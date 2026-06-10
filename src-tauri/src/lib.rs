@@ -413,6 +413,7 @@ pub fn run() {
             commands::merge_split::merge_documents,
             commands::academic_export::detect_pandoc,
             commands::academic_export::export_document,
+            commands::enrich::enrich_bib_entry,
             context_menu::show_trash_context_menu,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,

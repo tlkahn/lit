@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback } from "react";
 import type { PageContent, MergePlan, SplitPlan } from "../lib/ipc";
-import { readPage } from "../lib/ipc";
+import { readPage, enrichBibEntry } from "../lib/ipc";
+import { useWorkspaceStore } from "../stores/workspace";
 import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
@@ -49,6 +50,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const showCitations = useGraphViewState((s) => s.showCitations);
   const setShowCitations = useGraphViewState((s) => s.setShowCitations);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
     !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
@@ -68,8 +70,12 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const { sigmaRef, hoveredNodeRef, selectedSetRef, defaultNodeReducer, tierSettingsRef, resetZoom } = useGraphRenderer({
     containerRef, graphRef, tierSettings, dimColorRef, dataVersion,
     onNavigate, onContextMenu: async (menu) => {
-      const page = await readPage(menu.nodeId);
-      const hasHeadings = /^#{2,}\s/m.test(page.body);
+      const isShadow = menu.nodeId.startsWith("bib:");
+      let hasHeadings = false;
+      if (!isShadow) {
+        const page = await readPage(menu.nodeId);
+        hasHeadings = /^#{2,}\s/m.test(page.body);
+      }
       const { selectedNodes } = useGraphSelectionStore.getState();
       const nodeIds = selectedNodes.length >= 1 ? [...selectedNodes] : [menu.nodeId];
       await showGraphContextMenu({
@@ -78,6 +84,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         selectionCount: selectedNodes.length,
         hasHeadings,
         hasExport: !!onExportNetworkRef.current,
+        isShadow,
       });
     },
   });
@@ -118,6 +125,11 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
     },
     onExportNetwork: (nodeId) => {
       onExportNetworkRef.current?.(nodeId);
+    },
+    onFetchDetails: (nodeId) => {
+      if (!workspacePath) return;
+      const bibKey = nodeId.replace("bib:", "");
+      enrichBibEntry(bibKey, workspacePath);
     },
     getNodeLabel: (nodeId) => {
       try {

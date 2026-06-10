@@ -2,11 +2,13 @@ use crate::bib::cache::BibCache;
 use crate::bib::convert::normalize_doi;
 use crate::bib::types::BibEntry;
 use crate::commands::bib::scan_workspace_bibs;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// Result for each entry passed to append_entries_to_file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,6 +57,31 @@ pub fn serialize_bib_entry(entry: &BibEntry) -> String {
     // url
     if let Some(ref url) = entry.url {
         out.push_str(&format!("  url = {{{}}},\n", url));
+    }
+
+    // volume
+    if let Some(ref volume) = entry.volume {
+        out.push_str(&format!("  volume = {{{}}},\n", volume));
+    }
+
+    // number
+    if let Some(ref number) = entry.number {
+        out.push_str(&format!("  number = {{{}}},\n", number));
+    }
+
+    // pages
+    if let Some(ref pages) = entry.pages {
+        out.push_str(&format!("  pages = {{{}}},\n", pages));
+    }
+
+    // publisher
+    if let Some(ref publisher) = entry.publisher {
+        out.push_str(&format!("  publisher = {{{}}},\n", publisher));
+    }
+
+    // issn
+    if let Some(ref issn) = entry.issn {
+        out.push_str(&format!("  issn = {{{}}},\n", issn));
     }
 
     // abstract
@@ -247,6 +274,228 @@ pub fn append_entries_to_file(
     Ok(outcomes)
 }
 
+static UPDATE_ENTRY_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*@(\w+)\s*\{(.+)").unwrap());
+
+static UPDATE_FIELD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\w+)\s*=\s*").unwrap());
+
+/// Find the byte range `(start, end)` of the entry with the given `key` in `content`.
+/// `start` is the byte offset of the `@` character; `end` is one past the closing `}`.
+fn find_entry_span(content: &str, key: &str) -> Option<(usize, usize)> {
+    let mut offset = 0;
+    for line in content.split('\n') {
+        if let Some(caps) = UPDATE_ENTRY_RE.captures(line) {
+            let rest = &caps[2];
+            if let Some(comma_idx) = rest.find(',') {
+                let entry_key = rest[..comma_idx].trim();
+                if entry_key == key {
+                    let start = offset;
+                    // Track brace depth from the first `{`
+                    let brace_start = start + line.find('{').unwrap_or(0);
+                    let mut depth: i32 = 0;
+                    for (i, ch) in content[brace_start..].char_indices() {
+                        if ch == '{' {
+                            depth += 1;
+                        } else if ch == '}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some((start, brace_start + i + 1));
+                            }
+                        }
+                    }
+                    return None; // unbalanced braces
+                }
+            }
+        }
+        offset += line.len() + 1; // +1 for the '\n'
+    }
+    None
+}
+
+/// Find the byte range of a field line within `entry_text`.
+/// Returns `(field_start, field_end)` where `field_start` is the byte offset of the
+/// first character of the field name, and `field_end` is one past the trailing comma
+/// or the last character of the value (including any newline).
+fn find_field_span(entry_text: &str, field_name: &str) -> Option<(usize, usize)> {
+    let mut search_start = 0;
+    while search_start < entry_text.len() {
+        let Some(caps) = UPDATE_FIELD_RE.captures(&entry_text[search_start..]) else {
+            break;
+        };
+        let m = caps.get(0).unwrap();
+        let matched_name = caps[1].to_lowercase();
+        let abs_match_start = search_start + m.start();
+
+        if matched_name == field_name.to_lowercase() {
+            // Find the start of this line
+            let line_start = entry_text[..abs_match_start]
+                .rfind('\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+
+            let value_start = search_start + m.end();
+            // Determine the value span
+            if let Some(end) = find_value_end(entry_text, value_start) {
+                // Include trailing comma and whitespace up to (including) newline
+                let mut field_end = end;
+                if field_end < entry_text.len()
+                    && entry_text.as_bytes()[field_end] == b','
+                {
+                    field_end += 1;
+                }
+                // Skip trailing whitespace up to and including newline
+                while field_end < entry_text.len() {
+                    let ch = entry_text.as_bytes()[field_end];
+                    if ch == b'\n' {
+                        field_end += 1;
+                        break;
+                    } else if ch == b' ' || ch == b'\t' || ch == b'\r' {
+                        field_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                return Some((line_start, field_end));
+            }
+        }
+        search_start += m.end();
+    }
+    None
+}
+
+/// Find the end byte offset of a BibTeX field value starting at `start`.
+/// Handles `{...}`, `"..."`, and bare values.
+fn find_value_end(text: &str, start: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = start;
+    // skip whitespace
+    while i < bytes.len() && (bytes[i] as char).is_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+
+    match bytes[i] as char {
+        '{' => {
+            let mut depth: i32 = 0;
+            for j in i..bytes.len() {
+                if bytes[j] == b'{' {
+                    depth += 1;
+                } else if bytes[j] == b'}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(j + 1);
+                    }
+                }
+            }
+            None
+        }
+        '"' => {
+            let mut j = i + 1;
+            while j < bytes.len() {
+                if bytes[j] == b'"' && (j == i + 1 || bytes[j - 1] != b'\\') {
+                    return Some(j + 1);
+                }
+                j += 1;
+            }
+            None
+        }
+        _ => {
+            // Bare value: ends at comma, closing brace, or newline
+            let remaining = &text[i..];
+            let end = remaining
+                .find(|c: char| c == ',' || c == '}' || c == '\n')
+                .unwrap_or(remaining.len());
+            Some(i + end)
+        }
+    }
+}
+
+/// Update or insert fields in a BibTeX entry identified by `key`.
+///
+/// `new_fields` maps BibTeX field names (lowercase, e.g. "doi", "abstract") to
+/// raw values (without `{}`  the function wraps them).
+///
+/// Returns `Ok(true)` if the file was modified, `Ok(false)` if all fields already
+/// matched (idempotent no-op), or `Err` on I/O or parse failure.
+pub fn update_entry_fields(
+    bib_path: &Path,
+    key: &str,
+    new_fields: &HashMap<String, String>,
+    cache: &BibCache,
+) -> Result<bool, String> {
+    let content = fs::read_to_string(bib_path)
+        .map_err(|e| format!("Failed to read {}: {}", bib_path.display(), e))?;
+
+    let (entry_start, entry_end) = find_entry_span(&content, key)
+        .ok_or_else(|| format!("Entry '{}' not found in {}", key, bib_path.display()))?;
+
+    let entry_text = &content[entry_start..entry_end];
+
+    // Process fields: build a new entry text by applying replacements and insertions
+    let mut result_entry = entry_text.to_string();
+    let mut modified = false;
+
+    // Sort field names for deterministic ordering of insertions
+    let mut field_names: Vec<&String> = new_fields.keys().collect();
+    field_names.sort();
+
+    for field_name in field_names {
+        let value = &new_fields[field_name];
+        let new_field_line = format!("  {} = {{{}}},\n", field_name, value);
+
+        if let Some((fs, fe)) = find_field_span(&result_entry, field_name) {
+            // Check if existing value already matches
+            let existing_line = &result_entry[fs..fe];
+            if existing_line == new_field_line {
+                continue;
+            }
+            result_entry.replace_range(fs..fe, &new_field_line);
+            modified = true;
+        } else {
+            // Insert before the closing `}`
+            let close_pos = result_entry.rfind('}').unwrap();
+            // Ensure there's a newline before the closing brace
+            let insert_pos = if close_pos > 0
+                && result_entry.as_bytes()[close_pos - 1] != b'\n'
+            {
+                result_entry.insert(close_pos, '\n');
+                close_pos
+            } else {
+                close_pos
+            };
+            result_entry.insert_str(insert_pos, &new_field_line);
+            modified = true;
+        }
+    }
+
+    if !modified {
+        return Ok(false);
+    }
+
+    // Build the full new file content
+    let new_content = format!(
+        "{}{}{}",
+        &content[..entry_start],
+        result_entry,
+        &content[entry_end..]
+    );
+
+    // Atomic write: write to tempfile in the same directory, then rename
+    let parent = bib_path.parent().ok_or("Invalid bib path: no parent directory")?;
+    let tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    fs::write(tmp.path(), &new_content)
+        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+    tmp.persist(bib_path)
+        .map_err(|e| format!("Failed to atomically replace {}: {}", bib_path.display(), e))?;
+
+    cache.invalidate(&bib_path.to_path_buf());
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +520,11 @@ mod tests {
             doi: Some("10.1000/xyz".to_string()),
             journal: Some("Nature".to_string()),
             url: Some("https://example.com".to_string()),
+            volume: Some("42".to_string()),
+            number: Some("3".to_string()),
+            pages: Some("100--115".to_string()),
+            publisher: Some("Nature Publishing".to_string()),
+            issn: None,
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -289,6 +543,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         }
     }
@@ -763,5 +1022,320 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(bib_path.exists());
+    }
+
+    // ── Group 4: update_entry_fields ───────────────────────────────
+
+    #[test]
+    fn update_new_field_inserted() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1000/xyz".to_string());
+
+        let result = update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+        assert!(result, "should return true when file is modified");
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].doi, Some("10.1000/xyz".to_string()));
+        assert_eq!(parsed[0].title, "Alpha");
+        assert_eq!(parsed[0].year, "2024");
+        assert_eq!(parsed[0].authors, vec!["Smith"]);
+    }
+
+    #[test]
+    fn update_existing_field_replaced() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  title = {Old Title},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("title".to_string(), "New Title".to_string());
+
+        let result = update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+        assert!(result);
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed[0].title, "New Title");
+        assert_eq!(parsed[0].year, "2024");
+    }
+
+    #[test]
+    fn update_idempotent_no_write() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  title = {Alpha},\n  year = {2024},\n  doi = {10.1/x},\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+
+        let result = update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+        assert!(!result, "should return false when nothing changed");
+    }
+
+    #[test]
+    fn update_multiple_fields() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+        fields.insert("abstract".to_string(), "Summary text".to_string());
+        fields.insert("url".to_string(), "https://example.com".to_string());
+
+        let result = update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+        assert!(result);
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].doi, Some("10.1/x".to_string()));
+        assert_eq!(parsed[0].abstract_text, Some("Summary text".to_string()));
+        assert_eq!(parsed[0].url, Some("https://example.com".to_string()));
+        assert_eq!(parsed[0].title, "Alpha");
+    }
+
+    #[test]
+    fn update_preserves_other_entries() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let entry1 = "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}";
+        let entry2 = "@article{doe2023,\n  author = {Doe},\n  title = {Beta},\n  year = {2023}\n}";
+        let content = format!("{}\n\n{}\n", entry1, entry2);
+        fs::write(&bib_path, &content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+
+        update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        // doe2023 entry should be byte-for-byte unchanged
+        assert!(
+            updated.contains(entry2),
+            "doe2023 entry should be preserved verbatim, got: {}",
+            updated
+        );
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[1].key, "doe2023");
+        assert_eq!(parsed[1].title, "Beta");
+    }
+
+    #[test]
+    fn update_key_not_found() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+
+        let result = update_entry_fields(&bib_path, "nonexistent", &fields, &cache);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn update_empty_file() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        fs::write(&bib_path, "").unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+
+        let result = update_entry_fields(&bib_path, "anything", &fields, &cache);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_file_not_found() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("nonexistent.bib");
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+
+        let result = update_entry_fields(&bib_path, "anything", &fields, &cache);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_cache_invalidated() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        // Prime the cache
+        let mtime = fs::metadata(&bib_path).unwrap().modified().unwrap();
+        let initial = cache.get_or_parse(&bib_path.to_path_buf(), &content, mtime);
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].doi, None);
+
+        // Update a field
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+        update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+
+        // Cache should be invalidated; re-parse should see the new field
+        let new_content = fs::read_to_string(&bib_path).unwrap();
+        let new_mtime = fs::metadata(&bib_path).unwrap().modified().unwrap();
+        let refreshed = cache.get_or_parse(&bib_path.to_path_buf(), &new_content, new_mtime);
+        assert_eq!(refreshed.len(), 1);
+        assert_eq!(refreshed[0].doi, Some("10.1/x".to_string()));
+    }
+
+    #[test]
+    fn update_atomic_write_preserves_on_success() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+        update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].key, "smith2024");
+        assert_eq!(parsed[0].doi, Some("10.1/x".to_string()));
+        assert_eq!(parsed[0].title, "Alpha");
+        assert_eq!(parsed[0].authors, vec!["Smith"]);
+        assert_eq!(parsed[0].year, "2024");
+    }
+
+    #[test]
+    fn update_mixed_insert_and_replace() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  title = {Alpha},\n  year = {2024},\n  doi = {old},\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "new".to_string());
+        fields.insert("url".to_string(), "https://new.com".to_string());
+
+        let result = update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+        assert!(result);
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed[0].doi, Some("new".to_string()));
+        assert_eq!(parsed[0].url, Some("https://new.com".to_string()));
+    }
+
+    #[test]
+    fn update_field_with_braces_in_value() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let content = "@article{smith2024,\n  title = {Alpha},\n  year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("title".to_string(), "The {LaTeX} Approach".to_string());
+
+        update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        let parsed = parse_bibtex(&updated);
+        assert_eq!(parsed[0].title, "The {LaTeX} Approach");
+    }
+
+    #[test]
+    fn serialize_full_entry_round_trips_new_fields() {
+        let mut entry = full_entry();
+        entry.volume = Some("42".to_string());
+        entry.number = Some("3".to_string());
+        entry.pages = Some("100--115".to_string());
+        entry.publisher = Some("Nature Publishing".to_string());
+        entry.issn = Some("0028-0836".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].volume, Some("42".to_string()));
+        assert_eq!(parsed[0].number, Some("3".to_string()));
+        assert_eq!(parsed[0].pages, Some("100--115".to_string()));
+        assert_eq!(parsed[0].publisher, Some("Nature Publishing".to_string()));
+        assert_eq!(parsed[0].issn, Some("0028-0836".to_string()));
+    }
+
+    #[test]
+    fn serialize_omits_none_new_fields() {
+        let entry = minimal_entry();
+        let bib_str = serialize_bib_entry(&entry);
+        assert!(!bib_str.contains("volume"));
+        assert!(!bib_str.contains("number"));
+        assert!(!bib_str.contains("pages"));
+        assert!(!bib_str.contains("publisher"));
+        assert!(!bib_str.contains("issn"));
+    }
+
+    #[test]
+    fn serialize_issn_round_trips() {
+        let mut entry = minimal_entry();
+        entry.issn = Some("1234-5678".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed[0].issn, Some("1234-5678".to_string()));
+    }
+
+    #[test]
+    fn update_preserves_formatting_of_untouched_fields() {
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        // Custom formatting: 4-space indent, tab indent
+        let content = "@article{smith2024,\n    author = {Smith},\n\ttitle = {Alpha},\n    year = {2024}\n}\n";
+        fs::write(&bib_path, content).unwrap();
+        let cache = BibCache::new();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "10.1/x".to_string());
+
+        update_entry_fields(&bib_path, "smith2024", &fields, &cache).unwrap();
+
+        let updated = fs::read_to_string(&bib_path).unwrap();
+        // The author and year lines should be preserved with their original formatting
+        assert!(
+            updated.contains("    author = {Smith},"),
+            "4-space author line should be preserved, got: {}",
+            updated
+        );
+        assert!(
+            updated.contains("\ttitle = {Alpha},"),
+            "tab-indented title line should be preserved, got: {}",
+            updated
+        );
+        assert!(
+            updated.contains("    year = {2024}"),
+            "4-space year line should be preserved, got: {}",
+            updated
+        );
     }
 }

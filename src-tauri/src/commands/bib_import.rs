@@ -42,7 +42,7 @@ fn list_bib_files_inner(workspace_path: &Path) -> Vec<String> {
 
 // ── Tauri commands ──────────────────────────────────────────────────
 
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+pub(crate) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(format!(
@@ -397,6 +397,11 @@ mod tests {
             doi: Some("10.1000/test".to_string()),
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         };
         let results = append_entries_to_file(
@@ -433,6 +438,11 @@ mod tests {
             doi: Some("10.1000/new".to_string()),
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         };
         let results = append_entries_to_file(
@@ -471,6 +481,11 @@ mod tests {
             doi: Some("10.1000/dup".to_string()),
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         };
         let results = append_entries_to_file(

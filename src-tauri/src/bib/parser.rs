@@ -106,6 +106,11 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
                 .or_else(|| fields.get("booktitle"))
                 .cloned(),
             url: fields.get("url").cloned(),
+            volume: fields.get("volume").cloned(),
+            number: fields.get("number").cloned(),
+            pages: fields.get("pages").cloned(),
+            publisher: fields.get("publisher").cloned(),
+            issn: fields.get("issn").cloned(),
             tags: match fields.get("keywords") {
                 Some(kw) => kw
                     .split(',')
@@ -273,6 +278,7 @@ mod tests {
         assert_eq!(entries[0].entry_type, "book");
         assert_eq!(entries[0].authors, vec!["Flood, Gavin"]);
         assert_eq!(entries[0].year, "1996");
+        assert_eq!(entries[0].publisher, Some("Cambridge University Press".to_string()));
     }
 
     #[test]
@@ -488,5 +494,62 @@ mod tests {
         let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  keywords = {a, b, }\n}";
         let entries = parse_bibtex(input);
         assert_eq!(entries[0].tags, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn parse_extracts_volume_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  volume = {42}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].volume, Some("42".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_number_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  number = {3}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].number, Some("3".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_pages_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  pages = {100--115}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].pages, Some("100--115".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_publisher_field() {
+        let input = "@book{b2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  publisher = {Cambridge University Press}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].publisher, Some("Cambridge University Press".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_issn_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  issn = {0028-0836}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].issn, Some("0028-0836".to_string()));
+    }
+
+    #[test]
+    fn missing_new_fields_are_none() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].volume, None);
+        assert_eq!(entries[0].number, None);
+        assert_eq!(entries[0].pages, None);
+        assert_eq!(entries[0].publisher, None);
+        assert_eq!(entries[0].issn, None);
+    }
+
+    #[test]
+    fn parse_all_new_fields_together() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  volume = {10},\n  number = {2},\n  pages = {50--75},\n  publisher = {Springer},\n  issn = {1234-5678}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].volume, Some("10".to_string()));
+        assert_eq!(entries[0].number, Some("2".to_string()));
+        assert_eq!(entries[0].pages, Some("50--75".to_string()));
+        assert_eq!(entries[0].publisher, Some("Springer".to_string()));
+        assert_eq!(entries[0].issn, Some("1234-5678".to_string()));
     }
 }
