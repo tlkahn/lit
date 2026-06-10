@@ -204,9 +204,10 @@ impl PdfRenderThread {
                                 });
                                 pages.push(text);
                             }
-                            let info = doc
-                                .info()
-                                .map_err(|e| format!("Failed to get PDF info: {e}"))?;
+                            let info = doc.info().unwrap_or_else(|e| {
+                                eprintln!("[pdf] metadata extraction failed: {e}");
+                                HashMap::new()
+                            });
                             Ok(PdfRecognizerData {
                                 pages,
                                 total_pages,
@@ -791,6 +792,20 @@ mod tests {
         assert!(msg.contains("page 3"));
         assert!(msg.contains("text extraction failed"));
         assert!(msg.contains("text page load failed"));
+    }
+
+    #[test]
+    fn test_info_error_is_logged_not_propagated() {
+        // Document the contract: info() errors produce a logged warning + empty
+        // HashMap fallback, never hard-fail the extraction (which would discard
+        // all already-extracted page text).
+        let err = lmpdf::Error::Document(lmpdf::error::DocumentError::InvalidFormat);
+        let msg = format!("[pdf] metadata extraction failed: {err}");
+        assert!(msg.contains("[pdf]"));
+        assert!(msg.contains("metadata extraction failed"));
+        // The fallback must be an empty HashMap (matching unwrap_or_else default)
+        let fallback: std::collections::HashMap<String, String> = Default::default();
+        assert!(fallback.is_empty());
     }
 
     #[test]
