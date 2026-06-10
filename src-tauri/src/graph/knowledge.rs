@@ -235,7 +235,7 @@ impl KnowledgeGraph {
             .intersection(&nb)
             .copied()
             .filter(|&idx| idx != idx_a && idx != idx_b)
-            .filter(|&idx| !self.raw_graph[idx].is_stub)
+            .filter(|&idx| self.raw_graph[idx].materialization == Materialization::Materialized)
             .map(|idx| self.raw_graph[idx].clone())
             .collect();
 
@@ -407,7 +407,7 @@ impl KnowledgeGraph {
     fn induced_subgraph(&self, visited: &HashSet<NodeIndex>) -> SubgraphResult {
         let nodes: Vec<GraphNode> = visited.iter().map(|&idx| self.raw_graph[idx].clone()).collect();
         let edges = self.collect_induced_edges(visited, |kind| kind == EdgeKind::Wikilink);
-        SubgraphResult { nodes, edges }.without_stubs()
+        SubgraphResult { nodes, edges }.retain_materialized()
     }
 
     fn induced_subgraph_filtered(
@@ -585,7 +585,7 @@ impl KnowledgeGraph {
         }
 
         for neighbor in neighbors {
-            if self.raw_graph[neighbor].is_stub {
+            if self.raw_graph[neighbor].materialization != Materialization::Materialized {
                 continue;
             }
             if neighbor == target {
@@ -2078,5 +2078,68 @@ mod tests {
         assert!(edge_set.contains(&("A", "B")));
         assert!(edge_set.contains(&("B", "C")));
         assert!(!edge_set.contains(&("C", "D")), "D is not in visited");
+    }
+
+    // --- shadow nodes leak through is_stub filters (PR #459 findings #1, #3) ---
+
+    #[test]
+    fn neighbors_excludes_shadow_via_wikilink() {
+        // Shadow node reachable via wikilink (not citation) should be filtered
+        // by induced_subgraph when include_citations=false.
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("X", "X"), 1).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_shadow("Sh", "Shadow Node", Materialization::Shadow).unwrap();
+        store.insert_edge("X", "Y", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("X", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.neighbors("X", 1, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("X"), "seed should be present");
+        assert!(ids.contains("Y"), "materialized neighbor should be present");
+        assert!(!ids.contains("Sh"), "shadow node must be filtered out");
+        assert!(
+            result.edges.iter().all(|(s, t, _)| s != "Sh" && t != "Sh"),
+            "no edges should reference shadow node"
+        );
+    }
+
+    #[test]
+    fn shared_excludes_shadow_neighbor() {
+        // The only common neighbor is a shadow node -- result should be empty.
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("X", "X"), 1).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_shadow("Sh", "Shadow Node", Materialization::Shadow).unwrap();
+        store.insert_edge("X", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("Y", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.shared("X", "Y", true).unwrap();
+        assert!(
+            result.is_empty(),
+            "shadow node should be filtered from shared neighbors, got: {:?}",
+            result.iter().map(|n| &n.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn paths_does_not_traverse_through_shadow() {
+        // Path X->Sh->Y exists via wikilinks, but Sh is shadow so the path should be blocked.
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("X", "X"), 1).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_shadow("Sh", "Shadow Node", Materialization::Shadow).unwrap();
+        store.insert_edge("X", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("Sh", "Y", "", "", 0, EdgeKind::Wikilink).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.paths("X", "Y", 3, true).unwrap();
+        assert!(
+            result.is_empty(),
+            "path through shadow node should not exist, got: {:?}",
+            result
+        );
     }
 }
