@@ -412,6 +412,8 @@ use std::hash::{Hash, Hasher};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
 use super::knowledge::{EdgeMeta, GraphNode};
+#[cfg(test)]
+use super::types::{EdgeKind, Materialization};
 
 fn hash_position(id: &str) -> (f64, f64) {
     let mut h = DefaultHasher::new();
@@ -505,6 +507,7 @@ mod tests {
                     id: id.to_string(),
                     title: id.to_string(),
                     is_stub: false,
+                    materialization: Materialization::Materialized,
                 })
             })
             .collect();
@@ -513,6 +516,7 @@ mod tests {
                 context: String::new(),
                 source_line: 0,
                 raw_target: String::new(),
+                kind: EdgeKind::Wikilink,
             });
         }
         g

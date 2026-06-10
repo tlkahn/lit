@@ -60,12 +60,13 @@ describe("computeDiff (5% nodes added)", () => {
         ...Array.from({ length: added }, (_, i) => ({
           id: `new-${i}`,
           title: `New ${i}`,
-
+          is_stub: false as const,
+          materialization: "materialized" as const,
         })),
       ],
       edges: [
         ...subgraph.edges,
-        ...Array.from({ length: added }, (_, i) => [`new-${i}`, subgraph.nodes[i % subgraph.nodes.length]!.id] as [string, string]),
+        ...Array.from({ length: added }, (_, i) => [`new-${i}`, subgraph.nodes[i % subgraph.nodes.length]!.id, "wikilink"] as [string, string, "wikilink"]),
       ],
     };
     bench(`${size.toLocaleString()} nodes + ${added} new`, () => {
@@ -84,12 +85,13 @@ describe("applyDiff (5% nodes added)", () => {
         ...Array.from({ length: added }, (_, i) => ({
           id: `new-${i}`,
           title: `New ${i}`,
-
+          is_stub: false as const,
+          materialization: "materialized" as const,
         })),
       ],
       edges: [
         ...subgraph.edges,
-        ...Array.from({ length: added }, (_, i) => [`new-${i}`, subgraph.nodes[i % subgraph.nodes.length]!.id] as [string, string]),
+        ...Array.from({ length: added }, (_, i) => [`new-${i}`, subgraph.nodes[i % subgraph.nodes.length]!.id, "wikilink"] as [string, string, "wikilink"]),
       ],
     };
     bench(`${size.toLocaleString()} nodes + ${added} new`, () => {

@@ -13,7 +13,9 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import {
   listBibEntries,
   getCitingPages,
+  getBibKeyStates,
   type BibEntry,
+  type BibKeyState,
   type BacklinkEntry,
   type FileEvent,
 } from "../lib/ipc";
@@ -134,12 +136,20 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
 
 export function ReferenceLibrary() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const show = useStatusMessageStore((s) => s.show);
   const [entries, setEntries] = useState<BibEntry[]>([]);
+  const [bibKeyStates, setBibKeyStates] = useState<Record<string, BibKeyState>>({});
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const deferredSearch = useDeferredValue(search);
+
+  const currentPageRef = useRef(currentPagePath ?? "");
+  currentPageRef.current = currentPagePath ?? "";
+  const recordDeparture = useRecordDeparture(currentPageRef);
 
   const requestIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -163,6 +173,31 @@ export function ReferenceLibrary() {
     loadEntries();
   }, [loadEntries]);
 
+  const loadBibKeyStates = useCallback(() => {
+    if (!graphReady) {
+      setBibKeyStates({});
+      return;
+    }
+    getBibKeyStates()
+      .then((result) => setBibKeyStates(result))
+      .catch(() => setBibKeyStates({}));
+  }, [graphReady]);
+
+  useEffect(() => {
+    loadBibKeyStates();
+  }, [loadBibKeyStates]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:graph-updated", () => {
+      loadBibKeyStates();
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [loadBibKeyStates]);
+
   useEffect(() => {
     if (!workspacePath) return;
 
@@ -176,6 +211,7 @@ export function ReferenceLibrary() {
         debounceRef.current = setTimeout(() => {
           debounceRef.current = null;
           loadEntries();
+          loadBibKeyStates();
         }, 200);
       }
     };
@@ -205,7 +241,7 @@ export function ReferenceLibrary() {
         unlisten();
       }
     };
-  }, [workspacePath, loadEntries]);
+  }, [workspacePath, loadEntries, loadBibKeyStates]);
 
   const sorted = useMemo(() => {
     return [...entries].sort((a, b) => {
@@ -312,6 +348,7 @@ export function ReferenceLibrary() {
             const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
             const isExpanded = expandedKey === entryId;
             const tags = entry.tags ?? [];
+            const state = bibKeyStates[entry.key];
             return (
               <div
                 key={entryId}
@@ -339,6 +376,21 @@ export function ReferenceLibrary() {
                     {entry.authors.join("; ")}
                     {entry.year ? ` (${entry.year})` : ""}
                   </span>
+                  {state?.page_id ? (
+                    <span
+                      data-testid="badge-has-note"
+                      className="mt-0.5 inline-block rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent"
+                    >
+                      Has note
+                    </span>
+                  ) : state?.materialization === "partial" ? (
+                    <span
+                      data-testid="badge-enriched"
+                      className="mt-0.5 inline-block rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                    >
+                      Enriched
+                    </span>
+                  ) : null}
                 </button>
                 {isExpanded ? (
                   <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
@@ -391,6 +443,29 @@ export function ReferenceLibrary() {
                             {t}
                           </span>
                         ))}
+                      </div>
+                    ) : null}
+                    {state?.page_id ? (
+                      <div className="mt-2">
+                        <button
+                          data-testid="has-note-link"
+                          onClick={() => {
+                            recordDeparture();
+                            selectPage(state.page_id!);
+                          }}
+                          className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                        >
+                          Has note: {state.page_id}
+                        </button>
+                      </div>
+                    ) : state?.materialization === "partial" ? (
+                      <div className="mt-2">
+                        <span
+                          data-testid="badge-enriched"
+                          className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                        >
+                          Enriched
+                        </span>
                       </div>
                     ) : null}
                     <div className="mt-2">

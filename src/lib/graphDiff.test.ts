@@ -1,7 +1,17 @@
 import { describe, it, expect } from "vitest";
 import Graph from "graphology";
-import type { SubgraphResult } from "./ipc";
+import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
 import { computeDiff, applyDiff } from "./graphDiff";
+
+/** Helper to create a materialized GraphNode for test fixtures */
+function n(id: string, title: string): GraphNode {
+  return { id, title, is_stub: false, materialization: "materialized" };
+}
+
+/** Helper to create a wikilink edge triple */
+function e(src: string, tgt: string): [string, string, EdgeKind] {
+  return [src, tgt, "wikilink"];
+}
 
 describe("computeDiff", () => {
   it("returns empty diff when graph and subgraph are identical", () => {
@@ -11,11 +21,8 @@ describe("computeDiff", () => {
     graph.mergeUndirectedEdge("a.md", "b.md");
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-      ],
-      edges: [["a.md", "b.md"]],
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [e("a.md", "b.md")],
     };
 
     const diff = computeDiff(graph, subgraph);
@@ -34,17 +41,13 @@ describe("computeDiff", () => {
     graph.addNode("b.md", { label: "B" });
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-        { id: "c.md", title: "C" },
-      ],
+      nodes: [n("a.md", "A"), n("b.md", "B"), n("c.md", "C")],
       edges: [],
     };
 
     const diff = computeDiff(graph, subgraph);
 
-    expect(diff.addedNodes).toEqual([{ id: "c.md", title: "C" }]);
+    expect(diff.addedNodes).toEqual([n("c.md", "C")]);
     expect(diff.removedNodes).toEqual([]);
   });
 
@@ -55,10 +58,7 @@ describe("computeDiff", () => {
     graph.addNode("c.md", { label: "C" });
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-      ],
+      nodes: [n("a.md", "A"), n("b.md", "B")],
       edges: [],
     };
 
@@ -73,7 +73,7 @@ describe("computeDiff", () => {
     graph.addNode("a.md", { label: "Old Title" });
 
     const subgraph: SubgraphResult = {
-      nodes: [{ id: "a.md", title: "New Title" }],
+      nodes: [n("a.md", "New Title")],
       edges: [],
     };
 
@@ -90,12 +90,8 @@ describe("computeDiff", () => {
     graph.mergeUndirectedEdge("a.md", "b.md");
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-        { id: "c.md", title: "C" },
-      ],
-      edges: [["a.md", "b.md"], ["a.md", "c.md"]],
+      nodes: [n("a.md", "A"), n("b.md", "B"), n("c.md", "C")],
+      edges: [e("a.md", "b.md"), e("a.md", "c.md")],
     };
 
     const diff = computeDiff(graph, subgraph);
@@ -113,12 +109,8 @@ describe("computeDiff", () => {
     graph.mergeUndirectedEdge("a.md", "c.md");
 
     const subgraph: SubgraphResult = {
-      nodes: [
-        { id: "a.md", title: "A" },
-        { id: "b.md", title: "B" },
-        { id: "c.md", title: "C" },
-      ],
-      edges: [["a.md", "b.md"]],
+      nodes: [n("a.md", "A"), n("b.md", "B"), n("c.md", "C")],
+      edges: [e("a.md", "b.md")],
     };
 
     const diff = computeDiff(graph, subgraph);
@@ -135,16 +127,9 @@ describe("computeDiff", () => {
 
     const subgraph: SubgraphResult = {
       nodes: [
-        { id: "old0.md", title: "Old 0" },
-        { id: "old1.md", title: "Old 1" },
-        { id: "old2.md", title: "Old 2" },
-        { id: "old3.md", title: "Old 3" },
-        { id: "new0.md", title: "New 0" },
-        { id: "new1.md", title: "New 1" },
-        { id: "new2.md", title: "New 2" },
-        { id: "new3.md", title: "New 3" },
-        { id: "new4.md", title: "New 4" },
-        { id: "new5.md", title: "New 5" },
+        n("old0.md", "Old 0"), n("old1.md", "Old 1"), n("old2.md", "Old 2"), n("old3.md", "Old 3"),
+        n("new0.md", "New 0"), n("new1.md", "New 1"), n("new2.md", "New 2"),
+        n("new3.md", "New 3"), n("new4.md", "New 4"), n("new5.md", "New 5"),
       ],
       edges: [],
     };
@@ -163,8 +148,8 @@ describe("computeDiff", () => {
 
     const subgraph: SubgraphResult = {
       nodes: [
-        ...Array.from({ length: 10 }, (_, i) => ({ id: `n${i}.md`, title: `N ${i}` })),
-        { id: "new.md", title: "New" },
+        ...Array.from({ length: 10 }, (_, i) => n(`n${i}.md`, `N ${i}`)),
+        n("new.md", "New"),
       ],
       edges: [],
     };
@@ -183,7 +168,7 @@ describe("applyDiff", () => {
     graph.addNode("b.md", { label: "B", color: "#0969da", type: "filled", size: 8, x: 60, y: 60 });
 
     const diff = {
-      addedNodes: [{ id: "c.md", title: "Page C" }],
+      addedNodes: [n("c.md", "Page C")],
       removedNodes: [],
       updatedNodes: [],
       addedEdges: [] as [string, string][],
@@ -264,7 +249,7 @@ describe("applyDiff", () => {
     graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
 
     const diff = {
-      addedNodes: [{ id: "c.md", title: "C" }],
+      addedNodes: [n("c.md", "C")],
       removedNodes: [],
       updatedNodes: [],
       addedEdges: [["a.md", "c.md"]] as [string, string][],

@@ -1,4 +1,4 @@
-import type { SubgraphResult, GraphNode } from "../../lib/ipc";
+import type { SubgraphResult, GraphNode, EdgeKind } from "../../lib/ipc";
 import { mulberry32 } from "../../lib/random";
 
 export interface SyntheticGraphOptions {
@@ -18,11 +18,11 @@ export function generateSyntheticGraph(opts: SyntheticGraphOptions): SyntheticGr
 
   const nodes: GraphNode[] = [];
   for (let i = 0; i < nodeCount; i++) {
-    nodes.push({ id: `page-${i}`, title: `Page ${i}` });
+    nodes.push({ id: `page-${i}`, title: `Page ${i}`, is_stub: false, materialization: "materialized" });
   }
 
   const edgeSet = new Set<string>();
-  const edges: [string, string][] = [];
+  const edges: [string, string, EdgeKind][] = [];
   const inDegree = new Map<string, number>();
   for (const n of nodes) inDegree.set(n.id, 0);
 
@@ -40,7 +40,7 @@ export function generateSyntheticGraph(opts: SyntheticGraphOptions): SyntheticGr
     const key = src < tgt ? `${src}|${tgt}` : `${tgt}|${src}`;
     if (edgeSet.has(key)) continue;
     edgeSet.add(key);
-    edges.push([src, tgt]);
+    edges.push([src, tgt, "wikilink"]);
     inDegree.set(tgt, (inDegree.get(tgt) ?? 0) + 1);
   }
 

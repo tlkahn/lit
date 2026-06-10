@@ -494,14 +494,20 @@ export interface LinkEntry {
   context: string;
 }
 
+export type Materialization = "stub" | "shadow" | "partial" | "materialized";
+
 export interface GraphNode {
   id: string;
   title: string;
+  is_stub: boolean;
+  materialization: Materialization;
 }
+
+export type EdgeKind = "wikilink" | "citation";
 
 export interface SubgraphResult {
   nodes: GraphNode[];
-  edges: [string, string][];
+  edges: [string, string, EdgeKind][];
   pagerank?: Record<string, number>;
   positions?: Record<string, { x: number; y: number }>;
 }
@@ -566,12 +572,32 @@ export async function getGraphSubgraph(
   seeds: string[],
   depth: number,
   directed?: boolean,
+  includeCitations?: boolean,
 ): Promise<SubgraphResult> {
-  return invoke<SubgraphResult>("get_graph_subgraph", { seeds, depth, directed: directed ?? null });
+  return invoke<SubgraphResult>("get_graph_subgraph", {
+    seeds,
+    depth,
+    directed: directed ?? null,
+    includeCitations: includeCitations ?? null,
+  });
 }
 
-export async function getFullSubgraph(): Promise<SubgraphResult> {
-  return invoke<SubgraphResult>("get_graph_subgraph", { seeds: [], depth: 0, directed: null });
+export async function getFullSubgraph(includeCitations?: boolean): Promise<SubgraphResult> {
+  return invoke<SubgraphResult>("get_graph_subgraph", {
+    seeds: [],
+    depth: 0,
+    directed: null,
+    includeCitations: includeCitations ?? null,
+  });
+}
+
+export interface BibKeyState {
+  materialization: string;
+  page_id: string | null;
+}
+
+export async function getBibKeyStates(): Promise<Record<string, BibKeyState>> {
+  return invoke<Record<string, BibKeyState>>("get_bib_key_states");
 }
 
 export interface ResolvedWikilink {

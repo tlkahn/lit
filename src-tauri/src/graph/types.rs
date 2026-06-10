@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum EdgeKind {
     Wikilink,
@@ -23,6 +23,39 @@ impl From<&str> for EdgeKind {
             // Unknown kinds degrade to wikilink, mirroring the edges table's
             // `edge_kind TEXT NOT NULL DEFAULT 'wikilink'` semantics.
             _ => EdgeKind::Wikilink,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Materialization {
+    Stub,
+    Shadow,
+    Partial,
+    Materialized,
+}
+
+impl Materialization {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Materialization::Stub => "stub",
+            Materialization::Shadow => "shadow",
+            Materialization::Partial => "partial",
+            Materialization::Materialized => "materialized",
+        }
+    }
+}
+
+impl From<&str> for Materialization {
+    fn from(s: &str) -> Self {
+        match s {
+            "stub" => Materialization::Stub,
+            "shadow" => Materialization::Shadow,
+            "partial" => Materialization::Partial,
+            // Unknown values degrade to Materialized, mirroring the nodes table's
+            // `materialization TEXT NOT NULL DEFAULT 'materialized'` semantics.
+            _ => Materialization::Materialized,
         }
     }
 }
@@ -206,6 +239,59 @@ mod tests {
         assert_eq!(EdgeKind::from("wikilink"), EdgeKind::Wikilink);
         // Unknown kinds degrade to wikilink, mirroring the DB column default.
         assert_eq!(EdgeKind::from("garbage"), EdgeKind::Wikilink);
+    }
+
+    #[test]
+    fn materialization_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&Materialization::Stub).unwrap(), "\"stub\"");
+        assert_eq!(serde_json::to_string(&Materialization::Shadow).unwrap(), "\"shadow\"");
+        assert_eq!(serde_json::to_string(&Materialization::Partial).unwrap(), "\"partial\"");
+        assert_eq!(serde_json::to_string(&Materialization::Materialized).unwrap(), "\"materialized\"");
+        assert_eq!(Materialization::Stub.as_str(), "stub");
+        assert_eq!(Materialization::Shadow.as_str(), "shadow");
+        assert_eq!(Materialization::Partial.as_str(), "partial");
+        assert_eq!(Materialization::Materialized.as_str(), "materialized");
+        assert_eq!(
+            serde_json::from_str::<Materialization>("\"partial\"").unwrap(),
+            Materialization::Partial
+        );
+    }
+
+    #[test]
+    fn materialization_from_str() {
+        assert_eq!(Materialization::from("stub"), Materialization::Stub);
+        assert_eq!(Materialization::from("shadow"), Materialization::Shadow);
+        assert_eq!(Materialization::from("partial"), Materialization::Partial);
+        assert_eq!(Materialization::from("materialized"), Materialization::Materialized);
+        // Unknown values degrade to Materialized, mirroring the DB column default.
+        assert_eq!(Materialization::from("garbage"), Materialization::Materialized);
+    }
+
+    #[test]
+    fn materialization_roundtrips_all_variants() {
+        let variants = [
+            Materialization::Stub,
+            Materialization::Shadow,
+            Materialization::Partial,
+            Materialization::Materialized,
+        ];
+        for v in variants {
+            let json_str = serde_json::to_string(&v).unwrap();
+            let back: Materialization = serde_json::from_str(&json_str).unwrap();
+            assert_eq!(back, v);
+        }
+    }
+
+    #[test]
+    fn materialization_copy_and_eq() {
+        let a = Materialization::Shadow;
+        let b = a; // exercises Copy
+        assert_eq!(a, b); // exercises Eq
+    }
+
+    #[test]
+    fn materialization_debug_format() {
+        assert!(format!("{:?}", Materialization::Shadow).contains("Shadow"));
     }
 
     #[test]

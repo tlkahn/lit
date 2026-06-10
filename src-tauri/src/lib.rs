@@ -353,6 +353,7 @@ pub fn run() {
             commands::graph::get_graph_neighbors,
             commands::graph::get_graph_paths,
             commands::graph::get_graph_subgraph,
+            commands::graph::get_bib_key_states,
             commands::graph::resolve_wikilink,
             commands::graph::get_page_headings,
             commands::graph::get_unlinked_mentions,

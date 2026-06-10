@@ -572,14 +572,14 @@ pub fn incremental_reindex(
         let all_meta = store.all_nodes_metadata()?;
         let real_ids: HashSet<String> = all_meta
             .iter()
-            .filter(|(_, is_stub)| !is_stub)
-            .map(|(id, _)| id.clone())
+            .filter(|(_, is_stub, _)| !is_stub)
+            .map(|(id, _, _)| id.clone())
             .collect();
         let real_stems: HashMap<String, String> = real_ids
             .iter()
             .map(|id| (normalize_stem(id), id.clone()))
             .collect();
-        for (id, is_stub) in &all_meta {
+        for (id, is_stub, _) in &all_meta {
             if *is_stub {
                 let stub_stem = normalize_stem(id);
                 if real_stems.contains_key(&stub_stem) {
@@ -658,6 +658,7 @@ pub struct GraphIndex {
     workspace_root: std::path::PathBuf,
     positions: Mutex<HashMap<String, Position>>,
     layout_in_progress: AtomicBool,
+    bib_cache: crate::bib::cache::BibCache,
 }
 
 impl GraphIndex {
@@ -686,6 +687,7 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
+            bib_cache: crate::bib::cache::BibCache::new(),
         }))
     }
 
@@ -703,6 +705,9 @@ impl GraphIndex {
         );
         let mut reverse_stems = self.reverse_stems.lock().unwrap();
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
+        store.begin_transaction()?;
+        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
+        store.commit()?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -762,6 +767,11 @@ impl GraphIndex {
             reverse_stems
         };
 
+        let bib_cache = crate::bib::cache::BibCache::new();
+        store.begin_transaction()?;
+        resolve_shadows(&store, &workspace_root, &bib_cache)?;
+        store.commit()?;
+
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
         let positions = store.load_positions().unwrap_or_default();
@@ -772,6 +782,7 @@ impl GraphIndex {
             workspace_root,
             positions: Mutex::new(positions),
             layout_in_progress: AtomicBool::new(false),
+            bib_cache,
         })
     }
 
@@ -782,6 +793,9 @@ impl GraphIndex {
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
         let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
+        store.begin_transaction()?;
+        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
+        store.commit()?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(result.removed_annotation_uuids)
@@ -803,6 +817,9 @@ impl GraphIndex {
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
         let store = self.store.lock().unwrap();
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
+        store.begin_transaction()?;
+        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
+        store.commit()?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -855,14 +872,15 @@ impl GraphIndex {
         seeds: &[&str],
         depth: usize,
         directed: bool,
+        include_citations: bool,
     ) -> Result<SubgraphResult, GraphError> {
         let knowledge = self.knowledge.lock().unwrap();
-        knowledge.subgraph(seeds, depth, directed)
+        knowledge.subgraph_filtered(seeds, depth, directed, include_citations)
     }
 
-    pub fn full_subgraph(&self) -> SubgraphResult {
+    pub fn full_subgraph(&self, include_citations: bool) -> SubgraphResult {
         let knowledge = self.knowledge.lock().unwrap();
-        knowledge.full_subgraph()
+        knowledge.full_subgraph_filtered(include_citations)
     }
 
     pub fn subgraph_bundle(
@@ -870,8 +888,9 @@ impl GraphIndex {
         seeds: &[&str],
         depth: usize,
         directed: bool,
+        include_citations: bool,
     ) -> Result<SubgraphBundle, GraphError> {
-        let subgraph = self.subgraph(seeds, depth, directed)?;
+        let subgraph = self.subgraph(seeds, depth, directed, include_citations)?;
         let pagerank = self.pagerank()?;
         let positions = self.get_positions();
         Ok(SubgraphBundle {
@@ -1144,6 +1163,31 @@ impl GraphIndex {
         })?.clear_positions()
     }
 
+    /// Re-scan bibs, upsert/prune shadows, rebuild in-memory graph.
+    /// Returns true if anything changed.
+    pub fn refresh_shadows(&self) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let before_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE materialization IN ('shadow', 'partial')",
+            [],
+            |row| row.get(0),
+        ).map_err(GraphError::from)?;
+        store.begin_transaction()?;
+        resolve_shadows(&store, &self.workspace_root, &self.bib_cache)?;
+        store.commit()?;
+        let after_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE materialization IN ('shadow', 'partial')",
+            [],
+            |row| row.get(0),
+        ).map_err(GraphError::from)?;
+        let changed = before_count != after_count;
+        if changed {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            *knowledge = KnowledgeGraph::from_store(&store)?;
+        }
+        Ok(changed)
+    }
+
     pub fn compute_layout_background(&self, settings: &super::layout::LayoutSettings) {
         use std::sync::atomic::Ordering;
         if self.layout_in_progress.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
@@ -1171,6 +1215,82 @@ impl GraphIndex {
             Err(e) => tracing::warn!(error = %e, "failed to lock store for position save"),
         }
         self.layout_in_progress.store(false, Ordering::SeqCst);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shadow node helpers
+// ---------------------------------------------------------------------------
+
+/// After all edges are inserted, create shadow/partial nodes for cited bib
+/// keys and resolve citation edge targets from raw bib key to `bib:{key}`
+/// or citekey page.
+fn resolve_shadows(
+    store: &Store,
+    root: &Path,
+    bib_cache: &crate::bib::cache::BibCache,
+) -> Result<(), GraphError> {
+    let bib_index = crate::commands::bib::build_bib_index(root, bib_cache);
+    let citekey_map: HashMap<String, String> = store
+        .citekey_pages()?
+        .into_iter()
+        .collect();
+
+    // Collect all distinct cited raw keys
+    let all_cited_keys: HashSet<String> = {
+        let mut stmt = store.conn.prepare(
+            "SELECT DISTINCT raw_target FROM edges WHERE edge_kind = 'citation'"
+        ).map_err(GraphError::from)?;
+        let rows = stmt.query_map([], |row| row.get(0))
+            .map_err(GraphError::from)?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    let mut shadow_ids: HashSet<String> = HashSet::new();
+
+    for raw_key in &all_cited_keys {
+        // Determine the resolved target: citekey page > bib:key
+        let resolved_target = if let Some(page_id) = citekey_map.get(raw_key.as_str()) {
+            page_id.clone()
+        } else {
+            let bib_id = format!("bib:{}", raw_key);
+            // Upsert shadow node if the key exists in the bib index
+            if let Some(entry) = bib_index.get(raw_key.as_str()) {
+                let mat = if entry.abstract_text.is_some() {
+                    super::types::Materialization::Partial
+                } else {
+                    super::types::Materialization::Shadow
+                };
+                let title = shadow_title(entry);
+                store.upsert_shadow(&bib_id, &title, mat)?;
+                shadow_ids.insert(bib_id.clone());
+            }
+            bib_id
+        };
+
+        // Update citation edge targets for this raw_key
+        store.conn.execute(
+            "UPDATE edges SET target = ?1 WHERE raw_target = ?2 AND edge_kind = 'citation'",
+            rusqlite::params![resolved_target, raw_key],
+        ).map_err(GraphError::from)?;
+    }
+
+    // Prune orphaned shadow nodes
+    store.prune_shadows(&shadow_ids)?;
+
+    Ok(())
+}
+
+fn shadow_title(entry: &crate::bib::types::BibEntry) -> String {
+    let author = entry
+        .authors
+        .first()
+        .map(|a| a.split(',').next().unwrap_or(a).trim())
+        .unwrap_or("Unknown");
+    if entry.title.is_empty() {
+        format!("{} ({})", author, entry.year)
+    } else {
+        format!("{} ({}) {}", author, entry.year, entry.title)
     }
 }
 
@@ -1646,7 +1766,7 @@ mod tests {
         let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
         assert_eq!(result.stubs_created, 1);
         let meta = store.all_nodes_metadata().unwrap();
-        assert!(meta.iter().any(|(id, is_stub)| id == "Ghost" && *is_stub));
+        assert!(meta.iter().any(|(id, is_stub, _)| id == "Ghost" && *is_stub));
     }
 
     #[test]
@@ -2090,7 +2210,7 @@ mod tests {
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
-            !meta.iter().any(|(id, _)| id == "smith2024"),
+            !meta.iter().any(|(id, _, _)| id == "smith2024"),
             "bib key must not become a node, nodes: {:?}",
             meta
         );
@@ -2177,7 +2297,7 @@ mod tests {
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
-            !meta.iter().any(|(id, _)| id == "alpha2020" || id == "beta2021"),
+            !meta.iter().any(|(id, _, _)| id == "alpha2020" || id == "beta2021"),
             "multi-cite keys must not become nodes, nodes: {:?}",
             meta
         );
@@ -2596,7 +2716,7 @@ mod tests {
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 3); // a, b, d (c deleted)
         // d->a edge exists, a->b edge removed
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "a.md"));
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "c.md"));
@@ -2625,7 +2745,7 @@ mod tests {
         write_md(dir.path(), "fresh.md", "");
         gi.reindex_file("fresh.md", true).unwrap();
 
-        let sub = gi.subgraph(&["fresh.md"], 1, false).unwrap();
+        let sub = gi.subgraph(&["fresh.md"], 1, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "fresh.md"));
     }
 
@@ -2640,10 +2760,10 @@ mod tests {
         gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true).unwrap();
 
         assert!(matches!(
-            gi.subgraph(&["old.md"], 1, false),
+            gi.subgraph(&["old.md"], 1, false, false),
             Err(GraphError::NodeNotFound { .. })
         ));
-        let sub = gi.subgraph(&["new.md"], 1, false).unwrap();
+        let sub = gi.subgraph(&["new.md"], 1, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "new.md"));
     }
 
@@ -2658,7 +2778,7 @@ mod tests {
         gi.remove_file("doomed.md", true).unwrap();
 
         assert!(matches!(
-            gi.subgraph(&["doomed.md"], 1, false),
+            gi.subgraph(&["doomed.md"], 1, false, false),
             Err(GraphError::NodeNotFound { .. })
         ));
     }
@@ -2670,7 +2790,7 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         // b is a stub node — filtered from subgraph output
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should not appear in subgraph");
 
         // Create b.md and batch_reindex with new
@@ -2682,7 +2802,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         // Real node should now appear (stub was replaced)
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "bare stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
@@ -2700,7 +2820,7 @@ mod tests {
         write_md(dir.path(), "b.md", "I exist now.");
         gi.add_file("b.md", true).unwrap();
 
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
         assert!(!b_real.is_stub);
@@ -2719,7 +2839,7 @@ mod tests {
         // reindex_file uses `changed` semantics — stub promotion is skipped,
         // so the edge a.md -> b.md is NOT resolved (still points at stub "b",
         // which without_stubs filters out).
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert!(sub.nodes.iter().any(|n| n.id == "b.md"), "b.md exists as real node");
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"), "edge not resolved because stub persists");
     }
@@ -2749,7 +2869,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert_eq!(sub.nodes.len(), 3); // merged, c, d
         assert!(!sub.nodes.iter().any(|n| n.id == "a.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "b.md"));
@@ -2780,7 +2900,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert_eq!(sub.nodes.len(), 3); // part1, part2, ref
         assert!(!sub.nodes.iter().any(|n| n.id == "big.md"));
         assert!(sub.nodes.iter().any(|n| n.id == "part1.md"));
@@ -2830,15 +2950,15 @@ mod tests {
         gi_batch.batch_reindex(&diff, true).unwrap();
 
         // Compare node IDs
-        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph().nodes.iter().map(|n| n.id.clone()).collect();
-        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph().nodes.iter().map(|n| n.id.clone()).collect();
+        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph(false).nodes.iter().map(|n| n.id.clone()).collect();
+        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph(false).nodes.iter().map(|n| n.id.clone()).collect();
         seq_nodes.sort();
         batch_nodes.sort();
         assert_eq!(seq_nodes, batch_nodes);
 
         // Compare edge sets
-        let mut seq_edges: Vec<(String, String)> = gi_seq.full_subgraph().edges.clone();
-        let mut batch_edges: Vec<(String, String)> = gi_batch.full_subgraph().edges.clone();
+        let mut seq_edges: Vec<(String, String, EdgeKind)> = gi_seq.full_subgraph(false).edges.clone();
+        let mut batch_edges: Vec<(String, String, EdgeKind)> = gi_batch.full_subgraph(false).edges.clone();
         seq_edges.sort();
         batch_edges.sort();
         assert_eq!(seq_edges, batch_edges);
@@ -2953,12 +3073,12 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert_eq!(sub.nodes.len(), 1);
 
         write_md(dir.path(), "b.md", "New.");
         gi.full_rebuild(true).unwrap();
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert_eq!(sub.nodes.len(), 2);
     }
 
@@ -2968,12 +3088,12 @@ mod tests {
         write_md(dir.path(), "a.md", "No links.");
         write_md(dir.path(), "b.md", "Target.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert!(sub.edges.is_empty());
 
         write_md(dir.path(), "a.md", "Now links to [[b]].");
         gi.reindex_file("a.md", true).unwrap();
-        let sub = gi.full_subgraph();
+        let sub = gi.full_subgraph(false);
         assert!(!sub.edges.is_empty());
     }
 
@@ -4204,7 +4324,7 @@ mod tests {
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
-            meta.iter().any(|(id, is_stub)| id == "b" && *is_stub),
+            meta.iter().any(|(id, is_stub, _)| id == "b" && *is_stub),
             "b should be a stub before b.md is created"
         );
 
@@ -4218,11 +4338,11 @@ mod tests {
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
-            !meta.iter().any(|(id, is_stub)| id == "b" && *is_stub),
+            !meta.iter().any(|(id, is_stub, _)| id == "b" && *is_stub),
             "stub 'b' should be cleaned up after b.md is created"
         );
         assert!(
-            meta.iter().any(|(id, is_stub)| id == "b.md" && !is_stub),
+            meta.iter().any(|(id, is_stub, _)| id == "b.md" && !is_stub),
             "b.md should exist as a real node"
         );
         let edges = store.all_edges().unwrap();
@@ -4606,7 +4726,7 @@ mod tests {
         let viz_edge_count = sub
             .edges
             .iter()
-            .filter(|(s, t)| s == "source.md" && t == "target.md")
+            .filter(|(s, t, _)| s == "source.md" && t == "target.md")
             .count();
 
         assert_eq!(store_bl.len(), 2, "store keeps both edge rows");
@@ -4979,7 +5099,7 @@ mod tests {
         let knowledge = KnowledgeGraph::from_store(&store).unwrap();
         let sub = knowledge.full_subgraph();
         assert!(
-            !sub.edges.iter().any(|(s, _)| s == "source.md"),
+            !sub.edges.iter().any(|(s, _, _)| s == "source.md"),
             "KnowledgeGraph also drops edges from missing nodes"
         );
     }
@@ -5017,5 +5137,362 @@ mod tests {
         let removed = gi.batch_reindex(&diff, true).unwrap();
 
         assert!(removed.is_empty());
+    }
+
+    // --- Phase 4: shadow node tests ---
+
+    fn write_bib(root: &Path, rel_path: &str, content: &str) {
+        let abs = root.join(rel_path);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(abs, content).unwrap();
+    }
+
+    #[test]
+    fn shadow_created_for_cited_bib_key() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
+        assert!(
+            shadow.is_some(),
+            "shadow node bib:smith2024 must be created, nodes: {:?}",
+            meta
+        );
+        let (_, is_stub, mat) = shadow.unwrap();
+        assert!(!is_stub);
+        assert_eq!(*mat, super::super::types::Materialization::Shadow);
+
+        // Check title contains author and year
+        let titles = gi.store.lock().unwrap().node_titles().unwrap();
+        let title = titles.get("bib:smith2024").unwrap();
+        assert!(title.contains("Smith"), "title should contain author: {}", title);
+        assert!(title.contains("2024"), "title should contain year: {}", title);
+
+        // Check citation edge target resolved to bib:smith2024
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite_edge = edges.iter().find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation);
+        assert!(cite_edge.is_some(), "citation edge must exist");
+        let (_, target, _, raw, _, _) = cite_edge.unwrap();
+        assert_eq!(target, "bib:smith2024");
+        assert_eq!(raw, "smith2024");
+    }
+
+    #[test]
+    fn citekey_routes_edge_to_page_no_shadow() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_md(
+            dir.path(),
+            "notes/smith.md",
+            "---\ncitekey: smith2024\n---\nNotes on Smith.",
+        );
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Citation edge target should be the citekey page, not bib:smith2024
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite_edge = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation);
+        assert!(cite_edge.is_some(), "citation edge must exist");
+        let (_, target, _, raw, _, _) = cite_edge.unwrap();
+        assert_eq!(target, "notes/smith.md", "target should be citekey page");
+        assert_eq!(raw, "smith2024", "raw_target stays the bib key");
+
+        // No shadow node for smith2024 since citekey page claims it
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "citekey page claims the key; no shadow node should exist, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn refresh_shadows_rescans_bibs() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        // No bib file initially
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // No shadow initially
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(!meta.iter().any(|(id, _, _)| id == "bib:smith2024"));
+        }
+
+        // Write bib file, then refresh
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows should report change");
+
+        // Shadow should now exist
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(
+                meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+                "shadow must be created after refresh, nodes: {:?}",
+                meta
+            );
+        }
+
+        // Calling again without changes should return false
+        let changed2 = gi.refresh_shadows().unwrap();
+        assert!(!changed2, "no changes expected on second refresh");
+    }
+
+    #[test]
+    fn incremental_citekey_removed_reresolves() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_md(
+            dir.path(),
+            "smith-note.md",
+            "---\ncitekey: smith2024\n---\nNotes.",
+        );
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Initially: no shadow, citation target is smith-note.md
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(!meta.iter().any(|(id, _, _)| id == "bib:smith2024"));
+            let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+            let cite = edges
+                .iter()
+                .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation)
+                .unwrap();
+            assert_eq!(cite.1, "smith-note.md");
+        }
+
+        // Remove citekey from smith-note.md
+        write_md(dir.path(), "smith-note.md", "---\ntitle: Smith\n---\nNotes.");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["smith-note.md".to_string()],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        // Citation target should revert to bib:smith2024
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite_edge = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation);
+        assert!(cite_edge.is_some());
+        let (_, target, _, _, _, _) = cite_edge.unwrap();
+        assert_eq!(target, "bib:smith2024");
+
+        // Shadow should now be created
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must be created when citekey is removed, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn incremental_citekey_added_reresolves() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Initially: shadow bib:smith2024 exists, citation target is bib:smith2024
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(meta.iter().any(|(id, _, _)| id == "bib:smith2024"));
+        }
+
+        // Write a citekey page and reindex
+        write_md(
+            dir.path(),
+            "smith-note.md",
+            "---\ncitekey: smith2024\n---\nNotes.",
+        );
+        let diff = DiffResult {
+            new: vec!["smith-note.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        // Citation edge target should now be smith-note.md
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite_edge = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation);
+        assert!(cite_edge.is_some());
+        let (_, target, _, _, _, _) = cite_edge.unwrap();
+        assert_eq!(target, "smith-note.md");
+
+        // Shadow should be pruned (citekey page claims the key)
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must be pruned when citekey page exists, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn orphaned_shadow_pruned() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Shadow should exist initially
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must exist after build"
+        );
+
+        // Remove citation from a.md and reindex
+        write_md(dir.path(), "a.md", "No more citations.");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        // Shadow should be pruned
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "orphaned shadow must be pruned, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn cited_key_absent_from_bib_no_shadow() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@ghost2024].");
+        // No .bib file, or bib file without that key
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:ghost2024" || id == "ghost2024"),
+            "cited key absent from bib must not produce a node, nodes: {:?}",
+            meta
+        );
+
+        // Edge target should still be bib:ghost2024 (updated) but no node row
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite_edge = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation);
+        assert!(cite_edge.is_some());
+        let (_, target, _, _, _, _) = cite_edge.unwrap();
+        assert_eq!(target, "bib:ghost2024");
+    }
+
+    #[test]
+    fn uncited_bib_key_no_shadow() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "No citations here.");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "uncited bib key must not produce a shadow node, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn shadow_partial_when_abstract_present() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024},\n  abstract = {This paper explores...}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
+        assert!(shadow.is_some(), "shadow node must exist");
+        let (_, _, mat) = shadow.unwrap();
+        assert_eq!(
+            *mat,
+            super::super::types::Materialization::Partial,
+            "entry with abstract should be Partial"
+        );
+    }
+
+    #[test]
+    fn shadow_title_format() {
+        use crate::bib::types::BibEntry;
+
+        fn make_entry(authors: Vec<&str>, year: &str, title: &str) -> BibEntry {
+            BibEntry {
+                key: "test".into(),
+                authors: authors.into_iter().map(String::from).collect(),
+                title: title.into(),
+                year: year.into(),
+                entry_type: "article".into(),
+                line_number: 0,
+                bib_file: None,
+                abstract_text: None,
+                doi: None,
+                journal: None,
+                url: None,
+                tags: vec![],
+            }
+        }
+
+        // Author "Smith, John", year 2024, title "Alpha" -> "Smith (2024) Alpha"
+        let entry = make_entry(vec!["Smith, John"], "2024", "Alpha");
+        assert_eq!(shadow_title(&entry), "Smith (2024) Alpha");
+
+        // No title -> "Smith (2024)"
+        let entry = make_entry(vec!["Smith, John"], "2024", "");
+        assert_eq!(shadow_title(&entry), "Smith (2024)");
+
+        // No author -> "Unknown (2024) Title"
+        let entry = make_entry(vec![], "2024", "Some Title");
+        assert_eq!(shadow_title(&entry), "Unknown (2024) Some Title");
     }
 }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -52,6 +53,15 @@ pub fn scan_workspace_bibs(root: &Path, cache: &BibCache) -> Vec<BibEntry> {
             .then(a.line_number.cmp(&b.line_number))
     });
     all
+}
+
+/// Build a key -> BibEntry index from all `.bib` files in the workspace.
+/// Used by the graph indexer to create shadow nodes for cited bib keys.
+pub fn build_bib_index(root: &Path, cache: &BibCache) -> HashMap<String, BibEntry> {
+    scan_workspace_bibs(root, cache)
+        .into_iter()
+        .map(|e| (e.key.clone(), e))
+        .collect()
 }
 
 pub fn scan_workspace_bib_paths(root: &Path) -> Vec<String> {

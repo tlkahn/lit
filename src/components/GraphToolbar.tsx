@@ -5,13 +5,15 @@ export interface GraphToolbarProps {
   depth: number;
   localDisabled?: boolean;
   selectionCount?: number;
+  showCitations?: boolean;
   onModeChange: (mode: "full" | "local") => void;
   onDepthChange: (depth: number) => void;
   onResetZoom: () => void;
   onSearch?: () => void;
+  onShowCitationsChange?: (show: boolean) => void;
 }
 
-export function GraphToolbar({ mode, depth, localDisabled, selectionCount, onModeChange, onDepthChange, onResetZoom, onSearch }: GraphToolbarProps) {
+export function GraphToolbar({ mode, depth, localDisabled, selectionCount, showCitations, onModeChange, onDepthChange, onResetZoom, onSearch, onShowCitationsChange }: GraphToolbarProps) {
   return (
     <div className="graph-toolbar">
       <div className="graph-toolbar-group">
@@ -61,6 +63,17 @@ export function GraphToolbar({ mode, depth, localDisabled, selectionCount, onMod
           title="Search graph"
         >
           ⌕
+        </button>
+      )}
+      {onShowCitationsChange && (
+        <button
+          aria-pressed={showCitations}
+          className={`graph-toolbar-btn ${showCitations ? "active" : ""}`}
+          onClick={() => onShowCitationsChange(!showCitations)}
+          aria-label="Show citations"
+          title="Show citations"
+        >
+          @
         </button>
       )}
       {selectionCount != null && selectionCount > 0 && (

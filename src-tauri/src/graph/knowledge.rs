@@ -7,19 +7,20 @@ use serde::{Deserialize, Serialize};
 
 use super::error::GraphError;
 use super::store::Store;
-use super::types::{BacklinkEntry, EdgeKind, LinkEntry, Position};
+use super::types::{BacklinkEntry, EdgeKind, LinkEntry, Materialization, Position};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphNode {
     pub id: String,
     pub title: String,
     pub is_stub: bool,
+    pub materialization: Materialization,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SubgraphResult {
     pub nodes: Vec<GraphNode>,
-    pub edges: Vec<(String, String)>,
+    pub edges: Vec<(String, String, EdgeKind)>,
 }
 
 impl SubgraphResult {
@@ -37,7 +38,38 @@ impl SubgraphResult {
         let edges = self
             .edges
             .into_iter()
-            .filter(|(s, t)| !stub_ids.contains(s) && !stub_ids.contains(t))
+            .filter(|(s, t, _)| !stub_ids.contains(s) && !stub_ids.contains(t))
+            .collect();
+        SubgraphResult { nodes, edges }
+    }
+
+    /// Keep only `Materialized` nodes (and edges touching only those nodes).
+    /// This is the default-path filter (toggle OFF): identical to today's behavior.
+    pub fn retain_materialized(self) -> Self {
+        self.without(&[Materialization::Stub, Materialization::Shadow, Materialization::Partial])
+    }
+
+    /// Remove nodes whose materialization matches any entry in `kinds`,
+    /// plus edges touching removed nodes.
+    pub fn without(self, kinds: &[Materialization]) -> Self {
+        let remove_ids: HashSet<String> = self
+            .nodes
+            .iter()
+            .filter(|n| kinds.contains(&n.materialization))
+            .map(|n| n.id.clone())
+            .collect();
+        if remove_ids.is_empty() {
+            return self;
+        }
+        let nodes = self
+            .nodes
+            .into_iter()
+            .filter(|n| !kinds.contains(&n.materialization))
+            .collect();
+        let edges = self
+            .edges
+            .into_iter()
+            .filter(|(s, t, _)| !remove_ids.contains(s) && !remove_ids.contains(t))
             .collect();
         SubgraphResult { nodes, edges }
     }
@@ -56,6 +88,7 @@ pub struct EdgeMeta {
     pub context: String,
     pub source_line: u32,
     pub raw_target: String,
+    pub kind: EdgeKind,
 }
 
 pub struct KnowledgeGraph {
@@ -72,23 +105,19 @@ impl KnowledgeGraph {
         let mut graph = DiGraph::new();
         let mut id_to_index = HashMap::new();
 
-        for (id, is_stub) in &nodes_meta {
+        for (id, is_stub, materialization) in &nodes_meta {
             let title = titles.get(id).cloned().unwrap_or_default();
             let node = GraphNode {
                 id: id.clone(),
                 title,
                 is_stub: *is_stub,
+                materialization: *materialization,
             };
             let idx = graph.add_node(node);
             id_to_index.insert(id.clone(), idx);
         }
 
         for (source, target, context, raw_target, source_line, kind) in &store_edges {
-            // Citation edges live in the DB only — keep them out of petgraph
-            // (pagerank/subgraph/viz operate on wikilink structure).
-            if *kind != EdgeKind::Wikilink {
-                continue;
-            }
             if let (Some(&s_idx), Some(&t_idx)) =
                 (id_to_index.get(source), id_to_index.get(target))
             {
@@ -99,6 +128,7 @@ impl KnowledgeGraph {
                         context: context.clone(),
                         source_line: *source_line,
                         raw_target: raw_target.clone(),
+                        kind: *kind,
                     },
                 );
             }
@@ -107,27 +137,52 @@ impl KnowledgeGraph {
         Ok(Self { graph, id_to_index })
     }
 
+    /// Returns neighbor node indices reachable via wikilink edges only.
+    fn wikilink_neighbors_directed(&self, node: NodeIndex, dir: Direction) -> Vec<NodeIndex> {
+        self.graph
+            .edges_directed(node, dir)
+            .filter(|e| e.weight().kind == EdgeKind::Wikilink)
+            .map(|e| match dir {
+                Direction::Outgoing => e.target(),
+                Direction::Incoming => e.source(),
+            })
+            .collect()
+    }
+
     pub fn graph_clone(&self) -> DiGraph<GraphNode, EdgeMeta> {
         self.graph.clone()
     }
 
     pub fn full_subgraph(&self) -> SubgraphResult {
+        self.full_subgraph_filtered(false)
+    }
+
+    pub fn full_subgraph_filtered(&self, include_citations: bool) -> SubgraphResult {
         let nodes: Vec<GraphNode> = self.graph.node_weights().cloned().collect();
         let mut seen = HashSet::new();
-        let edges: Vec<(String, String)> = self
+        let edges: Vec<(String, String, EdgeKind)> = self
             .graph
             .edge_indices()
             .filter_map(|e| {
                 let (s, t) = self.graph.edge_endpoints(e)?;
-                let pair = (self.graph[s].id.clone(), self.graph[t].id.clone());
-                if seen.insert(pair.clone()) {
-                    Some(pair)
+                let kind = self.graph[e].kind;
+                if !include_citations && kind != EdgeKind::Wikilink {
+                    return None;
+                }
+                let key = (self.graph[s].id.clone(), self.graph[t].id.clone());
+                if seen.insert(key.clone()) {
+                    Some((key.0, key.1, kind))
                 } else {
                     None
                 }
             })
             .collect();
-        SubgraphResult { nodes, edges }.without_stubs()
+        let result = SubgraphResult { nodes, edges };
+        if include_citations {
+            result.without(&[Materialization::Stub])
+        } else {
+            result.retain_materialized()
+        }
     }
 
     pub fn neighbors(
@@ -140,7 +195,7 @@ impl KnowledgeGraph {
             .id_to_index
             .get(id)
             .ok_or_else(|| GraphError::NodeNotFound { id: id.into() })?;
-        if self.graph[start].is_stub {
+        if self.graph[start].materialization != Materialization::Materialized {
             return Err(GraphError::NodeNotFound { id: id.into() });
         }
         let visited = self.bfs_collect(&[start], depth, directed);
@@ -191,10 +246,10 @@ impl KnowledgeGraph {
             .id_to_index
             .get(to)
             .ok_or_else(|| GraphError::NodeNotFound { id: to.into() })?;
-        if self.graph[start].is_stub {
+        if self.graph[start].materialization != Materialization::Materialized {
             return Err(GraphError::NodeNotFound { id: from.into() });
         }
-        if self.graph[end].is_stub {
+        if self.graph[end].materialization != Materialization::Materialized {
             return Err(GraphError::NodeNotFound { id: to.into() });
         }
 
@@ -226,8 +281,18 @@ impl KnowledgeGraph {
         depth: usize,
         directed: bool,
     ) -> Result<SubgraphResult, GraphError> {
+        self.subgraph_filtered(seeds, depth, directed, false)
+    }
+
+    pub fn subgraph_filtered(
+        &self,
+        seeds: &[&str],
+        depth: usize,
+        directed: bool,
+        include_citations: bool,
+    ) -> Result<SubgraphResult, GraphError> {
         if seeds.is_empty() {
-            return Ok(self.full_subgraph());
+            return Ok(self.full_subgraph_filtered(include_citations));
         }
         let mut seed_indices = Vec::new();
         for &seed_id in seeds {
@@ -237,7 +302,7 @@ impl KnowledgeGraph {
                 .ok_or_else(|| GraphError::NodeNotFound {
                     id: seed_id.into(),
                 })?;
-            if self.graph[idx].is_stub {
+            if self.graph[idx].materialization != Materialization::Materialized {
                 return Err(GraphError::NodeNotFound {
                     id: seed_id.into(),
                 });
@@ -246,7 +311,7 @@ impl KnowledgeGraph {
         }
 
         let visited = self.bfs_collect(&seed_indices, depth, directed);
-        Ok(self.induced_subgraph(&visited))
+        Ok(self.induced_subgraph_filtered(&visited, include_citations))
     }
 
     fn bfs_collect(
@@ -269,13 +334,13 @@ impl KnowledgeGraph {
                 continue;
             }
 
-            for neighbor in self.graph.neighbors_directed(node, Direction::Outgoing) {
+            for neighbor in self.wikilink_neighbors_directed(node, Direction::Outgoing) {
                 if visited.insert(neighbor) {
                     queue.push_back((neighbor, level + 1));
                 }
             }
             if !directed {
-                for neighbor in self.graph.neighbors_directed(node, Direction::Incoming) {
+                for neighbor in self.wikilink_neighbors_directed(node, Direction::Incoming) {
                     if visited.insert(neighbor) {
                         queue.push_back((neighbor, level + 1));
                     }
@@ -288,9 +353,9 @@ impl KnowledgeGraph {
 
     fn immediate_neighbors(&self, node: NodeIndex, directed: bool) -> HashSet<NodeIndex> {
         let mut set: HashSet<NodeIndex> =
-            self.graph.neighbors_directed(node, Direction::Outgoing).collect();
+            self.wikilink_neighbors_directed(node, Direction::Outgoing).into_iter().collect();
         if !directed {
-            set.extend(self.graph.neighbors_directed(node, Direction::Incoming));
+            set.extend(self.wikilink_neighbors_directed(node, Direction::Incoming));
         }
         set
     }
@@ -299,15 +364,16 @@ impl KnowledgeGraph {
         let nodes: Vec<GraphNode> = visited.iter().map(|&idx| self.graph[idx].clone()).collect();
 
         let mut seen = HashSet::new();
-        let edges: Vec<(String, String)> = self
+        let edges: Vec<(String, String, EdgeKind)> = self
             .graph
             .edge_indices()
             .filter_map(|e| {
                 let (s, t) = self.graph.edge_endpoints(e)?;
                 if visited.contains(&s) && visited.contains(&t) {
-                    let pair = (self.graph[s].id.clone(), self.graph[t].id.clone());
-                    if seen.insert(pair.clone()) {
-                        Some(pair)
+                    let kind = self.graph[e].kind;
+                    let key = (self.graph[s].id.clone(), self.graph[t].id.clone());
+                    if seen.insert(key.clone()) {
+                        Some((key.0, key.1, kind))
                     } else {
                         None
                     }
@@ -320,6 +386,55 @@ impl KnowledgeGraph {
         SubgraphResult { nodes, edges }.without_stubs()
     }
 
+    fn induced_subgraph_filtered(
+        &self,
+        wikilink_visited: &HashSet<NodeIndex>,
+        include_citations: bool,
+    ) -> SubgraphResult {
+        if !include_citations {
+            return self.induced_subgraph(wikilink_visited);
+        }
+
+        // Expand visited set to include citation-adjacent nodes
+        let mut visited = wikilink_visited.clone();
+        for &idx in wikilink_visited {
+            for edge in self.graph.edges_directed(idx, Direction::Outgoing) {
+                if edge.weight().kind == EdgeKind::Citation {
+                    visited.insert(edge.target());
+                }
+            }
+            for edge in self.graph.edges_directed(idx, Direction::Incoming) {
+                if edge.weight().kind == EdgeKind::Citation {
+                    visited.insert(edge.source());
+                }
+            }
+        }
+
+        let nodes: Vec<GraphNode> = visited.iter().map(|&idx| self.graph[idx].clone()).collect();
+
+        let mut seen = HashSet::new();
+        let edges: Vec<(String, String, EdgeKind)> = self
+            .graph
+            .edge_indices()
+            .filter_map(|e| {
+                let (s, t) = self.graph.edge_endpoints(e)?;
+                if visited.contains(&s) && visited.contains(&t) {
+                    let kind = self.graph[e].kind;
+                    let key = (self.graph[s].id.clone(), self.graph[t].id.clone());
+                    if seen.insert(key.clone()) {
+                        Some((key.0, key.1, kind))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        SubgraphResult { nodes, edges }.without(&[Materialization::Stub])
+    }
+
     pub fn backlinks(&self, id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
         let &idx = self
             .id_to_index
@@ -328,6 +443,7 @@ impl KnowledgeGraph {
         let entries = self
             .graph
             .edges_directed(idx, Direction::Incoming)
+            .filter(|edge| edge.weight().kind == EdgeKind::Wikilink)
             .map(|edge| {
                 let source = &self.graph[edge.source()];
                 let meta = edge.weight();
@@ -350,6 +466,7 @@ impl KnowledgeGraph {
         let entries = self
             .graph
             .edges_directed(idx, Direction::Outgoing)
+            .filter(|edge| edge.weight().kind == EdgeKind::Wikilink)
             .map(|edge| {
                 let target = &self.graph[edge.target()];
                 let meta = edge.weight();
@@ -370,8 +487,8 @@ impl KnowledgeGraph {
             .get(id)
             .ok_or_else(|| GraphError::NodeNotFound { id: id.into() })?;
         let ids = self
-            .graph
-            .neighbors_directed(idx, Direction::Incoming)
+            .wikilink_neighbors_directed(idx, Direction::Incoming)
+            .into_iter()
             .map(|n| self.graph[n].id.clone())
             .collect();
         Ok(ids)
@@ -396,7 +513,7 @@ impl KnowledgeGraph {
 
         let out_degrees: Vec<usize> = node_indices
             .iter()
-            .map(|&idx| self.graph.neighbors_directed(idx, Direction::Outgoing).count())
+            .map(|&idx| self.wikilink_neighbors_directed(idx, Direction::Outgoing).len())
             .collect();
 
         for _ in 0..100 {
@@ -409,7 +526,7 @@ impl KnowledgeGraph {
 
             for (j, _) in node_indices.iter().enumerate() {
                 let mut incoming_sum = 0.0;
-                for neighbor in self.graph.neighbors_directed(node_indices[j], Direction::Incoming) {
+                for neighbor in self.wikilink_neighbors_directed(node_indices[j], Direction::Incoming) {
                     let pos = index_to_pos[&neighbor];
                     incoming_sum += scores[pos] / out_degrees[pos] as f64;
                 }
@@ -459,9 +576,9 @@ impl KnowledgeGraph {
         }
 
         let mut neighbors: HashSet<NodeIndex> =
-            self.graph.neighbors_directed(current, Direction::Outgoing).collect();
+            self.wikilink_neighbors_directed(current, Direction::Outgoing).into_iter().collect();
         if !directed {
-            neighbors.extend(self.graph.neighbors_directed(current, Direction::Incoming));
+            neighbors.extend(self.wikilink_neighbors_directed(current, Direction::Incoming));
         }
 
         for neighbor in neighbors {
@@ -498,7 +615,8 @@ mod tests {
         }
     }
 
-    /// Test fixture: A-->B-->C, A-->D, A-->F(stub), B-->D, E(isolated)
+    /// Test fixture: A-->B-->C, A-->D, A-->F(stub), B-->D, E(isolated),
+    /// A--cite-->bib:ref1(shadow)
     fn build_test_graph() -> (Store, KnowledgeGraph) {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
@@ -507,12 +625,14 @@ mod tests {
         store.upsert_node(&make_node("D", "Delta"), 1).unwrap();
         store.upsert_node(&make_node("E", "Echo"), 1).unwrap();
         store.upsert_stub("F").unwrap();
+        store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
 
         store.insert_edge("A", "B", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("B", "C", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "D", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "F", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("B", "D", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "bib:ref1", "cite", "ref1", 0, EdgeKind::Citation).unwrap();
 
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         (store, kg)
@@ -521,11 +641,36 @@ mod tests {
     // --- Step 1: types ---
 
     #[test]
+    fn graph_node_has_materialization_field() {
+        let node = GraphNode {
+            id: "test".into(),
+            title: "Test".into(),
+            is_stub: false,
+            materialization: Materialization::Materialized,
+        };
+        let json = serde_json::to_value(&node).unwrap();
+        assert_eq!(json["materialization"], "materialized");
+        assert_eq!(json["is_stub"], false);
+
+        // Stub node: is_stub computed from materialization
+        let stub = GraphNode {
+            id: "s".into(),
+            title: "".into(),
+            is_stub: true,
+            materialization: Materialization::Stub,
+        };
+        let json2 = serde_json::to_value(&stub).unwrap();
+        assert_eq!(json2["materialization"], "stub");
+        assert_eq!(json2["is_stub"], true);
+    }
+
+    #[test]
     fn graph_node_serialization_round_trip() {
         let node = GraphNode {
             id: "test".into(),
             title: "Test".into(),
             is_stub: false,
+            materialization: Materialization::Materialized,
         };
         let json = serde_json::to_string(&node).unwrap();
         let deserialized: GraphNode = serde_json::from_str(&json).unwrap();
@@ -538,9 +683,29 @@ mod tests {
             id: "test".into(),
             title: "Test".into(),
             is_stub: true,
+            materialization: Materialization::Stub,
         };
         let cloned = node.clone();
         assert_eq!(node, cloned);
+    }
+
+    #[test]
+    fn edge_meta_has_kind_field() {
+        let meta = EdgeMeta {
+            context: "ctx".into(),
+            source_line: 5,
+            raw_target: "b".into(),
+            kind: EdgeKind::Citation,
+        };
+        assert_eq!(meta.kind, EdgeKind::Citation);
+
+        let wikilink = EdgeMeta {
+            context: "".into(),
+            source_line: 0,
+            raw_target: "".into(),
+            kind: EdgeKind::Wikilink,
+        };
+        assert_eq!(wikilink.kind, EdgeKind::Wikilink);
     }
 
     #[test]
@@ -554,14 +719,30 @@ mod tests {
     }
 
     #[test]
+    fn subgraph_result_edge_triple_serialization() {
+        let result = SubgraphResult {
+            nodes: vec![],
+            edges: vec![("a".into(), "b".into(), EdgeKind::Wikilink)],
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        let edges = json["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 1);
+        let edge = edges[0].as_array().unwrap();
+        assert_eq!(edge[0], "a");
+        assert_eq!(edge[1], "b");
+        assert_eq!(edge[2], "wikilink");
+    }
+
+    #[test]
     fn subgraph_result_serialization_round_trip() {
         let result = SubgraphResult {
             nodes: vec![GraphNode {
                 id: "a".into(),
                 title: "A".into(),
                 is_stub: false,
+                materialization: Materialization::Materialized,
             }],
-            edges: vec![("a".into(), "b".into())],
+            edges: vec![("a".into(), "b".into(), EdgeKind::Wikilink)],
         };
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: SubgraphResult = serde_json::from_str(&json).unwrap();
@@ -573,13 +754,15 @@ mod tests {
     #[test]
     fn from_store_node_count() {
         let (_, kg) = build_test_graph();
-        assert_eq!(kg.graph.node_count(), 6);
+        // A, B, C, D, E, F(stub), bib:ref1(shadow)
+        assert_eq!(kg.graph.node_count(), 7);
     }
 
     #[test]
     fn from_store_edge_count() {
         let (_, kg) = build_test_graph();
-        assert_eq!(kg.graph.edge_count(), 5);
+        // 5 wikilinks + 1 citation
+        assert_eq!(kg.graph.edge_count(), 6);
     }
 
     #[test]
@@ -626,16 +809,33 @@ mod tests {
     }
 
     #[test]
-    fn from_store_excludes_citation_edges() {
+    fn from_store_includes_citation_edges_in_petgraph() {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "A"), 1).unwrap();
         store.upsert_node(&make_node("B", "B"), 1).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
-        // Both endpoints resolve to real nodes, so only the kind filter (not
-        // the id lookup) can exclude this edge.
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
-        assert_eq!(kg.graph.edge_count(), 1);
+        // Both wikilink and citation edges now live in petgraph
+        assert_eq!(kg.graph.edge_count(), 2);
+        // Verify the citation edge has the right kind
+        let citation_edges: Vec<_> = kg.graph.edge_indices()
+            .filter(|&e| kg.graph[e].kind == EdgeKind::Citation)
+            .collect();
+        assert_eq!(citation_edges.len(), 1);
+    }
+
+    #[test]
+    fn from_store_node_materialization_preserved() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+        let idx_a = kg.id_to_index["A"];
+        assert_eq!(kg.graph[idx_a].materialization, Materialization::Materialized);
+        let idx_ref = kg.id_to_index["bib:ref1"];
+        assert_eq!(kg.graph[idx_ref].materialization, Materialization::Shadow);
+        assert!(!kg.graph[idx_ref].is_stub);
     }
 
     // --- without_stubs ---
@@ -644,32 +844,81 @@ mod tests {
     fn without_stubs_filters_stub_nodes_and_edges() {
         let result = SubgraphResult {
             nodes: vec![
-                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
-                GraphNode { id: "B".into(), title: "Beta".into(), is_stub: false },
-                GraphNode { id: "S".into(), title: "".into(), is_stub: true },
+                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false, materialization: Materialization::Materialized },
+                GraphNode { id: "B".into(), title: "Beta".into(), is_stub: false, materialization: Materialization::Materialized },
+                GraphNode { id: "S".into(), title: "".into(), is_stub: true, materialization: Materialization::Stub },
             ],
             edges: vec![
-                ("A".into(), "B".into()),
-                ("A".into(), "S".into()),
+                ("A".into(), "B".into(), EdgeKind::Wikilink),
+                ("A".into(), "S".into(), EdgeKind::Wikilink),
             ],
         };
         let filtered = result.without_stubs();
         assert_eq!(filtered.nodes.len(), 2);
         assert!(filtered.nodes.iter().all(|n| !n.is_stub));
         assert_eq!(filtered.edges.len(), 1);
-        assert_eq!(filtered.edges[0], ("A".to_string(), "B".to_string()));
+        assert_eq!(filtered.edges[0], ("A".to_string(), "B".to_string(), EdgeKind::Wikilink));
     }
 
     #[test]
     fn without_stubs_noop_when_no_stubs() {
         let result = SubgraphResult {
             nodes: vec![
-                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false },
+                GraphNode { id: "A".into(), title: "Alpha".into(), is_stub: false, materialization: Materialization::Materialized },
             ],
             edges: vec![],
         };
         let filtered = result.without_stubs();
         assert_eq!(filtered.nodes.len(), 1);
+    }
+
+    // --- retain_materialized / without ---
+
+    #[test]
+    fn retain_materialized_filters_non_materialized() {
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "M".into(), title: "Mat".into(), is_stub: false, materialization: Materialization::Materialized },
+                GraphNode { id: "Sh".into(), title: "Shadow".into(), is_stub: false, materialization: Materialization::Shadow },
+                GraphNode { id: "St".into(), title: "".into(), is_stub: true, materialization: Materialization::Stub },
+                GraphNode { id: "P".into(), title: "Part".into(), is_stub: false, materialization: Materialization::Partial },
+            ],
+            edges: vec![
+                ("M".into(), "Sh".into(), EdgeKind::Wikilink),
+                ("M".into(), "P".into(), EdgeKind::Citation),
+                ("Sh".into(), "St".into(), EdgeKind::Wikilink),
+            ],
+        };
+        let filtered = result.retain_materialized();
+        assert_eq!(filtered.nodes.len(), 1);
+        assert_eq!(filtered.nodes[0].id, "M");
+        assert!(filtered.edges.is_empty(), "all edges touch non-materialized nodes");
+    }
+
+    #[test]
+    fn without_filters_specified_kinds() {
+        let result = SubgraphResult {
+            nodes: vec![
+                GraphNode { id: "M".into(), title: "Mat".into(), is_stub: false, materialization: Materialization::Materialized },
+                GraphNode { id: "Sh".into(), title: "Shadow".into(), is_stub: false, materialization: Materialization::Shadow },
+                GraphNode { id: "St".into(), title: "".into(), is_stub: true, materialization: Materialization::Stub },
+                GraphNode { id: "P".into(), title: "Part".into(), is_stub: false, materialization: Materialization::Partial },
+            ],
+            edges: vec![
+                ("M".into(), "Sh".into(), EdgeKind::Wikilink),
+                ("M".into(), "P".into(), EdgeKind::Citation),
+                ("Sh".into(), "St".into(), EdgeKind::Wikilink),
+            ],
+        };
+        // Remove only stubs
+        let filtered = result.without(&[Materialization::Stub]);
+        assert_eq!(filtered.nodes.len(), 3);
+        let ids: HashSet<&str> = filtered.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("M"));
+        assert!(ids.contains("Sh"));
+        assert!(ids.contains("P"));
+        assert!(!ids.contains("St"));
+        assert_eq!(filtered.edges.len(), 2, "edge touching St removed");
     }
 
     // --- Step 3: full_subgraph ---
@@ -678,10 +927,12 @@ mod tests {
     fn full_subgraph_all_nodes() {
         let (_, kg) = build_test_graph();
         let result = kg.full_subgraph();
+        // 5 materialized only (retain_materialized filters shadow + stub)
         assert_eq!(result.nodes.len(), 5);
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("A"));
         assert!(ids.contains("E"));
+        assert!(!ids.contains("bib:ref1"), "shadow filtered by retain_materialized");
         assert!(!ids.contains("F"));
     }
 
@@ -689,6 +940,7 @@ mod tests {
     fn full_subgraph_all_edges() {
         let (_, kg) = build_test_graph();
         let result = kg.full_subgraph();
+        // 4 wikilinks between materialized nodes (A->F, A->bib:ref1 both filtered)
         assert_eq!(result.edges.len(), 4);
     }
 
@@ -708,7 +960,7 @@ mod tests {
         let edge_set: HashSet<(&str, &str)> = result
             .edges
             .iter()
-            .map(|(s, t)| (s.as_str(), t.as_str()))
+            .map(|(s, t, _)| (s.as_str(), t.as_str()))
             .collect();
         assert!(edge_set.contains(&("A", "B")));
         assert!(edge_set.contains(&("B", "C")));
@@ -789,7 +1041,7 @@ mod tests {
         let edges: HashSet<(&str, &str)> = result
             .edges
             .iter()
-            .map(|(s, t)| (s.as_str(), t.as_str()))
+            .map(|(s, t, _)| (s.as_str(), t.as_str()))
             .collect();
         assert_eq!(edges.len(), 3);
         assert!(edges.contains(&("A", "B")));
@@ -1041,7 +1293,7 @@ mod tests {
         let edges: HashSet<(&str, &str)> = result
             .edges
             .iter()
-            .map(|(s, t)| (s.as_str(), t.as_str()))
+            .map(|(s, t, _)| (s.as_str(), t.as_str()))
             .collect();
         assert!(edges.contains(&("A", "B")));
     }
@@ -1060,8 +1312,8 @@ mod tests {
     fn pagerank_all_nodes_present() {
         let (_, kg) = build_test_graph();
         let scores = kg.pagerank(0.85);
-        assert_eq!(scores.len(), 6);
-        for id in &["A", "B", "C", "D", "E", "F"] {
+        assert_eq!(scores.len(), 7);
+        for id in &["A", "B", "C", "D", "E", "F", "bib:ref1"] {
             assert!(scores.contains_key(*id), "missing {id}");
         }
     }
@@ -1115,7 +1367,7 @@ mod tests {
     fn pagerank_damping_zero_gives_uniform() {
         let (_, kg) = build_test_graph();
         let scores = kg.pagerank(0.0);
-        let expected = 1.0 / 6.0;
+        let expected = 1.0 / 7.0;
         for (id, score) in &scores {
             assert!(
                 (*score - expected).abs() < 1e-9,
@@ -1136,8 +1388,8 @@ mod tests {
     fn graph_clone_preserves_structure() {
         let (_, kg) = build_test_graph();
         let cloned = kg.graph_clone();
-        assert_eq!(cloned.node_count(), 6);
-        assert_eq!(cloned.edge_count(), 5);
+        assert_eq!(cloned.node_count(), 7);
+        assert_eq!(cloned.edge_count(), 6);
     }
 
     // --- backlinks ---
@@ -1196,7 +1448,7 @@ mod tests {
         assert_eq!(kg.graph.edge_count(), 2, "multigraph has 2 edges");
         let sub = kg.full_subgraph();
         assert_eq!(sub.edges.len(), 1, "viz deduplicates to 1 edge");
-        assert_eq!(sub.edges[0], ("A".to_string(), "B".to_string()));
+        assert_eq!(sub.edges[0], ("A".to_string(), "B".to_string(), EdgeKind::Wikilink));
     }
 
     #[test]
@@ -1283,6 +1535,210 @@ mod tests {
         let (_, kg) = build_test_graph();
         let fl = kg.forward_links("E").unwrap();
         assert!(fl.is_empty());
+    }
+
+    // --- include_citations parameter ---
+
+    #[test]
+    fn full_subgraph_default_excludes_shadows_and_citations() {
+        let (_, kg) = build_test_graph();
+        let result = kg.full_subgraph_filtered(false);
+        // Only materialized nodes, no shadows, no stubs
+        assert_eq!(result.nodes.len(), 5);
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(!ids.contains("F"));
+        assert!(!ids.contains("bib:ref1"));
+        // Only wikilink edges (A->F filtered because stub, citation filtered)
+        assert!(result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink));
+        assert_eq!(result.edges.len(), 4);
+    }
+
+    #[test]
+    fn full_subgraph_include_citations_shows_shadows() {
+        let (_, kg) = build_test_graph();
+        let result = kg.full_subgraph_filtered(true);
+        // Materialized + shadow nodes, stubs still hidden
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("bib:ref1"), "shadow should be included");
+        assert!(!ids.contains("F"), "stubs still hidden");
+        // Citation edges present
+        assert!(result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Citation));
+    }
+
+    #[test]
+    fn subgraph_default_excludes_citations() {
+        let (_, kg) = build_test_graph();
+        let result = kg.subgraph_filtered(&["A"], 1, true, false).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(!ids.contains("bib:ref1"));
+        assert!(result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink));
+    }
+
+    #[test]
+    fn subgraph_include_citations_shows_citation_edges() {
+        let (_, kg) = build_test_graph();
+        let result = kg.subgraph_filtered(&["A"], 1, true, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("bib:ref1"), "shadow node reachable via citation");
+        assert!(result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Citation));
+    }
+
+    // --- seed guards ---
+
+    #[test]
+    fn neighbors_shadow_seed_returns_error() {
+        let (_, kg) = build_test_graph();
+        let result = kg.neighbors("bib:ref1", 1, true);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GraphError::NodeNotFound { id } => assert_eq!(id, "bib:ref1"),
+            other => panic!("expected NodeNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn subgraph_shadow_seed_returns_error() {
+        let (_, kg) = build_test_graph();
+        let result = kg.subgraph(&["bib:ref1"], 1, true);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GraphError::NodeNotFound { id } => assert_eq!(id, "bib:ref1"),
+            other => panic!("expected NodeNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paths_shadow_seed_returns_error() {
+        let (_, kg) = build_test_graph();
+        // shadow as source
+        assert!(kg.paths("bib:ref1", "A", 10, true).is_err());
+        // shadow as target
+        assert!(kg.paths("A", "bib:ref1", 10, true).is_err());
+    }
+
+    // --- kind-filtered traversals ---
+
+    #[test]
+    fn backlinks_excludes_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("C", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let bl = kg.backlinks("B").unwrap();
+        assert_eq!(bl.len(), 1);
+        assert_eq!(bl[0].source_id, "A");
+    }
+
+    #[test]
+    fn forward_links_excludes_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let fl = kg.forward_links("A").unwrap();
+        assert_eq!(fl.len(), 1);
+        assert_eq!(fl[0].target_id, "B");
+    }
+
+    #[test]
+    fn backlink_source_ids_excludes_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.insert_edge("A", "C", "wiki", "c", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let ids = kg.backlink_source_ids("C").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains("A"));
+        assert!(!ids.contains("B"));
+    }
+
+    #[test]
+    fn shared_excludes_citation_edges() {
+        // A->X wikilink, B->X wikilink, A->X citation (duplicate kind shouldn't matter)
+        // shared(A,B,true) should find X via wikilink only
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("X", "X"), 1).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.insert_edge("A", "X", "wiki", "x", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "X", "wiki", "x", 0, EdgeKind::Wikilink).unwrap();
+        // A also cites Y; B cites Y — but citation edges shouldn't count
+        store.insert_edge("A", "Y", "cite", "y", 0, EdgeKind::Citation).unwrap();
+        store.insert_edge("B", "Y", "cite", "y", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.shared("A", "B", true).unwrap();
+        let ids: HashSet<&str> = result.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("X"));
+        assert!(!ids.contains("Y"), "citation-shared neighbors should be excluded");
+    }
+
+    #[test]
+    fn paths_excludes_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        // B->C is only a citation — no wikilink path exists
+        store.insert_edge("B", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.paths("A", "C", 3, true).unwrap();
+        assert!(result.is_empty(), "citation edges should not be traversed for paths");
+    }
+
+    #[test]
+    fn pagerank_excludes_citation_edges() {
+        // Build a graph with only wikilinks, compute pagerank.
+        // Then build the same graph with an extra citation edge and verify scores are identical.
+        let store1 = Store::open_memory().unwrap();
+        store1.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store1.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store1.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        let kg1 = KnowledgeGraph::from_store(&store1).unwrap();
+        let scores1 = kg1.pagerank(0.85);
+
+        let store2 = Store::open_memory().unwrap();
+        store2.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store2.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store2.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store2.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
+        let kg2 = KnowledgeGraph::from_store(&store2).unwrap();
+        let scores2 = kg2.pagerank(0.85);
+
+        assert!((scores1["A"] - scores2["A"]).abs() < 1e-9, "citation edge should not affect A's score");
+        assert!((scores1["B"] - scores2["B"]).abs() < 1e-9, "citation edge should not affect B's score");
+    }
+
+    #[test]
+    fn bfs_collect_ignores_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.neighbors("A", 1, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("A"));
+        assert!(ids.contains("B"));
+        assert!(!ids.contains("C"), "BFS should not follow citation edges");
     }
 
     #[test]
