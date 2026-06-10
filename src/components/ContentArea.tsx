@@ -17,6 +17,7 @@ import { YamlHighlighter } from "./YamlHighlighter";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
 import { useLeafFileType } from "../hooks/useLeafFileType";
+import { useAppKeybindings } from "../hooks/useAppKeybindings";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
@@ -32,6 +33,7 @@ export function parseYamlErrorLocation(msg: string): { line: number; column: num
 }
 
 export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onExportNetwork?: (nodeId: string) => void; renderBottomPanel?: boolean } = {}) {
+  useAppKeybindings();
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
