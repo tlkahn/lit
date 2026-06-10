@@ -93,12 +93,24 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setEditingTitle(title);
   }, [title]);
 
+  const prevPanePageRef = useRef<string | null>(null);
   useEffect(() => {
+    const prevPanePage = prevPanePageRef.current;
+    prevPanePageRef.current = currentPanePage;
     if (currentPanePage !== null) {
       const current = useWorkspaceStore.getState().currentPagePath;
       if (currentPanePage !== current) {
         useWorkspaceStore.setState({ currentPagePath: currentPanePage });
       }
+    } else if (prevPanePage !== null && useWorkspaceStore.getState().currentPagePath !== null) {
+      // The focused pane just emptied (last pane closed, or focus moved to an
+      // empty pane): clear the mirror. A stale currentPagePath keeps the
+      // ErrorBoundary resetKey frozen, lets the mount-effect below resurrect
+      // the closed page, and makes re-selecting the same page in the sidebar
+      // a no-op. Transition-gated (prevPanePage) so an initial mount with an
+      // empty pane doesn't wipe a currentPagePath set before mount — the
+      // mount-effect below pushes that into the pane instead.
+      useWorkspaceStore.setState({ currentPagePath: null });
     }
   }, [currentPanePage]);
 

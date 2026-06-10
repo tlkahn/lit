@@ -18,7 +18,7 @@ import {
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
 import { loadLayout, validateLayout } from "../lib/paneLayout";
 import { useWorkspaceStore } from "./workspace";
-import { usePanePdfLinkStore } from "./panePdfLink";
+import { usePanePdfLinkStore, initPanePdfLinkCleanup, stopPanePdfLinkCleanup } from "./panePdfLink";
 
 // ---------------------------------------------------------------------------
 // Section A: Pure Tree Helpers (no store dependency)
@@ -1056,6 +1056,37 @@ describe("Section C: Tree-Mutation Actions", () => {
 
         expect(usePaneStore.getState().root).toBe(root);
         expect(usePaneStore.getState().focusedPaneId).toBe("left");
+      });
+    });
+
+    describe("companion close sequence (issue #447)", () => {
+      afterEach(() => {
+        stopPanePdfLinkCleanup();
+        usePanePdfLinkStore.setState({ links: new Map() });
+      });
+
+      it("closing md then pdf pane yields an empty leaf and a cleaned link map", () => {
+        const md: PaneLeaf = { type: "leaf", id: "md", pagePath: "Notes.md" };
+        const pdf: PaneLeaf = { type: "leaf", id: "pdf", pagePath: "doc.pdf" };
+        const root: PaneSplit = {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [md, pdf],
+          sizes: [50, 50],
+        };
+        usePaneStore.setState({ root, focusedPaneId: "md" });
+        usePanePdfLinkStore.getState().linkPanes("md", "pdf");
+        initPanePdfLinkCleanup();
+
+        usePaneStore.getState().closePane("md");
+        expect(usePaneStore.getState().root).toBe(pdf);
+        expect(usePaneStore.getState().focusedPaneId).toBe("pdf");
+        expect(usePanePdfLinkStore.getState().links.size).toBe(0);
+
+        usePaneStore.getState().closePane("pdf");
+        expect(usePaneStore.getState().root).toEqual({ type: "leaf", id: "pdf", pagePath: null });
+        expect(usePaneStore.getState().focusedPaneId).toBe("pdf");
       });
     });
 

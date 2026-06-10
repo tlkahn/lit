@@ -782,6 +782,54 @@ describe("ContentArea PDF rendering", () => {
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
   });
 
+  it("clears workspace.currentPagePath and shows empty state when the last PDF pane closes (issue #447)", async () => {
+    const pdfPage = {
+      title: "Doc",
+      relative_path: "doc.pdf",
+      frontmatter: {},
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "pdf" as const,
+    };
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: [pdfPage],
+      currentPagePath: "doc.pdf",
+    });
+    usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
+      if (cmd === "pdf_render_page") {
+        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
+        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      if (cmd === "get_keymaps") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
+    });
+
+    // Ctrl-W on the last pane: closePane nulls the leaf's pagePath.
+    act(() => {
+      usePaneStore.getState().closePane("test-pane");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("pdf-viewer-pane")).not.toBeInTheDocument();
+    // The pane→workspace mirror must clear too, or the closed PDF can be
+    // resurrected on remount and re-selecting it in the sidebar is a no-op.
+    expect(useWorkspaceStore.getState().currentPagePath).toBeNull();
+  });
+
   it("does not render editor chrome (title input or view-mode tabs) for a focused PDF pane", async () => {
     const pdfPage = {
       title: "Doc",
