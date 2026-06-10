@@ -1,12 +1,7 @@
-use std::collections::HashMap;
-use serde::Serialize;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PdfRecognizerData {
-    pub pages: Vec<String>,
-    pub total_pages: usize,
-    pub info: HashMap<String, String>,
-}
+// Re-export PdfRecognizerData from its canonical home in the pdf module.
+// The recognize module consumes this type (e.g. extract_identifiers in #441);
+// it does not define it.
+pub use crate::pdf::PdfRecognizerData;
 
 #[cfg(test)]
 mod tests {

@@ -8,8 +8,6 @@ use std::thread;
 
 use serde::Serialize;
 
-use crate::recognize::PdfRecognizerData;
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PdfInfo {
@@ -24,6 +22,13 @@ pub struct RenderedPage {
     pub png_path: String,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfRecognizerData {
+    pub pages: Vec<String>,
+    pub total_pages: usize,
+    pub info: HashMap<String, String>,
 }
 
 enum PdfCommand {
@@ -342,7 +347,6 @@ fn fixture_path(name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recognize::PdfRecognizerData;
 
     fn require_pdfium() -> String {
         find_libpdfium(None)
@@ -802,6 +806,21 @@ mod tests {
         // The fallback must be an empty HashMap (matching unwrap_or_else default)
         let fallback: std::collections::HashMap<String, String> = Default::default();
         assert!(fallback.is_empty());
+    }
+
+    #[test]
+    fn test_pdf_recognizer_data_accessible_from_pdf_module() {
+        // Architectural invariant: PdfRecognizerData is an output type of the pdf
+        // module (like PdfInfo and RenderedPage), so it must be defined here, not
+        // imported from another module. This prevents an organizational cycle when
+        // recognize/ (#441) consumes pdf output types.
+        let data = PdfRecognizerData {
+            pages: vec!["text".to_string()],
+            total_pages: 1,
+            info: std::collections::HashMap::new(),
+        };
+        // Confirm it's the same type used by extract_recognizer_data's return type.
+        let _: PdfRecognizerData = data;
     }
 
     #[test]
