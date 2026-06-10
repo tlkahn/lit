@@ -98,8 +98,10 @@ pub fn normalize_doi(raw: &str) -> String {
         "doi:",
     ];
     for prefix in prefixes {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            return rest.trim().to_string();
+        if s.len() >= prefix.len()
+            && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+        {
+            return s[prefix.len()..].trim().to_string();
         }
     }
     s.to_string()
@@ -281,6 +283,52 @@ mod tests {
             normalize_doi("https://dx.doi.org/10.1038/nature12373"),
             "10.1038/nature12373"
         );
+    }
+
+    #[test]
+    fn normalize_doi_uppercase_https_prefix() {
+        assert_eq!(
+            normalize_doi("HTTPS://DOI.ORG/10.1038/nature12373"),
+            "10.1038/nature12373"
+        );
+    }
+
+    #[test]
+    fn normalize_doi_mixed_case_https_prefix() {
+        assert_eq!(
+            normalize_doi("Https://Doi.Org/10.1038/nature12373"),
+            "10.1038/nature12373"
+        );
+    }
+
+    #[test]
+    fn normalize_doi_uppercase_dx_doi_org() {
+        assert_eq!(
+            normalize_doi("HTTPS://DX.DOI.ORG/10.1038/nature12373"),
+            "10.1038/nature12373"
+        );
+    }
+
+    #[test]
+    fn normalize_doi_uppercase_doi_colon() {
+        assert_eq!(
+            normalize_doi("DOI:10.1038/nature12373"),
+            "10.1038/nature12373"
+        );
+    }
+
+    #[test]
+    fn normalize_doi_preserves_suffix_casing() {
+        assert_eq!(
+            normalize_doi("HTTPS://DOI.ORG/10.1038/NaTuRe12373"),
+            "10.1038/NaTuRe12373"
+        );
+    }
+
+    #[test]
+    fn normalize_doi_non_ascii_input_does_not_panic() {
+        // Multibyte chars must not panic prefix-length slicing
+        assert_eq!(normalize_doi("€€€€€€€€"), "€€€€€€€€");
     }
 
     // ── Group 3: is_valid_doi ────────────────────────────────────────
