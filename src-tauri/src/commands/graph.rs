@@ -347,6 +347,19 @@ pub fn get_forward_links(
 }
 
 #[tauri::command]
+pub fn get_citing_pages(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    bib_key: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let cp = gi.citing_pages(&bib_key)?;
+        serde_json::to_value(cp).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
 pub async fn search_pages(
     window: tauri::Window,
     workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
@@ -675,6 +688,18 @@ mod tests {
         let fl = gi.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
         assert_eq!(fl[0].target_id, "b.md");
+    }
+
+    #[test]
+    fn cmd_get_citing_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "As shown in [@smith2024].").unwrap();
+        std::fs::write(dir.path().join("b.md"), "No citations here.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let citing = gi.citing_pages("smith2024").unwrap();
+        assert_eq!(citing.len(), 1);
+        assert_eq!(citing[0].source_id, "a.md");
+        assert!(gi.citing_pages("absent2000").unwrap().is_empty());
     }
 
     #[test]

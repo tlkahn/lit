@@ -1,5 +1,32 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EdgeKind {
+    Wikilink,
+    Citation,
+}
+
+impl EdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EdgeKind::Wikilink => "wikilink",
+            EdgeKind::Citation => "citation",
+        }
+    }
+}
+
+impl From<&str> for EdgeKind {
+    fn from(s: &str) -> Self {
+        match s {
+            "citation" => EdgeKind::Citation,
+            // Unknown kinds degrade to wikilink, mirroring the edges table's
+            // `edge_kind TEXT NOT NULL DEFAULT 'wikilink'` semantics.
+            _ => EdgeKind::Wikilink,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParsedNode {
     pub id: String,
@@ -163,6 +190,23 @@ pub fn extract_aliases(fm: &serde_json::Value) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn edge_kind_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&EdgeKind::Wikilink).unwrap(), "\"wikilink\"");
+        assert_eq!(serde_json::to_string(&EdgeKind::Citation).unwrap(), "\"citation\"");
+        assert_eq!(EdgeKind::Wikilink.as_str(), "wikilink");
+        assert_eq!(EdgeKind::Citation.as_str(), "citation");
+        assert_eq!(serde_json::from_str::<EdgeKind>("\"citation\"").unwrap(), EdgeKind::Citation);
+    }
+
+    #[test]
+    fn edge_kind_from_str() {
+        assert_eq!(EdgeKind::from("citation"), EdgeKind::Citation);
+        assert_eq!(EdgeKind::from("wikilink"), EdgeKind::Wikilink);
+        // Unknown kinds degrade to wikilink, mirroring the DB column default.
+        assert_eq!(EdgeKind::from("garbage"), EdgeKind::Wikilink);
+    }
 
     #[test]
     fn full_annotation_record_converts_to_indexable() {

@@ -5,9 +5,9 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, FullAnnotationRecord, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 14;
+pub const CURRENT_SCHEMA_VERSION: i64 = 15;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -419,6 +419,16 @@ impl Store {
             )?;
         }
 
+        if version < 15 {
+            info!(from = version, to = 15, "migrating schema: adding edge_kind to edges");
+            self.conn.execute_batch(
+                "ALTER TABLE edges ADD COLUMN edge_kind TEXT NOT NULL DEFAULT 'wikilink';
+                 CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(edge_kind);
+                 UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '15' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -560,10 +570,10 @@ impl Store {
 
     // --- Edges ---
 
-    pub fn insert_edge(&self, source: &str, target: &str, ctx: &str, raw_target: &str, source_line: u32) -> Result<(), GraphError> {
+    pub fn insert_edge(&self, source: &str, target: &str, ctx: &str, raw_target: &str, source_line: u32, kind: EdgeKind) -> Result<(), GraphError> {
         self.conn.execute(
-            "INSERT INTO edges(source, target, context, raw_target, source_line) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![source, target, ctx, raw_target, source_line],
+            "INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![source, target, ctx, raw_target, source_line, kind.as_str()],
         )?;
         Ok(())
     }
@@ -574,7 +584,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
+    pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str, u32, EdgeKind)]) -> Result<(), GraphError> {
         let tx = self.conn.unchecked_transaction()?;
         self.replace_all_edges_no_tx(edges)?;
         tx.commit()?;
@@ -592,12 +602,12 @@ impl Store {
     /// `Store` holds a single `rusqlite::Connection` (no pooling). This method
     /// operates on `self.conn` directly and relies on the caller's transaction
     /// living on the same connection.
-    pub(crate) fn replace_all_edges_no_tx(&self, edges: &[(&str, &str, &str, &str, u32)]) -> Result<(), GraphError> {
+    pub(crate) fn replace_all_edges_no_tx(&self, edges: &[(&str, &str, &str, &str, u32, EdgeKind)]) -> Result<(), GraphError> {
         self.conn.execute("DELETE FROM edges", [])?;
-        for &(source, target, context, raw_target, source_line) in edges {
+        for &(source, target, context, raw_target, source_line, kind) in edges {
             self.conn.execute(
-                "INSERT INTO edges(source, target, context, raw_target, source_line) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![source, target, context, raw_target, source_line],
+                "INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![source, target, context, raw_target, source_line, kind.as_str()],
             )?;
         }
         Ok(())
@@ -638,9 +648,11 @@ impl Store {
         Ok(map)
     }
 
+    /// Wikilink edges only, by design: this feeds `ReverseStemIndex`, which
+    /// tracks page stems — citation targets are bib keys, not stems.
     pub fn all_raw_edges(&self) -> Result<Vec<(String, String, String)>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT source, target, raw_target FROM edges ORDER BY source, target"
+            "SELECT source, target, raw_target FROM edges WHERE edge_kind = 'wikilink' ORDER BY source, target"
         )?;
         let edges = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
@@ -674,18 +686,20 @@ impl Store {
         Ok(edges)
     }
 
-    pub fn all_edges_full(&self) -> Result<Vec<(String, String, String, String, u32)>, GraphError> {
+    pub fn all_edges_full(&self) -> Result<Vec<(String, String, String, String, u32, EdgeKind)>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT source, target, context, raw_target, source_line FROM edges ORDER BY source, target"
+            "SELECT source, target, context, raw_target, source_line, edge_kind FROM edges ORDER BY source, target"
         )?;
         let edges = stmt
             .query_map([], |row| {
+                let kind: String = row.get(5)?;
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, u32>(4)?,
+                    EdgeKind::from(kind.as_str()),
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -819,6 +833,30 @@ impl Store {
         )?;
         let results = stmt
             .query_map([page_id], |row| {
+                Ok(BacklinkEntry {
+                    source_id: row.get(0)?,
+                    source_title: row.get(1)?,
+                    context: row.get(2)?,
+                    source_line: row.get::<_, u32>(3).unwrap_or(0),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
+    /// Pages containing a `[@bib_key]` citation of `bib_key`, via citation-kind
+    /// edges only. Citation edge targets are bib keys (not page ids), so these
+    /// rows never appear in petgraph; this is the DB-only query path for them.
+    pub fn citing_pages(&self, bib_key: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.source, n.title, e.context, e.source_line
+             FROM edges e
+             JOIN nodes n ON n.id = e.source
+             WHERE e.target = ?1 AND e.edge_kind = 'citation'
+             ORDER BY e.source",
+        )?;
+        let results = stmt
+            .query_map([bib_key], |row| {
                 Ok(BacklinkEntry {
                     source_id: row.get(0)?,
                     source_title: row.get(1)?,
@@ -990,6 +1028,17 @@ impl Store {
         })
     }
 
+    /// Count only wikilink edges. Used by `graph_fingerprint()` because
+    /// pagerank only operates on wikilink edges; citation edges are DB-only.
+    pub fn wikilink_edge_count(&self) -> Result<i64, GraphError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'wikilink'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     pub fn max_mtime(&self) -> Result<i64, GraphError> {
         let mtime: i64 = self.conn.query_row(
             "SELECT COALESCE(MAX(mtime), 0) FROM nodes WHERE is_stub = 0",
@@ -1002,8 +1051,10 @@ impl Store {
     pub fn graph_fingerprint(&self) -> Result<String, GraphError> {
         let stats = self.stats()?;
         let total_nodes = stats.nodes + stats.stubs;
+        // Only wikilink edges participate in pagerank; citation edges are DB-only.
+        let wikilink_edges = self.wikilink_edge_count()?;
         let max_mtime = self.max_mtime()?;
-        Ok(format!("{}:{}:{}", total_nodes, stats.edges, max_mtime))
+        Ok(format!("{}:{}:{}", total_nodes, wikilink_edges, max_mtime))
     }
 
     // --- Annotations ---
@@ -1746,7 +1797,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t"], json!({"aliases": ["X"]}));
         store.upsert_node(&node, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "ctx", "", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "", 0, EdgeKind::Wikilink).unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -1793,8 +1844,8 @@ mod tests {
         let node_b = make_node("b.md", "B", &[], json!({}));
         store.upsert_node(&node_a, 1).unwrap();
         store.upsert_node(&node_b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
-        store.insert_edge("b.md", "a.md", "", "", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("b.md", "a.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         store.delete_node("a.md").unwrap();
 
@@ -1816,7 +1867,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t"], json!({}));
         store.upsert_node(&node, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "ctx", "", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "", 0, EdgeKind::Wikilink).unwrap();
         {
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -1858,7 +1909,7 @@ mod tests {
     #[test]
     fn insert_edge_and_query() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "links to b", "b", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "b", 0, EdgeKind::Wikilink).unwrap();
 
         let ctx: String = store
             .conn
@@ -1872,11 +1923,41 @@ mod tests {
     }
 
     #[test]
+    fn insert_edge_stores_kind() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "b", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "smith2024", "ctx", "smith2024", 2, EdgeKind::Citation).unwrap();
+
+        let wikilink_kind: String = store
+            .conn
+            .query_row("SELECT edge_kind FROM edges WHERE target = 'b.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(wikilink_kind, "wikilink");
+
+        let citation_kind: String = store
+            .conn
+            .query_row("SELECT edge_kind FROM edges WHERE target = 'smith2024'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(citation_kind, "citation");
+    }
+
+    #[test]
+    fn all_raw_edges_excludes_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "B", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 2, EdgeKind::Citation).unwrap();
+
+        let raw = store.all_raw_edges().unwrap();
+        assert_eq!(raw.len(), 1);
+        assert_eq!(raw[0], ("a.md".to_string(), "b.md".to_string(), "B".to_string()));
+    }
+
+    #[test]
     fn delete_edges_from_source() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
-        store.insert_edge("a.md", "c.md", "", "", 0).unwrap();
-        store.insert_edge("x.md", "y.md", "", "", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "c.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("x.md", "y.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         store.delete_edges_from("a.md").unwrap();
 
@@ -1890,11 +1971,11 @@ mod tests {
     #[test]
     fn replace_all_edges_clears_and_inserts() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("old.md", "old_target.md", "", "", 0).unwrap();
+        store.insert_edge("old.md", "old_target.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let edges = vec![
-            ("a.md", "b.md", "link to B", "B", 0),
-            ("a.md", "c.md", "link to C", "C", 0),
+            ("a.md", "b.md", "link to B", "B", 0, EdgeKind::Wikilink),
+            ("a.md", "c.md", "link to C", "C", 0, EdgeKind::Wikilink),
         ];
         store.replace_all_edges(&edges).unwrap();
 
@@ -1916,13 +1997,55 @@ mod tests {
     }
 
     #[test]
+    fn all_edges_full_returns_edge_kind() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "b", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "smith2024", "ctx2", "smith2024", 2, EdgeKind::Citation).unwrap();
+
+        let edges = store.all_edges_full().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].5, EdgeKind::Wikilink);
+        assert_eq!(edges[1].5, EdgeKind::Citation);
+    }
+
+    #[test]
+    fn replace_all_edges_stores_kind() {
+        let store = Store::open_memory().unwrap();
+        let edges = vec![
+            ("a.md", "b.md", "c", "b", 1, EdgeKind::Wikilink),
+            ("a.md", "smith2024", "c2", "smith2024", 2, EdgeKind::Citation),
+        ];
+        store.replace_all_edges(&edges).unwrap();
+
+        let citation_kind: String = store
+            .conn
+            .query_row(
+                "SELECT edge_kind FROM edges WHERE target = 'smith2024'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(citation_kind, "citation");
+
+        let wikilink_kind: String = store
+            .conn
+            .query_row(
+                "SELECT edge_kind FROM edges WHERE target = 'b.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(wikilink_kind, "wikilink");
+    }
+
+    #[test]
     fn replace_all_edges_no_tx_clears_and_inserts() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("old.md", "old_target.md", "", "", 0).unwrap();
+        store.insert_edge("old.md", "old_target.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let edges = vec![
-            ("a.md", "b.md", "link to B", "B", 0),
-            ("a.md", "c.md", "link to C", "C", 0),
+            ("a.md", "b.md", "link to B", "B", 0, EdgeKind::Wikilink),
+            ("a.md", "c.md", "link to C", "C", 0, EdgeKind::Wikilink),
         ];
         store.replace_all_edges_no_tx(&edges).unwrap();
 
@@ -1946,7 +2069,7 @@ mod tests {
     #[test]
     fn replace_all_edges_is_atomic() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("keep.md", "keep_target.md", "orig", "kt", 0).unwrap();
+        store.insert_edge("keep.md", "keep_target.md", "orig", "kt", 0, EdgeKind::Wikilink).unwrap();
 
         // Trigger aborts the second inserted edge, after DELETE has already run
         // and the first INSERT succeeded — the wrapper must roll everything back.
@@ -1960,8 +2083,8 @@ mod tests {
             .unwrap();
 
         let edges = vec![
-            ("ok.md", "x.md", "", "", 0),
-            ("boom.md", "y.md", "", "", 0),
+            ("ok.md", "x.md", "", "", 0, EdgeKind::Wikilink),
+            ("boom.md", "y.md", "", "", 0, EdgeKind::Wikilink),
         ];
         let result = store.replace_all_edges(&edges);
         assert!(result.is_err());
@@ -2032,8 +2155,8 @@ mod tests {
     #[test]
     fn all_edges_returns_source_target_pairs() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
-        store.insert_edge("c.md", "d.md", "", "", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("c.md", "d.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let edges = store.all_edges().unwrap();
         assert_eq!(
@@ -2168,8 +2291,8 @@ mod tests {
         let node2 = make_node("b.md", "B", &["t1"], json!({}));
         store.upsert_node(&node2, 1).unwrap();
         store.upsert_stub("Ghost").unwrap();
-        store.insert_edge("a.md", "b.md", "", "", 0).unwrap();
-        store.insert_edge("a.md", "Ghost", "", "", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "Ghost", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let s = store.stats().unwrap();
         assert_eq!(s.nodes, 2);
@@ -2222,6 +2345,60 @@ mod tests {
         let fp1 = store.graph_fingerprint().unwrap();
         let fp2 = store.graph_fingerprint().unwrap();
         assert_eq!(fp1, fp2);
+    }
+
+    // --- wikilink_edge_count ---
+
+    #[test]
+    fn wikilink_edge_count_empty_db() {
+        let store = Store::open_memory().unwrap();
+        assert_eq!(store.wikilink_edge_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn wikilink_edge_count_excludes_citations() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 2, EdgeKind::Citation).unwrap();
+
+        assert_eq!(store.wikilink_edge_count().unwrap(), 1);
+        assert_eq!(store.stats().unwrap().edges, 2);
+    }
+
+    #[test]
+    fn graph_fingerprint_stable_when_citation_added() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+
+        let fp1 = store.graph_fingerprint().unwrap();
+        store.insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 2, EdgeKind::Citation).unwrap();
+        let fp2 = store.graph_fingerprint().unwrap();
+
+        assert_eq!(fp1, fp2, "adding a citation edge must not change the pagerank fingerprint");
+    }
+
+    #[test]
+    fn graph_fingerprint_changes_when_wikilink_added() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+
+        let fp1 = store.graph_fingerprint().unwrap();
+
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+
+        let fp2 = store.graph_fingerprint().unwrap();
+        assert_ne!(fp1, fp2, "adding a wikilink edge must change the fingerprint");
     }
 
     // --- all_sync_entries ---
@@ -2277,7 +2454,7 @@ mod tests {
     #[test]
     fn insert_edge_with_raw_target() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "b.md", "ctx", "B", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "B", 0, EdgeKind::Wikilink).unwrap();
         let raw = store.all_raw_edges().unwrap();
         assert_eq!(raw.len(), 1);
         assert_eq!(raw[0], ("a.md".into(), "b.md".into(), "B".into()));
@@ -2292,7 +2469,7 @@ mod tests {
         let b = make_node("b.md", "Beta", &[], json!({}));
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "links to b", "b", 5).unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "b", 5, EdgeKind::Wikilink).unwrap();
 
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
@@ -2320,8 +2497,8 @@ mod tests {
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
         store.upsert_node(&c, 1).unwrap();
-        store.insert_edge("a.md", "c.md", "from a", "c", 1).unwrap();
-        store.insert_edge("b.md", "c.md", "from b", "c", 3).unwrap();
+        store.insert_edge("a.md", "c.md", "from a", "c", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("b.md", "c.md", "from b", "c", 3, EdgeKind::Wikilink).unwrap();
 
         let bl = store.backlinks("c.md").unwrap();
         assert_eq!(bl.len(), 2);
@@ -2329,6 +2506,47 @@ mod tests {
         assert_eq!(bl[0].source_line, 1);
         assert_eq!(bl[1].source_id, "b.md");
         assert_eq!(bl[1].source_line, 3);
+    }
+
+    // --- Citing pages ---
+
+    #[test]
+    fn citing_pages_returns_only_citation_edges() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "smith2024", "as shown [@smith2024]", "smith2024", 7, EdgeKind::Citation).unwrap();
+        // Decoy wikilink edge to the same target must not appear.
+        store.insert_edge("b.md", "smith2024", "noise", "smith2024", 2, EdgeKind::Wikilink).unwrap();
+
+        let citing = store.citing_pages("smith2024").unwrap();
+        assert_eq!(citing.len(), 1);
+        assert_eq!(citing[0].source_id, "a.md");
+        assert_eq!(citing[0].source_title, "Alpha");
+        assert_eq!(citing[0].context, "as shown [@smith2024]");
+        assert_eq!(citing[0].source_line, 7);
+    }
+
+    #[test]
+    fn citing_pages_orders_by_source_and_requires_known_node() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("b.md", "doe2020", "cite b", "doe2020", 3, EdgeKind::Citation).unwrap();
+        store.insert_edge("a.md", "doe2020", "cite a", "doe2020", 1, EdgeKind::Citation).unwrap();
+        // Orphan source with no nodes row is dropped by the JOIN.
+        store.insert_edge("ghost.md", "doe2020", "cite ghost", "doe2020", 9, EdgeKind::Citation).unwrap();
+
+        let citing = store.citing_pages("doe2020").unwrap();
+        assert_eq!(citing.len(), 2);
+        assert_eq!(citing[0].source_id, "a.md");
+        assert_eq!(citing[1].source_id, "b.md");
+
+        assert!(store.citing_pages("nope").unwrap().is_empty());
     }
 
     // --- Forward links ---
@@ -2340,7 +2558,7 @@ mod tests {
         let b = make_node("b.md", "Beta", &[], json!({}));
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "links to b", "B", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "links to b", "B", 0, EdgeKind::Wikilink).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
@@ -2368,8 +2586,8 @@ mod tests {
         store.upsert_node(&a, 1).unwrap();
         store.upsert_node(&b, 1).unwrap();
         store.upsert_node(&c, 1).unwrap();
-        store.insert_edge("a.md", "b.md", "to b", "B", 0).unwrap();
-        store.insert_edge("a.md", "c.md", "to c", "C", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "to b", "B", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "c.md", "to c", "C", 0, EdgeKind::Wikilink).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 2);
@@ -2383,7 +2601,7 @@ mod tests {
         let a = make_node("a.md", "Alpha", &[], json!({}));
         store.upsert_node(&a, 1).unwrap();
         store.upsert_stub("Ghost").unwrap();
-        store.insert_edge("a.md", "Ghost", "to ghost", "Ghost", 0).unwrap();
+        store.insert_edge("a.md", "Ghost", "to ghost", "Ghost", 0, EdgeKind::Wikilink).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
@@ -2466,7 +2684,7 @@ mod tests {
         assert!(!tags_text.is_empty(), "tags_text should be backfilled");
 
         // v3 column should exist
-        store.insert_edge("a.md", "b.md", "ctx", "b", 0).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "b", 0, EdgeKind::Wikilink).unwrap();
         let raw_edges = store.all_raw_edges().unwrap();
         assert_eq!(raw_edges.len(), 1);
         assert_eq!(raw_edges[0].2, "b");
@@ -2614,8 +2832,8 @@ mod tests {
     #[test]
     fn backlink_source_ids_returns_sources() {
         let store = Store::open_memory().unwrap();
-        store.insert_edge("a.md", "target.md", "", "", 0).unwrap();
-        store.insert_edge("b.md", "target.md", "", "", 0).unwrap();
+        store.insert_edge("a.md", "target.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("b.md", "target.md", "", "", 0, EdgeKind::Wikilink).unwrap();
         let sources = store.backlink_source_ids("target.md").unwrap();
         assert!(sources.contains("a.md"));
         assert!(sources.contains("b.md"));
@@ -2723,11 +2941,21 @@ mod tests {
         assert!(has_column, "edges table should have source_line column");
     }
 
+    #[test]
+    fn edge_kind_column_exists() {
+        let store = Store::open_memory().unwrap();
+        let has_column: bool = store
+            .conn
+            .prepare("SELECT edge_kind FROM edges LIMIT 0")
+            .is_ok();
+        assert!(has_column, "edges table should have edge_kind column");
+    }
+
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_fourteen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 14);
+    fn schema_version_is_fifteen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 15);
     }
 
     #[test]
@@ -2743,7 +2971,7 @@ mod tests {
     #[test]
     fn migration_v14_drops_conversation_tables_on_fresh_db() {
         let store = Store::open_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 14);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         for table in &["conversations", "conversation_messages"] {
             let count: i64 = store.conn.query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
@@ -2823,8 +3051,8 @@ mod tests {
 
         let store = Store::open(&db_path).unwrap();
 
-        // schema upgraded to 14
-        assert_eq!(store.schema_version().unwrap(), 14);
+        // schema upgraded to the current version (migrations run all the way through)
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         // both conversation tables are gone
         for table in &["conversations", "conversation_messages"] {
@@ -2847,6 +3075,85 @@ mod tests {
             .query_row("SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(title, "Alpha");
+    }
+
+    #[test]
+    fn v14_to_v15_migration_preserves_existing_edges_as_wikilink() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '14');
+                INSERT INTO edges(source, target, context, raw_target, source_line) VALUES ('a.md', 'b.md', 'ctx1', 'b', 3);
+                INSERT INTO edges(source, target, context, raw_target, source_line) VALUES ('c.md', 'b.md', 'ctx2', 'b', 7);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // both pre-existing edges survive and are backfilled to 'wikilink'
+        let count: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM edges WHERE edge_kind = 'wikilink'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+
+        // index exists
+        let idx: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_edges_kind'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn v14_to_v15_migration_resets_sync_mtimes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT ''
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '', source_line INTEGER DEFAULT 0);
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '14');
+                INSERT INTO sync(path, mtime) VALUES ('notes/a.md', 1700000000);
+                INSERT INTO sync(path, mtime) VALUES ('notes/b.md', 1700000001);
+                INSERT INTO sync(path, mtime) VALUES ('notes/c.md', 1700000002);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "all sync mtimes should be reset to 0 after v15 migration");
+
+        let count: i64 = store.conn
+            .query_row("SELECT COUNT(*) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 3, "sync rows should be preserved, only mtimes reset");
     }
 
     #[test]

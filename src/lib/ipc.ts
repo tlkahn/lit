@@ -529,6 +529,10 @@ export async function getForwardLinks(pageId: string): Promise<LinkEntry[]> {
   return invoke<LinkEntry[]>("get_forward_links", { pageId });
 }
 
+export async function getCitingPages(bibKey: string): Promise<BacklinkEntry[]> {
+  return invoke<BacklinkEntry[]>("get_citing_pages", { bibKey });
+}
+
 export async function searchPages(query: string, limit?: number): Promise<GraphSearchResult[]> {
   return invoke<GraphSearchResult[]>("search_pages", { query, limit: limit ?? null });
 }

@@ -1,7 +1,8 @@
 import { registerOnce } from "../commandRegistry";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { usePreferencesStore } from "../../stores/preferences";
-import { setPreference } from "../ipc";
+import { setPreference, rebuildGraphIndex } from "../ipc";
+import { useStatusMessageStore } from "../../stores/statusMessage";
 
 function hasWorkspace(): boolean {
   return useWorkspaceStore.getState().workspacePath !== null;
@@ -45,6 +46,23 @@ export function initCoreCommands(): void {
       when: hasWorkspace,
       action: () => {
         useWorkspaceStore.getState().refreshPages();
+      },
+    },
+    {
+      id: "core.graph.rebuildIndex",
+      label: "Rebuild Graph Index",
+      keywords: ["graph", "index", "rebuild", "reindex", "citation"],
+      icon: "🔄",
+      when: hasWorkspace,
+      action: () => {
+        rebuildGraphIndex()
+          .then((msg) => {
+            useStatusMessageStore.getState().show(msg);
+            useWorkspaceStore.getState().refreshPages();
+          })
+          .catch((err) => {
+            useStatusMessageStore.getState().show(String(err), "error");
+          });
       },
     },
     {

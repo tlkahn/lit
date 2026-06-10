@@ -346,6 +346,7 @@ pub fn run() {
             commands::graph::get_pagerank,
             commands::graph::get_backlinks,
             commands::graph::get_forward_links,
+            commands::graph::get_citing_pages,
             commands::graph::search_pages,
             commands::graph::search_pages_by_title,
             commands::graph::get_graph_stats,

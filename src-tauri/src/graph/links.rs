@@ -10,18 +10,25 @@ pub struct WikiLink {
     pub section: Option<String>,
 }
 
-pub fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
+pub fn blank_code(body: &str) -> String {
     let mut text = body.to_string();
-
     blank_fenced_code_blocks(&mut text);
     blank_inline_code(&mut text);
+    text
+}
 
+pub fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
+    let blanked = blank_code(body);
+    extract_wikilinks_blanked(&blanked)
+}
+
+pub fn extract_wikilinks_blanked(blanked: &str) -> Vec<WikiLink> {
     let re = Regex::new(r"\[\[([^\[\]]+)\]\]").unwrap();
     let mut links = Vec::new();
 
-    for m in re.find_iter(&text) {
+    for m in re.find_iter(blanked) {
         let start = m.start();
-        if start > 0 && text.as_bytes()[start - 1] == b'!' {
+        if start > 0 && blanked.as_bytes()[start - 1] == b'!' {
             continue;
         }
 
@@ -334,5 +341,40 @@ mod tests {
         let links = extract_wikilinks(body);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target, "Page");
+    }
+
+    #[test]
+    fn blank_code_equivalence() {
+        let cases = [
+            "before\n```\n[[Link]] some code\n```\nafter",
+            "Use `inline code` here",
+            "Mixed ```\nfenced\n``` and `inline` content [[A]]",
+            "你好 `code 世界` 🎉\n```\nemoji 🎉\n```\nend",
+            "No code at all [[Page]]",
+        ];
+        for body in &cases {
+            let via_helper = blank_code(body);
+            let mut manual = body.to_string();
+            blank_fenced_code_blocks(&mut manual);
+            blank_inline_code(&mut manual);
+            assert_eq!(via_helper, manual, "blank_code diverged for input: {body}");
+        }
+    }
+
+    #[test]
+    fn extract_wikilinks_blanked_matches_extract_wikilinks() {
+        let cases = [
+            "See [[A]] and `[[B]]` and [[C]].",
+            "before\n```\n[[InCode]]\n```\n[[Outside]]",
+            "No links at all.",
+            "![[embed]] [[Real]]",
+            "[[folder/Page#Heading|alias]]",
+        ];
+        for body in &cases {
+            let blanked = blank_code(body);
+            let via_blanked = extract_wikilinks_blanked(&blanked);
+            let via_original = extract_wikilinks(body);
+            assert_eq!(via_blanked, via_original, "mismatch for input: {body}");
+        }
     }
 }

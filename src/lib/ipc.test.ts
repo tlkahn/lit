@@ -61,6 +61,7 @@ import {
   getPagerank,
   getBacklinks,
   getForwardLinks,
+  getCitingPages,
   searchPages,
   searchPagesByTitle,
   getGraphStats,
@@ -558,6 +559,10 @@ describe("ipc", () => {
         case "get_forward_links":
           return [
             { target_id: "b.md", target_title: "Beta", raw_target: "B", context: "see B" },
+          ];
+        case "get_citing_pages":
+          return [
+            { source_id: "a.md", source_title: "Alpha", context: "as argued in [@smith2024]", source_line: 12 },
           ];
         case "search_pages":
           return [
@@ -1062,6 +1067,15 @@ describe("ipc", () => {
     expect(fl[0]!.target_id).toBe("b.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_forward_links", { pageId: "a.md" });
+  });
+
+  it("getCitingPages returns citing page entries", async () => {
+    const cp = await getCitingPages("smith2024");
+    expect(cp).toHaveLength(1);
+    expect(cp[0]!.source_id).toBe("a.md");
+    expect(cp[0]!.source_line).toBe(12);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_citing_pages", { bibKey: "smith2024" });
   });
 
   it("searchPages returns results", async () => {

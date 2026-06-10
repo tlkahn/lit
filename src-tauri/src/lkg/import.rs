@@ -1,6 +1,6 @@
 use crate::graph::error::GraphError;
 use crate::graph::store::Store;
-use crate::graph::types::{IndexableAnnotation, ParsedNode, Position};
+use crate::graph::types::{EdgeKind, IndexableAnnotation, ParsedNode, Position};
 use crate::lkg::types::{
     BundleAnnotation, BundleEdge, BundleNode, LkgImportSummary, LkgManifest,
 };
@@ -227,7 +227,7 @@ pub fn import_graph_data(
             }
         }
 
-        let edge_refs: Vec<(&str, &str, &str, &str, u32)> = edges
+        let edge_refs: Vec<(&str, &str, &str, &str, u32, EdgeKind)> = edges
             .iter()
             .map(|e| {
                 (
@@ -236,6 +236,7 @@ pub fn import_graph_data(
                     e.context.as_str(),
                     e.raw_target.as_str(),
                     e.source_line,
+                    EdgeKind::from(e.edge_kind.as_str()),
                 )
             })
             .collect();
@@ -597,6 +598,7 @@ mod tests {
             context: "see [[b]]".into(),
             raw_target: "b".into(),
             source_line: 5,
+            edge_kind: "wikilink".into(),
         }];
         import_graph_data(&store, &[], &edges, &HashMap::new(), &[]).unwrap();
 
@@ -607,9 +609,30 @@ mod tests {
                 "b.md".to_string(),
                 "see [[b]]".to_string(),
                 "b".to_string(),
-                5u32
+                5u32,
+                EdgeKind::Wikilink
             )]
         );
+    }
+
+    #[test]
+    fn import_graph_data_preserves_edge_kind() {
+        let store = mem_store();
+        seed_node(&store, "a.md");
+
+        let edges = vec![BundleEdge {
+            source: "a.md".into(),
+            target: "smith2024".into(),
+            context: "[@smith2024]".into(),
+            raw_target: "smith2024".into(),
+            source_line: 3,
+            edge_kind: "citation".into(),
+        }];
+        import_graph_data(&store, &[], &edges, &HashMap::new(), &[]).unwrap();
+
+        let rows = store.all_edges_full().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].5, EdgeKind::Citation);
     }
 
     // --- E11: import_graph_data inserts positions ---
@@ -691,6 +714,7 @@ mod tests {
             context: "see [[b]]".into(),
             raw_target: "b".into(),
             source_line: 1,
+            edge_kind: "wikilink".into(),
         }];
         let mut positions = HashMap::new();
         positions.insert("a.md".to_string(), Position { x: 1.0, y: 2.0 });
