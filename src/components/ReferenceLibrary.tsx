@@ -18,6 +18,7 @@ import {
   type FileEvent,
 } from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
+import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 
 function lastName(entry: BibEntry): string {
@@ -54,21 +55,35 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
   const recordDeparture = useRecordDeparture(currentPageRef);
   const [citing, setCiting] = useState<BacklinkEntry[] | null>(null);
   const [open, setOpen] = useState(false);
+  const bibKeyRef = useRef(bibKey);
+  bibKeyRef.current = bibKey;
+
+  const fetchCitingPages = useCallback(async () => {
+    const capturedKey = bibKeyRef.current;
+    try {
+      const result = await getCitingPages(capturedKey);
+      if (bibKeyRef.current !== capturedKey) return;
+      setCiting(result);
+    } catch {
+      if (bibKeyRef.current !== capturedKey) return;
+      setCiting([]);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!graphReady) return;
+    if (graphReady) fetchCitingPages();
+  }, [bibKey, graphReady, fetchCitingPages]);
+
+  useEffect(() => {
     let cancelled = false;
-    getCitingPages(bibKey)
-      .then((result) => {
-        if (!cancelled) setCiting(result);
-      })
-      .catch(() => {
-        if (!cancelled) setCiting([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [bibKey, graphReady]);
+    let unlisten: (() => void) | undefined;
+    listen("lit:graph-updated", () => {
+      fetchCitingPages();
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [fetchCitingPages]);
 
   if (!graphReady || citing === null) return null;
   if (citing.length === 0) {
@@ -104,7 +119,7 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
                     selectPageAtLine(e.source_id, e.source_line);
                   }}
                 >
-                  {e.context}
+                  {highlightWikilinks(e.context)}
                   <span className="ml-1 text-text-faint">line {e.source_line}</span>
                 </p>
               ) : null}

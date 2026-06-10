@@ -667,4 +667,91 @@ describe("ReferenceLibrary", () => {
     spy.mockRestore();
     setCurrentEditorView(null);
   });
+
+  it("refetches citing pages when lit:graph-updated fires", async () => {
+    const user = userEvent.setup();
+    citingFixture = [makeCiting()];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    expect(
+      await screen.findByRole("button", { name: /Cited by \(1\)/ }),
+    ).toBeInTheDocument();
+
+    citingFixture = [
+      makeCiting(),
+      makeCiting({ source_id: "notes/b.md", source_title: "Note B", source_line: 9 }),
+    ];
+    emitMockEvent("lit:graph-updated", {});
+
+    expect(
+      await screen.findByRole("button", { name: /Cited by \(2\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("stops listening for lit:graph-updated when CitedBySection unmounts (entry collapsed)", async () => {
+    const user = userEvent.setup();
+    citingFixture = [makeCiting()];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    expect(
+      await screen.findByRole("button", { name: /Cited by \(1\)/ }),
+    ).toBeInTheDocument();
+
+    const rowTitle = () =>
+      screen
+        .getAllByTestId("reference-entry-title")
+        .find((el) => el.textContent === "The Saiva Age")!;
+    await user.click(rowTitle());
+    expect(screen.queryByRole("button", { name: /Cited by/ })).not.toBeInTheDocument();
+
+    const countBefore = invokedCommands.filter((c) => c.cmd === "get_citing_pages").length;
+    citingFixture = [
+      makeCiting(),
+      makeCiting({ source_id: "notes/b.md", source_title: "Note B", source_line: 9 }),
+    ];
+    emitMockEvent("lit:graph-updated", {});
+    await new Promise((r) => setTimeout(r, 20));
+
+    const countAfter = invokedCommands.filter((c) => c.cmd === "get_citing_pages").length;
+    expect(countAfter).toBe(countBefore);
+  });
+
+  it("highlights [[wikilink]] in cited-by context text", async () => {
+    const user = userEvent.setup();
+    citingFixture = [makeCiting({ context: "See [[Topic]] and [@smith2024]" })];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(await screen.findByRole("button", { name: /Cited by \(1\)/ }));
+
+    const ctx = screen.getByTestId("citing-context-0");
+    expect(ctx.innerHTML).toContain("text-interactive-accent");
+    expect(ctx.textContent).toContain("[[Topic]]");
+  });
+
+  it("lit:graph-updated updates the expanded cited-by list items", async () => {
+    const user = userEvent.setup();
+    citingFixture = [makeCiting()];
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    const toggle = await screen.findByRole("button", { name: /Cited by \(1\)/ });
+    await user.click(toggle);
+    expect(screen.getByText("Note A")).toBeInTheDocument();
+
+    citingFixture = [
+      makeCiting(),
+      makeCiting({ source_id: "notes/b.md", source_title: "Note B", source_line: 9 }),
+    ];
+    emitMockEvent("lit:graph-updated", {});
+
+    expect(await screen.findByText("Note B")).toBeInTheDocument();
+    expect(screen.getByText("Note A")).toBeInTheDocument();
+  });
 });

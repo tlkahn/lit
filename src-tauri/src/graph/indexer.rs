@@ -9,8 +9,8 @@ use super::error::GraphError;
 use super::extract::{extract_first_paragraph, extract_headings, extract_sentence_context};
 use super::types::HeadingInfo;
 use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult};
-use super::citations::extract_citations;
-use super::links::{extract_wikilinks, WikiLink};
+use super::citations::extract_citations_blanked;
+use super::links::{blank_code, extract_wikilinks_blanked, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
 use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
@@ -24,7 +24,7 @@ use crate::workspace::normalize::filename_to_page_name;
 pub fn parse_md_file(
     root: &Path,
     relative_path: &str,
-) -> Result<(ParsedNode, Vec<WikiLink>, String), GraphError> {
+) -> Result<(ParsedNode, Vec<WikiLink>, String, String), GraphError> {
     let abs = root.join(relative_path);
     let raw = std::fs::read_to_string(&abs).map_err(|e| GraphError::Io {
         source: e,
@@ -43,7 +43,8 @@ pub fn parse_md_file(
 
     let tags = extract_tags(&fm_json);
     let first_paragraph = extract_first_paragraph(parsed.body);
-    let links = extract_wikilinks(parsed.body);
+    let blanked = blank_code(parsed.body);
+    let links = extract_wikilinks_blanked(&blanked);
     let body = parsed.body.to_string();
 
     let node = ParsedNode {
@@ -54,7 +55,7 @@ pub fn parse_md_file(
         first_paragraph,
     };
 
-    Ok((node, links, body))
+    Ok((node, links, body, blanked))
 }
 
 fn title_from_relative_path(relative_path: &str) -> String {
@@ -223,11 +224,13 @@ pub fn index_workspace_with_progress(
     let mut all_links: HashMap<String, Vec<WikiLink>> = HashMap::new();
     let mut file_mtimes: HashMap<String, i64> = HashMap::new();
     let mut bodies: HashMap<String, String> = HashMap::new();
+    let mut blanked_bodies: HashMap<String, String> = HashMap::new();
 
     for (i, (rel_path, mtime)) in files.iter().enumerate() {
         match parse_md_file(root, rel_path) {
-            Ok((node, links, body)) => {
+            Ok((node, links, body, blanked)) => {
                 bodies.insert(rel_path.clone(), body);
+                blanked_bodies.insert(rel_path.clone(), blanked);
                 file_mtimes.insert(rel_path.clone(), *mtime);
                 all_links.insert(rel_path.clone(), links);
                 all_nodes.push(node);
@@ -322,7 +325,8 @@ pub fn index_workspace_with_progress(
         // Citation edges target bib keys, not pages: no stub, no reverse-stem
         // entry, and not counted in edges_resolved (resolved wikilinks only).
         let body = bodies.get(&node.id).map(|s| s.as_str()).unwrap_or("");
-        for cite in extract_citations(body) {
+        let blanked = blanked_bodies.get(&node.id).map(|s| s.as_str()).unwrap_or("");
+        for cite in extract_citations_blanked(blanked, body) {
             store.insert_edge(&node.id, &cite.bib_key, &cite.context, &cite.bib_key, cite.source_line, EdgeKind::Citation)?;
         }
 
@@ -492,7 +496,7 @@ pub fn incremental_reindex(
 
     for path in diff.new.iter().chain(diff.changed.iter()) {
         match parse_md_file(root, path) {
-            Ok((node, links, body)) => {
+            Ok((node, links, body, blanked)) => {
                 let mtime = std::fs::metadata(root.join(path))
                     .ok()
                     .and_then(|m| m.modified().ok())
@@ -553,7 +557,7 @@ pub fn incremental_reindex(
 
                 // Citation edges target bib keys, not pages: no stub, no
                 // reverse-stem entry, not counted in edges_resolved.
-                for cite in extract_citations(&body) {
+                for cite in extract_citations_blanked(&blanked, &body) {
                     store.insert_edge(&node.id, &cite.bib_key, &cite.context, &cite.bib_key, cite.source_line, EdgeKind::Citation)?;
                 }
             }
@@ -600,7 +604,7 @@ pub fn incremental_reindex(
                 continue; // already handled
             }
 
-            if let Ok((_, links, body)) = parse_md_file(root, source_id) {
+            if let Ok((_, links, body, blanked)) = parse_md_file(root, source_id) {
                 store.delete_edges_from(source_id)?;
                 reverse_stems.remove_source(source_id);
 
@@ -622,7 +626,7 @@ pub fn incremental_reindex(
 
                 // delete_edges_from above removed citation edges too — re-insert
                 // them or stub promotion would silently destroy them.
-                for cite in extract_citations(&body) {
+                for cite in extract_citations_blanked(&blanked, &body) {
                     store.insert_edge(source_id, &cite.bib_key, &cite.context, &cite.bib_key, cite.source_line, EdgeKind::Citation)?;
                 }
             }
@@ -1370,7 +1374,7 @@ mod tests {
             "note.md",
             "---\ntitle: My Note\ntags:\n  - rust\n---\nFirst paragraph.\n\n[[Link]]",
         );
-        let (node, links, _) = parse_md_file(dir.path(), "note.md").unwrap();
+        let (node, links, _, _) = parse_md_file(dir.path(), "note.md").unwrap();
         assert_eq!(node.id, "note.md");
         assert_eq!(node.title, "My Note");
         assert_eq!(node.tags, vec!["rust"]);
@@ -1383,7 +1387,7 @@ mod tests {
     fn parse_md_file_no_frontmatter() {
         let dir = create_workspace();
         write_md(dir.path(), "plain.md", "Just some text.\n\n[[Other]]");
-        let (node, links, _) = parse_md_file(dir.path(), "plain.md").unwrap();
+        let (node, links, _, _) = parse_md_file(dir.path(), "plain.md").unwrap();
         assert_eq!(node.title, "plain");
         assert!(node.tags.is_empty());
         assert_eq!(node.first_paragraph, "Just some text.");
@@ -1398,7 +1402,7 @@ mod tests {
             "tagged.md",
             "---\ntags:\n  - alpha\n  - beta\n---\nBody.",
         );
-        let (node, _, _) = parse_md_file(dir.path(), "tagged.md").unwrap();
+        let (node, _, _, _) = parse_md_file(dir.path(), "tagged.md").unwrap();
         assert_eq!(node.tags, vec!["alpha", "beta"]);
     }
 
@@ -1410,7 +1414,7 @@ mod tests {
             "note.md",
             "---\ntitle: Custom Title\n---\nBody.",
         );
-        let (node, _, _) = parse_md_file(dir.path(), "note.md").unwrap();
+        let (node, _, _, _) = parse_md_file(dir.path(), "note.md").unwrap();
         assert_eq!(node.title, "Custom Title");
     }
 
@@ -1429,7 +1433,7 @@ mod tests {
     fn parse_md_file_id_is_relative_path() {
         let dir = create_workspace();
         write_md(dir.path(), "sub/deep.md", "Content.");
-        let (node, _, _) = parse_md_file(dir.path(), "sub/deep.md").unwrap();
+        let (node, _, _, _) = parse_md_file(dir.path(), "sub/deep.md").unwrap();
         assert_eq!(node.id, "sub/deep.md");
     }
 
@@ -1441,7 +1445,7 @@ mod tests {
             "note.md",
             "---\ntitle: Hello\n---\nThe body text.\n\nSecond paragraph.",
         );
-        let (_, _, body) = parse_md_file(dir.path(), "note.md").unwrap();
+        let (_, _, body, _) = parse_md_file(dir.path(), "note.md").unwrap();
         assert_eq!(body, "The body text.\n\nSecond paragraph.");
     }
 
@@ -1449,7 +1453,7 @@ mod tests {
     fn parse_md_file_returns_body_no_frontmatter() {
         let dir = create_workspace();
         write_md(dir.path(), "plain.md", "Just plain text.");
-        let (_, _, body) = parse_md_file(dir.path(), "plain.md").unwrap();
+        let (_, _, body, _) = parse_md_file(dir.path(), "plain.md").unwrap();
         assert_eq!(body, "Just plain text.");
     }
 
@@ -1457,7 +1461,7 @@ mod tests {
     fn parse_md_file_empty_frontmatter_title_falls_back_to_filename() {
         let dir = create_workspace();
         write_md(dir.path(), "agentic-design.md", "---\ntitle: \"\"\n---\nBody.");
-        let (node, _, _) = parse_md_file(dir.path(), "agentic-design.md").unwrap();
+        let (node, _, _, _) = parse_md_file(dir.path(), "agentic-design.md").unwrap();
         assert_eq!(node.title, "agentic-design");
     }
 
@@ -2025,6 +2029,40 @@ mod tests {
         };
         let merged = a.merge(&empty);
         assert_eq!(merged, a);
+    }
+
+    // --- blanked body ---
+
+    #[test]
+    fn parse_md_file_returns_blanked_body() {
+        use super::super::links::blank_code;
+
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "note.md",
+            "---\ntitle: Test\n---\nSome `inline code` and\n```\nfenced block\n```\n[[Link]] and [@cite2024].",
+        );
+        let (_, _, body, blanked) = parse_md_file(dir.path(), "note.md").unwrap();
+        assert_eq!(blanked, blank_code(&body));
+    }
+
+    #[test]
+    fn index_workspace_citations_with_code_blocks() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Real cite [@outside2024].\n```\n[@inside2024]\n```\nDone.",
+        );
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        let outside = store.citing_pages("outside2024").unwrap();
+        assert_eq!(outside.len(), 1, "citation outside code block must be indexed");
+
+        let inside = store.citing_pages("inside2024").unwrap();
+        assert!(inside.is_empty(), "citation inside code block must be skipped");
     }
 
     // --- citation edges ---

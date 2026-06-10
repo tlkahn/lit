@@ -1027,6 +1027,17 @@ impl Store {
         })
     }
 
+    /// Count only wikilink edges. Used by `graph_fingerprint()` because
+    /// pagerank only operates on wikilink edges; citation edges are DB-only.
+    pub fn wikilink_edge_count(&self) -> Result<i64, GraphError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'wikilink'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     pub fn max_mtime(&self) -> Result<i64, GraphError> {
         let mtime: i64 = self.conn.query_row(
             "SELECT COALESCE(MAX(mtime), 0) FROM nodes WHERE is_stub = 0",
@@ -1039,8 +1050,10 @@ impl Store {
     pub fn graph_fingerprint(&self) -> Result<String, GraphError> {
         let stats = self.stats()?;
         let total_nodes = stats.nodes + stats.stubs;
+        // Only wikilink edges participate in pagerank; citation edges are DB-only.
+        let wikilink_edges = self.wikilink_edge_count()?;
         let max_mtime = self.max_mtime()?;
-        Ok(format!("{}:{}:{}", total_nodes, stats.edges, max_mtime))
+        Ok(format!("{}:{}:{}", total_nodes, wikilink_edges, max_mtime))
     }
 
     // --- Annotations ---
@@ -2331,6 +2344,60 @@ mod tests {
         let fp1 = store.graph_fingerprint().unwrap();
         let fp2 = store.graph_fingerprint().unwrap();
         assert_eq!(fp1, fp2);
+    }
+
+    // --- wikilink_edge_count ---
+
+    #[test]
+    fn wikilink_edge_count_empty_db() {
+        let store = Store::open_memory().unwrap();
+        assert_eq!(store.wikilink_edge_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn wikilink_edge_count_excludes_citations() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 2, EdgeKind::Citation).unwrap();
+
+        assert_eq!(store.wikilink_edge_count().unwrap(), 1);
+        assert_eq!(store.stats().unwrap().edges, 2);
+    }
+
+    #[test]
+    fn graph_fingerprint_stable_when_citation_added() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+
+        let fp1 = store.graph_fingerprint().unwrap();
+        store.insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 2, EdgeKind::Citation).unwrap();
+        let fp2 = store.graph_fingerprint().unwrap();
+
+        assert_eq!(fp1, fp2, "adding a citation edge must not change the pagerank fingerprint");
+    }
+
+    #[test]
+    fn graph_fingerprint_changes_when_wikilink_added() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&a, 1).unwrap();
+
+        let fp1 = store.graph_fingerprint().unwrap();
+
+        let b = make_node("b.md", "B", &[], json!({}));
+        store.upsert_node(&b, 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+
+        let fp2 = store.graph_fingerprint().unwrap();
+        assert_ne!(fp1, fp2, "adding a wikilink edge must change the fingerprint");
     }
 
     // --- all_sync_entries ---

@@ -1,7 +1,7 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use super::links::{blank_fenced_code_blocks, blank_inline_code};
+use super::links::blank_code;
 
 /// Mirrors `scanCiteprocCitations` in `src/editor/livePreview/citeproc.ts`
 /// (CITE_BRACKET_RE / CITE_ITEM_RE) so backend citation edges agree with what
@@ -22,14 +22,16 @@ pub struct CitationRef {
 }
 
 pub fn extract_citations(body: &str) -> Vec<CitationRef> {
-    let mut text = body.to_string();
-    blank_fenced_code_blocks(&mut text);
-    blank_inline_code(&mut text);
+    let blanked = blank_code(body);
+    extract_citations_blanked(&blanked, body)
+}
+
+pub fn extract_citations_blanked(blanked: &str, original_body: &str) -> Vec<CitationRef> {
     // Blanking is byte-length-preserving (asserted by links.rs tests), so byte
-    // offsets found in `text` are valid char boundaries in `body`.
+    // offsets found in `blanked` are valid char boundaries in `original_body`.
 
     let mut refs = Vec::new();
-    for caps in CITE_BRACKET_RE.captures_iter(&text) {
+    for caps in CITE_BRACKET_RE.captures_iter(blanked) {
         let whole = caps.get(0).unwrap();
         let inner = caps.get(1).unwrap().as_str();
 
@@ -53,13 +55,13 @@ pub fn extract_citations(body: &str) -> Vec<CitationRef> {
         }
 
         let start = whole.start();
-        let source_line = text[..start].matches('\n').count() as u32 + 1;
-        let line_start = body[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let line_end = body[start..]
+        let source_line = blanked[..start].matches('\n').count() as u32 + 1;
+        let line_start = original_body[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_end = original_body[start..]
             .find('\n')
             .map(|i| start + i)
-            .unwrap_or(body.len());
-        let context = body[line_start..line_end].trim().to_string();
+            .unwrap_or(original_body.len());
+        let context = original_body[line_start..line_end].trim().to_string();
 
         for bib_key in keys {
             refs.push(CitationRef {
@@ -191,5 +193,26 @@ mod tests {
         let refs = extract_citations("你好世界 [@k]");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].bib_key, "k");
+    }
+
+    #[test]
+    fn extract_citations_blanked_matches_extract_citations() {
+        use super::super::links::blank_code;
+
+        let cases = [
+            "As shown in [@smith2024].",
+            "[@alpha2020; @beta2021]",
+            "before\n```\n[@key]\n```\nafter",
+            "Use `[@key]` in code.",
+            "See [@fig:diagram].",
+            "你好世界 [@k]",
+            "Line one\nLine two\n[@a] and `[@b]`\n```\n[@c]\n```\n[@d]",
+        ];
+        for body in &cases {
+            let blanked = blank_code(body);
+            let via_blanked = extract_citations_blanked(&blanked, body);
+            let via_original = extract_citations(body);
+            assert_eq!(via_blanked, via_original, "mismatch for input: {body}");
+        }
     }
 }
