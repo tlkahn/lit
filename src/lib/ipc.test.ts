@@ -38,6 +38,12 @@ import {
   resolveBibEntries,
   renderBibCitations,
   listBibEntries,
+  lookupDoi,
+  saveBibEntry,
+  parseCslJson,
+  importCslJson,
+  listBibFiles,
+  type SaveOutcome,
   pdfOpen,
   pdfRenderPage,
   pdfPrefetch,
@@ -629,6 +635,37 @@ describe("ipc", () => {
           return null;
         case "secret_store_status":
           return { exists: true, unlocked: true };
+        case "lookup_doi":
+          return {
+            key: "smith2020",
+            authors: ["Smith, John"],
+            title: "A Study",
+            year: "2020",
+            entry_type: "article",
+            line_number: 0,
+            doi: "10.1038/nature12373",
+            journal: "Nature",
+          };
+        case "save_bib_entry":
+          return [{ Saved: { key: "smith2020" } }];
+        case "parse_csl_json":
+          return [
+            {
+              key: "doe2021",
+              authors: ["Doe, Jane"],
+              title: "Parsed Paper",
+              year: "2021",
+              entry_type: "article",
+              line_number: 0,
+            },
+          ];
+        case "import_csl_json":
+          return [
+            { Saved: { key: "doe2021" } },
+            { DuplicateDoi: { doi: "10.1000/dup", existing_key: "old2019" } },
+          ];
+        case "list_bib_files":
+          return ["/workspace/refs.bib", "/workspace/papers/extra.bib"];
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -891,6 +928,69 @@ describe("ipc", () => {
       },
     ]);
     expect(result).toEqual({ smith2020: "Smith 2020" });
+  });
+
+  it("lookupDoi invokes lookup_doi with doi string", async () => {
+    const entry = await lookupDoi("10.1038/nature12373");
+    expect(entry.key).toBe("smith2020");
+    expect(entry.doi).toBe("10.1038/nature12373");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("lookup_doi", { doi: "10.1038/nature12373" });
+  });
+
+  it("saveBibEntry invokes save_bib_entry with entry and paths", async () => {
+    const entry = {
+      key: "",
+      authors: ["Smith, John"],
+      title: "Test",
+      year: "2020",
+      entry_type: "article",
+      line_number: 0,
+      doi: "10.1000/test",
+    };
+    const result: SaveOutcome[] = await saveBibEntry(entry, "/workspace/refs.bib", "/workspace");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ Saved: { key: "smith2020" } });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("save_bib_entry", {
+      entry,
+      bibPath: "/workspace/refs.bib",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("parseCslJson invokes parse_csl_json with jsonPath", async () => {
+    const entries = await parseCslJson("/workspace/export.json");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.title).toBe("Parsed Paper");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("parse_csl_json", {
+      jsonPath: "/workspace/export.json",
+    });
+  });
+
+  it("importCslJson invokes import_csl_json and returns mixed outcomes", async () => {
+    const result = await importCslJson(
+      "/workspace/export.json",
+      "/workspace/refs.bib",
+      "/workspace",
+    );
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ Saved: { key: "doe2021" } });
+    expect(result[1]).toEqual({ DuplicateDoi: { doi: "10.1000/dup", existing_key: "old2019" } });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("import_csl_json", {
+      jsonPath: "/workspace/export.json",
+      bibPath: "/workspace/refs.bib",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("listBibFiles invokes list_bib_files with workspacePath", async () => {
+    const files = await listBibFiles("/workspace");
+    expect(files).toEqual(["/workspace/refs.bib", "/workspace/papers/extra.bib"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_bib_files", { workspacePath: "/workspace" });
   });
 
   it("openInExternalEditor calls with correct args", async () => {

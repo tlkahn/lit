@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   mockInvoke,
@@ -507,5 +507,94 @@ describe("ReferenceLibrary", () => {
       expect(useStatusMessageStore.getState().message).toMatch(/Failed to copy/i),
     );
     expect(useStatusMessageStore.getState().variant).toBe("error");
+  });
+
+  it("renders '+ Add' button in header when entries exist", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+    const addBtn = screen.getByTestId("reference-library-add-btn");
+    expect(addBtn).toBeInTheDocument();
+  });
+
+  it("renders '+ Add' button in empty state", async () => {
+    fixture = [];
+    render(<ReferenceLibrary />);
+    await waitFor(() =>
+      expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+    );
+    const addBtn = screen.getByTestId("reference-library-add-btn");
+    expect(addBtn).toBeInTheDocument();
+  });
+
+  it("clicking '+ Add' opens the AddReferenceDialog", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "list_bib_files") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByTestId("reference-library-add-btn"));
+    expect(screen.getByTestId("add-reference-dialog")).toBeInTheDocument();
+  });
+
+  it("onSaved from dialog triggers re-fetch", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+      if (cmd === "lookup_doi") return {
+        key: "new2025",
+        authors: ["New, A."],
+        title: "New Paper",
+        year: "2025",
+        entry_type: "article",
+        line_number: 0,
+        doi: "10.1000/new",
+      };
+      if (cmd === "save_bib_entry") return [{ Saved: { key: "new2025" } }];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    // Open dialog
+    await user.click(screen.getByTestId("reference-library-add-btn"));
+    expect(screen.getByTestId("add-reference-dialog")).toBeInTheDocument();
+
+    // Do a DOI lookup and save
+    const input = screen.getByTestId("add-reference-doi-input") as HTMLInputElement;
+    await user.type(input, "10.1000/new");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-reference-lookup-btn"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("add-reference-preview")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const select = screen.getByTestId("add-reference-bib-select") as HTMLSelectElement;
+      expect(select.options.length).toBeGreaterThan(0);
+    });
+    fireEvent.change(screen.getByTestId("add-reference-bib-select"), {
+      target: { value: "/workspace/refs.bib" },
+    });
+
+    const beforeCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-reference-save-btn"));
+    });
+
+    await waitFor(() => {
+      const afterCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+      expect(afterCount).toBeGreaterThan(beforeCount);
+    });
   });
 });

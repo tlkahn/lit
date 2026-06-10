@@ -12,6 +12,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { listBibEntries, type BibEntry, type FileEvent } from "../lib/ipc";
 import { localeFilter } from "../lib/localeSearch";
+import { AddReferenceDialog } from "./AddReferenceDialog";
 
 function lastName(entry: BibEntry): string {
   const first = entry.authors[0] ?? "";
@@ -44,6 +45,7 @@ export function ReferenceLibrary() {
   const [entries, setEntries] = useState<BibEntry[]>([]);
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const deferredSearch = useDeferredValue(search);
 
   const requestIdRef = useRef(0);
@@ -160,25 +162,50 @@ export function ReferenceLibrary() {
     virtualizer.measure();
   }, [virtualizer, expandedIndex]);
 
+  const addButton = (
+    <button
+      data-testid="reference-library-add-btn"
+      onClick={() => setAddDialogOpen(true)}
+      disabled={!workspacePath}
+      className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+    >
+      + Add
+    </button>
+  );
+
+  const dialog = (
+    <AddReferenceDialog
+      open={addDialogOpen}
+      onClose={() => setAddDialogOpen(false)}
+      onSaved={() => {
+        loadEntries();
+        setAddDialogOpen(false);
+      }}
+    />
+  );
+
   if (entries.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center p-4 text-center text-sm text-text-faint">
-        No references found. Add .bib files to your workspace.
+      <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-sm text-text-faint">
+        <div>No references found. Add .bib files to your workspace.</div>
+        <div className="mt-2">{addButton}</div>
+        {dialog}
       </div>
     );
   }
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="p-2">
+      <div className="flex items-center gap-2 p-2">
         <input
           type="text"
           placeholder="Search references…"
           aria-label="Search references"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="min-w-0 w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+          className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
         />
+        {addButton}
       </div>
       <div
         ref={scrollRef}
@@ -288,6 +315,7 @@ export function ReferenceLibrary() {
           })}
         </div>
       </div>
+      {dialog}
     </div>
   );
 }

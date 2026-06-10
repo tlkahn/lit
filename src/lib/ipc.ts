@@ -389,6 +389,12 @@ export interface BibEntry {
   tags?: string[];
 }
 
+// SaveOutcome — externally-tagged serde enum from Rust
+export type SaveOutcome =
+  | { Saved: { key: string } }
+  | { DuplicateDoi: { doi: string; existing_key: string } }
+  | { SavedNoDoi: { key: string } };
+
 export async function resolveAllDecorations(
   content: string,
   frontmatter?: Record<string, unknown>,
@@ -438,6 +444,36 @@ export async function renderBibCitations(
 
 export async function listBibEntries(workspacePath: string): Promise<BibEntry[]> {
   return invoke<BibEntry[]>("list_bib_entries", { workspacePath });
+}
+
+// Bib import commands
+
+export async function lookupDoi(doi: string): Promise<BibEntry> {
+  return invoke<BibEntry>("lookup_doi", { doi });
+}
+
+export async function saveBibEntry(
+  entry: BibEntry,
+  bibPath: string,
+  workspacePath: string,
+): Promise<SaveOutcome[]> {
+  return invoke<SaveOutcome[]>("save_bib_entry", { entry, bibPath, workspacePath });
+}
+
+export async function parseCslJson(jsonPath: string): Promise<BibEntry[]> {
+  return invoke<BibEntry[]>("parse_csl_json", { jsonPath });
+}
+
+export async function importCslJson(
+  jsonPath: string,
+  bibPath: string,
+  workspacePath: string,
+): Promise<SaveOutcome[]> {
+  return invoke<SaveOutcome[]>("import_csl_json", { jsonPath, bibPath, workspacePath });
+}
+
+export async function listBibFiles(workspacePath: string): Promise<string[]> {
+  return invoke<string[]>("list_bib_files", { workspacePath });
 }
 
 // Graph
