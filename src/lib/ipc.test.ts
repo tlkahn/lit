@@ -44,6 +44,8 @@ import {
   saveBibEntries,
   listBibFiles,
   materializeCitation,
+  enrichBibEntry,
+  type EnrichResult,
   type SaveOutcome,
   pdfOpen,
   pdfRenderPage,
@@ -686,6 +688,25 @@ describe("ipc", () => {
             created_at: 1000,
             modified_at: 2000,
             file_type: "markdown" as const,
+          };
+        case "enrich_bib_entry":
+          return {
+            entry: {
+              key: (args as Record<string, unknown>)?.bibKey ?? "smith2020",
+              authors: ["Smith, John"],
+              title: "A Study",
+              year: "2020",
+              entry_type: "article",
+              line_number: 0,
+              bib_file: "/workspace/refs.bib",
+              doi: "10.1/x",
+              journal: "Nature",
+              abstract_text: "Enriched abstract",
+            },
+            fields_added: ["abstract", "journal"],
+            references_found: 5,
+            references_appended: 5,
+            shadow_nodes_created: 3,
           };
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -2114,6 +2135,20 @@ describe("ipc", () => {
     expect("needsMigration" in status).toBe(false);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("secret_store_status");
+  });
+
+  it("enrichBibEntry calls enrich_bib_entry with bibKey and workspacePath", async () => {
+    const result: EnrichResult = await enrichBibEntry("smith2020", "/workspace");
+    expect(result.entry.key).toBe("smith2020");
+    expect(result.fields_added).toEqual(["abstract", "journal"]);
+    expect(result.references_found).toBe(5);
+    expect(result.references_appended).toBe(5);
+    expect(result.shadow_nodes_created).toBe(3);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
+      bibKey: "smith2020",
+      workspacePath: "/workspace",
+    });
   });
 
 });

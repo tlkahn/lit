@@ -386,6 +386,11 @@ export interface BibEntry {
   doi?: string;
   journal?: string;
   url?: string;
+  volume?: string;
+  number?: string;
+  pages?: string;
+  publisher?: string;
+  issn?: string;
   tags?: string[];
 }
 
@@ -478,6 +483,23 @@ export async function listBibFiles(workspacePath: string): Promise<string[]> {
 
 export async function materializeCitation(bibKey: string): Promise<PageMeta> {
   return invoke<PageMeta>("materialize_citation", { bibKey });
+}
+
+// Bib enrichment
+
+export interface EnrichResult {
+  entry: BibEntry;
+  fields_added: string[];
+  references_found: number;
+  references_appended: number;
+  shadow_nodes_created: number;
+}
+
+export async function enrichBibEntry(
+  bibKey: string,
+  workspacePath: string,
+): Promise<EnrichResult> {
+  return invoke<EnrichResult>("enrich_bib_entry", { bibKey, workspacePath });
 }
 
 // Graph

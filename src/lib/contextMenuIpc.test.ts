@@ -176,6 +176,7 @@ describe("showGraphContextMenu", () => {
       selectionCount: 2,
       hasHeadings: false,
       hasExport: true,
+      isShadow: false,
     });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", {
@@ -184,7 +185,28 @@ describe("showGraphContextMenu", () => {
       selectionCount: 2,
       hasHeadings: false,
       hasExport: true,
+      isShadow: false,
     });
+  });
+
+  it("passes isShadow=true to invoke", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_graph_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showGraphContextMenu } = await import("./contextMenuIpc");
+    await showGraphContextMenu({
+      nodeId: "bib:smith2024",
+      nodeIds: ["bib:smith2024"],
+      selectionCount: 0,
+      hasHeadings: false,
+      hasExport: false,
+      isShadow: true,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", expect.objectContaining({
+      isShadow: true,
+    }));
   });
 });
 
@@ -212,6 +234,7 @@ describe("useGraphContextMenu", () => {
       onSplitRequest: vi.fn(),
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -244,6 +267,7 @@ describe("useGraphContextMenu", () => {
       onSplitRequest: vi.fn(),
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -264,6 +288,7 @@ describe("useGraphContextMenu", () => {
       onSplitRequest: vi.fn(),
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
       getNodeLabel: vi.fn((id: string) => (id === "n1" ? "Alpha" : "Beta")),
     };
 
@@ -284,6 +309,7 @@ describe("useGraphContextMenu", () => {
       onSplitRequest: vi.fn(),
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -295,6 +321,45 @@ describe("useGraphContextMenu", () => {
     expect(handlers.onExportNetwork).toHaveBeenCalledWith("node-99");
   });
 
+  it("fires onFetchDetails with node_id on fetch-details event", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useGraphContextMenu(handlers));
+
+    emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+
+    expect(handlers.onFetchDetails).toHaveBeenCalledWith("bib:smith2024");
+  });
+
+  it("cleans up fetch-details listener on unmount", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    const { unmount } = renderHook(() => useGraphContextMenu(handlers));
+
+    unmount();
+
+    emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    expect(handlers.onFetchDetails).not.toHaveBeenCalled();
+  });
+
   it("cleans up listeners on unmount", async () => {
     const { useGraphContextMenu } = await import("./contextMenuIpc");
     const handlers = {
@@ -302,6 +367,7 @@ describe("useGraphContextMenu", () => {
       onSplitRequest: vi.fn(),
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 

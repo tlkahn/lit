@@ -5609,6 +5609,11 @@ mod tests {
                 doi: None,
                 journal: None,
                 url: None,
+                volume: None,
+                number: None,
+                pages: None,
+                publisher: None,
+                issn: None,
                 tags: vec![],
             }
         }

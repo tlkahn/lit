@@ -15,6 +15,7 @@ import {
   getCitingPages,
   getBibKeyStates,
   materializeCitation,
+  enrichBibEntry,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
@@ -147,6 +148,7 @@ export function ReferenceLibrary() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [materializingKey, setMaterializingKey] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
   const currentPageRef = useRef(currentPagePath ?? "");
@@ -301,6 +303,43 @@ export function ReferenceLibrary() {
       }
     },
     [materializingKey, loadBibKeyStates, recordDeparture, selectPage, show],
+  );
+
+  const handleEnrich = useCallback(
+    async (entry: BibEntry) => {
+      if (!workspacePath) return;
+      setEnrichingKey(entry.key);
+      try {
+        const result = await enrichBibEntry(entry.key, workspacePath);
+        loadEntries();
+        loadBibKeyStates();
+        const parts: string[] = [];
+        if (result.fields_added.length > 0)
+          parts.push(`added ${result.fields_added.join(", ")}`);
+        if (result.references_appended > 0) {
+          const qualifier =
+            result.references_found > result.references_appended
+              ? ` of ${result.references_found}`
+              : "";
+          parts.push(
+            `${result.references_appended}${qualifier} references added`,
+          );
+        }
+        if (result.shadow_nodes_created > 0)
+          parts.push(`${result.shadow_nodes_created} shadow nodes created`);
+        show(
+          `Enriched ${entry.key}${parts.length > 0 ? ": " + parts.join(". ") : ""}`,
+        );
+      } catch (err) {
+        show(
+          err instanceof Error ? err.message : String(err),
+          "error",
+        );
+      } finally {
+        setEnrichingKey(null);
+      }
+    },
+    [workspacePath, show, loadEntries, loadBibKeyStates],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -507,6 +546,22 @@ export function ReferenceLibrary() {
                             Enriched
                           </span>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {!state?.page_id ? (
+                      <div className="mt-2">
+                        <button
+                          data-testid="fetch-details-btn"
+                          disabled={enrichingKey === entry.key}
+                          onClick={() => handleEnrich(entry)}
+                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                        >
+                          {enrichingKey === entry.key
+                            ? "Fetching…"
+                            : state?.materialization === "partial"
+                              ? "Refresh"
+                              : "Fetch details"}
+                        </button>
                       </div>
                     ) : null}
                     <div className="mt-2">

@@ -222,6 +222,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![]
         });
         cache.set_cached_index(index.clone());
@@ -248,6 +253,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![]
         });
         cache.set_cached_index(index);
@@ -279,6 +289,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         });
         cache.set_cached_index(index);
@@ -303,6 +318,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         });
         cache.set_cached_index(index);
@@ -325,6 +345,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         });
         cache.set_cached_index(index);
@@ -355,6 +380,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![]
         });
         cache.set_cached_index(index);

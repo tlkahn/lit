@@ -563,6 +563,11 @@ mod tests {
             doi: Some("10.1/x".to_string()),
             journal: Some("Nature".to_string()),
             url: Some("https://example.com".to_string()),
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -639,6 +644,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -667,6 +677,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -713,6 +728,11 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
             tags: vec![],
         };
         let body = super::build_citation_body(&entry);
