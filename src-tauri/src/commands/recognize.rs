@@ -58,6 +58,29 @@ fn choose_no_result_reason(ids: &ExtractedIdentifiers, title: Option<&str>) -> C
     }
 }
 
+/// If `outcome` is `DuplicateDoi` and `copied_to` is `Some`, remove the
+/// orphaned PDF copy so repeated imports of the same paper don't accumulate
+/// paper-1.pdf, paper-2.pdf, etc.
+pub(crate) fn cleanup_copy_on_duplicate(
+    outcome: &SaveOutcome,
+    copied_to: &Option<std::path::PathBuf>,
+) {
+    if matches!(outcome, SaveOutcome::DuplicateDoi { .. }) {
+        if let Some(ref p) = copied_to {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// Compute the effective title from extracted identifiers.
+/// chapter_title (from JSTOR metadata) takes precedence over info_title.
+pub(crate) fn effective_title(ids: &ExtractedIdentifiers) -> Option<&str> {
+    ids.jstor_metadata
+        .as_ref()
+        .and_then(|m| m.chapter_title.as_deref())
+        .or(ids.info_title.as_deref())
+}
+
 /// Build a prefilled BibEntry from extraction metadata for the manual confirmation form.
 fn build_prefilled_entry(ids: &ExtractedIdentifiers, file: &str) -> BibEntry {
     let mut entry = BibEntry {
@@ -158,12 +181,7 @@ pub async fn recognize_pdf(
 
     // 4. Extract identifiers
     let ids = extract_identifiers(&data);
-    // chapter_title takes precedence over info_title, mirroring build_prefilled_entry
-    let title: Option<&str> = ids
-        .jstor_metadata
-        .as_ref()
-        .and_then(|m| m.chapter_title.as_deref())
-        .or(ids.info_title.as_deref());
+    let title: Option<&str> = effective_title(&ids);
 
     // 5. Resolve
     match resolve_to_bib_entry_default(&ids, title, false).await {
@@ -188,11 +206,7 @@ pub async fn recognize_pdf(
             // Clean up the copied file if this was a duplicate — avoids
             // accumulating orphaned paper-1.pdf, paper-2.pdf, ... on
             // repeated imports of the same paper.
-            if matches!(&outcome, SaveOutcome::DuplicateDoi { .. }) {
-                if let Some(ref p) = copied_to {
-                    let _ = std::fs::remove_file(p);
-                }
-            }
+            cleanup_copy_on_duplicate(&outcome, &copied_to);
 
             // Update entry key from outcome
             let final_key = match &outcome {
@@ -630,12 +644,8 @@ mod tests {
             "should detect duplicate DOI"
         );
 
-        // 5. Perform cleanup exactly as recognize_pdf should: delete the orphaned copy
-        if matches!(outcome, SaveOutcome::DuplicateDoi { .. }) {
-            if let Some(ref p) = attach.copied_to {
-                std::fs::remove_file(p).expect("cleanup should succeed");
-            }
-        }
+        // 5. Call the production cleanup helper
+        cleanup_copy_on_duplicate(outcome, &attach.copied_to);
 
         // 6. Assert the copied file no longer exists
         assert!(
@@ -644,16 +654,31 @@ mod tests {
         );
     }
 
-    // ── title fallback (chapter_title > info_title) tests ──────────────
+    #[test]
+    fn test_cleanup_copy_on_duplicate_no_op_for_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("keep-me.pdf");
+        std::fs::write(&file, b"dummy").unwrap();
 
-    /// Helper: compute the effective title using the same fallback chain
-    /// that recognize_pdf should use (chapter_title > info_title).
-    fn effective_title(ids: &ExtractedIdentifiers) -> Option<&str> {
-        ids.jstor_metadata
-            .as_ref()
-            .and_then(|m| m.chapter_title.as_deref())
-            .or(ids.info_title.as_deref())
+        let outcome = SaveOutcome::Saved {
+            key: "foo2024".to_string(),
+        };
+        cleanup_copy_on_duplicate(&outcome, &Some(file.clone()));
+
+        assert!(file.exists(), "file should NOT be deleted for Saved outcome");
     }
+
+    #[test]
+    fn test_cleanup_copy_on_duplicate_no_op_for_none() {
+        let outcome = SaveOutcome::DuplicateDoi {
+            doi: "10.1234/test".to_string(),
+            existing_key: "test2024".to_string(),
+        };
+        // Should not panic when copied_to is None
+        cleanup_copy_on_duplicate(&outcome, &None);
+    }
+
+    // ── title fallback (chapter_title > info_title) tests ──────────────
 
     #[test]
     fn test_title_fallback_prefers_chapter_title_over_info_title() {

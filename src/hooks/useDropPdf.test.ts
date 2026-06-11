@@ -21,6 +21,11 @@ describe("isInsideRect", () => {
   it("returns false when point is to the left of the rect", () => {
     expect(isInsideRect(-1, 50, new DOMRect(0, 0, 100, 100))).toBe(false);
   });
+
+  it("returns false for a zero-area rect even when point matches origin", () => {
+    // display:none elements return DOMRect(0,0,0,0) from getBoundingClientRect()
+    expect(isInsideRect(0, 0, new DOMRect(0, 0, 0, 0))).toBe(false);
+  });
 });
 
 describe("filterPdfPaths", () => {

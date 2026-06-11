@@ -8,6 +8,7 @@ export function isInsideRect(
   logicalY: number,
   rect: DOMRect,
 ): boolean {
+  if (rect.width <= 0 || rect.height <= 0) return false;
   return (
     logicalX >= rect.left &&
     logicalX <= rect.right &&
