@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::State;
 
 use crate::bib::cache::BibCache;
 use crate::bib::semantic_scholar::{
@@ -202,7 +202,7 @@ pub async fn enrich_bib_entry(
     }
 
     // Refresh shadows in the graph index
-    crate::commands::recognize::refresh_graph_shadows(&graph_state, &root, &app_handle);
+    crate::commands::graph::refresh_graph_shadows(&graph_state, &root, &app_handle);
 
     // Re-read the entry to get the enriched version
     let updated_index = build_bib_index(&root, &cache);

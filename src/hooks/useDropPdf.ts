@@ -69,6 +69,7 @@ export function useDropPdf(opts: {
           setIsDropHighlighted(false);
         } else if (payload.type === "drop") {
           setIsDropHighlighted(false);
+          if (!checkHit(payload.position)) return;
           const pdfPaths = filterPdfPaths(payload.paths);
           if (pdfPaths.length === 0) {
             showToastRef.current("Only PDF files can be imported", "error");

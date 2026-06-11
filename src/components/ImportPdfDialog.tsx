@@ -5,12 +5,16 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import {
   recognizePdf,
   importRecognizedEntry,
-  listBibFiles,
+  isSaved,
+  isDuplicateDoi,
+  isSavedNoDoi,
   type BibEntry,
   type SaveOutcome,
   type RecognizeResult,
   type ConfirmReason,
 } from "../lib/ipc";
+import { useBibFilePicker } from "../hooks/useBibFilePicker";
+import { BibFilePicker } from "./BibFilePicker";
 import { SpinnerSvg } from "./SpinnerSvg";
 
 type DialogPhase = "idle" | "progress" | "confirm" | "error";
@@ -21,18 +25,6 @@ interface ImportPdfDialogProps {
   onImported: () => void;
   /** If provided, skip idle state and go straight to recognition with this path. */
   initialPdfPath?: string | null;
-}
-
-function isSaved(o: SaveOutcome): o is { Saved: { key: string } } {
-  return "Saved" in o;
-}
-function isDuplicateDoi(
-  o: SaveOutcome,
-): o is { DuplicateDoi: { doi: string; existing_key: string } } {
-  return "DuplicateDoi" in o;
-}
-function isSavedNoDoi(o: SaveOutcome): o is { SavedNoDoi: { key: string } } {
-  return "SavedNoDoi" in o;
 }
 
 function reasonBannerText(reason: ConfirmReason, message: string | null): string {
@@ -52,9 +44,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
   const show = useStatusMessageStore((s) => s.show);
 
   const [phase, setPhase] = useState<DialogPhase>("idle");
-  const [bibFiles, setBibFiles] = useState<string[]>([]);
-  const [selectedBibFile, setSelectedBibFile] = useState("");
-  const [newBibPath, setNewBibPath] = useState("refs.bib");
+  const bib = useBibFilePicker(workspacePath, open);
   const [error, setError] = useState<string | null>(null);
 
   // For confirm form
@@ -81,9 +71,6 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
   useEffect(() => {
     if (open) {
       setPhase("idle");
-      setBibFiles([]);
-      setSelectedBibFile("");
-      setNewBibPath("refs.bib");
       setError(null);
       setConfirmData(null);
       setEditFields({
@@ -101,25 +88,8 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
       if (initialPdfPath) {
         setPdfPath(initialPdfPath);
       }
-
-      // Load bib files
-      if (workspacePath) {
-        listBibFiles(workspacePath)
-          .then((files) => {
-            setBibFiles(files);
-            if (files.length > 0) {
-              setSelectedBibFile(files[0]!);
-            } else {
-              setSelectedBibFile("__new__");
-            }
-          })
-          .catch(() => {
-            setBibFiles([]);
-            setSelectedBibFile("__new__");
-          });
-      }
     }
-  }, [open, workspacePath, initialPdfPath]);
+  }, [open, initialPdfPath]);
 
   // Escape key
   const handleKeyDown = useCallback(
@@ -135,31 +105,29 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
 
-  // Compute effective bib path
-  const effectiveBibPath =
-    selectedBibFile === "__new__"
-      ? newBibPath
-        ? `${workspacePath}/${newBibPath}`
-        : ""
-      : selectedBibFile;
+  const effectiveBibPath = bib.effectiveBibPath;
+
+  // Shared SaveOutcome dispatch
+  function handleSaveOutcome(outcome: SaveOutcome) {
+    if (isDuplicateDoi(outcome)) {
+      show(
+        `DOI already exists as @${outcome.DuplicateDoi.existing_key}`,
+        "error",
+      );
+      onClose();
+    } else if (isSaved(outcome)) {
+      show(`Imported as @${outcome.Saved.key}`);
+      onImported();
+    } else if (isSavedNoDoi(outcome)) {
+      show(`Imported as @${outcome.SavedNoDoi.key} (no DOI)`);
+      onImported();
+    }
+  }
 
   // Handle the result of recognizePdf
   function handleRecognizeResult(result: RecognizeResult) {
     if (result.kind === "resolved") {
-      const outcome = result.outcome;
-      if (isDuplicateDoi(outcome)) {
-        show(
-          `DOI already exists as @${outcome.DuplicateDoi.existing_key}`,
-          "error",
-        );
-        // Do NOT call onImported for duplicates
-      } else if (isSaved(outcome)) {
-        show(`Imported as @${outcome.Saved.key}`);
-        onImported();
-      } else if (isSavedNoDoi(outcome)) {
-        show(`Imported as @${outcome.SavedNoDoi.key} (no DOI)`);
-        onImported();
-      }
+      handleSaveOutcome(result.outcome);
     } else if (result.kind === "needs_confirmation") {
       setPhase("confirm");
       setConfirmData(result);
@@ -238,9 +206,9 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
     setError(null);
     try {
       const entry: BibEntry = {
-        key: confirmData.prefilled.key,
+        ...confirmData.prefilled,
         authors: editFields.authors
-          .split(/[;,]/)
+          .split(";")
           .map((a) => a.trim())
           .filter((a) => a.length > 0),
         title: editFields.title,
@@ -253,17 +221,8 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
       };
       const outcomes = await importRecognizedEntry(entry, effectiveBibPath, workspacePath);
       const first = outcomes[0];
-      if (first && isDuplicateDoi(first)) {
-        show(
-          `DOI already exists as @${first.DuplicateDoi.existing_key}`,
-          "error",
-        );
-      } else if (first && isSaved(first)) {
-        show(`Imported as @${first.Saved.key}`);
-        onImported();
-      } else if (first && isSavedNoDoi(first)) {
-        show(`Imported as @${first.SavedNoDoi.key} (no DOI)`);
-        onImported();
+      if (first) {
+        handleSaveOutcome(first);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -444,45 +403,14 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
 
           {/* Bib file picker (shown in idle and confirm phases) */}
           {(phase === "idle" || phase === "confirm") && (
-            <div>
-              <label className="mb-1 block text-sm text-text-muted">Target .bib file</label>
-              {bibFiles.length > 0 ? (
-                <select
-                  data-testid="import-pdf-bib-select"
-                  className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal"
-                  value={selectedBibFile}
-                  onChange={(e) => setSelectedBibFile(e.target.value)}
-                >
-                  <option value="">Select a file...</option>
-                  {bibFiles.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                  <option value="__new__">New file...</option>
-                </select>
-              ) : (
-                <select
-                  data-testid="import-pdf-bib-select"
-                  className="hidden"
-                  value="__new__"
-                  onChange={() => {}}
-                />
-              )}
-
-              {selectedBibFile === "__new__" && (
-                <div className="mt-2">
-                  <input
-                    data-testid="import-pdf-bib-new-input"
-                    type="text"
-                    className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal"
-                    value={newBibPath}
-                    onChange={(e) => setNewBibPath(e.target.value)}
-                    placeholder="e.g. refs.bib"
-                  />
-                </div>
-              )}
-            </div>
+            <BibFilePicker
+              bibFiles={bib.bibFiles}
+              selectedBibFile={bib.selectedBibFile}
+              onSelectedBibFileChange={bib.setSelectedBibFile}
+              newBibPath={bib.newBibPath}
+              onNewBibPathChange={bib.setNewBibPath}
+              testIdPrefix="import-pdf"
+            />
           )}
         </div>
 

@@ -367,7 +367,12 @@ export function ReferenceLibrary() {
     virtualizer.measure();
   }, [virtualizer, expandedIndex]);
 
-  // Consume dropped PDF path and open the import dialog
+  // Why the local copy? The hook's droppedPdfPath is cleared immediately after
+  // being consumed so that dropping the *same* file path a second time still
+  // triggers a null->path transition (and thus re-fires this effect). Passing
+  // droppedPdfPath directly to ImportPdfDialog without clearing it would make a
+  // second drop of the same path a no-op, because React skips effects when the
+  // dependency value hasn't changed.
   useEffect(() => {
     if (dropPdf.droppedPdfPath) {
       setDropPdfPath(dropPdf.droppedPdfPath);

@@ -7,10 +7,13 @@ import {
   saveBibEntry,
   parseCslJson,
   saveBibEntries,
-  listBibFiles,
+  isSaved,
+  isDuplicateDoi,
+  isSavedNoDoi,
   type BibEntry,
-  type SaveOutcome,
 } from "../lib/ipc";
+import { useBibFilePicker } from "../hooks/useBibFilePicker";
+import { BibFilePicker } from "./BibFilePicker";
 
 type Mode = "doi" | "import";
 
@@ -18,18 +21,6 @@ interface AddReferenceDialogProps {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
-}
-
-function isSaved(o: SaveOutcome): o is { Saved: { key: string } } {
-  return "Saved" in o;
-}
-function isDuplicateDoi(
-  o: SaveOutcome,
-): o is { DuplicateDoi: { doi: string; existing_key: string } } {
-  return "DuplicateDoi" in o;
-}
-function isSavedNoDoi(o: SaveOutcome): o is { SavedNoDoi: { key: string } } {
-  return "SavedNoDoi" in o;
 }
 
 export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialogProps) {
@@ -50,9 +41,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
   const [importError, setImportError] = useState<string | null>(null);
 
   // Shared state
-  const [bibFiles, setBibFiles] = useState<string[]>([]);
-  const [selectedBibFile, setSelectedBibFile] = useState("");
-  const [newBibPath, setNewBibPath] = useState("refs.bib");
+  const bib = useBibFilePicker(workspacePath, open);
   const [saving, setSaving] = useState(false);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -69,26 +58,9 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
       setImportEntries([]);
       setImportFile(null);
       setImportError(null);
-      setSelectedBibFile("");
-      setNewBibPath("refs.bib");
       setSaving(false);
-
-      // Load bib files
-      if (workspacePath) {
-        listBibFiles(workspacePath).then((files) => {
-          setBibFiles(files);
-          if (files.length > 0) {
-            setSelectedBibFile(files[0]!);
-          } else {
-            setSelectedBibFile("__new__");
-          }
-        }).catch(() => {
-          setBibFiles([]);
-          setSelectedBibFile("__new__");
-        });
-      }
     }
-  }, [open, workspacePath]);
+  }, [open]);
 
   // Escape key
   const handleKeyDown = useCallback(
@@ -104,13 +76,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
 
-  // Compute effective bib path
-  const effectiveBibPath =
-    selectedBibFile === "__new__"
-      ? newBibPath
-        ? `${workspacePath}/${newBibPath}`
-        : ""
-      : selectedBibFile;
+  const effectiveBibPath = bib.effectiveBibPath;
 
   // DOI lookup
   async function handleLookup() {
@@ -348,45 +314,14 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
           )}
 
           {/* Shared bib file picker */}
-          <div>
-            <label className="mb-1 block text-sm text-text-muted">Target .bib file</label>
-            {bibFiles.length > 0 ? (
-              <select
-                data-testid="add-reference-bib-select"
-                className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal"
-                value={selectedBibFile}
-                onChange={(e) => setSelectedBibFile(e.target.value)}
-              >
-                <option value="">Select a file...</option>
-                {bibFiles.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-                <option value="__new__">New file...</option>
-              </select>
-            ) : (
-              <select
-                data-testid="add-reference-bib-select"
-                className="hidden"
-                value="__new__"
-                onChange={() => {}}
-              />
-            )}
-
-            {selectedBibFile === "__new__" && (
-              <div className="mt-2">
-                <input
-                  data-testid="add-reference-bib-new-input"
-                  type="text"
-                  className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal"
-                  value={newBibPath}
-                  onChange={(e) => setNewBibPath(e.target.value)}
-                  placeholder="e.g. refs.bib"
-                />
-              </div>
-            )}
-          </div>
+          <BibFilePicker
+            bibFiles={bib.bibFiles}
+            selectedBibFile={bib.selectedBibFile}
+            onSelectedBibFileChange={bib.setSelectedBibFile}
+            newBibPath={bib.newBibPath}
+            onNewBibPathChange={bib.setNewBibPath}
+            testIdPrefix="add-reference"
+          />
         </div>
 
         {/* Footer */}

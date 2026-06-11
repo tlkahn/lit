@@ -47,6 +47,9 @@ import {
   enrichBibEntry,
   type EnrichResult,
   type SaveOutcome,
+  isSaved,
+  isDuplicateDoi,
+  isSavedNoDoi,
   recognizePdf,
   importRecognizedEntry,
   type RecognizeResult,
@@ -2234,6 +2237,27 @@ describe("ipc", () => {
       expect(result.file).toBe("assets/pdf/scanned.pdf");
       expect(result.message).toBeNull();
     }
+  });
+
+  // SaveOutcome type guards
+  it("isSaved returns true for Saved variant", () => {
+    const o: SaveOutcome = { Saved: { key: "k" } };
+    expect(isSaved(o)).toBe(true);
+  });
+
+  it("isSaved returns false for DuplicateDoi variant", () => {
+    const o: SaveOutcome = { DuplicateDoi: { doi: "10.1/x", existing_key: "k" } };
+    expect(isSaved(o)).toBe(false);
+  });
+
+  it("isDuplicateDoi returns true for DuplicateDoi variant", () => {
+    const o: SaveOutcome = { DuplicateDoi: { doi: "10.1/x", existing_key: "k" } };
+    expect(isDuplicateDoi(o)).toBe(true);
+  });
+
+  it("isSavedNoDoi returns true for SavedNoDoi variant", () => {
+    const o: SaveOutcome = { SavedNoDoi: { key: "k" } };
+    expect(isSavedNoDoi(o)).toBe(true);
   });
 
   it("importRecognizedEntry calls import_recognized_entry with correct args", async () => {

@@ -1621,6 +1621,13 @@ describe("ReferenceLibrary", () => {
   });
 
   describe("Drag-drop", () => {
+    /** Mock the panel's bounding rect so checkHit succeeds for drops at (50,50). */
+    function mockPanelHitArea() {
+      const panel = screen.getByTestId("reference-library-panel");
+      vi.spyOn(panel, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 1000));
+      Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
+    }
+
     it("subscribes to onDragDropEvent on mount when workspace is set", async () => {
       const { mockOnDragDropFn } = mockOnDragDropEvent();
       mockInvoke((cmd, args) => {
@@ -1686,6 +1693,7 @@ describe("ReferenceLibrary", () => {
 
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      mockPanelHitArea();
 
       act(() => {
         emitDragDropEvent({
@@ -1719,6 +1727,7 @@ describe("ReferenceLibrary", () => {
 
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      mockPanelHitArea();
 
       act(() => {
         emitDragDropEvent({
@@ -1764,6 +1773,7 @@ describe("ReferenceLibrary", () => {
 
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      mockPanelHitArea();
 
       act(() => {
         emitDragDropEvent({
@@ -1810,6 +1820,7 @@ describe("ReferenceLibrary", () => {
 
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      mockPanelHitArea();
 
       act(() => {
         emitDragDropEvent({
@@ -1841,6 +1852,46 @@ describe("ReferenceLibrary", () => {
       });
     });
 
+    it("drop outside panel bounding rect does not open ImportPdfDialog", async () => {
+      mockOnDragDropEvent();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Mock the panel rect to occupy x:100-300, y:100-400
+      const panel = screen.getByTestId("reference-library-panel");
+      vi.spyOn(panel, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 100, 200, 300));
+      Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
+
+      // Drop at (50,50) -- outside the panel rect
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/path/to/paper.pdf"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      // Wait a tick to ensure any state updates would have happened
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Dialog must NOT open
+      expect(screen.queryByTestId("import-pdf-dialog")).not.toBeInTheDocument();
+      // No recognize_pdf command should have been invoked
+      expect(invokedCommands.find((c) => c.cmd === "recognize_pdf")).toBeUndefined();
+      // No error toast for off-panel drops
+      expect(useStatusMessageStore.getState().message).not.toBe(
+        "Only PDF files can be imported",
+      );
+    });
+
     it("does not subscribe when workspacePath is null", async () => {
       const { mockOnDragDropFn } = mockOnDragDropEvent();
       useWorkspaceStore.setState({ workspacePath: null });
@@ -1858,6 +1909,78 @@ describe("ReferenceLibrary", () => {
       );
 
       expect(mockOnDragDropFn).not.toHaveBeenCalled();
+    });
+
+    it("re-dropping the same PDF file reopens the import dialog", async () => {
+      mockOnDragDropEvent();
+      const resolvedResult = {
+        kind: "resolved" as const,
+        outcome: { Saved: { key: "same2024" } },
+        source: "DoiContentNegotiation" as const,
+        validation: "validated" as const,
+        file: "papers/same2024.pdf",
+        entry: {
+          key: "same2024",
+          authors: ["Same, S."],
+          title: "Same PDF",
+          year: "2024",
+          entry_type: "article",
+          line_number: 0,
+        },
+      };
+
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+        if (cmd === "recognize_pdf") return resolvedResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      mockPanelHitArea();
+
+      // First drop
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/same/paper.pdf"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      // Dialog opens
+      await waitFor(() => {
+        expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+      });
+
+      // recognize_pdf resolves with Saved => onImported fires => dialog closes
+      await waitFor(() => {
+        expect(screen.queryByTestId("import-pdf-dialog")).not.toBeInTheDocument();
+      });
+
+      // Second drop of the SAME path
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/same/paper.pdf"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      // Dialog must reopen
+      await waitFor(() => {
+        expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+      });
+
+      // recognize_pdf was called twice, both times with the same path
+      const recognizeCalls = invokedCommands.filter((c) => c.cmd === "recognize_pdf");
+      expect(recognizeCalls).toHaveLength(2);
+      expect((recognizeCalls[0]!.args as Record<string, unknown>).pdfPath).toBe("/same/paper.pdf");
+      expect((recognizeCalls[1]!.args as Record<string, unknown>).pdfPath).toBe("/same/paper.pdf");
     });
   });
 });

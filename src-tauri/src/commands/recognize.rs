@@ -1,8 +1,6 @@
-use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 use crate::bib::types::BibEntry;
 use crate::bib::writer::SaveOutcome;
@@ -57,31 +55,6 @@ fn choose_no_result_reason(ids: &ExtractedIdentifiers, title: Option<&str>) -> C
         ConfirmReason::NoMatch
     } else {
         ConfirmReason::NoIdentifier
-    }
-}
-
-/// Refresh shadow nodes in the graph index and emit `lit:graph-updated` if changed.
-/// Factored from enrich.rs:204-216 for reuse by recognize + enrich.
-pub(crate) fn refresh_graph_shadows(
-    graph_state: &Arc<GraphRegistry>,
-    workspace_root: &Path,
-    app_handle: &tauri::AppHandle,
-) {
-    let graph_changed = {
-        let gi = graph_state
-            .indices
-            .lock()
-            .unwrap()
-            .get(workspace_root)
-            .cloned();
-        if let Some(gi) = gi {
-            gi.refresh_shadows().unwrap_or(false)
-        } else {
-            false
-        }
-    };
-    if graph_changed {
-        let _ = app_handle.emit("lit:graph-updated", ());
     }
 }
 
@@ -156,7 +129,9 @@ pub async fn recognize_pdf(
     let pdf = PathBuf::from(&pdf_path);
 
     // 1. Copy/reference PDF in workspace (up front, every branch carries valid file)
-    let file = ensure_pdf_in_workspace(&pdf, &workspace_root)?;
+    let attach = ensure_pdf_in_workspace(&pdf, &workspace_root)?;
+    let file = attach.relative_path;
+    let copied_to = attach.copied_to;
 
     // 2. Extract text via transient PdfRenderThread in spawn_blocking
     let lib_path = pdf_state.lib_path().to_string();
@@ -183,7 +158,12 @@ pub async fn recognize_pdf(
 
     // 4. Extract identifiers
     let ids = extract_identifiers(&data);
-    let title = ids.info_title.as_deref();
+    // chapter_title takes precedence over info_title, mirroring build_prefilled_entry
+    let title: Option<&str> = ids
+        .jstor_metadata
+        .as_ref()
+        .and_then(|m| m.chapter_title.as_deref())
+        .or(ids.info_title.as_deref());
 
     // 5. Resolve
     match resolve_to_bib_entry_default(&ids, title, false).await {
@@ -197,13 +177,22 @@ pub async fn recognize_pdf(
                 append_entries_to_file(&[entry.clone()], &bib, &workspace_root, &cache)?;
 
             // Refresh graph shadows
-            refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
+            crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
 
             // Return the first outcome (we only appended one entry)
             let outcome = outcomes
                 .into_iter()
                 .next()
                 .ok_or_else(|| "append_entries_to_file returned empty outcomes".to_string())?;
+
+            // Clean up the copied file if this was a duplicate — avoids
+            // accumulating orphaned paper-1.pdf, paper-2.pdf, ... on
+            // repeated imports of the same paper.
+            if matches!(&outcome, SaveOutcome::DuplicateDoi { .. }) {
+                if let Some(ref p) = copied_to {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
 
             // Update entry key from outcome
             let final_key = match &outcome {
@@ -260,7 +249,7 @@ pub async fn import_recognized_entry(
     let bib = PathBuf::from(&bib_path);
 
     let outcomes = append_entries_to_file(&[entry], &bib, &workspace_root, &cache)?;
-    refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
+    crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
     Ok(outcomes)
 }
 
@@ -515,13 +504,6 @@ mod tests {
         assert_eq!(entry.year, "");
     }
 
-    // ── refresh_graph_shadows test ────────────────────────────────────
-
-    // Note: test_refresh_graph_shadows_no_panic_on_empty_registry requires
-    // a tauri::AppHandle, which is not easily constructible in unit tests.
-    // This test is omitted in favor of the enrich.rs test that already covers
-    // the graph-refresh pattern. The function is structurally identical.
-
     // ── wiremock integration test: resolve + write file field ─────────
 
     #[tokio::test]
@@ -591,6 +573,153 @@ mod tests {
         assert_eq!(entries[0].file, Some("assets/pdf/test.pdf".to_string()));
         assert_eq!(entries[0].doi, Some("10.1038/nature12373".to_string()));
         assert_eq!(entries[0].title, "Probing condensed matter physics");
+    }
+
+    // ── duplicate DOI cleanup test ─────────────────────────────────────
+
+    #[test]
+    fn test_duplicate_doi_cleans_up_orphaned_pdf_copy() {
+        use crate::bib::cache::BibCache;
+        use crate::bib::writer::{append_entries_to_file, SaveOutcome};
+        use crate::recognize::attach::ensure_pdf_in_workspace;
+
+        // 1. Set up workspace with a bib file containing an entry with a known DOI
+        let workspace = tempfile::tempdir().unwrap();
+        let bib_path = workspace.path().join("refs.bib");
+        let existing_bib = "@article{kucsko2013,\n  author = {Kucsko, Georg},\n  title = {Probing condensed matter physics},\n  year = {2013},\n  doi = {10.1038/nature12373}\n}\n";
+        std::fs::write(&bib_path, existing_bib).unwrap();
+
+        // 2. Create an external PDF file in a separate tempdir
+        let external = tempfile::tempdir().unwrap();
+        let external_pdf = external.path().join("paper.pdf");
+        std::fs::write(&external_pdf, b"dummy pdf data").unwrap();
+
+        // 3. Copy the external PDF into the workspace
+        let attach = ensure_pdf_in_workspace(&external_pdf, workspace.path()).unwrap();
+        assert!(attach.copied_to.is_some(), "external PDF should have been copied");
+        let copied_path = attach.copied_to.clone().unwrap();
+        assert!(copied_path.exists(), "copied file should exist before cleanup");
+
+        // 4. Try to append an entry with the same DOI -- should get DuplicateDoi
+        let cache = BibCache::new();
+        let entry = BibEntry {
+            key: String::new(),
+            authors: vec!["Kucsko, Georg".to_string()],
+            title: "Probing condensed matter physics".to_string(),
+            year: "2013".to_string(),
+            entry_type: "article".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: Some("10.1038/nature12373".to_string()),
+            journal: None,
+            url: None,
+            file: Some(attach.relative_path.clone()),
+            volume: None,
+            number: None,
+            pages: None,
+            publisher: None,
+            issn: None,
+            tags: vec![],
+        };
+        let outcomes =
+            append_entries_to_file(&[entry], &bib_path, workspace.path(), &cache).unwrap();
+        let outcome = &outcomes[0];
+        assert!(
+            matches!(outcome, SaveOutcome::DuplicateDoi { .. }),
+            "should detect duplicate DOI"
+        );
+
+        // 5. Perform cleanup exactly as recognize_pdf should: delete the orphaned copy
+        if matches!(outcome, SaveOutcome::DuplicateDoi { .. }) {
+            if let Some(ref p) = attach.copied_to {
+                std::fs::remove_file(p).expect("cleanup should succeed");
+            }
+        }
+
+        // 6. Assert the copied file no longer exists
+        assert!(
+            !copied_path.exists(),
+            "orphaned PDF copy should be deleted after DuplicateDoi cleanup"
+        );
+    }
+
+    // ── title fallback (chapter_title > info_title) tests ──────────────
+
+    /// Helper: compute the effective title using the same fallback chain
+    /// that recognize_pdf should use (chapter_title > info_title).
+    fn effective_title(ids: &ExtractedIdentifiers) -> Option<&str> {
+        ids.jstor_metadata
+            .as_ref()
+            .and_then(|m| m.chapter_title.as_deref())
+            .or(ids.info_title.as_deref())
+    }
+
+    #[test]
+    fn test_title_fallback_prefers_chapter_title_over_info_title() {
+        // JSTOR chapter PDF with chapter_title but no info_title.
+        // The effective title should be the chapter_title, so
+        // choose_no_result_reason should return NoMatch, not NoIdentifier.
+        let ids = ExtractedIdentifiers {
+            jstor_metadata: Some(JstorMetadata {
+                chapter_title: Some("The Chapter Title".to_string()),
+                authors: vec!["Author, First".to_string()],
+                ..Default::default()
+            }),
+            // info_title is None
+            ..Default::default()
+        };
+
+        let title = effective_title(&ids);
+        assert_eq!(title, Some("The Chapter Title"));
+        assert_eq!(
+            choose_no_result_reason(&ids, title),
+            ConfirmReason::NoMatch,
+            "chapter_title should make this NoMatch, not NoIdentifier"
+        );
+    }
+
+    #[test]
+    fn test_title_fallback_chapter_title_none_uses_info_title() {
+        let ids = ExtractedIdentifiers {
+            info_title: Some("Info Dict Title".to_string()),
+            // no jstor_metadata
+            ..Default::default()
+        };
+
+        let title = effective_title(&ids);
+        assert_eq!(title, Some("Info Dict Title"));
+        assert_eq!(
+            choose_no_result_reason(&ids, title),
+            ConfirmReason::NoMatch,
+        );
+    }
+
+    #[test]
+    fn test_title_fallback_both_present_prefers_chapter_title() {
+        let ids = ExtractedIdentifiers {
+            info_title: Some("Info Dict Title".to_string()),
+            jstor_metadata: Some(JstorMetadata {
+                chapter_title: Some("Chapter Title Override".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let title = effective_title(&ids);
+        assert_eq!(title, Some("Chapter Title Override"));
+    }
+
+    #[test]
+    fn test_title_fallback_neither_present_is_none() {
+        let ids = ExtractedIdentifiers::default();
+
+        let title = effective_title(&ids);
+        assert!(title.is_none());
+        assert_eq!(
+            choose_no_result_reason(&ids, title),
+            ConfirmReason::NoIdentifier,
+        );
     }
 
     // ── pdfium integration tests (ignored by default) ─────────────────

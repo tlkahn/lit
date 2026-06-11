@@ -401,6 +401,19 @@ export type SaveOutcome =
   | { DuplicateDoi: { doi: string; existing_key: string } }
   | { SavedNoDoi: { key: string } };
 
+// SaveOutcome type guards
+export function isSaved(o: SaveOutcome): o is { Saved: { key: string } } {
+  return "Saved" in o;
+}
+export function isDuplicateDoi(
+  o: SaveOutcome,
+): o is { DuplicateDoi: { doi: string; existing_key: string } } {
+  return "DuplicateDoi" in o;
+}
+export function isSavedNoDoi(o: SaveOutcome): o is { SavedNoDoi: { key: string } } {
+  return "SavedNoDoi" in o;
+}
+
 export async function resolveAllDecorations(
   content: string,
   frontmatter?: Record<string, unknown>,

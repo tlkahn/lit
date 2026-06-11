@@ -332,8 +332,9 @@ describe("ImportPdfDialog", () => {
     (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/path/to/paper.pdf");
 
     const onImported = vi.fn();
+    const onClose = vi.fn();
     const { container } = render(
-      <ImportPdfDialog open={true} onClose={vi.fn()} onImported={onImported} />,
+      <ImportPdfDialog open={true} onClose={onClose} onImported={onImported} />,
     );
 
     await waitFor(() => {
@@ -350,6 +351,8 @@ describe("ImportPdfDialog", () => {
       expect(state.variant).toBe("error");
     });
     expect(onImported).not.toHaveBeenCalled();
+    // Dialog must NOT remain stuck on progress phase -- onClose must be called
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("user cancels file dialog (null path) stays in idle", async () => {
@@ -627,6 +630,108 @@ describe("ImportPdfDialog", () => {
     expect((call!.args as { entry: { file: string } }).entry.file).toBe("papers/manual2024.pdf");
   });
 
+  it("confirm form save preserves prefilled issn not in form fields", async () => {
+    const prefilledWithIssn: BibEntry = {
+      ...samplePrefilled,
+      issn: "1234-5678",
+    };
+    const confirmResultWithIssn: RecognizeResult = {
+      kind: "needs_confirmation",
+      reason: "no_text_layer",
+      prefilled: prefilledWithIssn,
+      file: "papers/manual2024.pdf",
+      message: null,
+    };
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args: args ?? {} });
+      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+      if (cmd === "recognize_pdf") return confirmResultWithIssn;
+      if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/path/to/paper.pdf");
+
+    const { container } = render(
+      <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='import-pdf-field-title']")).toBeTruthy();
+    });
+
+    // Click save without editing anything
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='import-pdf-confirm-save-btn']")!);
+    });
+
+    const call = invokedCommands.find((c) => c.cmd === "import_recognized_entry");
+    expect(call).toBeTruthy();
+    const savedEntry = (call!.args as { entry: BibEntry }).entry;
+    // The ISSN from prefilled must survive into the saved entry
+    expect(savedEntry.issn).toBe("1234-5678");
+    // Form-edited fields must also be present
+    expect(savedEntry.title).toBe("A Manually Confirmed Paper");
+    expect(savedEntry.doi).toBe("10.1000/manual");
+    expect(savedEntry.file).toBe("papers/manual2024.pdf");
+  });
+
+  it("confirm form save splits authors on semicolons only, preserving Last, First format", async () => {
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args: args ?? {} });
+      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+      if (cmd === "recognize_pdf") return needsConfirmResult;
+      if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/path/to/paper.pdf");
+
+    const { container } = render(
+      <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='import-pdf-field-title']")).toBeTruthy();
+    });
+
+    // The prefilled authors field should show "Smith, John; Doe, Jane"
+    const authorsInput = container.querySelector(
+      "[data-testid='import-pdf-field-authors']",
+    ) as HTMLInputElement;
+    expect(authorsInput.value).toBe("Smith, John; Doe, Jane");
+
+    // Click save WITHOUT editing the authors field -- the prefilled value round-trips
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='import-pdf-confirm-save-btn']")!);
+    });
+
+    const call = invokedCommands.find((c) => c.cmd === "import_recognized_entry");
+    expect(call).toBeTruthy();
+    const savedEntry = (call!.args as { entry: BibEntry }).entry;
+    // Must produce exactly 2 authors, not 4 corrupt fragments
+    expect(savedEntry.authors).toEqual(["Smith, John", "Doe, Jane"]);
+  });
+
   it("confirm form save success shows toast with key from SaveOutcome", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
@@ -705,6 +810,50 @@ describe("ImportPdfDialog", () => {
       expect(errorBanner).toBeTruthy();
       expect(errorBanner!.textContent).toContain("Write failed");
     });
+  });
+
+  it("confirm form save with DuplicateDoi closes dialog after toast", async () => {
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args: args ?? {} });
+      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+      if (cmd === "recognize_pdf") return needsConfirmResult;
+      if (cmd === "import_recognized_entry")
+        return [{ DuplicateDoi: { doi: "10.1/x", existing_key: "old2019" } }];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/path/to/paper.pdf");
+
+    const onImported = vi.fn();
+    const onClose = vi.fn();
+    const { container } = render(
+      <ImportPdfDialog open={true} onClose={onClose} onImported={onImported} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='import-pdf-field-title']")).toBeTruthy();
+    });
+
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='import-pdf-confirm-save-btn']")!);
+    });
+
+    await waitFor(() => {
+      const state = useStatusMessageStore.getState();
+      expect(state.message).toContain("old2019");
+      expect(state.variant).toBe("error");
+    });
+    expect(onImported).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
   });
 
   // Group 5: Error phase
