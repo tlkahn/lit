@@ -202,18 +202,7 @@ pub async fn enrich_bib_entry(
     }
 
     // Refresh shadows in the graph index
-    let graph_changed = {
-        let gi = graph_state.indices.lock().unwrap().get(&root).cloned();
-        if let Some(gi) = gi {
-            gi.refresh_shadows().unwrap_or(false)
-        } else {
-            false
-        }
-    };
-
-    if graph_changed {
-        let _ = app_handle.emit("lit:graph-updated", ());
-    }
+    crate::commands::recognize::refresh_graph_shadows(&graph_state, &root, &app_handle);
 
     // Re-read the entry to get the enriched version
     let updated_index = build_bib_index(&root, &cache);
@@ -252,6 +241,7 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            file: None,
             volume: None,
             number: None,
             pages: None,

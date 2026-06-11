@@ -5609,6 +5609,7 @@ mod tests {
                 doi: None,
                 journal: None,
                 url: None,
+                file: None,
                 volume: None,
                 number: None,
                 pages: None,

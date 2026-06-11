@@ -71,6 +71,7 @@ export function mockWindowListen() {
   });
   mockedGetCurrentWebviewWindow.mockReturnValue({
     listen: mockListenFn,
+    onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
   });
 }
 
@@ -81,9 +82,34 @@ export function emitWindowEvent(event: string, payload: unknown) {
   }
 }
 
-export function resetWindowListenMock() {
-  windowListenCallbacks.clear();
+type DragDropHandler = (event: { payload: unknown }) => void;
+
+let dragDropHandler: DragDropHandler | null = null;
+
+export function mockOnDragDropEvent() {
+  const mockUnlisten = vi.fn();
+  const mockOnDragDropFn = vi.fn((handler: DragDropHandler) => {
+    dragDropHandler = handler;
+    return Promise.resolve(mockUnlisten);
+  });
   mockedGetCurrentWebviewWindow.mockReturnValue({
     listen: vi.fn(() => Promise.resolve(vi.fn())),
+    onDragDropEvent: mockOnDragDropFn,
+  });
+  return { mockOnDragDropFn, mockUnlisten };
+}
+
+export function emitDragDropEvent(payload: unknown) {
+  if (dragDropHandler) {
+    dragDropHandler({ payload });
+  }
+}
+
+export function resetWindowListenMock() {
+  windowListenCallbacks.clear();
+  dragDropHandler = null;
+  mockedGetCurrentWebviewWindow.mockReturnValue({
+    listen: vi.fn(() => Promise.resolve(vi.fn())),
+    onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
   });
 }

@@ -22,3 +22,4 @@ pub mod merge_split;
 pub mod workspace;
 pub mod academic_export;
 pub mod enrich;
+pub mod recognize;

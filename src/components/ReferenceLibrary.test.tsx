@@ -6,6 +6,8 @@ import {
   mockListen,
   resetListenMock,
   emitMockEvent,
+  mockOnDragDropEvent,
+  emitDragDropEvent,
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -1216,6 +1218,99 @@ describe("ReferenceLibrary", () => {
     expect(screen.getByTestId("badge-enriched")).toBeInTheDocument();
   });
 
+  describe("Import PDF button", () => {
+    it("renders 'Import PDF...' button in header when entries exist", async () => {
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      const importBtn = screen.getByTestId("reference-library-import-pdf-btn");
+      expect(importBtn).toBeInTheDocument();
+    });
+
+    it("renders 'Import PDF...' button in empty state", async () => {
+      fixture = [];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+      );
+      const importBtn = screen.getByTestId("reference-library-import-pdf-btn");
+      expect(importBtn).toBeInTheDocument();
+    });
+
+    it("clicking 'Import PDF...' opens the ImportPdfDialog", async () => {
+      const user = userEvent.setup();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "list_bib_files") return [];
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByTestId("reference-library-import-pdf-btn"));
+      expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+    });
+
+    it("onImported from ImportPdfDialog triggers re-fetch", async () => {
+      const user = userEvent.setup();
+      const resolvedResult = {
+        kind: "resolved" as const,
+        outcome: { Saved: { key: "newpdf2024" } },
+        source: "DoiContentNegotiation" as const,
+        validation: "validated" as const,
+        file: "papers/newpdf2024.pdf",
+        entry: {
+          key: "newpdf2024",
+          authors: ["New, A."],
+          title: "New PDF Paper",
+          year: "2024",
+          entry_type: "article",
+          line_number: 0,
+        },
+      };
+
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "recognize_pdf") return resolvedResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Open dialog
+      await user.click(screen.getByTestId("reference-library-import-pdf-btn"));
+      expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+
+      // Mock the file dialog to return a PDF path
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/workspace/paper.pdf");
+
+      // Wait for bib select to load
+      await waitFor(() => {
+        expect(screen.getByTestId("import-pdf-bib-select")).toBeInTheDocument();
+      });
+
+      const beforeCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("import-pdf-choose-btn"));
+      });
+
+      await waitFor(() => {
+        const afterCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+        expect(afterCount).toBeGreaterThan(beforeCount);
+      });
+    });
+  });
+
   describe("Fetch details button", () => {
     const enrichResult = {
       entry: { ...sanderson, abstract_text: "Enriched abstract" },
@@ -1522,6 +1617,247 @@ describe("ReferenceLibrary", () => {
         expect(btn).not.toBeDisabled();
         expect(btn.textContent).toBe("Fetch details");
       });
+    });
+  });
+
+  describe("Drag-drop", () => {
+    it("subscribes to onDragDropEvent on mount when workspace is set", async () => {
+      const { mockOnDragDropFn } = mockOnDragDropEvent();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      expect(mockOnDragDropFn).toHaveBeenCalled();
+    });
+
+    it("unsubscribes from onDragDropEvent on unmount", async () => {
+      const { mockUnlisten } = mockOnDragDropEvent();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      const { unmount } = render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      unmount();
+      // Allow async unlisten to resolve
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockUnlisten).toHaveBeenCalled();
+    });
+
+    it("dropping a single .pdf opens ImportPdfDialog in progress state", async () => {
+      mockOnDragDropEvent();
+      const resolvedResult = {
+        kind: "resolved" as const,
+        outcome: { Saved: { key: "dropped2024" } },
+        source: "DoiContentNegotiation" as const,
+        validation: "validated" as const,
+        file: "papers/dropped2024.pdf",
+        entry: {
+          key: "dropped2024",
+          authors: ["Drop, D."],
+          title: "Dropped PDF",
+          year: "2024",
+          entry_type: "article",
+          line_number: 0,
+        },
+      };
+
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+        if (cmd === "recognize_pdf") return resolvedResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/path/to/paper.pdf"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+      });
+
+      // Verify recognize_pdf was called with the dropped path
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "recognize_pdf");
+        expect(call).toBeTruthy();
+        expect((call!.args as Record<string, unknown>).pdfPath).toBe("/path/to/paper.pdf");
+      });
+    });
+
+    it("dropping non-PDF files shows toast and does not open dialog", async () => {
+      mockOnDragDropEvent();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/path/to/file.docx"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      await waitFor(() => {
+        expect(useStatusMessageStore.getState().message).toBe(
+          "Only PDF files can be imported",
+        );
+      });
+      expect(screen.queryByTestId("import-pdf-dialog")).not.toBeInTheDocument();
+    });
+
+    it("dropping multiple PDFs imports first and shows multi-import toast", async () => {
+      mockOnDragDropEvent();
+      const toastMessages: string[] = [];
+      const origShow = useStatusMessageStore.getState().show;
+      useStatusMessageStore.setState({
+        show: (message: string, variant?: "success" | "error" | "progress") => {
+          toastMessages.push(message);
+          origShow(message, variant);
+        },
+      });
+
+      let recognizeDeferred: { resolve: (v: unknown) => void } | null = null;
+      const recognizePromise = new Promise((resolve) => {
+        recognizeDeferred = { resolve };
+      });
+
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+        if (cmd === "recognize_pdf") return recognizePromise;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/a.pdf", "/b.pdf"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+      });
+
+      // The multi-import toast should have been shown (even if later overwritten by "Recognizing PDF...")
+      expect(toastMessages.some((m) => m.includes("multi-import is not yet supported"))).toBe(true);
+
+      // Cleanup
+      recognizeDeferred!.resolve({
+        kind: "resolved",
+        outcome: { Saved: { key: "a2024" } },
+        source: "DoiContentNegotiation",
+        validation: "validated",
+        file: "papers/a.pdf",
+        entry: { key: "a2024", authors: [], title: "", year: "", entry_type: "article", line_number: 0 },
+      });
+    });
+
+    it("dropping mix of PDF and non-PDF filters to only PDFs", async () => {
+      mockOnDragDropEvent();
+      let recognizeDeferred: { resolve: (v: unknown) => void } | null = null;
+      const recognizePromise = new Promise((resolve) => {
+        recognizeDeferred = { resolve };
+      });
+
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+        if (cmd === "recognize_pdf") return recognizePromise;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      act(() => {
+        emitDragDropEvent({
+          type: "drop",
+          paths: ["/a.txt", "/b.pdf"],
+          position: { x: 50, y: 50 },
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
+      });
+
+      // Should call recognize_pdf with the PDF path
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "recognize_pdf");
+        expect(call).toBeTruthy();
+        expect((call!.args as Record<string, unknown>).pdfPath).toBe("/b.pdf");
+      });
+
+      // Cleanup
+      recognizeDeferred!.resolve({
+        kind: "resolved",
+        outcome: { Saved: { key: "b2024" } },
+        source: "DoiContentNegotiation",
+        validation: "validated",
+        file: "papers/b.pdf",
+        entry: { key: "b2024", authors: [], title: "", year: "", entry_type: "article", line_number: 0 },
+      });
+    });
+
+    it("does not subscribe when workspacePath is null", async () => {
+      const { mockOnDragDropFn } = mockOnDragDropEvent();
+      useWorkspaceStore.setState({ workspacePath: null });
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return [];
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+      );
+
+      expect(mockOnDragDropFn).not.toHaveBeenCalled();
     });
   });
 });

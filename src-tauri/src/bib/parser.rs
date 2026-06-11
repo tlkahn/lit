@@ -106,6 +106,7 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
                 .or_else(|| fields.get("booktitle"))
                 .cloned(),
             url: fields.get("url").cloned(),
+            file: fields.get("file").cloned(),
             volume: fields.get("volume").cloned(),
             number: fields.get("number").cloned(),
             pages: fields.get("pages").cloned(),
@@ -565,6 +566,20 @@ mod tests {
         let input = "@book{b2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  publisher = {Cambridge University Press}\n}";
         let entries = parse_bibtex(input);
         assert_eq!(entries[0].publisher, Some("Cambridge University Press".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_file_field() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  file = {assets/pdf/paper.pdf}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].file, Some("assets/pdf/paper.pdf".to_string()));
+    }
+
+    #[test]
+    fn missing_file_field_is_none() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].file, None);
     }
 
     #[test]

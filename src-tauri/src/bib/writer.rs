@@ -58,6 +58,11 @@ pub fn serialize_bib_entry(entry: &BibEntry) -> String {
         out.push_str(&format!("  url = {{{}}},\n", sanitize_bib_value(url)));
     }
 
+    // file
+    if let Some(ref file) = entry.file {
+        out.push_str(&format!("  file = {{{}}},\n", sanitize_bib_value(file)));
+    }
+
     // volume
     if let Some(ref volume) = entry.volume {
         out.push_str(&format!("  volume = {{{}}},\n", sanitize_bib_value(volume)));
@@ -505,6 +510,7 @@ mod tests {
             doi: Some("10.1000/xyz".to_string()),
             journal: Some("Nature".to_string()),
             url: Some("https://example.com".to_string()),
+            file: None,
             volume: Some("42".to_string()),
             number: Some("3".to_string()),
             pages: Some("100--115".to_string()),
@@ -528,6 +534,7 @@ mod tests {
             doi: None,
             journal: None,
             url: None,
+            file: None,
             volume: None,
             number: None,
             pages: None,
@@ -1550,6 +1557,48 @@ mod tests {
         let updated = fs::read_to_string(&bib_path).unwrap();
         let parsed = parse_bibtex(&updated);
         assert_eq!(parsed[0].year, "2025");
+    }
+
+    #[test]
+    fn serialize_file_field_round_trips() {
+        let mut entry = minimal_entry();
+        entry.file = Some("assets/pdf/paper.pdf".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].file, Some("assets/pdf/paper.pdf".to_string()));
+    }
+
+    #[test]
+    fn serialize_omits_none_file_field() {
+        let entry = minimal_entry();
+        let bib_str = serialize_bib_entry(&entry);
+        assert!(!bib_str.contains("file"));
+    }
+
+    #[test]
+    fn serialize_file_after_url() {
+        let mut entry = minimal_entry();
+        entry.url = Some("https://example.com".to_string());
+        entry.file = Some("assets/pdf/test.pdf".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let url_pos = bib_str.find("url =").unwrap();
+        let file_pos = bib_str.find("file =").unwrap();
+        assert!(file_pos > url_pos, "file field should come after url field");
+    }
+
+    #[test]
+    fn serialize_full_entry_with_file_round_trips() {
+        let mut entry = full_entry();
+        entry.file = Some("assets/pdf/example.pdf".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].file, Some("assets/pdf/example.pdf".to_string()));
+        // Verify other fields are unaffected
+        assert_eq!(parsed[0].title, entry.title);
+        assert_eq!(parsed[0].doi, entry.doi);
+        assert_eq!(parsed[0].url, entry.url);
     }
 
     #[test]

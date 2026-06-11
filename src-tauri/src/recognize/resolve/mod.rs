@@ -179,7 +179,7 @@ pub(crate) fn check_status(
     Ok(resp)
 }
 
-async fn resolve_to_bib_entry_with_base(
+pub(crate) async fn resolve_to_bib_entry_with_base(
     client: &reqwest::Client,
     identifiers: &ExtractedIdentifiers,
     extracted_title: Option<&str>,
@@ -743,6 +743,7 @@ mod tests {
             doi: Some("10.1234/test".to_string()),
             journal: None,
             url: None,
+            file: None,
             volume: None,
             number: None,
             pages: None,
