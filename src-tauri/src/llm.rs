@@ -1,4 +1,4 @@
-use llm_core::types::{Attachment, Message, Prompt, Role};
+use llm_core::types::{Attachment, AttachmentSource, Message, Prompt, Role};
 use llm_core::Provider;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -66,15 +66,6 @@ pub fn build_prompt_with_attachments(
     }
 }
 
-/// Conservative image MIME type allowlist for unknown models on known
-/// vision-capable provider families (Anthropic, OpenAI wire format).
-const CONSERVATIVE_IMAGE_ALLOWLIST: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
-];
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentCapabilityError {
     pub model: String,
@@ -100,9 +91,9 @@ impl std::error::Error for AttachmentCapabilityError {}
 /// - No attachments -> `Ok(())`
 /// - Known model in `provider.models()` -> check `attachment_types` against
 ///   each attachment's `mime_type`
-/// - Unknown model on a known vision-capable provider ("anthropic" or "openai")
-///   -> allow conservative image allowlist (png/jpeg/webp/gif)
-/// - Unknown provider -> reject all attachments
+/// - Unknown model on a provider that declares default attachment types
+///   -> allow those default types
+/// - Provider with no default attachment types -> reject all attachments
 pub fn check_attachment_capability(
     provider: &dyn Provider,
     model: &str,
@@ -112,16 +103,22 @@ pub fn check_attachment_capability(
         return Ok(());
     }
 
-    // Collect the MIME types from all attachments. Treat None as
-    // "application/octet-stream" (which will be rejected by any allowlist).
+    // Collect the MIME types that need checking. URL-source attachments with
+    // no declared MIME are pass-through (providers fetch and sniff natively).
+    // Path/Bytes sources with no MIME fall back to "application/octet-stream"
+    // which will be rejected by any allowlist.
     let attachment_mimes: Vec<String> = attachments
         .iter()
-        .map(|a| {
-            a.mime_type
-                .clone()
-                .unwrap_or_else(|| "application/octet-stream".to_string())
+        .filter_map(|a| match (&a.mime_type, &a.source) {
+            (Some(mime), _) => Some(mime.clone()),
+            (None, AttachmentSource::Url(_)) => None, // pass-through
+            (None, _) => Some("application/octet-stream".to_string()),
         })
         .collect();
+
+    if attachment_mimes.is_empty() {
+        return Ok(());
+    }
 
     // Try to find the model in the provider's known model list
     let models = provider.models();
@@ -129,7 +126,7 @@ pub fn check_attachment_capability(
         // Known model: check against its declared attachment_types
         let unsupported: Vec<String> = attachment_mimes
             .iter()
-            .filter(|mime| !model_info.attachment_types.contains(mime))
+            .filter(|mime| !model_info.supports_mime(mime))
             .cloned()
             .collect();
         if unsupported.is_empty() {
@@ -141,18 +138,19 @@ pub fn check_attachment_capability(
             })
         }
     } else {
-        // Unknown model: use provider family heuristic
-        let provider_id = provider.id();
-        let is_vision_capable_family = provider_id == "anthropic" || provider_id == "openai";
+        // Unknown model: check provider's default attachment types
+        let defaults = provider.default_attachment_types();
 
-        if is_vision_capable_family {
+        if defaults.is_empty() {
+            // Provider declares no default vision support: reject all
+            Err(AttachmentCapabilityError {
+                model: model.to_string(),
+                unsupported_types: attachment_mimes,
+            })
+        } else {
             let unsupported: Vec<String> = attachment_mimes
                 .iter()
-                .filter(|mime| {
-                    !CONSERVATIVE_IMAGE_ALLOWLIST
-                        .iter()
-                        .any(|allowed| *allowed == mime.as_str())
-                })
+                .filter(|mime| !defaults.iter().any(|allowed| *allowed == mime.as_str()))
                 .cloned()
                 .collect();
             if unsupported.is_empty() {
@@ -163,12 +161,6 @@ pub fn check_attachment_capability(
                     unsupported_types: unsupported,
                 })
             }
-        } else {
-            // Truly unknown provider: reject all
-            Err(AttachmentCapabilityError {
-                model: model.to_string(),
-                unsupported_types: attachment_mimes,
-            })
         }
     }
 }
@@ -179,6 +171,10 @@ pub fn estimate_tokens(text: &str) -> usize {
 
 const DEFAULT_CONTEXT_WINDOW: usize = 128_000;
 const IMAGE_TOKEN_ESTIMATE: usize = 1000;
+
+/// Minimum tokens reserved for user text when attachments are present.
+/// Prevents attachment overhead from starving the text budget to zero.
+const MIN_TEXT_BUDGET_TOKENS: usize = 100;
 
 pub fn context_window(provider_id: &str) -> usize {
     provider_registry::lookup(provider_id)
@@ -226,17 +222,36 @@ pub fn symmetric_trim(text: &str, budget_chars: usize) -> String {
     text[start_byte..end_byte].to_string()
 }
 
-pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str, context_window_override: Option<usize>) -> (Prompt, Option<TruncationInfo>) {
+pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str, context_window_override: Option<usize>) -> Result<(Prompt, Option<TruncationInfo>), String> {
     let window = context_window_override.unwrap_or_else(|| context_window(provider_id));
     let budget = (window as f64 * 0.8) as usize;
     let size = estimate_prompt_size(&prompt);
 
     if size <= budget {
-        return (prompt, None);
+        return Ok((prompt, None));
     }
 
     let overhead = size - estimate_tokens(&prompt.text);
-    let text_budget_tokens = budget.saturating_sub(overhead);
+
+    // When attachments are present, ensure text gets at least MIN_TEXT_BUDGET_TOKENS.
+    // If even that minimum is impossible (attachments alone exceed the budget),
+    // return an error instead of silently sending an empty question.
+    let text_budget_tokens = if !prompt.attachments.is_empty() {
+        if overhead > budget {
+            return Err(format!(
+                "Attachments ({} images) require ~{} tokens, which exceeds the {}-token budget \
+                 (80% of {} context window). Remove some attachments or use a model with a larger context window.",
+                prompt.attachments.len(),
+                overhead,
+                budget,
+                window,
+            ));
+        }
+        let raw = budget.saturating_sub(overhead);
+        raw.max(MIN_TEXT_BUDGET_TOKENS.min(estimate_tokens(&prompt.text)))
+    } else {
+        budget.saturating_sub(overhead)
+    };
     let text_budget_chars = text_budget_tokens * 4;
 
     let original_tokens = estimate_tokens(&prompt.text);
@@ -250,13 +265,13 @@ pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str, conte
     result.attachments = prompt.attachments;
     result.tools = prompt.tools;
 
-    (
+    Ok((
         result,
         Some(TruncationInfo {
             original_tokens,
             kept_tokens,
         }),
-    )
+    ))
 }
 
 pub fn resolve_api_key(provider_id: &str, store: &dyn CredentialStore) -> Option<String> {
@@ -496,7 +511,7 @@ mod tests {
     #[test]
     fn apply_token_budget_short_text_unchanged() {
         let prompt = Prompt::new("Hello");
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert_eq!(result.text, "Hello");
         assert!(trunc.is_none());
     }
@@ -508,7 +523,7 @@ mod tests {
         // override (0.8 * 1000 = 800 token budget). ~2000 tokens of text.
         let text = "word ".repeat(8_000); // 40000 chars => ~10000 tokens
         let prompt = Prompt::new(&text);
-        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1000));
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1000)).unwrap();
         assert!(trunc.is_some(), "override (1000) should force truncation");
     }
 
@@ -518,7 +533,7 @@ mod tests {
         // fall back to context_window(provider_id) and NOT truncate.
         let text = "word ".repeat(8_000);
         let prompt = Prompt::new(&text);
-        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert!(trunc.is_none(), "fallback to openai default should not truncate");
     }
 
@@ -527,7 +542,7 @@ mod tests {
         // Text that WOULD truncate under the 128k default but fits under a huge override.
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1_000_000));
+        let (_result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(1_000_000)).unwrap();
         assert!(trunc.is_none(), "huge override should prevent truncation");
     }
 
@@ -535,7 +550,7 @@ mod tests {
     fn apply_token_budget_long_text_truncated() {
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert!(result.text.len() < long_text.len(), "text should be truncated");
         let info = trunc.expect("should have truncation info");
         assert!(info.kept_tokens < info.original_tokens);
@@ -545,7 +560,7 @@ mod tests {
     fn apply_token_budget_symmetric_truncation() {
         let long_text = "word ".repeat(200_000);
         let prompt = Prompt::new(&long_text);
-        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         let center_of_original = long_text.len() / 2;
         let center_region = &long_text[center_of_original - 10..center_of_original + 10];
         assert!(
@@ -787,7 +802,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_cjk_no_panic() {
         let cjk_text = "你好".repeat(300_000);
         let prompt = Prompt::new(&cjk_text);
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert!(result.text.len() < cjk_text.len());
         let info = trunc.expect("should have truncation info");
         assert!(info.kept_tokens < info.original_tokens);
@@ -797,7 +812,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_cjk_preserves_center() {
         let cjk_text = "你好".repeat(300_000);
         let prompt = Prompt::new(&cjk_text);
-        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         let char_count = cjk_text.chars().count();
         let center_char = char_count / 2;
         let check_start: String = cjk_text.chars().skip(center_char - 2).take(4).collect();
@@ -808,7 +823,7 @@ data: [DONE]\n\n";
     fn apply_token_budget_mixed_script_no_panic() {
         let mixed = "Hello你好World世界".repeat(50_000);
         let prompt = Prompt::new(&mixed);
-        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, _) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert!(result.text.len() < mixed.len());
     }
 
@@ -948,7 +963,7 @@ data: [DONE]\n\n";
             &HashMap::new(),
             attachments,
         );
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert!(trunc.is_none(), "short text should not be truncated");
         assert_eq!(result.attachments.len(), 1);
         assert_eq!(result.text, "Short text");
@@ -970,7 +985,7 @@ data: [DONE]\n\n";
             &HashMap::new(),
             attachments,
         );
-        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
         assert!(trunc.is_some(), "long text should be truncated");
         assert!(result.text.len() < long_text.len());
         assert_eq!(result.attachments.len(), 1, "attachments must survive truncation");
@@ -982,6 +997,7 @@ data: [DONE]\n\n";
     struct MockVisionProvider {
         provider_id: &'static str,
         model_infos: Vec<ModelInfo>,
+        default_attachment_types: &'static [&'static str],
     }
 
     #[async_trait]
@@ -992,6 +1008,10 @@ data: [DONE]\n\n";
 
         fn models(&self) -> Vec<ModelInfo> {
             self.model_infos.clone()
+        }
+
+        fn default_attachment_types(&self) -> &'static [&'static str] {
+            self.default_attachment_types
         }
 
         async fn execute(
@@ -1025,6 +1045,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &[]);
         assert!(result.is_ok());
@@ -1046,6 +1067,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let attachments = vec![Attachment {
             mime_type: Some("image/png".into()),
@@ -1071,6 +1093,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let attachments = vec![Attachment {
             mime_type: Some("audio/mp3".into()),
@@ -1098,6 +1121,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let attachments = vec![Attachment {
             mime_type: Some("image/png".into()),
@@ -1124,6 +1148,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let attachments = vec![Attachment {
             mime_type: Some("audio/mp3".into()),
@@ -1139,6 +1164,7 @@ data: [DONE]\n\n";
         let provider = MockVisionProvider {
             provider_id: "custom-unknown",
             model_infos: vec![],
+            default_attachment_types: &[],
         };
         let attachments = vec![Attachment {
             mime_type: Some("image/png".into()),
@@ -1150,7 +1176,7 @@ data: [DONE]\n\n";
     }
 
     #[test]
-    fn check_attachment_capability_none_mime_type_rejected() {
+    fn check_attachment_capability_none_mime_bytes_rejected() {
         let provider = MockVisionProvider {
             provider_id: "anthropic",
             model_infos: vec![ModelInfo {
@@ -1165,6 +1191,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let attachments = vec![Attachment {
             mime_type: None,
@@ -1176,6 +1203,132 @@ data: [DONE]\n\n";
             err.unsupported_types,
             vec!["application/octet-stream".to_string()]
         );
+    }
+
+    #[test]
+    fn check_attachment_capability_none_mime_url_passthrough() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
+        };
+        // URL attachment with no declared MIME should pass through —
+        // providers fetch and sniff URL images natively.
+        let attachments = vec![Attachment {
+            mime_type: None,
+            source: AttachmentSource::Url("https://example.com/image.png".into()),
+        }];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        assert!(result.is_ok(), "Url+None should pass through, got: {:?}", result);
+    }
+
+    #[test]
+    fn check_attachment_capability_url_with_unsupported_declared_mime() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
+        };
+        // URL attachment WITH an explicit unsupported MIME should still be rejected.
+        let attachments = vec![Attachment {
+            mime_type: Some("audio/mp3".into()),
+            source: AttachmentSource::Url("https://example.com/audio.mp3".into()),
+        }];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(err.unsupported_types, vec!["audio/mp3".to_string()]);
+    }
+
+    #[test]
+    fn check_attachment_capability_mixed_url_none_and_bytes_none() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
+        };
+        // Mix: Url+None (pass-through) and Bytes+None (rejected as octet-stream).
+        let attachments = vec![
+            Attachment {
+                mime_type: None,
+                source: AttachmentSource::Url("https://example.com/image.png".into()),
+            },
+            Attachment {
+                mime_type: None,
+                source: AttachmentSource::Bytes(vec![0x00, 0x01]),
+            },
+        ];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.unsupported_types,
+            vec!["application/octet-stream".to_string()]
+        );
+    }
+
+    #[test]
+    fn check_attachment_capability_all_url_none_passthrough() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
+        };
+        // All URL attachments with no MIME — all should pass through.
+        let attachments = vec![
+            Attachment {
+                mime_type: None,
+                source: AttachmentSource::Url("https://example.com/a.png".into()),
+            },
+            Attachment {
+                mime_type: None,
+                source: AttachmentSource::Url("https://example.com/b.jpg".into()),
+            },
+        ];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        assert!(result.is_ok(), "all Url+None should pass through, got: {:?}", result);
     }
 
     #[test]
@@ -1194,6 +1347,7 @@ data: [DONE]\n\n";
                     "image/gif".into(),
                 ],
             }],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
         };
         let attachments = vec![
             Attachment {
@@ -1208,6 +1362,42 @@ data: [DONE]\n\n";
         let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
         let err = result.unwrap_err();
         assert_eq!(err.unsupported_types, vec!["audio/mp3".to_string()]);
+    }
+
+    #[test]
+    fn check_attachment_capability_provider_with_default_types_allows_images() {
+        // A "gemini" provider that declares default image types should allow
+        // images for unknown models -- proving the fix works for ANY provider
+        // that declares defaults, not just hardcoded "anthropic"/"openai".
+        let provider = MockVisionProvider {
+            provider_id: "gemini",
+            model_infos: vec![],
+            default_attachment_types: llm_core::types::DEFAULT_IMAGE_MIME_TYPES,
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        let result = check_attachment_capability(&provider, "gemini-2.0-flash", &attachments);
+        assert!(result.is_ok(), "provider with default types should allow images, got: {:?}", result);
+    }
+
+    #[test]
+    fn check_attachment_capability_provider_without_default_types_rejects() {
+        // A provider that does NOT override default_attachment_types (returns &[])
+        // should reject all attachments for unknown models.
+        let provider = MockVisionProvider {
+            provider_id: "custom-local",
+            model_infos: vec![],
+            default_attachment_types: &[],
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        let result = check_attachment_capability(&provider, "some-model", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(err.unsupported_types, vec!["image/png".to_string()]);
     }
 
     #[test]
@@ -1370,5 +1560,112 @@ data: [DONE]\n\n";
         let url = parts[1]["image_url"]["url"].as_str().unwrap();
         assert!(url.starts_with("data:image/png;base64,"), "expected data URI, got: {url}");
         assert!(url.len() > "data:image/png;base64,".len());
+    }
+
+    // --- F10 regression tests: attachment overhead must not starve text budget ---
+
+    #[test]
+    fn apply_token_budget_many_attachments_preserves_text() {
+        // 10 images => 10 * 1000 = 10_000 tokens overhead.
+        // context_window_override = 20_000 => budget = 16_000.
+        // Without the fix, text_budget_tokens = 16000 - 10000 - system/etc = ~6000,
+        // but with a borderline case (e.g. override=14000, budget=11200),
+        // the old code would saturate to 0. Use a tight budget to trigger the floor.
+        let attachments: Vec<Attachment> = (0..10)
+            .map(|_| Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            })
+            .collect();
+        let prompt = build_prompt_with_attachments(
+            "Describe these images in detail",
+            None,
+            &[],
+            &HashMap::new(),
+            attachments,
+        );
+        // Budget = 0.8 * 14000 = 11200 tokens. Overhead from 10 images = 10000.
+        // Old code: text_budget = 11200 - 10000 - text_tokens ~= 1192 (still positive here).
+        // Use an even tighter budget: 13000 => budget=10400, overhead=10000+8=10008 => raw=392
+        // That's still > 0. Let's go extreme: 12600 => budget=10080, overhead=10008 => raw=72
+        // With the fix, raw(72) gets bumped to min(100, 8) = 8 (the text is only ~8 tokens).
+        // Actually, the text "Describe these images in detail" is ~8 tokens, always preserved.
+        // The real regression is when raw goes to 0. Use override=12500 => budget=10000.
+        // overhead = 10000 + 8 = 10008. raw = 10000 - 10008 = saturates to 0.
+        // Old code: symmetric_trim(text, 0) => empty. New code: floor to min(100,8)=8 => text preserved.
+        let result = apply_token_budget(prompt, "openai", "gpt-4o", Some(12_500));
+        assert!(result.is_ok(), "should not error — attachments don't exceed budget alone");
+        let (result_prompt, trunc) = result.unwrap();
+        assert!(
+            !result_prompt.text.is_empty(),
+            "text must not be starved to empty when attachments are present"
+        );
+        assert!(trunc.is_some(), "truncation info should be present");
+    }
+
+    #[test]
+    fn apply_token_budget_attachments_exceed_budget_returns_error() {
+        // 20 images => 20 * 1000 = 20_000 tokens overhead.
+        // context_window_override = 100 => budget = 80 tokens.
+        // Attachments alone far exceed the budget => should return Err.
+        let attachments: Vec<Attachment> = (0..20)
+            .map(|_| Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            })
+            .collect();
+        let prompt = build_prompt_with_attachments(
+            "What are these?",
+            None,
+            &[],
+            &HashMap::new(),
+            attachments,
+        );
+        let result = apply_token_budget(prompt, "openai", "gpt-4o", Some(100));
+        assert!(result.is_err(), "should error when attachments alone exceed budget");
+        let err = result.unwrap_err();
+        assert!(err.contains("Attachments"), "error should mention attachments: {err}");
+        assert!(err.contains("exceed"), "error should mention exceeding budget: {err}");
+    }
+
+    #[test]
+    fn apply_token_budget_single_attachment_short_text_unchanged() {
+        // 1 image + "Hi" text, default 128k context => no truncation at all.
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        let prompt = build_prompt_with_attachments(
+            "Hi",
+            None,
+            &[],
+            &HashMap::new(),
+            attachments,
+        );
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None).unwrap();
+        assert_eq!(result.text, "Hi", "short text with single attachment should be unchanged");
+        assert!(trunc.is_none(), "no truncation expected");
+    }
+
+    #[test]
+    fn apply_token_budget_attachments_with_empty_text() {
+        // 1 image + empty text, small context window.
+        // Empty text can't be starved further; min floor doesn't inflate beyond original.
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        let prompt = build_prompt_with_attachments(
+            "",
+            None,
+            &[],
+            &HashMap::new(),
+            attachments,
+        );
+        // budget = 0.8 * 5000 = 4000 tokens. overhead = 1000 (image) + 0 (empty text) = 1000.
+        // size = 1000 (image) + 0 (text) = 1000 <= 4000, so early return with no truncation.
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", Some(5000)).unwrap();
+        assert_eq!(result.text, "", "empty text should stay empty");
+        assert!(trunc.is_none());
     }
 }

@@ -120,7 +120,7 @@ pub async fn llm_prompt_streaming(
         &args.options,
     );
 
-    let (prompt, truncation) = llm::apply_token_budget(prompt, provider_id, &args.model, args.context_window);
+    let (prompt, truncation) = llm::apply_token_budget(prompt, provider_id, &args.model, args.context_window)?;
 
     log_prompt_info(
         &args.model,
