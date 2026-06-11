@@ -80,9 +80,8 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
 
   const materialize = useMaterializeCitation({
     recordDeparture,
-    selectPage,
+    navigate: onNavigate ?? selectPage,
     onError: (msg) => show(msg, "error"),
-    onNavigate,
     onMaterialized: rebuild,
   });
 

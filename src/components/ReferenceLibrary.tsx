@@ -284,7 +284,7 @@ export function ReferenceLibrary() {
 
   const doMaterialize = useMaterializeCitation({
     recordDeparture,
-    selectPage,
+    navigate: selectPage,
     onError: (msg) => show(msg, "error"),
     onMaterialized: loadBibKeyStates,
   });

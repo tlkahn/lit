@@ -33,13 +33,13 @@ const fakeMeta: PageMeta = {
 
 describe("useMaterializeCitation", () => {
   let recordDeparture: ReturnType<typeof vi.fn>;
-  let selectPage: ReturnType<typeof vi.fn>;
+  let navigate: ReturnType<typeof vi.fn>;
   let onError: ReturnType<typeof vi.fn>;
   let onMaterialized: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     recordDeparture = vi.fn();
-    selectPage = vi.fn();
+    navigate = vi.fn();
     onError = vi.fn();
     onMaterialized = vi.fn();
     mockedMaterialize.mockReset();
@@ -52,7 +52,7 @@ describe("useMaterializeCitation", () => {
     const { result } = renderHook(() =>
       useMaterializeCitation({
         recordDeparture,
-        selectPage,
+        navigate,
         onError,
         onMaterialized,
       }),
@@ -68,22 +68,25 @@ describe("useMaterializeCitation", () => {
     const updater = mockedSetState.mock.calls[0]![0] as (state: { pages: PageMeta[] }) => { pages: PageMeta[] };
     const updated = updater({ pages: [] });
     expect(updated.pages).toEqual([fakeMeta]);
-    // When the page already exists (race condition with refreshPages), do not duplicate
-    const noDup = updater({ pages: [fakeMeta] });
-    expect(noDup.pages).toEqual([fakeMeta]);
+    // When the page already exists (race condition with refreshPages), replace stale entry
+    const staleMeta: PageMeta = { ...fakeMeta, title: "Stale Title" };
+    const noDup = updater({ pages: [staleMeta] });
     expect(noDup.pages).toHaveLength(1);
+    expect(noDup.pages[0]).toBe(fakeMeta); // fresh meta replaces stale
+    expect(noDup.pages[0]).not.toBe(staleMeta);
     expect(onMaterialized).toHaveBeenCalled();
     expect(recordDeparture).toHaveBeenCalled();
-    expect(selectPage).toHaveBeenCalledWith("references/smith2024.md");
+    expect(navigate).toHaveBeenCalledWith("references/smith2024.md");
   });
 
-  it("does not duplicate page when relative_path already exists in store (race with refreshPages)", async () => {
+  it("replaces stale page entry when relative_path already exists in store (race with refreshPages)", async () => {
     mockedMaterialize.mockResolvedValue(fakeMeta);
+    const staleMeta: PageMeta = { ...fakeMeta, title: "Stale Title" };
 
     const { result } = renderHook(() =>
       useMaterializeCitation({
         recordDeparture,
-        selectPage,
+        navigate,
         onError,
         onMaterialized,
       }),
@@ -93,12 +96,44 @@ describe("useMaterializeCitation", () => {
       await result.current("smith2024");
     });
 
-    // Simulate the race: refreshPages already added the page to state
-    // before the setState updater runs
     const updater = mockedSetState.mock.calls[0]![0] as (state: { pages: PageMeta[] }) => { pages: PageMeta[] };
-    const raceResult = updater({ pages: [fakeMeta] });
+    const raceResult = updater({ pages: [staleMeta] });
     expect(raceResult.pages).toHaveLength(1);
-    expect(raceResult.pages[0]).toBe(fakeMeta); // reference equality — original preserved
+    expect(raceResult.pages[0]!.title).toBe("Smith 2024");   // fresh meta replaces stale
+    expect(raceResult.pages[0]).not.toBe(staleMeta);          // reference inequality to stale entry
+  });
+
+  it("replaces stale entry while preserving other pages in order", async () => {
+    mockedMaterialize.mockResolvedValue(fakeMeta);
+    const staleMeta: PageMeta = { ...fakeMeta, title: "Stale Title" };
+    const otherPage: PageMeta = {
+      title: "Other Note",
+      relative_path: "notes/other.md",
+      frontmatter: {},
+      created_at: null,
+      modified_at: null,
+      file_type: "markdown",
+    };
+
+    const { result } = renderHook(() =>
+      useMaterializeCitation({
+        recordDeparture,
+        navigate,
+        onError,
+        onMaterialized,
+      }),
+    );
+
+    await act(async () => {
+      await result.current("smith2024");
+    });
+
+    const updater = mockedSetState.mock.calls[0]![0] as (state: { pages: PageMeta[] }) => { pages: PageMeta[] };
+    const updated = updater({ pages: [otherPage, staleMeta] });
+    expect(updated.pages).toHaveLength(2);
+    expect(updated.pages[0]).toBe(otherPage);                 // untouched
+    expect(updated.pages[1]!.title).toBe("Smith 2024");       // fresh meta replaced stale
+    expect(updated.pages[1]).toBe(fakeMeta);                   // reference equality to fresh meta
   });
 
   it("calls onError and skips navigation when materializeCitation rejects", async () => {
@@ -107,7 +142,7 @@ describe("useMaterializeCitation", () => {
     const { result } = renderHook(() =>
       useMaterializeCitation({
         recordDeparture,
-        selectPage,
+        navigate,
         onError,
         onMaterialized,
       }),
@@ -118,7 +153,7 @@ describe("useMaterializeCitation", () => {
     });
 
     expect(onError).toHaveBeenCalledWith("network error");
-    expect(selectPage).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
     expect(recordDeparture).not.toHaveBeenCalled();
     expect(onMaterialized).not.toHaveBeenCalled();
   });
@@ -129,7 +164,7 @@ describe("useMaterializeCitation", () => {
     const { result } = renderHook(() =>
       useMaterializeCitation({
         recordDeparture,
-        selectPage,
+        navigate,
         onError,
         onMaterialized,
       }),
@@ -140,7 +175,7 @@ describe("useMaterializeCitation", () => {
     });
 
     expect(onError).toHaveBeenCalledWith("Bib key 'foo' not found");
-    expect(selectPage).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
     expect(recordDeparture).not.toHaveBeenCalled();
     expect(onMaterialized).not.toHaveBeenCalled();
   });
@@ -154,7 +189,7 @@ describe("useMaterializeCitation", () => {
     const { result } = renderHook(() =>
       useMaterializeCitation({
         recordDeparture,
-        selectPage,
+        navigate,
         onError,
       }),
     );
@@ -180,7 +215,7 @@ describe("useMaterializeCitation", () => {
     });
 
     expect(firstDone).toBe(true);
-    expect(selectPage).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledTimes(1);
   });
 
   it("works without onMaterialized callback", async () => {
@@ -189,7 +224,7 @@ describe("useMaterializeCitation", () => {
     const { result } = renderHook(() =>
       useMaterializeCitation({
         recordDeparture,
-        selectPage,
+        navigate,
         onError,
         // no onMaterialized
       }),
@@ -200,51 +235,8 @@ describe("useMaterializeCitation", () => {
     });
 
     expect(mockedMaterialize).toHaveBeenCalledWith("smith2024");
-    expect(selectPage).toHaveBeenCalledWith("references/smith2024.md");
+    expect(navigate).toHaveBeenCalledWith("references/smith2024.md");
     expect(recordDeparture).toHaveBeenCalled();
   });
 
-  it("calls onNavigate instead of selectPage when onNavigate is provided", async () => {
-    mockedMaterialize.mockResolvedValue(fakeMeta);
-    const onNavigate = vi.fn();
-
-    const { result } = renderHook(() =>
-      useMaterializeCitation({
-        recordDeparture,
-        selectPage,
-        onError,
-        onMaterialized,
-        onNavigate,
-      }),
-    );
-
-    await act(async () => {
-      await result.current("smith2024");
-    });
-
-    expect(mockedMaterialize).toHaveBeenCalledWith("smith2024");
-    expect(onNavigate).toHaveBeenCalledWith("references/smith2024.md");
-    expect(selectPage).not.toHaveBeenCalled();
-    expect(recordDeparture).toHaveBeenCalled();
-  });
-
-  it("falls back to selectPage when onNavigate is not provided", async () => {
-    mockedMaterialize.mockResolvedValue(fakeMeta);
-
-    const { result } = renderHook(() =>
-      useMaterializeCitation({
-        recordDeparture,
-        selectPage,
-        onError,
-        // onNavigate intentionally omitted
-      }),
-    );
-
-    await act(async () => {
-      await result.current("smith2024");
-    });
-
-    expect(selectPage).toHaveBeenCalledWith("references/smith2024.md");
-    expect(recordDeparture).toHaveBeenCalled();
-  });
 });
