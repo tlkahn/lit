@@ -979,6 +979,20 @@ impl Store {
         Ok(rows)
     }
 
+    /// Returns the page id that declares the given citekey in its frontmatter,
+    /// or `None` if no page has that citekey.
+    pub fn page_for_citekey(&self, citekey: &str) -> Result<Option<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM nodes
+             WHERE json_extract(frontmatter, '$.citekey') = ?1
+             LIMIT 1"
+        )?;
+        let page_id: Option<String> = stmt
+            .query_row([citekey], |row| row.get(0))
+            .optional()?;
+        Ok(page_id)
+    }
+
     /// Returns page ids that cite the given raw key via citation edges.
     pub fn sources_citing(&self, raw_key: &str) -> Result<Vec<String>, GraphError> {
         let mut stmt = self.conn.prepare(
@@ -4904,6 +4918,28 @@ mod tests {
 
         let pages = store.citekey_pages().unwrap();
         assert!(pages.is_empty());
+    }
+
+    #[test]
+    fn page_for_citekey_returns_page_for_existing_key() {
+        let store = Store::open_memory().unwrap();
+        let paper = make_node("paper.md", "Paper", &[], json!({"citekey": "smith2024"}));
+        let other = make_node("other.md", "Other", &[], json!({}));
+        store.upsert_node(&paper, 1).unwrap();
+        store.upsert_node(&other, 1).unwrap();
+
+        let result = store.page_for_citekey("smith2024").unwrap();
+        assert_eq!(result, Some("paper.md".to_string()));
+    }
+
+    #[test]
+    fn page_for_citekey_returns_none_for_absent_key() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let result = store.page_for_citekey("nonexistent").unwrap();
+        assert_eq!(result, None);
     }
 
     #[test]

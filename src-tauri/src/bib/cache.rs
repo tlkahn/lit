@@ -31,6 +31,14 @@ impl BibCache {
         self.index_cache.lock().unwrap().clone()
     }
 
+    /// Look up a single entry from the cached index without cloning the
+    /// entire `HashMap`.  Returns `None` when the cache is cold or dirty
+    /// (caller should fall back to `build_bib_index`).
+    pub fn get_entry(&self, key: &str) -> Option<BibEntry> {
+        let guard = self.index_cache.lock().unwrap();
+        guard.as_ref().and_then(|idx| idx.get(key).cloned())
+    }
+
     pub fn set_cached_index(&self, index: HashMap<String, crate::bib::types::BibEntry>) {
         *self.index_cache.lock().unwrap() = Some(index);
     }
@@ -245,6 +253,83 @@ mod tests {
         cache.set_cached_index(index);
         cache.mark_index_dirty();
         assert!(cache.get_cached_index().is_none(), "cache should be None after mark_index_dirty");
+    }
+
+    // --- get_entry tests ---
+
+    #[test]
+    fn get_entry_returns_none_when_cold() {
+        let cache = BibCache::new();
+        assert!(cache.get_entry("smith2024").is_none(), "cold cache must return None");
+    }
+
+    #[test]
+    fn get_entry_returns_entry_when_warm() {
+        let cache = BibCache::new();
+        let mut index = HashMap::new();
+        index.insert("smith2024".to_string(), BibEntry {
+            key: "smith2024".to_string(),
+            entry_type: "article".to_string(),
+            title: "Alpha".to_string(),
+            authors: vec!["Smith, John".to_string()],
+            year: "2024".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![],
+        });
+        cache.set_cached_index(index);
+        let result = cache.get_entry("smith2024");
+        assert!(result.is_some(), "warm cache should return the entry");
+        assert_eq!(result.unwrap().key, "smith2024");
+    }
+
+    #[test]
+    fn get_entry_returns_none_for_missing_key() {
+        let cache = BibCache::new();
+        let mut index = HashMap::new();
+        index.insert("smith2024".to_string(), BibEntry {
+            key: "smith2024".to_string(),
+            entry_type: "article".to_string(),
+            title: "Alpha".to_string(),
+            authors: vec!["Smith, John".to_string()],
+            year: "2024".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![],
+        });
+        cache.set_cached_index(index);
+        assert!(cache.get_entry("nonexistent").is_none(), "missing key must return None");
+    }
+
+    #[test]
+    fn get_entry_returns_none_after_dirty() {
+        let cache = BibCache::new();
+        let mut index = HashMap::new();
+        index.insert("smith2024".to_string(), BibEntry {
+            key: "smith2024".to_string(),
+            entry_type: "article".to_string(),
+            title: "Alpha".to_string(),
+            authors: vec!["Smith, John".to_string()],
+            year: "2024".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            journal: None,
+            url: None,
+            tags: vec![],
+        });
+        cache.set_cached_index(index);
+        cache.mark_index_dirty();
+        assert!(cache.get_entry("smith2024").is_none(), "dirty cache must return None");
     }
 
     #[test]

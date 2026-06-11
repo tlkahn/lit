@@ -997,7 +997,7 @@ describe("ReferenceLibrary", () => {
   it("clicking 'Create note' calls materializeCitation and navigates to the new page", async () => {
     const user = userEvent.setup();
     const selectPage = vi.fn();
-    useWorkspaceStore.setState({ selectPage });
+    useWorkspaceStore.setState({ selectPage, pages: [] });
     bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
 
     mockInvoke((cmd, args) => {
@@ -1005,7 +1005,14 @@ describe("ReferenceLibrary", () => {
       if (cmd === "list_bib_entries") return fixture;
       if (cmd === "get_citing_pages") return citingFixture;
       if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "materialize_citation") return "notes/sanderson2009.md";
+      if (cmd === "materialize_citation") return {
+        title: "Sanderson (2009) The Saiva Age",
+        relative_path: "notes/sanderson2009.md",
+        frontmatter: { citekey: "sanderson2009" },
+        created_at: 1000,
+        modified_at: 2000,
+        file_type: "markdown",
+      };
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -1023,6 +1030,9 @@ describe("ReferenceLibrary", () => {
     await waitFor(() => {
       expect(selectPage).toHaveBeenCalledWith("notes/sanderson2009.md");
     });
+    // The new page must appear in the workspace store's pages array
+    const pages = useWorkspaceStore.getState().pages;
+    expect(pages.some((p: { relative_path: string }) => p.relative_path === "notes/sanderson2009.md")).toBe(true);
   });
 
   it("clicking 'Create note' shows error status on failure", async () => {
@@ -1048,6 +1058,113 @@ describe("ReferenceLibrary", () => {
       expect(useStatusMessageStore.getState().message).toMatch(/Failed to create note/i),
     );
     expect(useStatusMessageStore.getState().variant).toBe("error");
+  });
+
+  it("disables 'Create note' button while materialization is in flight", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+
+    let resolveMaterialize!: (value: unknown) => void;
+    const pending = new Promise((r) => { resolveMaterialize = r; });
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "materialize_citation") return pending;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    const btn = screen.getByTestId("create-note-btn");
+    expect(btn).not.toBeDisabled();
+
+    await user.click(btn);
+
+    await waitFor(() => expect(btn).toBeDisabled());
+
+    // Resolve the pending call
+    resolveMaterialize({
+      title: "Sanderson (2009) The Saiva Age",
+      relative_path: "notes/sanderson2009.md",
+      frontmatter: { citekey: "sanderson2009" },
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "markdown",
+    });
+  });
+
+  it("does not fire a second materialize_citation on rapid double-click", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+
+    let resolveMaterialize!: (value: unknown) => void;
+    const pending = new Promise((r) => { resolveMaterialize = r; });
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "materialize_citation") return pending;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    const btn = screen.getByTestId("create-note-btn");
+
+    // Click twice rapidly
+    await user.click(btn);
+    await waitFor(() => expect(btn).toBeDisabled());
+    // Second click on a disabled button should be a no-op
+    await user.click(btn);
+
+    const materializeCalls = invokedCommands.filter((c) => c.cmd === "materialize_citation");
+    expect(materializeCalls).toHaveLength(1);
+
+    // Cleanup
+    resolveMaterialize({
+      title: "Sanderson (2009) The Saiva Age",
+      relative_path: "notes/sanderson2009.md",
+      frontmatter: { citekey: "sanderson2009" },
+      created_at: 1000,
+      modified_at: 2000,
+      file_type: "markdown",
+    });
+  });
+
+  it("re-enables 'Create note' button after materialization failure", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "materialize_citation") throw new Error("disk full");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    const btn = screen.getByTestId("create-note-btn");
+
+    await user.click(btn);
+
+    // After failure, button should be re-enabled
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    // And the error message should be shown
+    expect(useStatusMessageStore.getState().message).toMatch(/Failed to create note/i);
   });
 
   it("discards stale bib key states after rapid graph updates", async () => {

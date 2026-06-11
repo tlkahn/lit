@@ -209,17 +209,6 @@ export function setCompanionSearchPath(paths: string[]) {
   });
 }
 
-export function setCitationNotesDir(dir: string) {
-  const prev = usePreferencesStore.getState().citationNotesDir;
-  const next = dir.trim() || "references";
-  usePreferencesStore.setState({ citationNotesDir: next });
-  setPreference("citation.notesDir", next).catch(() => {
-    usePreferencesStore.setState((state) =>
-      state.citationNotesDir === next ? { citationNotesDir: prev } : {},
-    );
-  });
-}
-
 export function addCustomProvider(def: CustomProviderDef) {
   const prev = usePreferencesStore.getState().llmCustomProviders;
   const next = [...prev, def];

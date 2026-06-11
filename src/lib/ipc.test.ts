@@ -679,7 +679,14 @@ describe("ipc", () => {
         case "list_bib_files":
           return ["/workspace/refs.bib", "/workspace/papers/extra.bib"];
         case "materialize_citation":
-          return `citations/${(args as Record<string, unknown>)?.bibKey}.md`;
+          return {
+            title: `Smith (2020) ${(args as Record<string, unknown>)?.bibKey}`,
+            relative_path: `citations/${(args as Record<string, unknown>)?.bibKey}.md`,
+            frontmatter: { citekey: (args as Record<string, unknown>)?.bibKey },
+            created_at: 1000,
+            modified_at: 2000,
+            file_type: "markdown" as const,
+          };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1010,9 +1017,11 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("list_bib_files", { workspacePath: "/workspace" });
   });
 
-  it("materializeCitation invokes materialize_citation with bibKey", async () => {
-    const path = await materializeCitation("smith2020");
-    expect(path).toBe("citations/smith2020.md");
+  it("materializeCitation invokes materialize_citation and returns PageMeta", async () => {
+    const meta = await materializeCitation("smith2020");
+    expect(meta.relative_path).toBe("citations/smith2020.md");
+    expect(meta.title).toContain("smith2020");
+    expect(meta.file_type).toBe("markdown");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("materialize_citation", { bibKey: "smith2020" });
   });

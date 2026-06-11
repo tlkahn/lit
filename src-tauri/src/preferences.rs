@@ -164,6 +164,8 @@ pub fn citation_notes_dir(prefs: &Preferences) -> String {
         .extra
         .get("citation.notesDir")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("references")
         .to_string()
 }
@@ -942,6 +944,20 @@ mod tests {
     #[test]
     fn citation_notes_dir_non_string_falls_back_to_default() {
         let json = r#"{"citation.notesDir": 42}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(super::citation_notes_dir(&prefs), "references");
+    }
+
+    #[test]
+    fn citation_notes_dir_empty_string_falls_back_to_default() {
+        let json = r#"{"citation.notesDir": ""}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(super::citation_notes_dir(&prefs), "references");
+    }
+
+    #[test]
+    fn citation_notes_dir_whitespace_only_falls_back_to_default() {
+        let json = r#"{"citation.notesDir": "   "}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert_eq!(super::citation_notes_dir(&prefs), "references");
     }

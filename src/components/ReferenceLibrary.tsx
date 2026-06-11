@@ -145,6 +145,7 @@ export function ReferenceLibrary() {
   const [bibKeyStates, setBibKeyStates] = useState<Record<string, BibKeyState>>({});
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [materializingKey, setMaterializingKey] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const deferredSearch = useDeferredValue(search);
 
@@ -281,16 +282,25 @@ export function ReferenceLibrary() {
 
   const materializeNote = useCallback(
     async (bibKey: string) => {
+      if (materializingKey !== null) return;
+      setMaterializingKey(bibKey);
       try {
-        const relativePath = await materializeCitation(bibKey);
+        const meta = await materializeCitation(bibKey);
+        useWorkspaceStore.setState((state) => ({
+          pages: [...state.pages, meta],
+        }));
+        // Eagerly refresh — covers paths where lit:graph-updated won't fire
+        // (reindex error or graph index not yet ready).
         loadBibKeyStates();
         recordDeparture();
-        selectPage(relativePath);
+        selectPage(meta.relative_path);
       } catch {
         show("Failed to create note", "error");
+      } finally {
+        setMaterializingKey(null);
       }
     },
-    [loadBibKeyStates, recordDeparture, selectPage, show],
+    [materializingKey, loadBibKeyStates, recordDeparture, selectPage, show],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -484,7 +494,8 @@ export function ReferenceLibrary() {
                         <button
                           data-testid="create-note-btn"
                           onClick={() => materializeNote(entry.key)}
-                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                          disabled={materializingKey !== null}
+                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                         >
                           Create note
                         </button>
