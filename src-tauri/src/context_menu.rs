@@ -875,6 +875,8 @@ mod tests {
             CTX_GRAPH_SPLIT,
             CTX_GRAPH_DELETE,
             CTX_GRAPH_EXPORT_NETWORK,
+            CTX_GRAPH_FETCH_DETAILS,
+            CTX_GRAPH_CREATE_NOTE,
         ];
         for gid in &graph_ids {
             for aid in &app_menu_ids {
@@ -900,6 +902,8 @@ mod tests {
             CTX_GRAPH_SPLIT,
             CTX_GRAPH_DELETE,
             CTX_GRAPH_EXPORT_NETWORK,
+            CTX_GRAPH_FETCH_DETAILS,
+            CTX_GRAPH_CREATE_NOTE,
         ];
         for gid in &graph_ids {
             for oid in &other_ids {
@@ -1072,53 +1076,6 @@ mod tests {
         assert_eq!(payload.node_id, "bib:smith2024");
     }
 
-    #[test]
-    fn graph_fetch_details_id_does_not_collide_with_other_context_menu_ids() {
-        let other_ids = [
-            CTX_TRASH_RESTORE,
-            CTX_TRASH_PURGE,
-            CTX_SIDEBAR_RENAME,
-            CTX_SIDEBAR_EXTERNAL_EDITOR,
-            CTX_SIDEBAR_EXPORT_NETWORK,
-            CTX_SIDEBAR_TRASH,
-            CTX_MINDMAP_EDIT,
-            CTX_MINDMAP_EXPORT_NETWORK,
-            CTX_GRAPH_MERGE,
-            CTX_GRAPH_SPLIT,
-            CTX_GRAPH_DELETE,
-            CTX_GRAPH_EXPORT_NETWORK,
-        ];
-        for oid in &other_ids {
-            assert_ne!(
-                CTX_GRAPH_FETCH_DETAILS, *oid,
-                "CTX_GRAPH_FETCH_DETAILS collides with {oid}"
-            );
-        }
-    }
-
-    #[test]
-    fn graph_fetch_details_id_does_not_collide_with_app_menu_ids() {
-        use crate::menu;
-        let app_menu_ids = [
-            menu::MENU_ID_OPEN_WORKSPACE,
-            menu::MENU_ID_INSTALL_CLI,
-            menu::MENU_ID_OPEN_PREFERENCES,
-            menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
-            menu::MENU_ID_CLOSE,
-            menu::MENU_ID_EXPORT_MARKDOWN,
-            menu::MENU_ID_BUY_LICENSE,
-            menu::MENU_ID_ENTER_LICENSE_KEY,
-            menu::MENU_ID_LICENSE_INFO,
-            menu::MENU_ID_ABOUT,
-        ];
-        for aid in &app_menu_ids {
-            assert_ne!(
-                CTX_GRAPH_FETCH_DETAILS, *aid,
-                "CTX_GRAPH_FETCH_DETAILS collides with app menu ID {aid}"
-            );
-        }
-    }
-
     // --- Phase 7: Graph "Create note" context menu for shadow nodes ---
 
     #[test]
@@ -1212,31 +1169,6 @@ mod tests {
         );
         assert_eq!(event, EVENT_CTX_GRAPH_CREATE_NOTE);
         assert_eq!(payload.node_id, "bib:jones2023");
-    }
-
-    #[test]
-    fn graph_create_note_id_does_not_collide_with_other_context_menu_ids() {
-        let other_ids = [
-            CTX_TRASH_RESTORE,
-            CTX_TRASH_PURGE,
-            CTX_SIDEBAR_RENAME,
-            CTX_SIDEBAR_EXTERNAL_EDITOR,
-            CTX_SIDEBAR_EXPORT_NETWORK,
-            CTX_SIDEBAR_TRASH,
-            CTX_MINDMAP_EDIT,
-            CTX_MINDMAP_EXPORT_NETWORK,
-            CTX_GRAPH_MERGE,
-            CTX_GRAPH_SPLIT,
-            CTX_GRAPH_DELETE,
-            CTX_GRAPH_EXPORT_NETWORK,
-            CTX_GRAPH_FETCH_DETAILS,
-        ];
-        for oid in &other_ids {
-            assert_ne!(
-                CTX_GRAPH_CREATE_NOTE, *oid,
-                "CTX_GRAPH_CREATE_NOTE collides with {oid}"
-            );
-        }
     }
 
     #[test]

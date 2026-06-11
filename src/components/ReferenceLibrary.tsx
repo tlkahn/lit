@@ -14,13 +14,13 @@ import {
   listBibEntries,
   getCitingPages,
   getBibKeyStates,
-  materializeCitation,
   enrichBibEntry,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
   type FileEvent,
 } from "../lib/ipc";
+import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
@@ -282,27 +282,24 @@ export function ReferenceLibrary() {
     [show],
   );
 
+  const doMaterialize = useMaterializeCitation({
+    recordDeparture,
+    selectPage,
+    onError: (msg) => show(msg, "error"),
+    onMaterialized: loadBibKeyStates,
+  });
+
   const materializeNote = useCallback(
     async (bibKey: string) => {
       if (materializingKey !== null) return;
       setMaterializingKey(bibKey);
       try {
-        const meta = await materializeCitation(bibKey);
-        useWorkspaceStore.setState((state) => ({
-          pages: [...state.pages, meta],
-        }));
-        // Eagerly refresh — covers paths where lit:graph-updated won't fire
-        // (reindex error or graph index not yet ready).
-        loadBibKeyStates();
-        recordDeparture();
-        selectPage(meta.relative_path);
-      } catch {
-        show("Failed to create note", "error");
+        await doMaterialize(bibKey);
       } finally {
         setMaterializingKey(null);
       }
     },
-    [materializingKey, loadBibKeyStates, recordDeparture, selectPage, show],
+    [materializingKey, doMaterialize],
   );
 
   const handleEnrich = useCallback(

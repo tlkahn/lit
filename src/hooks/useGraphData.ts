@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import Graph from "graphology";
 import { listen } from "@tauri-apps/api/event";
 import { getFullSubgraph, getGraphPositions, getGraphSubgraph, NODE_NOT_FOUND_PREFIX } from "../lib/ipc";
@@ -21,6 +21,7 @@ export interface UseGraphDataResult {
   tierSettings: TierSettings;
   dimColorRef: MutableRefObject<string>;
   dataVersion: number;
+  rebuild: () => Promise<void>;
 }
 
 async function doRebuild(
@@ -117,12 +118,29 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   activePageIdRef.current = activePageId;
   showCitationsRef.current = showCitations;
 
+  const rebuild = useCallback(async () => {
+    try {
+      const result = await doRebuild(
+        graphRef.current!, modeRef.current, depthRef.current,
+        activePageIdRef.current, dimColorRef, generationRef,
+        showCitationsRef.current,
+      );
+      if (!result) return;
+      setTierSettings(result.tierSettings);
+      setGraphStats(result.stats);
+      setLoading(false);
+      setDataVersion((v) => v + 1);
+    } catch {
+      // non-fatal, same as event-driven rebuild
+    }
+  }, []);
+
   const effectKey = mode === "local" ? activePageId : null;
 
   useEffect(() => {
     let cancelled = false;
 
-    async function rebuild() {
+    async function initialBuild() {
       try {
         setLoading(true);
         setError(null);
@@ -140,7 +158,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
       }
     }
 
-    rebuild();
+    initialBuild();
 
     return () => {
       cancelled = true;
@@ -153,16 +171,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
 
     listen("lit:graph-updated", async () => {
       if (cancelled) return;
-      try {
-        const result = await doRebuild(graphRef.current!, modeRef.current, depthRef.current, activePageIdRef.current, dimColorRef, generationRef, showCitationsRef.current);
-        if (cancelled || !result) return;
-        setTierSettings(result.tierSettings);
-        setGraphStats(result.stats);
-        setLoading(false);
-        setDataVersion((v) => v + 1);
-      } catch {
-        // event-driven rebuild failures are non-fatal
-      }
+      await rebuild();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
@@ -220,5 +229,6 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     tierSettings,
     dimColorRef,
     dataVersion,
+    rebuild,
   };
 }
