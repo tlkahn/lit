@@ -1044,6 +1044,7 @@ describe("App", () => {
             ? listenPromise
             : Promise.resolve(vi.fn()),
         ),
+        onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
       } as unknown as ReturnType<typeof getCurrentWebviewWindow>);
 
       useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });

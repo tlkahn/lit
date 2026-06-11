@@ -21,8 +21,10 @@ import {
   type FileEvent,
 } from "../lib/ipc";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
+import { useDropPdf } from "../hooks/useDropPdf";
 import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
+import { ImportPdfDialog } from "./ImportPdfDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 
@@ -148,8 +150,15 @@ export function ReferenceLibrary() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [materializingKey, setMaterializingKey] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [importPdfDialogOpen, setImportPdfDialogOpen] = useState(false);
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
+  const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
+
+  const dropPdf = useDropPdf({
+    enabled: !!workspacePath,
+    showToast: show,
+  });
 
   const currentPageRef = useRef(currentPagePath ?? "");
   currentPageRef.current = currentPagePath ?? "";
@@ -358,6 +367,20 @@ export function ReferenceLibrary() {
     virtualizer.measure();
   }, [virtualizer, expandedIndex]);
 
+  // Why the local copy? The hook's droppedPdfPath is cleared immediately after
+  // being consumed so that dropping the *same* file path a second time still
+  // triggers a null->path transition (and thus re-fires this effect). Passing
+  // droppedPdfPath directly to ImportPdfDialog without clearing it would make a
+  // second drop of the same path a no-op, because React skips effects when the
+  // dependency value hasn't changed.
+  useEffect(() => {
+    if (dropPdf.droppedPdfPath) {
+      setDropPdfPath(dropPdf.droppedPdfPath);
+      dropPdf.clearDroppedPdfPath();
+      setImportPdfDialogOpen(true);
+    }
+  }, [dropPdf.droppedPdfPath, dropPdf.clearDroppedPdfPath]);
+
   const addButton = (
     <button
       data-testid="reference-library-add-btn"
@@ -366,6 +389,17 @@ export function ReferenceLibrary() {
       className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
     >
       + Add
+    </button>
+  );
+
+  const importPdfButton = (
+    <button
+      data-testid="reference-library-import-pdf-btn"
+      onClick={() => setImportPdfDialogOpen(true)}
+      disabled={!workspacePath}
+      className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+    >
+      Import PDF...
     </button>
   );
 
@@ -380,204 +414,226 @@ export function ReferenceLibrary() {
     />
   );
 
-  if (entries.length === 0) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-sm text-text-faint">
-        <div>No references found. Add .bib files to your workspace.</div>
-        <div className="mt-2">{addButton}</div>
-        {dialog}
-      </div>
-    );
-  }
+  const importPdfDialog = (
+    <ImportPdfDialog
+      open={importPdfDialogOpen}
+      onClose={() => {
+        setImportPdfDialogOpen(false);
+        setDropPdfPath(null);
+      }}
+      onImported={() => {
+        loadEntries();
+        loadBibKeyStates();
+        setImportPdfDialogOpen(false);
+        setDropPdfPath(null);
+      }}
+      initialPdfPath={dropPdfPath}
+    />
+  );
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center gap-2 p-2">
-        <input
-          type="text"
-          placeholder="Search references…"
-          aria-label="Search references"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
-        />
-        {addButton}
-      </div>
-      <div
-        ref={scrollRef}
-        data-testid="reference-library-list"
-        data-virtual-scroll
-        className="flex-1 overflow-y-auto overscroll-contain px-1"
-      >
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const entry = filtered[virtualRow.index]!;
-            const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
-            const isExpanded = expandedKey === entryId;
-            const tags = entry.tags ?? [];
-            const state = bibKeyStates[entry.key];
-            return (
-              <div
-                key={entryId}
-                data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-              >
-                <button
-                  onClick={() => toggleExpand(entryId)}
-                  className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-start hover:bg-bg-hover"
-                >
-                  <span
-                    data-testid="reference-entry-title"
-                    className="w-full truncate text-sm text-text-normal"
-                  >
-                    {entry.title}
-                  </span>
-                  <span className="w-full truncate text-xs text-text-muted">
-                    {entry.authors.join("; ")}
-                    {entry.year ? ` (${entry.year})` : ""}
-                  </span>
-                  {state?.page_id ? (
-                    <span
-                      data-testid="badge-has-note"
-                      className="mt-0.5 inline-block rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent"
-                    >
-                      Has note
-                    </span>
-                  ) : state?.materialization === "partial" ? (
-                    <span
-                      data-testid="badge-enriched"
-                      className="mt-0.5 inline-block rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                    >
-                      Enriched
-                    </span>
-                  ) : null}
-                </button>
-                {isExpanded ? (
-                  <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
-                    <div className="font-semibold text-text-normal">{entry.title}</div>
-                    {entry.authors.length > 0 ? (
-                      <div className="mt-1 text-text-muted">
-                        {entry.authors.join("; ")}
-                      </div>
-                    ) : null}
-                    {entry.year ? (
-                      <div className="text-text-muted">{entry.year}</div>
-                    ) : null}
-                    {entry.journal ? (
-                      <div className="text-text-muted">{entry.journal}</div>
-                    ) : null}
-                    {entry.doi ? (
-                      <div className="mt-1">
-                        <a
-                          href={doiHref(entry.doi)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-interactive-accent hover:underline"
-                        >
-                          {entry.doi}
-                        </a>
-                      </div>
-                    ) : null}
-                    {entry.url ? (
-                      <div className="mt-1">
-                        <a
-                          href={urlHref(entry.url)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="break-all text-interactive-accent hover:underline"
-                        >
-                          {entry.url}
-                        </a>
-                      </div>
-                    ) : null}
-                    {entry.abstract_text ? (
-                      <p className="mt-2 text-text-normal">{entry.abstract_text}</p>
-                    ) : null}
-                    {tags.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {tags.map((t, i) => (
-                          <span
-                            key={`${t}-${i}`}
-                            className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    {state?.page_id ? (
-                      <div className="mt-2">
-                        <button
-                          data-testid="has-note-link"
-                          onClick={() => {
-                            recordDeparture();
-                            selectPage(state.page_id!);
-                          }}
-                          className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
-                        >
-                          Open note: {state.page_id}
-                        </button>
-                      </div>
-                    ) : state ? (
-                      <div className="mt-2 flex items-center gap-2">
-                        <button
-                          data-testid="create-note-btn"
-                          onClick={() => materializeNote(entry.key)}
-                          disabled={materializingKey !== null}
-                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
-                        >
-                          Create note
-                        </button>
-                        {state.materialization === "partial" ? (
-                          <span
-                            data-testid="badge-enriched"
-                            className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                          >
-                            Enriched
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {!state?.page_id ? (
-                      <div className="mt-2">
-                        <button
-                          data-testid="fetch-details-btn"
-                          disabled={enrichingKey === entry.key}
-                          onClick={() => handleEnrich(entry)}
-                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
-                        >
-                          {enrichingKey === entry.key
-                            ? "Fetching…"
-                            : state?.materialization === "partial"
-                              ? "Refresh"
-                              : "Fetch details"}
-                        </button>
-                      </div>
-                    ) : null}
-                    <div className="mt-2">
-                      <button
-                        onClick={() => copyCitation(entry.key)}
-                        className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-                      >
-                        Copy citation
-                      </button>
-                    </div>
-                    <CitedBySection bibKey={entry.key} />
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+    <div
+      ref={dropPdf.panelRef}
+      data-testid="reference-library-panel"
+      className={`flex flex-1 flex-col overflow-hidden${dropPdf.isDropHighlighted ? " drop-highlight" : ""}`}
+    >
+      {entries.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-sm text-text-faint">
+          <div>No references found. Add .bib files to your workspace.</div>
+          <div className="mt-2 flex gap-2">{addButton}{importPdfButton}</div>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-2 p-2">
+            <input
+              type="text"
+              placeholder="Search references…"
+              aria-label="Search references"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+            />
+            {addButton}
+            {importPdfButton}
+          </div>
+          <div
+            ref={scrollRef}
+            data-testid="reference-library-list"
+            data-virtual-scroll
+            className="flex-1 overflow-y-auto overscroll-contain px-1"
+          >
+            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const entry = filtered[virtualRow.index]!;
+                const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
+                const isExpanded = expandedKey === entryId;
+                const tags = entry.tags ?? [];
+                const state = bibKeyStates[entry.key];
+                return (
+                  <div
+                    key={entryId}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    <button
+                      onClick={() => toggleExpand(entryId)}
+                      className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-start hover:bg-bg-hover"
+                    >
+                      <span
+                        data-testid="reference-entry-title"
+                        className="w-full truncate text-sm text-text-normal"
+                      >
+                        {entry.title}
+                      </span>
+                      <span className="w-full truncate text-xs text-text-muted">
+                        {entry.authors.join("; ")}
+                        {entry.year ? ` (${entry.year})` : ""}
+                      </span>
+                      {state?.page_id ? (
+                        <span
+                          data-testid="badge-has-note"
+                          className="mt-0.5 inline-block rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent"
+                        >
+                          Has note
+                        </span>
+                      ) : state?.materialization === "partial" ? (
+                        <span
+                          data-testid="badge-enriched"
+                          className="mt-0.5 inline-block rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                        >
+                          Enriched
+                        </span>
+                      ) : null}
+                    </button>
+                    {isExpanded ? (
+                      <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
+                        <div className="font-semibold text-text-normal">{entry.title}</div>
+                        {entry.authors.length > 0 ? (
+                          <div className="mt-1 text-text-muted">
+                            {entry.authors.join("; ")}
+                          </div>
+                        ) : null}
+                        {entry.year ? (
+                          <div className="text-text-muted">{entry.year}</div>
+                        ) : null}
+                        {entry.journal ? (
+                          <div className="text-text-muted">{entry.journal}</div>
+                        ) : null}
+                        {entry.doi ? (
+                          <div className="mt-1">
+                            <a
+                              href={doiHref(entry.doi)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-interactive-accent hover:underline"
+                            >
+                              {entry.doi}
+                            </a>
+                          </div>
+                        ) : null}
+                        {entry.url ? (
+                          <div className="mt-1">
+                            <a
+                              href={urlHref(entry.url)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="break-all text-interactive-accent hover:underline"
+                            >
+                              {entry.url}
+                            </a>
+                          </div>
+                        ) : null}
+                        {entry.abstract_text ? (
+                          <p className="mt-2 text-text-normal">{entry.abstract_text}</p>
+                        ) : null}
+                        {tags.length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {tags.map((t, i) => (
+                              <span
+                                key={`${t}-${i}`}
+                                className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                              >
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {state?.page_id ? (
+                          <div className="mt-2">
+                            <button
+                              data-testid="has-note-link"
+                              onClick={() => {
+                                recordDeparture();
+                                selectPage(state.page_id!);
+                              }}
+                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                            >
+                              Open note: {state.page_id}
+                            </button>
+                          </div>
+                        ) : state ? (
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              data-testid="create-note-btn"
+                              onClick={() => materializeNote(entry.key)}
+                              disabled={materializingKey !== null}
+                              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                            >
+                              Create note
+                            </button>
+                            {state.materialization === "partial" ? (
+                              <span
+                                data-testid="badge-enriched"
+                                className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                              >
+                                Enriched
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {!state?.page_id ? (
+                          <div className="mt-2">
+                            <button
+                              data-testid="fetch-details-btn"
+                              disabled={enrichingKey === entry.key}
+                              onClick={() => handleEnrich(entry)}
+                              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                            >
+                              {enrichingKey === entry.key
+                                ? "Fetching…"
+                                : state?.materialization === "partial"
+                                  ? "Refresh"
+                                  : "Fetch details"}
+                            </button>
+                          </div>
+                        ) : null}
+                        <div className="mt-2">
+                          <button
+                            onClick={() => copyCitation(entry.key)}
+                            className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                          >
+                            Copy citation
+                          </button>
+                        </div>
+                        <CitedBySection bibKey={entry.key} />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
       {dialog}
+      {importPdfDialog}
     </div>
   );
 }

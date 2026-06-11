@@ -386,6 +386,7 @@ export interface BibEntry {
   doi?: string;
   journal?: string;
   url?: string;
+  file?: string;
   volume?: string;
   number?: string;
   pages?: string;
@@ -399,6 +400,19 @@ export type SaveOutcome =
   | { Saved: { key: string } }
   | { DuplicateDoi: { doi: string; existing_key: string } }
   | { SavedNoDoi: { key: string } };
+
+// SaveOutcome type guards
+export function isSaved(o: SaveOutcome): o is { Saved: { key: string } } {
+  return "Saved" in o;
+}
+export function isDuplicateDoi(
+  o: SaveOutcome,
+): o is { DuplicateDoi: { doi: string; existing_key: string } } {
+  return "DuplicateDoi" in o;
+}
+export function isSavedNoDoi(o: SaveOutcome): o is { SavedNoDoi: { key: string } } {
+  return "SavedNoDoi" in o;
+}
 
 export async function resolveAllDecorations(
   content: string,
@@ -500,6 +514,51 @@ export async function enrichBibEntry(
   workspacePath: string,
 ): Promise<EnrichResult> {
   return invoke<EnrichResult>("enrich_bib_entry", { bibKey, workspacePath });
+}
+
+// PDF recognition
+
+export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";
+
+export type ResolutionSource =
+  | "DoiContentNegotiation"
+  | "CrossrefApi"
+  | "ArxivApi"
+  | "CrossrefTitleSearch";
+
+export type ValidationStatus = "validated" | "skipped";
+
+export type RecognizeResult =
+  | {
+      kind: "resolved";
+      outcome: SaveOutcome;
+      source: ResolutionSource;
+      validation: ValidationStatus;
+      file: string;
+      entry: BibEntry;
+    }
+  | {
+      kind: "needs_confirmation";
+      reason: ConfirmReason;
+      prefilled: BibEntry;
+      file: string;
+      message: string | null;
+    };
+
+export async function recognizePdf(
+  pdfPath: string,
+  bibPath: string,
+  workspacePath: string,
+): Promise<RecognizeResult> {
+  return invoke<RecognizeResult>("recognize_pdf", { pdfPath, bibPath, workspacePath });
+}
+
+export async function importRecognizedEntry(
+  entry: BibEntry,
+  bibPath: string,
+  workspacePath: string,
+): Promise<SaveOutcome[]> {
+  return invoke<SaveOutcome[]>("import_recognized_entry", { entry, bibPath, workspacePath });
 }
 
 // Graph

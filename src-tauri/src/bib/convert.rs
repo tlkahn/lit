@@ -171,6 +171,7 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         doi: item.doi.as_deref().map(normalize_doi),
         journal: item.container_title.clone().and_then(|ct| ct.into_first()),
         url: item.url.clone(),
+        file: None,
         volume: item.volume.clone(),
         number: item.issue.clone(),
         pages: item.page.clone(),

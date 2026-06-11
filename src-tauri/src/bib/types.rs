@@ -18,6 +18,8 @@ pub struct BibEntry {
     pub journal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

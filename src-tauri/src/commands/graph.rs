@@ -2,7 +2,7 @@ use crate::graph::error::GraphError;
 use crate::graph::indexer::GraphIndex;
 use crate::graph::types::Position;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::{Emitter, State};
 
@@ -61,6 +61,30 @@ pub(crate) fn emit_reindex_side_effects_with_removed(
 ) {
     emit_reindex_result(handle, result);
     emit_annotations_removed(handle, removed);
+}
+
+/// Refresh shadow nodes in the graph index and emit `lit:graph-updated` if changed.
+pub(crate) fn refresh_graph_shadows(
+    graph_state: &Arc<GraphRegistry>,
+    workspace_root: &Path,
+    app_handle: &tauri::AppHandle,
+) {
+    let graph_changed = {
+        let gi = graph_state
+            .indices
+            .lock()
+            .unwrap()
+            .get(workspace_root)
+            .cloned();
+        if let Some(gi) = gi {
+            gi.refresh_shadows().unwrap_or(false)
+        } else {
+            false
+        }
+    };
+    if graph_changed {
+        let _ = app_handle.emit("lit:graph-updated", ());
+    }
 }
 
 pub struct GraphRegistry {
@@ -1334,6 +1358,60 @@ mod tests {
             citekey_map.get("doe2021").map(|s| s.as_str()),
             Some("notes/smith.md"),
             "citekey doe2021 should map to notes/smith.md"
+        );
+    }
+
+    #[test]
+    fn refresh_graph_shadows_creates_shadow_after_bib_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Create a .md file citing [@jones2024] but no .bib yet
+        std::fs::write(dir.path().join("a.md"), "As shown in [@jones2024].").unwrap();
+
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+
+        // No shadow initially
+        {
+            let meta = gi.store().all_nodes_metadata().unwrap();
+            assert!(
+                !meta.iter().any(|(id, _, _)| id == "bib:jones2024"),
+                "shadow should not exist before .bib is written"
+            );
+        }
+
+        // Insert into a GraphRegistry
+        let registry = Arc::new(GraphRegistry::new());
+        registry
+            .indices
+            .lock()
+            .unwrap()
+            .insert(root.clone(), Arc::new(gi));
+
+        // Write a .bib file
+        std::fs::write(
+            dir.path().join("refs.bib"),
+            "@article{jones2024,\n  author = {Jones, Alice},\n  title = {Beta},\n  year = {2024}\n}",
+        )
+        .unwrap();
+
+        // Test the core logic that refresh_graph_shadows uses:
+        // lock registry, get Arc<GraphIndex>, call refresh_shadows()
+        let gi = registry
+            .indices
+            .lock()
+            .unwrap()
+            .get(&root)
+            .cloned()
+            .unwrap();
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows should detect the new .bib entry");
+
+        // Shadow node should now exist
+        let meta = gi.store().all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:jones2024"),
+            "shadow must be created after refresh"
         );
     }
 }

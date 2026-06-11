@@ -106,19 +106,19 @@ pub fn try_navigate_existing_window(
 /// outside), fall back to `candidate` — the original relative path, which is
 /// still valid for opening.
 fn canonicalize_within_root(root: &Path, absolute: &Path, candidate: &Path) -> String {
-    let result = root
-        .canonicalize()
+    root.canonicalize()
         .ok()
         .and_then(|canon_root| {
             absolute
                 .canonicalize()
                 .ok()
-                .and_then(|canon_abs| canon_abs.strip_prefix(&canon_root).ok().map(|p| p.to_path_buf()))
+                .and_then(|canon_abs| crate::util::relative_to_root(&canon_root, &canon_abs))
         })
-        .unwrap_or_else(|| candidate.to_path_buf());
-    result
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/")
+        .unwrap_or_else(|| {
+            candidate
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/")
+        })
 }
 
 /// Given a workspace-relative path to a markdown or PDF file, return the

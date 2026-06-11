@@ -47,6 +47,13 @@ import {
   enrichBibEntry,
   type EnrichResult,
   type SaveOutcome,
+  isSaved,
+  isDuplicateDoi,
+  isSavedNoDoi,
+  recognizePdf,
+  importRecognizedEntry,
+  type RecognizeResult,
+  type ConfirmReason,
   pdfOpen,
   pdfRenderPage,
   pdfPrefetch,
@@ -708,6 +715,28 @@ describe("ipc", () => {
             references_appended: 5,
             shadow_nodes_created: 3,
           };
+        case "recognize_pdf": {
+          return {
+            kind: "resolved",
+            outcome: { Saved: { key: "kucsko2013" } },
+            source: "DoiContentNegotiation",
+            validation: "validated",
+            file: "assets/pdf/paper.pdf",
+            entry: {
+              key: "kucsko2013",
+              authors: ["Kucsko, Georg"],
+              title: "Probing condensed matter physics",
+              year: "2013",
+              entry_type: "article",
+              line_number: 0,
+              doi: "10.1038/nature12373",
+              file: "assets/pdf/paper.pdf",
+            },
+          };
+        }
+        case "import_recognized_entry": {
+          return [{ Saved: { key: "manual2024" } }];
+        }
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2147,6 +2176,111 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
       bibKey: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("recognizePdf calls recognize_pdf with correct args", async () => {
+    const result: RecognizeResult = await recognizePdf(
+      "/external/paper.pdf",
+      "/workspace/refs.bib",
+      "/workspace",
+    );
+    expect(result.kind).toBe("resolved");
+    if (result.kind === "resolved") {
+      expect(result.outcome).toEqual({ Saved: { key: "kucsko2013" } });
+      expect(result.source).toBe("DoiContentNegotiation");
+      expect(result.validation).toBe("validated");
+      expect(result.file).toBe("assets/pdf/paper.pdf");
+      expect(result.entry.key).toBe("kucsko2013");
+      expect(result.entry.file).toBe("assets/pdf/paper.pdf");
+    }
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("recognize_pdf", {
+      pdfPath: "/external/paper.pdf",
+      bibPath: "/workspace/refs.bib",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("recognizePdf handles needs_confirmation result", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "recognize_pdf") {
+        return {
+          kind: "needs_confirmation",
+          reason: "no_text_layer",
+          prefilled: {
+            key: "",
+            authors: [],
+            title: "",
+            year: "",
+            entry_type: "misc",
+            line_number: 0,
+            file: "assets/pdf/scanned.pdf",
+          },
+          file: "assets/pdf/scanned.pdf",
+          message: null,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const result = await recognizePdf(
+      "/external/scanned.pdf",
+      "/workspace/refs.bib",
+      "/workspace",
+    );
+    expect(result.kind).toBe("needs_confirmation");
+    if (result.kind === "needs_confirmation") {
+      const reason: ConfirmReason = result.reason;
+      expect(reason).toBe("no_text_layer");
+      expect(result.prefilled.entry_type).toBe("misc");
+      expect(result.file).toBe("assets/pdf/scanned.pdf");
+      expect(result.message).toBeNull();
+    }
+  });
+
+  // SaveOutcome type guards
+  it("isSaved returns true for Saved variant", () => {
+    const o: SaveOutcome = { Saved: { key: "k" } };
+    expect(isSaved(o)).toBe(true);
+  });
+
+  it("isSaved returns false for DuplicateDoi variant", () => {
+    const o: SaveOutcome = { DuplicateDoi: { doi: "10.1/x", existing_key: "k" } };
+    expect(isSaved(o)).toBe(false);
+  });
+
+  it("isDuplicateDoi returns true for DuplicateDoi variant", () => {
+    const o: SaveOutcome = { DuplicateDoi: { doi: "10.1/x", existing_key: "k" } };
+    expect(isDuplicateDoi(o)).toBe(true);
+  });
+
+  it("isSavedNoDoi returns true for SavedNoDoi variant", () => {
+    const o: SaveOutcome = { SavedNoDoi: { key: "k" } };
+    expect(isSavedNoDoi(o)).toBe(true);
+  });
+
+  it("importRecognizedEntry calls import_recognized_entry with correct args", async () => {
+    const entry = {
+      key: "",
+      authors: ["Manual, Author"],
+      title: "Manual Entry",
+      year: "2024",
+      entry_type: "misc",
+      line_number: 0,
+      file: "assets/pdf/paper.pdf",
+    };
+    const outcomes = await importRecognizedEntry(
+      entry,
+      "/workspace/refs.bib",
+      "/workspace",
+    );
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toEqual({ Saved: { key: "manual2024" } });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("import_recognized_entry", {
+      entry,
+      bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
   });

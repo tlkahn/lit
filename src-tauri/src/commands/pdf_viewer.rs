@@ -30,6 +30,12 @@ impl PdfViewerState {
         }
     }
 
+    /// Public accessor for the pdfium library path.
+    /// Used by recognize_pdf to create transient PdfRenderThread instances.
+    pub fn lib_path(&self) -> &str {
+        &self.lib_path
+    }
+
     pub fn open_for_window(&self, slot: &str, path: &str) -> Result<PdfInfo, String> {
         let mut threads = self.threads.lock().unwrap();
         if let Some(old) = threads.remove(slot) {
