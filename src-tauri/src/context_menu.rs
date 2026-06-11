@@ -30,12 +30,14 @@ pub const CTX_GRAPH_SPLIT: &str = "ctx_graph_split";
 pub const CTX_GRAPH_DELETE: &str = "ctx_graph_delete";
 pub const CTX_GRAPH_EXPORT_NETWORK: &str = "ctx_graph_export_network";
 pub const CTX_GRAPH_FETCH_DETAILS: &str = "ctx_graph_fetch_details";
+pub const CTX_GRAPH_CREATE_NOTE: &str = "ctx_graph_create_note";
 
 pub const EVENT_CTX_GRAPH_MERGE: &str = "context-menu://graph/merge";
 pub const EVENT_CTX_GRAPH_SPLIT: &str = "context-menu://graph/split";
 pub const EVENT_CTX_GRAPH_DELETE: &str = "context-menu://graph/delete";
 pub const EVENT_CTX_GRAPH_EXPORT_NETWORK: &str = "context-menu://graph/export-network";
 pub const EVENT_CTX_GRAPH_FETCH_DETAILS: &str = "context-menu://graph/fetch-details";
+pub const EVENT_CTX_GRAPH_CREATE_NOTE: &str = "context-menu://graph/create-note";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
@@ -52,6 +54,7 @@ pub enum ContextMenuAction {
     GraphDelete,
     GraphExportNetwork,
     GraphFetchDetails,
+    GraphCreateNote,
 }
 
 impl ContextMenuAction {
@@ -70,6 +73,7 @@ impl ContextMenuAction {
             CTX_GRAPH_DELETE => Some(Self::GraphDelete),
             CTX_GRAPH_EXPORT_NETWORK => Some(Self::GraphExportNetwork),
             CTX_GRAPH_FETCH_DETAILS => Some(Self::GraphFetchDetails),
+            CTX_GRAPH_CREATE_NOTE => Some(Self::GraphCreateNote),
             _ => None,
         }
     }
@@ -190,6 +194,11 @@ pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
             label: "Fetch details".into(),
             enabled: true,
         });
+        items.push(MenuItemSpec {
+            id: CTX_GRAPH_CREATE_NOTE,
+            label: "Create note".into(),
+            enabled: true,
+        });
     }
     if ctx.selection_count >= 2 {
         items.push(MenuItemSpec {
@@ -254,6 +263,7 @@ pub fn dispatch_graph_action(
         ContextMenuAction::GraphDelete => EVENT_CTX_GRAPH_DELETE,
         ContextMenuAction::GraphExportNetwork => EVENT_CTX_GRAPH_EXPORT_NETWORK,
         ContextMenuAction::GraphFetchDetails => EVENT_CTX_GRAPH_FETCH_DETAILS,
+        ContextMenuAction::GraphCreateNote => EVENT_CTX_GRAPH_CREATE_NOTE,
         _ => unreachable!("dispatch_graph_action called with non-graph action"),
     };
     (event, payload)
@@ -1105,6 +1115,126 @@ mod tests {
             assert_ne!(
                 CTX_GRAPH_FETCH_DETAILS, *aid,
                 "CTX_GRAPH_FETCH_DETAILS collides with app menu ID {aid}"
+            );
+        }
+    }
+
+    // --- Phase 7: Graph "Create note" context menu for shadow nodes ---
+
+    #[test]
+    fn graph_create_note_constant_equals_expected_value() {
+        assert_eq!(CTX_GRAPH_CREATE_NOTE, "ctx_graph_create_note");
+    }
+
+    #[test]
+    fn graph_create_note_event_constant_equals_expected_value() {
+        assert_eq!(EVENT_CTX_GRAPH_CREATE_NOTE, "context-menu://graph/create-note");
+    }
+
+    #[test]
+    fn from_id_maps_graph_create_note() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_GRAPH_CREATE_NOTE),
+            Some(ContextMenuAction::GraphCreateNote)
+        );
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_no_selection_includes_create_note() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: false,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_CREATE_NOTE
+            && i.label == "Create note"
+            && i.enabled));
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_single_selection_includes_create_note() {
+        let ctx = GraphMenuContext {
+            selection_count: 1,
+            has_headings: false,
+            has_export: false,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_CREATE_NOTE));
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_multi_selection_excludes_create_note() {
+        let ctx = GraphMenuContext {
+            selection_count: 2,
+            has_headings: false,
+            has_export: false,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_CREATE_NOTE));
+    }
+
+    #[test]
+    fn graph_menu_items_not_shadow_excludes_create_note() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: false,
+            is_shadow: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_CREATE_NOTE));
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_create_note_appears_after_fetch_details() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: true,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        let fetch_idx = items.iter().position(|i| i.id == CTX_GRAPH_FETCH_DETAILS).unwrap();
+        let create_idx = items.iter().position(|i| i.id == CTX_GRAPH_CREATE_NOTE).unwrap();
+        assert_eq!(create_idx, fetch_idx + 1);
+    }
+
+    #[test]
+    fn dispatch_graph_create_note_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_graph_action(
+            ContextMenuAction::GraphCreateNote,
+            "bib:jones2023",
+            &[],
+        );
+        assert_eq!(event, EVENT_CTX_GRAPH_CREATE_NOTE);
+        assert_eq!(payload.node_id, "bib:jones2023");
+    }
+
+    #[test]
+    fn graph_create_note_id_does_not_collide_with_other_context_menu_ids() {
+        let other_ids = [
+            CTX_TRASH_RESTORE,
+            CTX_TRASH_PURGE,
+            CTX_SIDEBAR_RENAME,
+            CTX_SIDEBAR_EXTERNAL_EDITOR,
+            CTX_SIDEBAR_EXPORT_NETWORK,
+            CTX_SIDEBAR_TRASH,
+            CTX_MINDMAP_EDIT,
+            CTX_MINDMAP_EXPORT_NETWORK,
+            CTX_GRAPH_MERGE,
+            CTX_GRAPH_SPLIT,
+            CTX_GRAPH_DELETE,
+            CTX_GRAPH_EXPORT_NETWORK,
+            CTX_GRAPH_FETCH_DETAILS,
+        ];
+        for oid in &other_ids {
+            assert_ne!(
+                CTX_GRAPH_CREATE_NOTE, *oid,
+                "CTX_GRAPH_CREATE_NOTE collides with {oid}"
             );
         }
     }

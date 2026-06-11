@@ -235,6 +235,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -268,6 +269,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -289,6 +291,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => (id === "n1" ? "Alpha" : "Beta")),
     };
 
@@ -310,6 +313,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -329,6 +333,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -348,6 +353,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 
@@ -360,6 +366,47 @@ describe("useGraphContextMenu", () => {
     expect(handlers.onFetchDetails).not.toHaveBeenCalled();
   });
 
+  it("fires onCreateNote callback with node_id on create-note event", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useGraphContextMenu(handlers));
+
+    emitMockEvent("context-menu://graph/create-note", { node_id: "bib:jones2023", node_ids: [] });
+
+    expect(handlers.onCreateNote).toHaveBeenCalledWith("bib:jones2023");
+  });
+
+  it("cleans up create-note listener on unmount", async () => {
+    const { useGraphContextMenu } = await import("./contextMenuIpc");
+    const handlers = {
+      onMergeRequest: vi.fn(),
+      onSplitRequest: vi.fn(),
+      onDeleteRequest: vi.fn(),
+      onExportNetwork: vi.fn(),
+      onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
+      getNodeLabel: vi.fn((id: string) => id),
+    };
+
+    const { renderHook } = await import("@testing-library/react");
+    const { unmount } = renderHook(() => useGraphContextMenu(handlers));
+
+    unmount();
+
+    emitMockEvent("context-menu://graph/create-note", { node_id: "bib:jones2023", node_ids: [] });
+    expect(handlers.onCreateNote).not.toHaveBeenCalled();
+  });
+
   it("cleans up listeners on unmount", async () => {
     const { useGraphContextMenu } = await import("./contextMenuIpc");
     const handlers = {
@@ -368,6 +415,7 @@ describe("useGraphContextMenu", () => {
       onDeleteRequest: vi.fn(),
       onExportNetwork: vi.fn(),
       onFetchDetails: vi.fn(),
+      onCreateNote: vi.fn(),
       getNodeLabel: vi.fn((id: string) => id),
     };
 

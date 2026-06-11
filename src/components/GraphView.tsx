@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback } from "react";
 import type { PageContent, MergePlan, SplitPlan } from "../lib/ipc";
-import { readPage, enrichBibEntry } from "../lib/ipc";
+import { readPage, enrichBibEntry, materializeCitation } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc";
@@ -17,6 +17,7 @@ import { GraphDeleteDialog } from "./GraphDeleteDialog";
 import { useGraphTheme } from "../hooks/useGraphTheme";
 import { useGraphSearch } from "../hooks/useGraphSearch";
 import { useGraphData } from "../hooks/useGraphData";
+import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { useGraphRenderer } from "../hooks/useGraphRenderer";
 import type { GraphLike } from "../hooks/graphTypes";
 import "./GraphSearch.css";
@@ -52,11 +53,17 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setShowCitations = useGraphViewState((s) => s.setShowCitations);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const show = useStatusMessageStore((s) => s.show);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
     !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
   );
+
+  const currentPageRef = useRef(currentPagePath ?? "");
+  currentPageRef.current = currentPagePath ?? "";
+  const recordDeparture = useRecordDeparture(currentPageRef);
 
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeDialogDocs, setMergeDialogDocs] = useState<PageContent[]>([]);
@@ -155,6 +162,19 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
           err instanceof Error ? err.message : String(err),
           "error",
         );
+      }
+    },
+    onCreateNote: async (nodeId) => {
+      const bibKey = nodeId.replace("bib:", "");
+      try {
+        const meta = await materializeCitation(bibKey);
+        useWorkspaceStore.setState((state) => ({
+          pages: [...state.pages, meta],
+        }));
+        recordDeparture();
+        selectPage(meta.relative_path);
+      } catch {
+        show("Failed to create note", "error");
       }
     },
     getNodeLabel: (nodeId) => {
