@@ -217,6 +217,13 @@ fn build_citation_note_path(
         }
     }
 
+    // Reject dot-prefixed bib_key: the graph indexer's full rescan skips
+    // dot-prefixed paths, so the note would silently drop from the index
+    // and the shadow node would reappear with the file stuck on disk.
+    if bib_key.starts_with('.') {
+        return Err(format!("bib_key cannot start with '.': {bib_key}"));
+    }
+
     // Reject absolute notes_dir
     if notes_dir.starts_with('/') || notes_dir.starts_with('\\') {
         return Err(format!(
@@ -224,11 +231,17 @@ fn build_citation_note_path(
         ));
     }
 
-    // Reject path traversal components in notes_dir
+    // Reject traversal and dot-prefixed components in notes_dir (the
+    // indexer skips hidden directories, same stuck state as above)
     for component in notes_dir.split(['/', '\\']) {
         if component == ".." {
             return Err(format!(
                 "notes_dir contains '..' traversal: {notes_dir}"
+            ));
+        }
+        if component.starts_with('.') {
+            return Err(format!(
+                "notes_dir contains a hidden ('.'-prefixed) component: {notes_dir}"
             ));
         }
     }
@@ -777,6 +790,33 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn note_path_rejects_dot_prefixed_key() {
+        let dir = TempDir::new().unwrap();
+        let result = build_citation_note_path(dir.path(), ".hidden2020", "References");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("cannot start with '.'"), "got: {err}");
+    }
+
+    #[test]
+    fn note_path_rejects_dot_prefixed_notes_dir() {
+        let dir = TempDir::new().unwrap();
+        let result = build_citation_note_path(dir.path(), "smith2020", ".references");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("hidden"), "got: {err}");
+    }
+
+    #[test]
+    fn note_path_rejects_hidden_component_in_nested_notes_dir() {
+        let dir = TempDir::new().unwrap();
+        let result = build_citation_note_path(dir.path(), "smith2020", "notes/.refs/sub");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("hidden"), "got: {err}");
     }
 
     #[test]
