@@ -1193,4 +1193,46 @@ describe("useGraphData", () => {
       expect(result.current.graphRef.current!.hasNode("b.md")).toBe(false);
     });
   });
+
+  // Cycle: rebuild() exposed function
+  describe("rebuild()", () => {
+    it("rebuild() triggers a fresh graph fetch and increments dataVersion", async () => {
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const initialVersion = result.current.dataVersion;
+
+      await act(async () => {
+        await result.current.rebuild();
+      });
+
+      expect(result.current.dataVersion).toBeGreaterThan(initialVersion);
+    });
+
+    it("rebuild() produces same graph stats as lit:graph-updated event", async () => {
+      mockInvoke(makeInvokeHandler());
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      // Rebuild via the exposed function
+      await act(async () => {
+        await result.current.rebuild();
+      });
+      const versionAfterRebuild = result.current.dataVersion;
+      const statsAfterRebuild = result.current.graphStats;
+
+      // Verify both advanced
+      expect(versionAfterRebuild).toBe(2); // initial=1, rebuild=2
+      expect(statsAfterRebuild).toEqual({ nodes: 2, edges: 1 });
+    });
+  });
 });

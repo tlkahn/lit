@@ -3,14 +3,18 @@ import { useWorkspaceStore } from "../stores/workspace";
 
 /**
  * Canonical materialize-and-navigate sequence shared between:
- * - ReferenceLibrary.tsx  (React component)
- * - citeprocTooltip.ts    (CM6 imperative DOM builder)
+ * - useMaterializeCitation.ts (React hook — ReferenceLibrary, GraphView)
+ * - citeprocTooltip.ts        (CM6 imperative DOM builder)
  *
  * Steps:
- * 1. materializeCitation(bibKey)   → creates the note on disk
- * 2. Append the returned PageMeta to the workspace pages array
- * 3. recordDeparture()             → record jump history for back-navigation
- * 4. selectPage(meta.relative_path) → navigate to the new page
+ * 1. materializeCitation(bibKey)    → creates the note on disk
+ * 2. Replace-or-append the returned PageMeta in the workspace pages array
+ *    (a racing refreshPages may have already added a stale entry)
+ * 3. recordDeparture()              → record jump history for back-navigation
+ * 4. navigate(meta.relative_path)   → defaults to selectPage
+ *
+ * Rejects with the backend error on failure; callers own error handling
+ * (the tooltip relies on the "already exists" message to recover).
  *
  * NOTE: This helper intentionally does NOT call invalidateBibKeyStatesCache()
  * or loadBibKeyStates(). Each call-site handles its own local cache refresh
@@ -20,17 +24,33 @@ import { useWorkspaceStore } from "../stores/workspace";
  */
 export async function materializeAndOpen(
   bibKey: string,
-  opts?: { recordDeparture?: () => void },
+  opts?: {
+    recordDeparture?: () => void;
+    navigate?: (relativePath: string) => void;
+  },
 ): Promise<PageMeta> {
   const meta = await materializeCitation(bibKey);
 
-  useWorkspaceStore.setState((state: { pages: PageMeta[] }) => ({
-    pages: [...state.pages, meta],
-  }));
+  useWorkspaceStore.setState((state: { pages: PageMeta[] }) => {
+    const exists = state.pages.some(
+      (p) => p.relative_path === meta.relative_path,
+    );
+    return {
+      pages: exists
+        ? state.pages.map((p) =>
+            p.relative_path === meta.relative_path ? meta : p,
+          )
+        : [...state.pages, meta],
+    };
+  });
 
   opts?.recordDeparture?.();
 
-  useWorkspaceStore.getState().selectPage(meta.relative_path);
+  if (opts?.navigate) {
+    opts.navigate(meta.relative_path);
+  } else {
+    useWorkspaceStore.getState().selectPage(meta.relative_path);
+  }
 
   return meta;
 }

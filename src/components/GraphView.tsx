@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback } from "react";
 import type { PageContent, MergePlan, SplitPlan } from "../lib/ipc";
 import { readPage, enrichBibEntry } from "../lib/ipc";
+import { bibKeyFromNodeId } from "../lib/bibKey";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc";
@@ -17,7 +18,9 @@ import { GraphDeleteDialog } from "./GraphDeleteDialog";
 import { useGraphTheme } from "../hooks/useGraphTheme";
 import { useGraphSearch } from "../hooks/useGraphSearch";
 import { useGraphData } from "../hooks/useGraphData";
+import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { useGraphRenderer } from "../hooks/useGraphRenderer";
+import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import type { GraphLike } from "../hooks/graphTypes";
 import "./GraphSearch.css";
 import "./GraphView.css";
@@ -52,11 +55,17 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setShowCitations = useGraphViewState((s) => s.setShowCitations);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const show = useStatusMessageStore((s) => s.show);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
     !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
   );
+
+  const currentPageRef = useRef(currentPagePath ?? "");
+  currentPageRef.current = currentPagePath ?? "";
+  const recordDeparture = useRecordDeparture(currentPageRef);
 
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeDialogDocs, setMergeDialogDocs] = useState<PageContent[]>([]);
@@ -65,14 +74,21 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const [splitDialogPath, setSplitDialogPath] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
 
-  const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion } = useGraphData({
+  const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion, rebuild } = useGraphData({
     mode, depth, activePageId: activePageId ?? null, showCitations,
+  });
+
+  const materialize = useMaterializeCitation({
+    recordDeparture,
+    navigate: onNavigate ?? selectPage,
+    onError: (msg) => show(msg, "error"),
+    onMaterialized: rebuild,
   });
 
   const { sigmaRef, hoveredNodeRef, selectedSetRef, defaultNodeReducer, tierSettingsRef, resetZoom } = useGraphRenderer({
     containerRef, graphRef, tierSettings, dimColorRef, dataVersion,
     onNavigate, onContextMenu: async (menu) => {
-      const isShadow = menu.nodeId.startsWith("bib:");
+      const isShadow = bibKeyFromNodeId(menu.nodeId) !== null;
       let hasHeadings = false;
       if (!isShadow) {
         const page = await readPage(menu.nodeId);
@@ -130,7 +146,8 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
     },
     onFetchDetails: async (nodeId) => {
       if (!workspacePath) return;
-      const bibKey = nodeId.replace("bib:", "");
+      const bibKey = bibKeyFromNodeId(nodeId);
+      if (!bibKey) return;
       try {
         const result = await enrichBibEntry(bibKey, workspacePath);
         const parts: string[] = [];
@@ -156,6 +173,11 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
           "error",
         );
       }
+    },
+    onCreateNote: async (nodeId) => {
+      const bibKey = bibKeyFromNodeId(nodeId);
+      if (!bibKey) return;
+      await materialize(bibKey);
     },
     getNodeLabel: (nodeId) => {
       try {

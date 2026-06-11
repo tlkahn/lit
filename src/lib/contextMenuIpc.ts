@@ -162,6 +162,7 @@ interface GraphContextMenuHandlers {
   onDeleteRequest: (nodeIds: string[], labels: string[]) => void;
   onExportNetwork: (nodeId: string) => void;
   onFetchDetails: (nodeId: string) => void;
+  onCreateNote: (nodeId: string) => void;
   getNodeLabel: (nodeId: string) => string;
 }
 
@@ -214,6 +215,12 @@ export function useGraphContextMenu(handlers: GraphContextMenuHandlers) {
     unlisteners.push(
       listen<GraphContextPayload>("context-menu://graph/fetch-details", (event) => {
         if (!cancelled) handlersRef.current.onFetchDetails(event.payload.node_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<GraphContextPayload>("context-menu://graph/create-note", (event) => {
+        if (!cancelled) handlersRef.current.onCreateNote(event.payload.node_id);
       }),
     );
 

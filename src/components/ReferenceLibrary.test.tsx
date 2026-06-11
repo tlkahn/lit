@@ -1055,7 +1055,7 @@ describe("ReferenceLibrary", () => {
     await user.click(screen.getByTestId("create-note-btn"));
 
     await waitFor(() =>
-      expect(useStatusMessageStore.getState().message).toMatch(/Failed to create note/i),
+      expect(useStatusMessageStore.getState().message).toMatch(/disk full/i),
     );
     expect(useStatusMessageStore.getState().variant).toBe("error");
   });
@@ -1164,7 +1164,7 @@ describe("ReferenceLibrary", () => {
     // After failure, button should be re-enabled
     await waitFor(() => expect(btn).not.toBeDisabled());
     // And the error message should be shown
-    expect(useStatusMessageStore.getState().message).toMatch(/Failed to create note/i);
+    expect(useStatusMessageStore.getState().message).toMatch(/disk full/i);
   });
 
   it("discards stale bib key states after rapid graph updates", async () => {

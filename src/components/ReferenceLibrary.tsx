@@ -20,11 +20,11 @@ import {
   type BacklinkEntry,
   type FileEvent,
 } from "../lib/ipc";
+import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
-import { materializeAndOpen } from "../lib/materializeAndOpen";
 
 function lastName(entry: BibEntry): string {
   const first = entry.authors[0] ?? "";
@@ -282,22 +282,24 @@ export function ReferenceLibrary() {
     [show],
   );
 
+  const doMaterialize = useMaterializeCitation({
+    recordDeparture,
+    navigate: selectPage,
+    onError: (msg) => show(msg, "error"),
+    onMaterialized: loadBibKeyStates,
+  });
+
   const materializeNote = useCallback(
     async (bibKey: string) => {
       if (materializingKey !== null) return;
       setMaterializingKey(bibKey);
       try {
-        await materializeAndOpen(bibKey, { recordDeparture });
-        // Eagerly refresh React state — covers paths where lit:graph-updated
-        // won't fire (reindex error or graph index not yet ready).
-        loadBibKeyStates();
-      } catch {
-        show("Failed to create note", "error");
+        await doMaterialize(bibKey);
       } finally {
         setMaterializingKey(null);
       }
     },
-    [materializingKey, loadBibKeyStates, recordDeparture, show],
+    [materializingKey, doMaterialize],
   );
 
   const handleEnrich = useCallback(
