@@ -55,9 +55,9 @@ base64 = "0.22"
 url = "2"
 tauri-plugin-deep-link = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-llm-core = { git = "https://github.com/tlkahn/llm-rs.git", rev = "533dbb5" }
-llm-openai = { git = "https://github.com/tlkahn/llm-rs.git", rev = "533dbb5" }
-llm-anthropic = { git = "https://github.com/tlkahn/llm-rs.git", rev = "533dbb5" }
+llm-core = { git = "https://github.com/tlkahn/llm-rs.git", rev = "3ae914c" }
+llm-openai = { git = "https://github.com/tlkahn/llm-rs.git", rev = "3ae914c" }
+llm-anthropic = { git = "https://github.com/tlkahn/llm-rs.git", rev = "3ae914c" }
 futures = "0.3"
 tokio-stream = "0.1"
 uuid = { version = "1", features = ["v4"] }
@@ -72,6 +72,7 @@ name = "lit-cli"
 path = "src/bin/lit-cli.rs"
 
 [dev-dependencies]
+async-trait = "0.1"
 serde_json = "1"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"

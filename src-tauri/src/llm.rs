@@ -1,4 +1,4 @@
-use llm_core::types::{Message, Prompt, Role};
+use llm_core::types::{Attachment, Message, Prompt, Role};
 use llm_core::Provider;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -51,11 +51,134 @@ pub fn build_prompt(
     prompt
 }
 
+pub fn build_prompt_with_attachments(
+    text: &str,
+    system: Option<&str>,
+    messages: &[ChatMessage],
+    options: &HashMap<String, serde_json::Value>,
+    attachments: Vec<Attachment>,
+) -> Prompt {
+    let prompt = build_prompt(text, system, messages, options);
+    if attachments.is_empty() {
+        prompt
+    } else {
+        prompt.with_attachments(attachments)
+    }
+}
+
+/// Conservative image MIME type allowlist for unknown models on known
+/// vision-capable provider families (Anthropic, OpenAI wire format).
+const CONSERVATIVE_IMAGE_ALLOWLIST: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+];
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachmentCapabilityError {
+    pub model: String,
+    pub unsupported_types: Vec<String>,
+}
+
+impl std::fmt::Display for AttachmentCapabilityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Model '{}' does not support attachment types: {}",
+            self.model,
+            self.unsupported_types.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for AttachmentCapabilityError {}
+
+/// Check whether the given provider+model combination supports the MIME types
+/// of the supplied attachments.
+///
+/// - No attachments -> `Ok(())`
+/// - Known model in `provider.models()` -> check `attachment_types` against
+///   each attachment's `mime_type`
+/// - Unknown model on a known vision-capable provider ("anthropic" or "openai")
+///   -> allow conservative image allowlist (png/jpeg/webp/gif)
+/// - Unknown provider -> reject all attachments
+pub fn check_attachment_capability(
+    provider: &dyn Provider,
+    model: &str,
+    attachments: &[Attachment],
+) -> Result<(), AttachmentCapabilityError> {
+    if attachments.is_empty() {
+        return Ok(());
+    }
+
+    // Collect the MIME types from all attachments. Treat None as
+    // "application/octet-stream" (which will be rejected by any allowlist).
+    let attachment_mimes: Vec<String> = attachments
+        .iter()
+        .map(|a| {
+            a.mime_type
+                .clone()
+                .unwrap_or_else(|| "application/octet-stream".to_string())
+        })
+        .collect();
+
+    // Try to find the model in the provider's known model list
+    let models = provider.models();
+    if let Some(model_info) = models.iter().find(|m| m.id == model) {
+        // Known model: check against its declared attachment_types
+        let unsupported: Vec<String> = attachment_mimes
+            .iter()
+            .filter(|mime| !model_info.attachment_types.contains(mime))
+            .cloned()
+            .collect();
+        if unsupported.is_empty() {
+            Ok(())
+        } else {
+            Err(AttachmentCapabilityError {
+                model: model.to_string(),
+                unsupported_types: unsupported,
+            })
+        }
+    } else {
+        // Unknown model: use provider family heuristic
+        let provider_id = provider.id();
+        let is_vision_capable_family = provider_id == "anthropic" || provider_id == "openai";
+
+        if is_vision_capable_family {
+            let unsupported: Vec<String> = attachment_mimes
+                .iter()
+                .filter(|mime| {
+                    !CONSERVATIVE_IMAGE_ALLOWLIST
+                        .iter()
+                        .any(|allowed| *allowed == mime.as_str())
+                })
+                .cloned()
+                .collect();
+            if unsupported.is_empty() {
+                Ok(())
+            } else {
+                Err(AttachmentCapabilityError {
+                    model: model.to_string(),
+                    unsupported_types: unsupported,
+                })
+            }
+        } else {
+            // Truly unknown provider: reject all
+            Err(AttachmentCapabilityError {
+                model: model.to_string(),
+                unsupported_types: attachment_mimes,
+            })
+        }
+    }
+}
+
 pub fn estimate_tokens(text: &str) -> usize {
     (text.chars().count() + 3) / 4
 }
 
 const DEFAULT_CONTEXT_WINDOW: usize = 128_000;
+const IMAGE_TOKEN_ESTIMATE: usize = 1000;
 
 pub fn context_window(provider_id: &str) -> usize {
     provider_registry::lookup(provider_id)
@@ -71,6 +194,7 @@ pub fn estimate_prompt_size(prompt: &Prompt) -> usize {
     for msg in &prompt.messages {
         total += estimate_tokens(&msg.content);
     }
+    total += prompt.attachments.len() * IMAGE_TOKEN_ESTIMATE;
     total
 }
 
@@ -239,6 +363,8 @@ pub fn create_provider(provider_id: &str, base_url: Option<&str>) -> Box<dyn Pro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use llm_core::types::{AttachmentSource, ModelInfo};
 
     #[test]
     fn chat_message_serializes() {
@@ -783,5 +909,466 @@ data: [DONE]\n\n";
         store.set("com.lit.app", "anthropic-api-key", "sk-from-store").unwrap();
         let result = resolve_api_key("anthropic", &store);
         assert_eq!(result.as_deref(), Some("sk-from-store"));
+    }
+
+    #[test]
+    fn build_prompt_with_attachments_passes_through() {
+        let attachments = vec![
+            Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            },
+        ];
+        let prompt = build_prompt_with_attachments(
+            "Describe this image",
+            Some("Be brief"),
+            &[],
+            &HashMap::new(),
+            attachments.clone(),
+        );
+        assert_eq!(prompt.text, "Describe this image");
+        assert_eq!(prompt.system.as_deref(), Some("Be brief"));
+        assert_eq!(prompt.attachments.len(), 1);
+        assert_eq!(prompt.attachments[0].mime_type, Some("image/png".into()));
+        assert!(matches!(prompt.attachments[0].source, AttachmentSource::Bytes(_)));
+    }
+
+    #[test]
+    fn attachments_survive_token_budget() {
+        let attachments = vec![
+            Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![1, 2, 3]),
+            },
+        ];
+        let prompt = build_prompt_with_attachments(
+            "Short text",
+            None,
+            &[],
+            &HashMap::new(),
+            attachments,
+        );
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        assert!(trunc.is_none(), "short text should not be truncated");
+        assert_eq!(result.attachments.len(), 1);
+        assert_eq!(result.text, "Short text");
+    }
+
+    #[test]
+    fn attachments_survive_token_budget_with_truncation() {
+        let long_text = "word ".repeat(200_000);
+        let attachments = vec![
+            Attachment {
+                mime_type: Some("image/jpeg".into()),
+                source: AttachmentSource::Bytes(vec![0xFF, 0xD8, 0xFF]),
+            },
+        ];
+        let prompt = build_prompt_with_attachments(
+            &long_text,
+            None,
+            &[],
+            &HashMap::new(),
+            attachments,
+        );
+        let (result, trunc) = apply_token_budget(prompt, "openai", "gpt-4o", None);
+        assert!(trunc.is_some(), "long text should be truncated");
+        assert!(result.text.len() < long_text.len());
+        assert_eq!(result.attachments.len(), 1, "attachments must survive truncation");
+        assert_eq!(result.attachments[0].mime_type, Some("image/jpeg".into()));
+    }
+
+    // --- Mock provider for check_attachment_capability tests ---
+
+    struct MockVisionProvider {
+        provider_id: &'static str,
+        model_infos: Vec<ModelInfo>,
+    }
+
+    #[async_trait]
+    impl Provider for MockVisionProvider {
+        fn id(&self) -> &str {
+            self.provider_id
+        }
+
+        fn models(&self) -> Vec<ModelInfo> {
+            self.model_infos.clone()
+        }
+
+        async fn execute(
+            &self,
+            _model: &str,
+            _prompt: &Prompt,
+            _key: Option<&str>,
+            _stream: bool,
+        ) -> llm_core::error::Result<llm_core::stream::ResponseStream> {
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(llm_core::stream::Chunk::Done),
+            ])))
+        }
+    }
+
+    // --- check_attachment_capability tests ---
+
+    #[test]
+    fn check_attachment_capability_no_attachments() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_attachment_capability_supported_model() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_attachment_capability_unsupported_type() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("audio/mp3".into()),
+            source: AttachmentSource::Bytes(vec![0xFF, 0xFB]),
+        }];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(err.model, "claude-sonnet-4-6");
+        assert_eq!(err.unsupported_types, vec!["audio/mp3".to_string()]);
+    }
+
+    #[test]
+    fn check_attachment_capability_unknown_model_conservative() {
+        let provider = MockVisionProvider {
+            provider_id: "openai",
+            model_infos: vec![ModelInfo {
+                id: "gpt-4o".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        // "llama-3.1-70b" is NOT in provider.models(), but provider.id() == "openai"
+        let result = check_attachment_capability(&provider, "llama-3.1-70b", &attachments);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn check_attachment_capability_unknown_model_rejects_non_image() {
+        let provider = MockVisionProvider {
+            provider_id: "openai",
+            model_infos: vec![ModelInfo {
+                id: "gpt-4o".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("audio/mp3".into()),
+            source: AttachmentSource::Bytes(vec![0xFF, 0xFB]),
+        }];
+        let result = check_attachment_capability(&provider, "llama-3.1-70b", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(err.unsupported_types, vec!["audio/mp3".to_string()]);
+    }
+
+    #[test]
+    fn check_attachment_capability_unknown_provider_rejects_all() {
+        let provider = MockVisionProvider {
+            provider_id: "custom-unknown",
+            model_infos: vec![],
+        };
+        let attachments = vec![Attachment {
+            mime_type: Some("image/png".into()),
+            source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+        }];
+        let result = check_attachment_capability(&provider, "some-model", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(err.unsupported_types, vec!["image/png".to_string()]);
+    }
+
+    #[test]
+    fn check_attachment_capability_none_mime_type_rejected() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let attachments = vec![Attachment {
+            mime_type: None,
+            source: AttachmentSource::Bytes(vec![0x00, 0x01]),
+        }];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.unsupported_types,
+            vec!["application/octet-stream".to_string()]
+        );
+    }
+
+    #[test]
+    fn check_attachment_capability_mixed_supported_and_unsupported() {
+        let provider = MockVisionProvider {
+            provider_id: "anthropic",
+            model_infos: vec![ModelInfo {
+                id: "claude-sonnet-4-6".into(),
+                can_stream: true,
+                supports_tools: true,
+                supports_schema: true,
+                attachment_types: vec![
+                    "image/png".into(),
+                    "image/jpeg".into(),
+                    "image/webp".into(),
+                    "image/gif".into(),
+                ],
+            }],
+        };
+        let attachments = vec![
+            Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            },
+            Attachment {
+                mime_type: Some("audio/mp3".into()),
+                source: AttachmentSource::Bytes(vec![0xFF, 0xFB]),
+            },
+        ];
+        let result = check_attachment_capability(&provider, "claude-sonnet-4-6", &attachments);
+        let err = result.unwrap_err();
+        assert_eq!(err.unsupported_types, vec!["audio/mp3".to_string()]);
+    }
+
+    #[test]
+    fn estimate_prompt_size_includes_attachments() {
+        let prompt_without = Prompt::new("Hello world");
+        let size_without = estimate_prompt_size(&prompt_without);
+
+        let prompt_with = Prompt::new("Hello world")
+            .with_attachments(vec![Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            }]);
+        let size_with = estimate_prompt_size(&prompt_with);
+
+        assert_eq!(
+            size_with - size_without,
+            IMAGE_TOKEN_ESTIMATE,
+            "one attachment should add exactly IMAGE_TOKEN_ESTIMATE tokens"
+        );
+
+        // Two attachments should add 2 * IMAGE_TOKEN_ESTIMATE
+        let prompt_two = Prompt::new("Hello world")
+            .with_attachments(vec![
+                Attachment {
+                    mime_type: Some("image/png".into()),
+                    source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+                },
+                Attachment {
+                    mime_type: Some("image/jpeg".into()),
+                    source: AttachmentSource::Bytes(vec![0xFF, 0xD8, 0xFF]),
+                },
+            ]);
+        let size_two = estimate_prompt_size(&prompt_two);
+        assert_eq!(
+            size_two - size_without,
+            2 * IMAGE_TOKEN_ESTIMATE,
+            "two attachments should add exactly 2 * IMAGE_TOKEN_ESTIMATE tokens"
+        );
+    }
+
+    #[tokio::test]
+    async fn integration_anthropic_with_image_attachment() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        let sse_body = format!(
+            "{}{}{}{}{}{}",
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"I see a cat\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse_body, "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = create_provider("anthropic", Some(&server.uri()));
+        let prompt = Prompt::new("Describe this image")
+            .with_attachments(vec![Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            }]);
+        let stream = provider
+            .execute("claude-sonnet-4-6", &prompt, Some("fake-key"), true)
+            .await
+            .unwrap();
+
+        // Consume the stream
+        let mut events = Vec::new();
+        process_stream(stream, |e| events.push(e)).await;
+        assert!(events.contains(&LlmEvent::Chunk { text: "I see a cat".into() }));
+        assert!(events.contains(&LlmEvent::Done));
+
+        // Inspect the outgoing request body
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let req_body: serde_json::Value =
+            serde_json::from_slice(&received[0].body).unwrap();
+
+        // messages[0].content should be an array (Blocks) with an image block
+        let content = &req_body["messages"][0]["content"];
+        assert!(content.is_array(), "content should be array of blocks, got: {content}");
+        let blocks = content.as_array().unwrap();
+
+        // First block: image (Anthropic convention: images before text)
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["source"]["type"], "base64");
+        assert_eq!(blocks[0]["source"]["media_type"], "image/png");
+        assert!(!blocks[0]["source"]["data"].as_str().unwrap().is_empty());
+
+        // Second block: text
+        assert_eq!(blocks[1]["type"], "text");
+        assert_eq!(blocks[1]["text"], "Describe this image");
+    }
+
+    #[tokio::test]
+    async fn integration_openai_with_image_attachment() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::{method, path};
+
+        let server = MockServer::start().await;
+        let sse_body = "\
+data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"I see a cat\"},\"finish_reason\":null}]}\n\n\
+data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse_body, "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = create_provider("openai", Some(&server.uri()));
+        let prompt = Prompt::new("Describe this image")
+            .with_attachments(vec![Attachment {
+                mime_type: Some("image/png".into()),
+                source: AttachmentSource::Bytes(vec![0x89, 0x50, 0x4E, 0x47]),
+            }]);
+        let stream = provider
+            .execute("gpt-4o", &prompt, Some("fake-key"), true)
+            .await
+            .unwrap();
+
+        // Consume the stream
+        let mut events = Vec::new();
+        process_stream(stream, |e| events.push(e)).await;
+        assert!(events.contains(&LlmEvent::Chunk { text: "I see a cat".into() }));
+        assert!(events.contains(&LlmEvent::Done));
+
+        // Inspect the outgoing request body
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let req_body: serde_json::Value =
+            serde_json::from_slice(&received[0].body).unwrap();
+
+        // For OpenAI, user message is messages[0] (no system message in this prompt).
+        // content should be an array (Parts) with text + image_url
+        let content = &req_body["messages"][0]["content"];
+        assert!(content.is_array(), "content should be array of parts, got: {content}");
+        let parts = content.as_array().unwrap();
+
+        // First part: text (OpenAI convention: text before images)
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "Describe this image");
+
+        // Second part: image_url with data URI
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"), "expected data URI, got: {url}");
+        assert!(url.len() > "data:image/png;base64,".len());
     }
 }
