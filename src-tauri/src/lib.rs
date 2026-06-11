@@ -1,6 +1,7 @@
 pub mod annotation;
 pub mod bib;
 pub mod pdf;
+pub mod recognize;
 pub mod cli;
 mod commands;
 pub mod llm;
