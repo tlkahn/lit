@@ -55,6 +55,7 @@ export interface PreferencesState {
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   companionSearchPath: string[];
+  citationNotesDir: string;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -184,6 +185,7 @@ function mapPreferences(prefs: Preferences) {
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
+    citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
   };
 }
 
@@ -272,6 +274,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationPrefillLastUsed: false,
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
+  citationNotesDir: "references",
   loaded: false,
 
   loadPreferences: async () => {

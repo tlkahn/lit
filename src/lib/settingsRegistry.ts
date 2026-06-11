@@ -150,6 +150,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-companionSearchPath",
     keywords: ["companion", "pdf", "search path", "sibling", "markdown", "directory"],
   },
+  {
+    category: "Editor",
+    label: "Citation Notes Directory",
+    storeField: "citationNotesDir",
+    jsonKey: "citation.notesDir",
+    controlType: "text",
+    testId: "settings-citationNotesDir",
+    keywords: ["citation", "references", "notes", "bibliography", "citekey", "directory"],
+  },
   // Cross-references
   {
     category: "Cross-references",

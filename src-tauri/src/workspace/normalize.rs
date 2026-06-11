@@ -2,7 +2,7 @@ use super::WorkspaceError;
 use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 
-const FORBIDDEN_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
+pub const FORBIDDEN_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
 
 pub fn validate_within_root(root: &Path, relative_path: &str) -> Result<PathBuf, WorkspaceError> {
     let canonical_root = root

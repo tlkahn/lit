@@ -1332,7 +1332,7 @@ fn resolve_shadows(
     Ok(())
 }
 
-fn shadow_title(entry: &crate::bib::types::BibEntry) -> String {
+pub(crate) fn shadow_title(entry: &crate::bib::types::BibEntry) -> String {
     let author = entry
         .authors
         .first()

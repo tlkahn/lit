@@ -14,6 +14,7 @@ import {
   listBibEntries,
   getCitingPages,
   getBibKeyStates,
+  materializeCitation,
   enrichBibEntry,
   type BibEntry,
   type BibKeyState,
@@ -145,6 +146,7 @@ export function ReferenceLibrary() {
   const [bibKeyStates, setBibKeyStates] = useState<Record<string, BibKeyState>>({});
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [materializingKey, setMaterializingKey] = useState<string | null>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
@@ -278,6 +280,29 @@ export function ReferenceLibrary() {
         .catch(() => show("Failed to copy citation", "error"));
     },
     [show],
+  );
+
+  const materializeNote = useCallback(
+    async (bibKey: string) => {
+      if (materializingKey !== null) return;
+      setMaterializingKey(bibKey);
+      try {
+        const meta = await materializeCitation(bibKey);
+        useWorkspaceStore.setState((state) => ({
+          pages: [...state.pages, meta],
+        }));
+        // Eagerly refresh — covers paths where lit:graph-updated won't fire
+        // (reindex error or graph index not yet ready).
+        loadBibKeyStates();
+        recordDeparture();
+        selectPage(meta.relative_path);
+      } catch {
+        show("Failed to create note", "error");
+      } finally {
+        setMaterializingKey(null);
+      }
+    },
+    [materializingKey, loadBibKeyStates, recordDeparture, selectPage, show],
   );
 
   const handleEnrich = useCallback(
@@ -500,17 +525,27 @@ export function ReferenceLibrary() {
                           }}
                           className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                         >
-                          Has note: {state.page_id}
+                          Open note: {state.page_id}
                         </button>
                       </div>
-                    ) : state?.materialization === "partial" ? (
-                      <div className="mt-2">
-                        <span
-                          data-testid="badge-enriched"
-                          className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                    ) : state ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          data-testid="create-note-btn"
+                          onClick={() => materializeNote(entry.key)}
+                          disabled={materializingKey !== null}
+                          className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                         >
-                          Enriched
-                        </span>
+                          Create note
+                        </button>
+                        {state.materialization === "partial" ? (
+                          <span
+                            data-testid="badge-enriched"
+                            className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                          >
+                            Enriched
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                     {!state?.page_id ? (

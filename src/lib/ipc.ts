@@ -481,6 +481,10 @@ export async function listBibFiles(workspacePath: string): Promise<string[]> {
   return invoke<string[]>("list_bib_files", { workspacePath });
 }
 
+export async function materializeCitation(bibKey: string): Promise<PageMeta> {
+  return invoke<PageMeta>("materialize_citation", { bibKey });
+}
+
 // Bib enrichment
 
 export interface EnrichResult {
