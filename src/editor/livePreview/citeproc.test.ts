@@ -148,8 +148,8 @@ describe("buildCiteprocLinks", () => {
       bib,
     );
     expect(links).toHaveLength(2);
-    expect(links[0]).toEqual({ renderedText: "Smith 2020", bibFile: "refs.bib", lineNumber: 6, isValid: true });
-    expect(links[1]).toEqual({ renderedText: "Jones 2021", bibFile: "refs.bib", lineNumber: 13, isValid: true });
+    expect(links[0]).toEqual({ renderedText: "Smith 2020", bibKey: "smith2020", bibFile: "refs.bib", lineNumber: 6, isValid: true });
+    expect(links[1]).toEqual({ renderedText: "Jones 2021", bibKey: "jones2021", bibFile: "refs.bib", lineNumber: 13, isValid: true });
   });
 
   it("marks unknown keys as invalid", () => {
@@ -159,7 +159,7 @@ describe("buildCiteprocLinks", () => {
       bib,
     );
     expect(links[0]!.isValid).toBe(true);
-    expect(links[1]).toEqual({ renderedText: "@unknown", isValid: false });
+    expect(links[1]).toEqual({ renderedText: "@unknown", bibKey: "unknown", isValid: false });
   });
 
   it("uses year-only text for suppressed keys", () => {

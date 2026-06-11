@@ -193,7 +193,7 @@ export function buildCiteprocLinks(
     const entry = bibData.byKey.get(k.key);
     if (!entry) {
       const rendered = bibData.renderedCitations[k.key];
-      return { renderedText: rendered ?? `@${k.key}`, isValid: false };
+      return { renderedText: rendered ?? `@${k.key}`, bibKey: k.key, isValid: false };
     }
     const rendered = bibData.renderedCitations[k.key];
     let renderedText: string;
@@ -209,6 +209,7 @@ export function buildCiteprocLinks(
     }
     return {
       renderedText,
+      bibKey: k.key,
       bibFile: entry.bib_file,
       lineNumber: entry.line_number + 1,
       isValid: true,

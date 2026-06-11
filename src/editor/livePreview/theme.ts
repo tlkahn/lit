@@ -396,6 +396,32 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     margin: "0",
   },
 
+  ".cm-citeproc-tooltip": {
+    backgroundColor: "var(--background-primary, #fff)",
+    border: "1px solid var(--background-modifier-border, #e0e0e0)",
+    borderRadius: "6px",
+    padding: "6px 10px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+    fontSize: "0.9em",
+  },
+  ".cm-citeproc-tooltip-action": {
+    background: "none",
+    border: "none",
+    color: "var(--text-accent)",
+    cursor: "pointer",
+    padding: "2px 4px",
+    borderRadius: "4px",
+    fontSize: "inherit",
+    fontFamily: "inherit",
+  },
+  ".cm-citeproc-tooltip-action:hover": {
+    backgroundColor: "var(--background-modifier-hover, rgba(0,0,0,0.05))",
+  },
+  ".cm-citeproc-tooltip-action:disabled": {
+    color: "var(--text-faint)",
+    cursor: "default",
+  },
+
   ".cm-preview-mermaid-error": {
     color: "var(--text-error, #e53e3e)",
     fontStyle: "italic",

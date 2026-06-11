@@ -4,6 +4,7 @@ import { globalJumpTracker } from "../jumpTracker";
 
 export interface CiteprocLinkInfo {
   renderedText: string;
+  bibKey?: string;
   bibFile?: string;
   lineNumber?: number;
   isValid: boolean;
@@ -38,6 +39,9 @@ export class CiteprocWidget extends WidgetType {
       keySpan.className = "cm-crossref-citeproc-key";
       if (!link.isValid) keySpan.classList.add("invalid");
       keySpan.textContent = link.renderedText;
+      if (link.bibKey) {
+        keySpan.dataset.citekey = link.bibKey;
+      }
       keySpan.onmousedown = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -94,6 +98,7 @@ export class CiteprocWidget extends WidgetType {
         const o = other.links[i]!;
         return (
           l.renderedText === o.renderedText &&
+          l.bibKey === o.bibKey &&
           l.bibFile === o.bibFile &&
           l.lineNumber === o.lineNumber &&
           l.isValid === o.isValid
