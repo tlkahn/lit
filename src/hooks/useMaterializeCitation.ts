@@ -1,6 +1,5 @@
 import { useCallback, useRef } from "react";
-import { materializeCitation } from "../lib/ipc";
-import { useWorkspaceStore } from "../stores/workspace";
+import { materializeAndOpen } from "../lib/materializeAndOpen";
 
 interface UseMaterializeCitationOptions {
   recordDeparture: () => void;
@@ -22,22 +21,8 @@ export function useMaterializeCitation({
       if (materializingRef.current) return;
       materializingRef.current = true;
       try {
-        const meta = await materializeCitation(bibKey);
-        useWorkspaceStore.setState((state) => {
-          const exists = state.pages.some(
-            (p) => p.relative_path === meta.relative_path,
-          );
-          return {
-            pages: exists
-              ? state.pages.map((p) =>
-                  p.relative_path === meta.relative_path ? meta : p,
-                )
-              : [...state.pages, meta],
-          };
-        });
+        await materializeAndOpen(bibKey, { recordDeparture, navigate });
         onMaterialized?.();
-        recordDeparture();
-        navigate(meta.relative_path);
       } catch (err) {
         onError(err instanceof Error ? err.message : String(err));
       } finally {
