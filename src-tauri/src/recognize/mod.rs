@@ -1,3 +1,5 @@
+pub mod identifiers;
+
 // Re-export PdfRecognizerData from its canonical home in the pdf module.
 // The recognize module consumes this type (e.g. extract_identifiers in #441);
 // it does not define it.
