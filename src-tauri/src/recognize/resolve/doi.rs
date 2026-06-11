@@ -1,28 +1,69 @@
-use crate::bib::convert::{csl_to_bib_entry, CslItem};
+use crate::bib::convert::{csl_to_bib_entry, is_valid_doi, CslItem};
 use crate::bib::types::BibEntry;
 use crate::commands::bib_import::parse_crossref_body;
 use super::ResolveError;
 
+/// Percent-encode characters in a DOI that are unsafe in URL paths.
+///
+/// DOIs can legally contain `#`, `?`, `%`, `<`, `>` which would break
+/// URL parsing if interpolated raw. Characters like `/`, `(`, `)`, `:`, `;`
+/// are allowed in URI path segments per RFC 3986 and left as-is.
+fn percent_encode_doi_path(doi: &str) -> String {
+    let mut out = String::with_capacity(doi.len() + 16);
+    for ch in doi.chars() {
+        match ch {
+            '#' => out.push_str("%23"),
+            '?' => out.push_str("%3F"),
+            '%' => out.push_str("%25"),
+            '<' => out.push_str("%3C"),
+            '>' => out.push_str("%3E"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Which internal path `resolve_doi_with_base` used to obtain the result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DoiPath {
+    /// Resolved via doi.org content negotiation (CSL-JSON).
+    ContentNegotiation,
+    /// doi.org failed; resolved via the CrossRef `/works/{doi}` API.
+    CrossrefFallback,
+}
+
 /// Resolve a DOI to a `BibEntry` via content negotiation at doi.org,
 /// with automatic fallback to the CrossRef API.
 ///
-/// - `client`: a pre-configured `reqwest::Client`
+/// - `client`: a pre-configured `reqwest::Client` — should have a timeout
+///   (recommended 10 s) and a `User-Agent` header (CrossRef etiquette requires
+///   an identifying UA for polite access). In production, use
+///   [`crate::commands::bib_import::HTTP_CLIENT`].
 /// - `doi`: bare DOI string (e.g. `"10.1038/nature12373"`)
 /// - `doi_base_url`: base URL for content negotiation (production: `"https://doi.org"`)
 /// - `crossref_base_url`: base URL for CrossRef API (production: `"https://api.crossref.org"`)
+///
+/// Returns the resolved `BibEntry` together with a `DoiPath` indicating
+/// which resolution strategy succeeded.
 pub async fn resolve_doi_with_base(
     client: &reqwest::Client,
     doi: &str,
     doi_base_url: &str,
     crossref_base_url: &str,
-) -> Result<BibEntry, ResolveError> {
+) -> Result<(BibEntry, DoiPath), ResolveError> {
+    if !is_valid_doi(doi) {
+        return Err(ResolveError::Parse(format!("Invalid DOI: {}", doi)));
+    }
+
     // 1. Content negotiation attempt via doi.org
     if let Some(result) = try_content_negotiation(client, doi, doi_base_url).await? {
-        return Ok(result);
+        return Ok((result, DoiPath::ContentNegotiation));
     }
 
     // 2. CrossRef fallback
-    try_crossref(client, doi, crossref_base_url).await
+    try_crossref(client, doi, crossref_base_url)
+        .await
+        .map(|entry| (entry, DoiPath::CrossrefFallback))
 }
 
 /// Attempt content negotiation at doi.org. Returns:
@@ -34,7 +75,7 @@ async fn try_content_negotiation(
     doi: &str,
     doi_base_url: &str,
 ) -> Result<Option<BibEntry>, ResolveError> {
-    let url = format!("{}/{}", doi_base_url, doi);
+    let url = format!("{}/{}", doi_base_url, percent_encode_doi_path(doi));
     let resp = match client
         .get(&url)
         .header("Accept", "application/vnd.citationstyles.csl+json")
@@ -45,13 +86,11 @@ async fn try_content_negotiation(
         Err(_) => return Ok(None), // timeout or network error — fall through
     };
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(ResolveError::RateLimited);
-    }
-    if !status.is_success() {
-        return Ok(None); // 404 or other — fall through to CrossRef
-    }
+    let resp = match super::check_status(resp, "doi.org") {
+        Ok(resp) => resp,
+        Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
+        Err(_) => return Ok(None), // 404 or other non-success — fall through to CrossRef
+    };
 
     let body = resp
         .text()
@@ -70,26 +109,17 @@ async fn try_crossref(
     doi: &str,
     crossref_base_url: &str,
 ) -> Result<BibEntry, ResolveError> {
-    let url = format!("{}/works/{}", crossref_base_url, doi);
+    let url = format!("{}/works/{}", crossref_base_url, percent_encode_doi_path(doi));
     let resp = client.get(&url).send().await.map_err(|e| {
         ResolveError::Http(format!("CrossRef request failed: {}", e))
     })?;
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(ResolveError::RateLimited);
-    }
-    if status == reqwest::StatusCode::NOT_FOUND {
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Err(ResolveError::Http(
             "DOI not found on both doi.org and CrossRef".into(),
         ));
     }
-    if !status.is_success() {
-        return Err(ResolveError::Http(format!(
-            "CrossRef API returned status {}",
-            status
-        )));
-    }
+    let resp = super::check_status(resp, "CrossRef API")?;
 
     let body = resp.text().await.map_err(|e| {
         ResolveError::Parse(format!("Failed to read CrossRef response: {}", e))
@@ -137,7 +167,8 @@ mod tests {
         )
         .await;
 
-        let entry = result.expect("should resolve successfully");
+        let (entry, doi_path) = result.expect("should resolve successfully");
+        assert_eq!(doi_path, DoiPath::ContentNegotiation);
         assert_eq!(entry.title, "Probing condensed matter physics");
         assert_eq!(entry.authors, vec!["Kucsko, Georg"]);
         assert_eq!(entry.year, "2013");
@@ -190,7 +221,8 @@ mod tests {
         )
         .await;
 
-        let entry = result.expect("should resolve via CrossRef fallback");
+        let (entry, doi_path) = result.expect("should resolve via CrossRef fallback");
+        assert_eq!(doi_path, DoiPath::CrossrefFallback);
         assert_eq!(entry.title, "Probing condensed matter physics");
         assert_eq!(entry.authors, vec!["Kucsko, Georg"]);
         assert_eq!(entry.year, "2013");
@@ -244,7 +276,8 @@ mod tests {
         )
         .await;
 
-        let entry = result.expect("should resolve via CrossRef after doi.org timeout");
+        let (entry, doi_path) = result.expect("should resolve via CrossRef after doi.org timeout");
+        assert_eq!(doi_path, DoiPath::CrossrefFallback);
         assert_eq!(entry.title, "Probing condensed matter physics");
     }
 
@@ -327,5 +360,214 @@ mod tests {
             ResolveError::RateLimited => {} // expected
             other => panic!("expected ResolveError::RateLimited, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn doi_with_angle_brackets_encodes_path_correctly() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        // SICI DOI with <, >, (, ), :, ; — only < and > need encoding
+        let sici_doi = "10.1002/(SICI)1097-4571(199009)41:6<391::AID-ASI1>3.0.CO;2-9";
+        let encoded_path =
+            "/10.1002/(SICI)1097-4571(199009)41:6%3C391::AID-ASI1%3E3.0.CO;2-9";
+
+        let csl_json = r#"{
+            "type": "journal-article",
+            "title": "SICI Test Article",
+            "author": [{"family": "Test", "given": "Author"}],
+            "issued": {"date-parts": [[1990]]},
+            "DOI": "10.1002/(SICI)1097-4571(199009)41:6<391::AID-ASI1>3.0.CO;2-9"
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path(encoded_path))
+            .and(header("Accept", "application/vnd.citationstyles.csl+json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(csl_json))
+            .mount(&server)
+            .await;
+
+        let result = resolve_doi_with_base(
+            &client,
+            sici_doi,
+            &server.uri(),
+            &server.uri(),
+        )
+        .await;
+
+        let (entry, _doi_path) = result.expect("should resolve SICI DOI with encoded angle brackets");
+        assert_eq!(entry.title, "SICI Test Article");
+    }
+
+    #[tokio::test]
+    async fn doi_with_hash_encodes_correctly() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        let doi_with_hash = "10.1000/test#fragment";
+        let encoded_path = "/10.1000/test%23fragment";
+
+        let csl_json = r#"{
+            "type": "journal-article",
+            "title": "Hash Test Article",
+            "author": [{"family": "Hash", "given": "Test"}],
+            "issued": {"date-parts": [[2020]]},
+            "DOI": "10.1000/test#fragment"
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path(encoded_path))
+            .and(header("Accept", "application/vnd.citationstyles.csl+json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(csl_json))
+            .mount(&server)
+            .await;
+
+        let result = resolve_doi_with_base(
+            &client,
+            doi_with_hash,
+            &server.uri(),
+            &server.uri(),
+        )
+        .await;
+
+        let (entry, _doi_path) = result.expect("should resolve DOI with encoded hash");
+        assert_eq!(entry.title, "Hash Test Article");
+    }
+
+    #[tokio::test]
+    async fn doi_with_percent_encodes_correctly() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        let doi_with_pct = "10.1000/test%value";
+        let encoded_path = "/10.1000/test%25value";
+
+        let csl_json = r#"{
+            "type": "journal-article",
+            "title": "Percent Test Article",
+            "author": [{"family": "Pct", "given": "Test"}],
+            "issued": {"date-parts": [[2020]]},
+            "DOI": "10.1000/test%value"
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path(encoded_path))
+            .and(header("Accept", "application/vnd.citationstyles.csl+json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(csl_json))
+            .mount(&server)
+            .await;
+
+        let result = resolve_doi_with_base(
+            &client,
+            doi_with_pct,
+            &server.uri(),
+            &server.uri(),
+        )
+        .await;
+
+        let (entry, _doi_path) = result.expect("should resolve DOI with encoded percent");
+        assert_eq!(entry.title, "Percent Test Article");
+    }
+
+    #[tokio::test]
+    async fn invalid_doi_rejected_without_http() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        // Use unreachable base URLs — if any HTTP call is attempted, it will fail
+        let result = resolve_doi_with_base(
+            &client,
+            "not-a-doi",
+            "http://localhost:1",
+            "http://localhost:1",
+        )
+        .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ResolveError::Parse(msg) => {
+                assert!(
+                    msg.contains("Invalid DOI"),
+                    "error message should mention Invalid DOI, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ResolveError::Parse, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn crossref_fallback_also_encodes_special_chars() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        let sici_doi = "10.1002/(SICI)1097-4571(199009)41:6<391::AID-ASI1>3.0.CO;2-9";
+        let encoded_doi_path =
+            "/10.1002/(SICI)1097-4571(199009)41:6%3C391::AID-ASI1%3E3.0.CO;2-9";
+        let encoded_crossref_path =
+            "/works/10.1002/(SICI)1097-4571(199009)41:6%3C391::AID-ASI1%3E3.0.CO;2-9";
+
+        // doi.org returns 404 on the encoded path
+        Mock::given(method("GET"))
+            .and(path(encoded_doi_path))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        // CrossRef mock matches the encoded path
+        let crossref_json = r#"{
+            "status": "ok",
+            "message": {
+                "type": "journal-article",
+                "title": ["SICI Crossref Article"],
+                "author": [{"family": "Test", "given": "Author"}],
+                "issued": {"date-parts": [[1990]]},
+                "DOI": "10.1002/(SICI)1097-4571(199009)41:6<391::AID-ASI1>3.0.CO;2-9"
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path(encoded_crossref_path))
+            .respond_with(ResponseTemplate::new(200).set_body_string(crossref_json))
+            .mount(&server)
+            .await;
+
+        let result = resolve_doi_with_base(
+            &client,
+            sici_doi,
+            &server.uri(),
+            &server.uri(),
+        )
+        .await;
+
+        let (entry, doi_path) = result.expect("should resolve SICI DOI via CrossRef with encoded path");
+        assert_eq!(doi_path, DoiPath::CrossrefFallback);
+        assert_eq!(entry.title, "SICI Crossref Article");
     }
 }

@@ -1,25 +1,39 @@
-use std::collections::HashSet;
-
+use crate::bib::convert::{csl_to_bib_entry, CslDate, CslItem, CslName, StringOrSeq};
 use crate::bib::types::BibEntry;
-use crate::bib::writer::generate_key;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use super::ResolveError;
 
-/// Convert an arXiv author name from "Given Family" format to "Family, Given".
-/// If the name has no spaces, return as-is.
-fn arxiv_author_to_bib_format(name: &str) -> String {
+/// Split a flat "Given Family" name string into a [`CslName`].
+///
+/// Uses a last-space heuristic: everything after the last space is treated
+/// as the family name, the rest as the given name. This matches standard
+/// BibTeX behavior for unstructured names but **cannot detect name
+/// particles** (e.g., "van", "de", "von") -- "Pieter van der Berg" will
+/// produce `family: "Berg", given: "Pieter van der"` rather than the
+/// correct `family: "van der Berg", given: "Pieter"`.
+fn split_flat_name(name: &str) -> CslName {
     let trimmed = name.trim();
     if let Some(pos) = trimmed.rfind(' ') {
-        let given = &trimmed[..pos];
-        let family = &trimmed[pos + 1..];
-        format!("{}, {}", family, given)
+        CslName {
+            family: Some(trimmed[pos + 1..].to_string()),
+            given: Some(trimmed[..pos].to_string()),
+            literal: None,
+        }
     } else {
-        trimmed.to_string()
+        CslName {
+            family: Some(trimmed.to_string()),
+            given: None,
+            literal: None,
+        }
     }
 }
 
 /// Parse an arXiv Atom XML feed and extract the first `<entry>` into a `BibEntry`.
+///
+/// Internally builds a [`CslItem`] from the parsed Atom fields and delegates
+/// to [`csl_to_bib_entry`], so that DOI normalization, JATS stripping, and
+/// author formatting remain consistent with the Crossref/CSL code path.
 pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -28,8 +42,8 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
     let mut in_author = false;
 
     let mut title: Option<String> = None;
-    let mut authors: Vec<String> = Vec::new();
-    let mut year: Option<String> = None;
+    let mut authors: Vec<CslName> = Vec::new();
+    let mut year: Option<i64> = None;
     let mut url: Option<String> = None;
     let mut abstract_text: Option<String> = None;
     let mut doi: Option<String> = None;
@@ -46,7 +60,7 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
                         let text = reader
                             .read_text(e.to_end().name())
                             .map_err(|err| ResolveError::Parse(format!("Failed to read author name: {}", err)))?;
-                        authors.push(arxiv_author_to_bib_format(&text));
+                        authors.push(split_flat_name(&text));
                     }
                     b"title" if in_entry => {
                         let text = reader
@@ -64,8 +78,10 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
                         let text = reader
                             .read_text(e.to_end().name())
                             .map_err(|err| ResolveError::Parse(format!("Failed to read published date: {}", err)))?;
-                        if text.len() >= 4 {
-                            year = Some(text[..4].to_string());
+                        if let Some(prefix) = text.get(..4) {
+                            if prefix.chars().all(|c| c.is_ascii_digit()) {
+                                year = prefix.parse::<i64>().ok();
+                            }
                         }
                     }
                     b"id" if in_entry => {
@@ -114,33 +130,36 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
     }
 
     let title = title.ok_or_else(|| ResolveError::Parse("arXiv ID not found".into()))?;
-    let year_str = year.unwrap_or_default();
-    let key = generate_key(&authors, &year_str, &HashSet::new());
 
-    Ok(BibEntry {
-        key,
-        authors,
-        title,
-        year: year_str,
-        entry_type: "article".to_string(),
-        line_number: 0,
-        bib_file: None,
-        abstract_text,
+    let csl_item = CslItem {
+        // Use "article-journal" so map_entry_type produces "article"
+        item_type: Some("article-journal".to_string()),
+        title: Some(StringOrSeq::Single(title)),
+        author: if authors.is_empty() { None } else { Some(authors) },
+        container_title: journal.map(StringOrSeq::Single),
+        issued: year.map(|y| CslDate {
+            date_parts: vec![vec![y]],
+        }),
         doi,
-        journal,
         url,
+        abstract_text,
+        subject: if tags.is_empty() { None } else { Some(tags) },
         volume: None,
-        number: None,
-        pages: None,
+        issue: None,
+        page: None,
         publisher: None,
         issn: None,
-        tags,
-    })
+    };
+
+    Ok(csl_to_bib_entry(&csl_item))
 }
 
 /// Resolve an arXiv ID to a `BibEntry` by fetching metadata from the arXiv API.
 ///
-/// - `client`: a pre-configured `reqwest::Client`
+/// - `client`: a pre-configured `reqwest::Client` — should have a timeout
+///   (recommended 10 s) and a `User-Agent` header (arXiv does not mandate a UA
+///   but a timeout prevents indefinite hangs). In production, use
+///   [`crate::commands::bib_import::HTTP_CLIENT`].
 /// - `arxiv_id`: bare arXiv ID (e.g. `"2301.07041"`)
 /// - `base_url`: base URL for the arXiv API (production: `"https://export.arxiv.org"`)
 pub async fn resolve_arxiv_with_base(
@@ -153,16 +172,7 @@ pub async fn resolve_arxiv_with_base(
         ResolveError::Http(format!("arXiv request failed: {}", e))
     })?;
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(ResolveError::RateLimited);
-    }
-    if !status.is_success() {
-        return Err(ResolveError::Http(format!(
-            "arXiv API returned status {}",
-            status
-        )));
-    }
+    let resp = super::check_status(resp, "arXiv API")?;
 
     let body = resp.text().await.map_err(|e| {
         ResolveError::Parse(format!("Failed to read arXiv response: {}", e))
@@ -359,27 +369,128 @@ mod tests {
     // ── Helper function tests ──────────────────────────────────────
 
     #[test]
-    fn author_format_two_parts() {
+    fn split_flat_name_two_parts() {
+        let name = split_flat_name("Alexander Viand");
+        assert_eq!(name.family, Some("Viand".to_string()));
+        assert_eq!(name.given, Some("Alexander".to_string()));
+        assert_eq!(name.literal, None);
+    }
+
+    #[test]
+    fn split_flat_name_three_parts_particle_limitation() {
+        // Documents the known limitation: name particles like "van der"
+        // are not detected — the last space heuristic treats only the
+        // final token as the family name.
+        let name = split_flat_name("Pieter van der Berg");
+        assert_eq!(name.family, Some("Berg".to_string()));
+        assert_eq!(name.given, Some("Pieter van der".to_string()));
+        assert_eq!(name.literal, None);
+    }
+
+    #[test]
+    fn split_flat_name_initials() {
+        let name = split_flat_name("E. L. Berger");
+        assert_eq!(name.family, Some("Berger".to_string()));
+        assert_eq!(name.given, Some("E. L.".to_string()));
+        assert_eq!(name.literal, None);
+    }
+
+    #[test]
+    fn split_flat_name_single_name() {
+        let name = split_flat_name("Aristotle");
+        assert_eq!(name.family, Some("Aristotle".to_string()));
+        assert_eq!(name.given, None);
+        assert_eq!(name.literal, None);
+    }
+
+    #[test]
+    fn parse_arxiv_atom_uses_csl_author_format() {
+        // Verify that the CslName -> csl_to_bib_entry path produces
+        // the same "Family, Given" format as before.
+        let entry = parse_arxiv_atom(SINGLE_AUTHOR_XML).expect("should parse");
+        assert_eq!(entry.authors, vec!["Viand, Alexander"]);
+    }
+
+    #[test]
+    fn parse_arxiv_atom_doi_normalized() {
+        // DOI normalization from csl_to_bib_entry now applies to arXiv path.
+        let xml = r#"<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"
+      xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/0704.0001v1</id>
+    <title>DOI Normalization Test</title>
+    <summary>A test.</summary>
+    <published>2007-04-02T20:00:00Z</published>
+    <author><name>Jane Doe</name></author>
+    <arxiv:doi>https://doi.org/10.1103/PhysRevD.76.013009</arxiv:doi>
+    <category term="hep-ph" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>"#;
+        let entry = parse_arxiv_atom(xml).expect("should parse");
         assert_eq!(
-            arxiv_author_to_bib_format("Alexander Viand"),
-            "Viand, Alexander"
+            entry.doi,
+            Some("10.1103/PhysRevD.76.013009".to_string()),
+            "DOI should be normalized (URL prefix stripped)"
         );
     }
 
     #[test]
-    fn author_format_three_parts() {
-        assert_eq!(
-            arxiv_author_to_bib_format("E. L. Berger"),
-            "Berger, E. L."
-        );
-    }
-
-    #[test]
-    fn author_format_single_name() {
-        assert_eq!(arxiv_author_to_bib_format("Aristotle"), "Aristotle");
+    fn parse_arxiv_atom_tags_preserved() {
+        let entry = parse_arxiv_atom(MULTIPLE_AUTHORS_XML).expect("should parse");
+        assert_eq!(entry.tags, vec!["cs.CR", "cs.LG"]);
     }
 
     // ── Wiremock integration tests ─────────────────────────────────
+
+    /// Helper to build a minimal arXiv Atom feed with a custom <published> value.
+    fn atom_with_published(published: &str) -> String {
+        format!(
+            r#"<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"
+      xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2301.07041v2</id>
+    <title>Test Paper</title>
+    <summary>A summary.</summary>
+    <published>{}</published>
+    <author><name>Jane Doe</name></author>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>"#,
+            published
+        )
+    }
+
+    #[test]
+    fn parse_published_multibyte_prefix_no_panic() {
+        // Two 2-byte e-accent chars (\u{00E9}) followed by digits.
+        // text.len() >= 4 is true (6+ bytes), but first 4 bytes are NOT all ASCII digits.
+        // Before the fix, text[..4] might slice mid-char and panic or yield garbage.
+        let xml = atom_with_published("\u{00E9}\u{00E9}23-01-17T00:00:00Z");
+        let entry = parse_arxiv_atom(&xml).expect("should parse without panic");
+        assert_eq!(entry.year, "", "year should be empty for multibyte-prefixed published value");
+    }
+
+    #[test]
+    fn parse_published_short_value_no_panic() {
+        // Published value shorter than 4 bytes -- must not panic.
+        let xml = atom_with_published("20");
+        let entry = parse_arxiv_atom(&xml).expect("should parse without panic");
+        assert_eq!(entry.year, "", "year should be empty for too-short published value");
+    }
+
+    #[test]
+    fn parse_published_non_digit_prefix() {
+        // First 4 chars are ASCII but not digits -- should not be accepted as a year.
+        let xml = atom_with_published("ABCD-01-01T00:00:00Z");
+        let entry = parse_arxiv_atom(&xml).expect("should parse without panic");
+        assert_eq!(entry.year, "", "year should be empty for non-digit prefix");
+    }
 
     #[tokio::test]
     async fn resolve_arxiv_full_flow() {

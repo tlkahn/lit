@@ -18,7 +18,10 @@ struct CrossrefSearchMessage {
 ///
 /// Returns up to `rows` BibEntry results from the CrossRef search API.
 ///
-/// - `client`: a pre-configured `reqwest::Client`
+/// - `client`: a pre-configured `reqwest::Client` — should have a timeout
+///   (recommended 10 s) and a `User-Agent` header (CrossRef etiquette requires
+///   an identifying UA for polite access). In production, use
+///   [`crate::commands::bib_import::HTTP_CLIENT`].
 /// - `title`: the title to search for
 /// - `authors`: optional author names to include in the query
 /// - `base_url`: base URL for CrossRef API (production: `"https://api.crossref.org"`)
@@ -46,16 +49,7 @@ pub async fn search_crossref_by_title_with_base(
         .await
         .map_err(|e| ResolveError::Http(format!("CrossRef search request failed: {}", e)))?;
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(ResolveError::RateLimited);
-    }
-    if !status.is_success() {
-        return Err(ResolveError::Http(format!(
-            "CrossRef search API returned status {}",
-            status
-        )));
-    }
+    let resp = super::check_status(resp, "CrossRef search API")?;
 
     let body = resp.text().await.map_err(|e| {
         ResolveError::Parse(format!("Failed to read CrossRef search response: {}", e))
