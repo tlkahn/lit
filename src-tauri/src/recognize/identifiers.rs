@@ -17,7 +17,7 @@ static DOI_EXTRACT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"10\.\d{4,9}/[^\s]+[^\s.,]").unwrap());
 
 static ISBN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:ISBN(?:[- ]?1[03])?|SBN)[:\s]*([0-9][0-9\- \t\n\r\u{2013}\u{2014}xX]{8,26}[0-9xX])").unwrap()
+    Regex::new(r"(?i)\b(?:ISBN(?:[- ]?1[03])?|SBN)[:\s]*([0-9][0-9\- \t\n\r\u{2013}\u{2014}xX]{8,52}[0-9xX])").unwrap()
 });
 
 static JSTOR_STABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -385,20 +385,44 @@ fn clean_doi_match(candidate: &str) -> Option<String> {
 }
 
 /// Collapse `\n` between non-whitespace chars so line-wrapped DOIs become contiguous.
+///
+/// Only collapses when the line break looks like it falls *within* a DOI rather
+/// than *between* a DOI and unrelated text.  Specifically, a `\n` is kept when:
+///   - the following text starts a new DOI (`10.\d`), or
+///   - the previous char is alphanumeric and the next char is uppercase
+///     (indicates a word/sentence boundary, not a mid-DOI wrap).
 fn collapse_doi_linebreaks(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.char_indices().peekable();
-    let mut prev_non_ws = false;
-    while let Some((_, ch)) = chars.next() {
-        if ch == '\n' && prev_non_ws {
-            // Peek at the next char: if it's non-whitespace, skip this \n
-            if let Some(&(_, next_ch)) = chars.peek() {
-                if !next_ch.is_whitespace() {
+    let mut prev_char: Option<char> = None;
+    while let Some((i, ch)) = chars.next() {
+        if ch == '\n' {
+            if let (Some(pc), Some(&(_, next_ch))) = (prev_char, chars.peek()) {
+                if !pc.is_whitespace() && !next_ch.is_whitespace() {
+                    // Don't collapse if the following text starts a new DOI.
+                    let rest = &text[i + 1..];
+                    if rest.starts_with("10.")
+                        && rest.as_bytes().get(3).is_some_and(|b| b.is_ascii_digit())
+                    {
+                        out.push('\n');
+                        prev_char = Some('\n');
+                        continue;
+                    }
+                    // Don't collapse at a word/sentence boundary: previous char
+                    // is alphanumeric (end of a word) and next char is uppercase
+                    // (start of a new word). Mid-DOI wraps happen after separators
+                    // like '.', '-', '/', '(', ':', '<' which are not alphanumeric.
+                    if pc.is_alphanumeric() && next_ch.is_uppercase() {
+                        out.push('\n');
+                        prev_char = Some('\n');
+                        continue;
+                    }
+                    // Collapse: skip the \n, keep prev_char as-is.
                     continue;
                 }
             }
         }
-        prev_non_ws = !ch.is_whitespace();
+        prev_char = Some(ch);
         out.push(ch);
     }
     out
@@ -473,6 +497,11 @@ fn validate_info_title(info: &HashMap<String, String>, pages: &[String]) -> Opti
 
 // ── JSTOR cover page heuristics ─────────────────────────────────────
 
+/// Maximum number of continuation lines to collect after a JSTOR field label line.
+/// Real JSTOR cover pages wrap field values over at most 2-3 lines. Capping here
+/// prevents runaway collection when body text follows without a blank-line separator.
+const MAX_JSTOR_CONTINUATION_LINES: usize = 3;
+
 /// Known JSTOR cover-page field labels that act as block terminators.
 const JSTOR_FIELD_LABELS: &[&str] = &[
     "Chapter Title",
@@ -520,7 +549,7 @@ fn extract_jstor_field(text: &str, label: &str) -> Option<String> {
     let start_idx = start_idx?;
 
     // Pass 2: collect continuation lines until a terminator.
-    for line in &lines[start_idx + 1..] {
+    for (continuation_count, line) in lines[start_idx + 1..].iter().enumerate() {
         let trimmed = line.trim();
 
         // Blank line terminates the block.
@@ -539,6 +568,12 @@ fn extract_jstor_field(text: &str, label: &str) -> Option<String> {
         });
 
         if is_new_label {
+            break;
+        }
+
+        // Cap continuation lines to prevent runaway collection when body
+        // text follows a field value without a blank-line separator.
+        if continuation_count >= MAX_JSTOR_CONTINUATION_LINES {
             break;
         }
 
@@ -654,14 +689,10 @@ fn try_jstor_cover(pages: &[String]) -> (Option<String>, Option<JstorMetadata>) 
     // Derive DOI from stable ID
     let derived_doi = format!("10.2307/{}", stable_id);
 
-    // Collect all DOI matches on the page
+    // Collect all valid DOI matches on the page (same pipeline as try_doi_regex)
     let all_dois: Vec<String> = DOI_EXTRACT_RE
         .find_iter(page0)
-        .map(|m| {
-            let trimmed = trim_unbalanced_brackets(m.as_str());
-            let trimmed = strip_doi_url_cruft(trimmed);
-            trimmed.to_lowercase()
-        })
+        .filter_map(|m| clean_doi_match(m.as_str()))
         .collect();
 
     // Prefer a non-JSTOR DOI (explicit publisher DOI) over the derived one
@@ -1507,6 +1538,52 @@ mod tests {
         assert_eq!(try_isbn(&pages), Some("9780306406157".to_string()));
     }
 
+    // -- Concern 2: ISBN_RE quantifier must span hyphenated pairs --
+
+    #[test]
+    fn isbn_extract_hyphenated_13_pair() {
+        // Two hyphenated ISBN-13s: print + ebook. 35 chars in the capture.
+        // Before fix: second ISBN truncated to "978-0-262" (7 stripped digits), silently lost.
+        let pages = vec!["ISBN 978-0-306-40615-7 978-0-262-03384-8".to_string()];
+        let result = try_isbn(&pages);
+        assert_eq!(result, Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_hyphenated_10_13_pair() {
+        // Hyphenated ISBN-10 (13 chars) + space + hyphenated ISBN-13 (17 chars) = 31 chars.
+        let pages = vec!["ISBN 0-306-40615-2 978-0-262-03384-8".to_string()];
+        let result = try_isbn(&pages);
+        assert_eq!(result, Some("0306406152".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_hyphenated_13_10_pair() {
+        // Hyphenated ISBN-13 (17 chars) + space + hyphenated ISBN-10 (13 chars) = 31 chars.
+        let pages = vec!["ISBN 978-0-262-03384-8 0-306-40615-2".to_string()];
+        let result = try_isbn(&pages);
+        assert_eq!(result, Some("9780262033848".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_hyphenated_pair_both_counted() {
+        // Two hyphenated pairs under separate ISBN prefixes = 4 distinct ISBNs.
+        // If the second ISBN in each pair were truncated, only 2 would be found -> no reject.
+        // After fix, all 4 are found -> bibliography heuristic rejects.
+        let pages = vec![
+            "ISBN 978-0-306-40615-7 978-0-262-03384-8 ISBN 978-0-13-468599-1 978-0-321-12521-7".to_string()
+        ];
+        assert_eq!(try_isbn(&pages), None);
+    }
+
+    #[test]
+    fn isbn_extract_hyphenated_13_pair_endash() {
+        // En-dash (\u{2013}) used as separator within ISBNs, space between the pair.
+        let pages = vec!["ISBN 978\u{2013}0\u{2013}306\u{2013}40615\u{2013}7 978\u{2013}0\u{2013}262\u{2013}03384\u{2013}8".to_string()];
+        let result = try_isbn(&pages);
+        assert_eq!(result, Some("9780306406157".to_string()));
+    }
+
     // -- Finding 7: ISSN_RE case-insensitive matching tests --
 
     #[test]
@@ -1847,6 +1924,155 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    // -- Concern 3: JSTOR block field parser over-collects without terminator --
+
+    #[test]
+    fn jstor_field_continuation_cap_stops_body_text() {
+        // "Chapter Title:" value on one line, followed immediately by body text
+        // that has no blank line and no JSTOR label prefix.
+        // Without the cap, all 5 body lines would be swallowed.
+        let text = concat!(
+            "Chapter Title: The Big Idea\n",
+            "This is body text that follows without a blank line.\n",
+            "It continues for several lines without any known label.\n",
+            "More body text that should not be collected.\n",
+            "Even more body text here.\n",
+            "And yet more body text.\n",
+            "Stable URL: http://www.jstor.org/stable/12345\n",
+        );
+        let result = extract_jstor_field(text, "Chapter Title:");
+        // The value on the label line is captured, but body text beyond the
+        // continuation cap (3 lines) must NOT be included.
+        // With cap=3, collects: "This is body text..." (1), "It continues..." (2),
+        // "More body text..." (3), then stops.
+        assert_eq!(
+            result,
+            Some("The Big Idea This is body text that follows without a blank line. It continues for several lines without any known label. More body text that should not be collected.".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_continuation_cap_allows_three() {
+        // Source value wraps across exactly 3 continuation lines, all legitimate.
+        let text = concat!(
+            "Source: Proceedings of the National Academy\n",
+            "of Sciences of the United States\n",
+            "of America, Vol. 75, No. 12\n",
+            "(Dec., 1978), pp. 5913-5917\n",
+            "Published by: National Academy of Sciences\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("Proceedings of the National Academy of Sciences of the United States of America, Vol. 75, No. 12 (Dec., 1978), pp. 5913-5917".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_continuation_cap_truncates_at_four() {
+        // Source value appears to wrap over 4 continuation lines (no terminator until line 5).
+        // Only the first 3 continuation lines should be collected.
+        let text = concat!(
+            "Source: Proceedings of the National Academy\n",
+            "of Sciences of the United States\n",
+            "of America, Vol. 75, No. 12\n",
+            "(Dec., 1978), pp. 5913-5917\n",
+            "Extra line that should be dropped\n",
+            "Published by: National Academy of Sciences\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        // 4th continuation line ("Extra line...") is dropped
+        assert_eq!(
+            result,
+            Some("Proceedings of the National Academy of Sciences of the United States of America, Vol. 75, No. 12 (Dec., 1978), pp. 5913-5917".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_blank_line_before_cap() {
+        // Blank line after 1 continuation line -- stops before cap.
+        let text = concat!(
+            "Source: Short Journal, Vol. 1\n",
+            "(2000), pp. 1-5\n",
+            "\n",
+            "Body text that must not be collected.\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("Short Journal, Vol. 1 (2000), pp. 1-5".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_label_terminator_before_cap() {
+        // Known label after 1 continuation line -- stops before cap.
+        let text = concat!(
+            "Source: Short Journal, Vol. 1\n",
+            "(2000), pp. 1-5\n",
+            "Published by: Someone\n",
+            "More text\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("Short Journal, Vol. 1 (2000), pp. 1-5".to_string()),
+        );
+    }
+
+    // -- Concern 1: collapse_doi_linebreaks must not glue unrelated tokens --
+
+    #[test]
+    fn doi_collapse_does_not_glue_trailing_word() {
+        // Scenario (a): DOI followed by unrelated capitalized word on next line.
+        // "10.1234/abc" is a valid DOI; collapsing the \n would wrongly produce
+        // "10.1234/abcNextword" which also passes is_valid_doi.
+        let pages = vec!["see 10.1234/abc\nNextword more text".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1234/abc".to_string()));
+    }
+
+    #[test]
+    fn doi_collapse_does_not_glue_adjacent_dois() {
+        // Scenario (b): Two DOIs on adjacent lines in a reference list.
+        // Must return the first DOI, not a bogus concatenation.
+        let pages = vec!["10.1234/foo\n10.5678/bar".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1234/foo".to_string()));
+    }
+
+    #[test]
+    fn doi_collapse_adjacent_dois_second_returned_when_first_invalid() {
+        // Edge case of (b): first line is an invalid DOI prefix, second is valid.
+        let pages = vec!["10.1234/\n10.5678/bar".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.5678/bar".to_string()));
+    }
+
+    #[test]
+    fn doi_collapse_preserves_wrap_after_separator() {
+        // Non-regression: wrapping after '.' still collapses (existing behavior).
+        let collapsed = collapse_doi_linebreaks("10.1016/j.cell.\n2020.01.001");
+        assert_eq!(collapsed, "10.1016/j.cell.2020.01.001");
+    }
+
+    #[test]
+    fn doi_collapse_preserves_wrap_after_slash() {
+        // Wrapping after '/' is a legitimate DOI break point.
+        let pages = vec!["10.1038/\nnature12373".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    #[test]
+    fn doi_collapse_preserves_wrap_after_hyphen() {
+        // Wrapping after '-' is a legitimate DOI break point.
+        let pages = vec!["10.1103/physrev-\nlett.123".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1103/physrev-lett.123".to_string()),
+        );
+    }
+
     #[test]
     fn jstor_parses_metadata_wrapped_source() {
         let pages = vec![
@@ -1870,5 +2096,30 @@ mod tests {
         assert_eq!(meta.number, Some("3".to_string()));
         assert_eq!(meta.pages, Some("5-28".to_string()));
         assert_eq!(meta.year, Some("2001".to_string()));
+    }
+
+    #[test]
+    fn jstor_explicit_doi_validated() {
+        // "10.1234/?query=value" on a JSTOR page: regex matches it, then
+        // strip_doi_url_cruft removes "?query=value" leaving "10.1234/"
+        // which fails is_valid_doi (no suffix after slash).
+        // Before fix: returned as "10.1234/" (no validation).
+        // After fix: rejected, falls back to derived 10.2307/12345.
+        let pages = vec![
+            "10.1234/?query=value Stable URL: http://www.jstor.org/stable/12345\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_explicit_doi_valid_still_wins() {
+        // Valid explicit DOI must still win over derived 10.2307/... DOI.
+        // (Non-regression for jstor_embedded_doi_wins.)
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345\n10.1086/599247\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.1086/599247".to_string()));
     }
 }
