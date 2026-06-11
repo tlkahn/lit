@@ -3144,7 +3144,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 [[package]]
 name = "llm-anthropic"
 version = "0.11.0"
-source = "git+https://github.com/tlkahn/llm-rs.git?rev=8429721#842972186fd21bf52a198ea4acafe93754d7a29c"
+source = "git+https://github.com/tlkahn/llm-rs.git?rev=665090e#665090eeb656a5145866523c71f7328b93551b9e"
 dependencies = [
  "async-trait",
  "futures",
@@ -3160,7 +3160,7 @@ dependencies = [
 [[package]]
 name = "llm-core"
 version = "0.11.0"
-source = "git+https://github.com/tlkahn/llm-rs.git?rev=8429721#842972186fd21bf52a198ea4acafe93754d7a29c"
+source = "git+https://github.com/tlkahn/llm-rs.git?rev=665090e#665090eeb656a5145866523c71f7328b93551b9e"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3176,7 +3176,7 @@ dependencies = [
 [[package]]
 name = "llm-openai"
 version = "0.11.0"
-source = "git+https://github.com/tlkahn/llm-rs.git?rev=8429721#842972186fd21bf52a198ea4acafe93754d7a29c"
+source = "git+https://github.com/tlkahn/llm-rs.git?rev=665090e#665090eeb656a5145866523c71f7328b93551b9e"
 dependencies = [
  "async-trait",
  "futures",

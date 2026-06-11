@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::commands::credential::{self, CredentialStore};
 use crate::provider_registry;
+use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct ChatMessage {
@@ -238,13 +239,17 @@ pub fn apply_token_budget(prompt: Prompt, provider_id: &str, _model: &str, conte
     // return an error instead of silently sending an empty question.
     let text_budget_tokens = if !prompt.attachments.is_empty() {
         if overhead > budget {
+            warn!(
+                attachment_count = prompt.attachments.len(),
+                estimated_overhead = overhead,
+                token_budget = budget,
+                context_window = window,
+                "image attachments exceed token budget"
+            );
             return Err(format!(
-                "Attachments ({} images) require ~{} tokens, which exceeds the {}-token budget \
-                 (80% of {} context window). Remove some attachments or use a model with a larger context window.",
+                "The attached images ({}) are too large for this model's context window. \
+                 Remove some images or choose a model with a larger context window.",
                 prompt.attachments.len(),
-                overhead,
-                budget,
-                window,
             ));
         }
         let raw = budget.saturating_sub(overhead);
@@ -1624,8 +1629,10 @@ data: [DONE]\n\n";
         let result = apply_token_budget(prompt, "openai", "gpt-4o", Some(100));
         assert!(result.is_err(), "should error when attachments alone exceed budget");
         let err = result.unwrap_err();
-        assert!(err.contains("Attachments"), "error should mention attachments: {err}");
-        assert!(err.contains("exceed"), "error should mention exceeding budget: {err}");
+        assert!(err.contains("too large"), "error should tell the user images are too large: {err}");
+        assert!(err.contains("Remove some images"), "error should give actionable guidance: {err}");
+        assert!(!err.contains("tokens"), "error should not leak internal token estimates: {err}");
+        assert!(!err.contains("80%"), "error should not leak budget math: {err}");
     }
 
     #[test]
