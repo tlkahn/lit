@@ -11,13 +11,13 @@ static ARXIV_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static ISSN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"ISSN:? *(\d{4}-\d{3}[\dX])").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)ISSN:? *(\d{4}-\d{3}[\dX])").unwrap());
 
 static DOI_EXTRACT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"10\.\d{4,9}/[^\s]+[^\s.,]").unwrap());
 
 static ISBN_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:ISBN(?:[- ]?1[03])?|SBN)[:\s]*([0-9][0-9\- \u{2013}\u{2014}xX]{8,26}[0-9xX])").unwrap()
+    Regex::new(r"(?i)\b(?:ISBN(?:[- ]?1[03])?|SBN)[:\s]*([0-9][0-9\- \t\n\r\u{2013}\u{2014}xX]{8,26}[0-9xX])").unwrap()
 });
 
 static JSTOR_STABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -114,10 +114,10 @@ pub fn validate_isbn_13(digits: &[u8]) -> bool {
     sum.is_multiple_of(10)
 }
 
-/// Strip hyphens, en-dashes, em-dashes, and spaces, then uppercase.
+/// Strip hyphens, en-dashes, em-dashes, and whitespace (including Unicode), then uppercase.
 fn strip_isbn_separators(s: &str) -> String {
     s.chars()
-        .filter(|&c| c != '-' && c != '\u{2013}' && c != '\u{2014}' && c != ' ')
+        .filter(|&c| c != '-' && c != '\u{2013}' && c != '\u{2014}' && !c.is_whitespace())
         .collect::<String>()
         .to_uppercase()
 }
@@ -196,7 +196,13 @@ fn try_issn(pages: &[String]) -> Option<String> {
         for caps in ISSN_RE.captures_iter(page) {
             let candidate = caps[1].to_string();
             if validate_issn(&candidate) {
-                return Some(candidate);
+                // Normalize check digit to uppercase for consistent output
+                let mut normalized = candidate;
+                if normalized.ends_with('x') {
+                    normalized.pop();
+                    normalized.push('X');
+                }
+                return Some(normalized);
             }
         }
     }
@@ -217,6 +223,23 @@ fn split_isbn_candidates(stripped: &str, is_sbn: bool) -> Vec<String> {
         // Two concatenated ISBN-10s
         candidates.push(stripped[..10].to_string());
         candidates.push(stripped[10..].to_string());
+    } else if len == 23 {
+        // Mixed ISBN-10 + ISBN-13 pair (either order).
+        // Try both splits; prefer the one where both halves validate.
+        let mut split_found = false;
+        for split_at in [10, 13] {
+            let left = clean_isbn(&stripped[..split_at]);
+            let right = clean_isbn(&stripped[split_at..]);
+            if let (Some(l), Some(r)) = (left, right) {
+                candidates.push(l);
+                candidates.push(r);
+                split_found = true;
+                break;
+            }
+        }
+        if !split_found {
+            candidates.push(stripped.to_string());
+        }
     } else if len == 26 {
         // Two concatenated ISBN-13s
         candidates.push(stripped[..13].to_string());
@@ -239,11 +262,26 @@ fn try_isbn(pages: &[String]) -> Option<String> {
             let full_match_lower = caps[0].to_ascii_lowercase();
             let is_sbn = full_match_lower.starts_with("sbn");
 
-            let stripped = strip_isbn_separators(&caps[1]);
+            // Split the raw capture on whitespace first to separate
+            // space-delimited ISBN pairs that the regex captured as one run,
+            // then strip separators from each fragment individually.
+            let raw = &caps[1];
+            let fragments: Vec<&str> = raw.split_whitespace().collect();
 
-            let candidates = split_isbn_candidates(&stripped, is_sbn);
+            let mut all_candidates = Vec::new();
+            if fragments.len() > 1 {
+                // Multiple whitespace-separated fragments: strip and validate each
+                for frag in &fragments {
+                    let stripped = strip_isbn_separators(frag);
+                    all_candidates.extend(split_isbn_candidates(&stripped, is_sbn));
+                }
+            }
+            // Also try the fully-stripped (concatenated) path for cases
+            // where two ISBNs are printed without any whitespace.
+            let stripped = strip_isbn_separators(raw);
+            all_candidates.extend(split_isbn_candidates(&stripped, is_sbn));
 
-            for candidate in candidates {
+            for candidate in all_candidates {
                 if let Some(valid) = clean_isbn(&candidate) {
                     if !seen.contains(&valid) {
                         seen.push(valid);
@@ -284,13 +322,97 @@ fn trim_unbalanced_brackets(s: &str) -> &str {
     &s[..end]
 }
 
+/// Strip URL-cruft suffixes from a DOI candidate.
+///
+/// Removes query strings (`?...`), fragment identifiers (`#...`), and known
+/// session/tracking parameters appended with `;` (e.g. `;jsessionid=...`,
+/// `;token=...`). A bare trailing `;` is also trimmed.
+///
+/// Legitimate DOIs MAY contain internal semicolons (e.g. SICI-style DOIs like
+/// `...3.0.CO;2-2`), so we only strip from a `;` that is followed by a known
+/// URL-parameter pattern (`key=value`) or is the final character.
+fn strip_doi_url_cruft(s: &str) -> &str {
+    // 1. Strip from `?` onward (query string) — DOIs never contain `?`.
+    let s = s.split('?').next().unwrap_or(s);
+
+    // 2. Strip from `#` onward (fragment) — DOIs never contain `#`.
+    let s = s.split('#').next().unwrap_or(s);
+
+    // 3. Strip `;key=value` suffixes. Scan backwards for the leftmost `;`
+    //    that starts a `key=value` parameter chain. A "parameter" matches
+    //    `;<ascii-alphanumeric-or-dash>+=`.
+    let bytes = s.as_bytes();
+    let mut cut = s.len();
+    // Walk backwards through semicolons
+    loop {
+        let search = &bytes[..cut];
+        let pos = match search.iter().rposition(|&b| b == b';') {
+            Some(p) => p,
+            None => break,
+        };
+        let after = &s[pos + 1..cut];
+        // Check if the segment after `;` looks like `key=value`
+        if after.contains('=') {
+            let key = after.split('=').next().unwrap_or("");
+            if !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
+                cut = pos;
+                continue;
+            }
+        }
+        break;
+    }
+    let s = &s[..cut];
+
+    // 4. Trim a bare trailing `;`
+    s.strip_suffix(';').unwrap_or(s)
+}
+
+/// Run the shared DOI cleanup pipeline on a candidate string:
+/// regex-extract, trim brackets, strip URL cruft, validate, lowercase.
+fn clean_doi_match(candidate: &str) -> Option<String> {
+    let m = DOI_EXTRACT_RE.find(candidate)?;
+    let trimmed = trim_unbalanced_brackets(m.as_str());
+    let trimmed = strip_doi_url_cruft(trimmed);
+    if is_valid_doi(trimmed) {
+        Some(trimmed.to_lowercase())
+    } else {
+        None
+    }
+}
+
+/// Collapse `\n` between non-whitespace chars so line-wrapped DOIs become contiguous.
+fn collapse_doi_linebreaks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.char_indices().peekable();
+    let mut prev_non_ws = false;
+    while let Some((_, ch)) = chars.next() {
+        if ch == '\n' && prev_non_ws {
+            // Peek at the next char: if it's non-whitespace, skip this \n
+            if let Some(&(_, next_ch)) = chars.peek() {
+                if !next_ch.is_whitespace() {
+                    continue;
+                }
+            }
+        }
+        prev_non_ws = !ch.is_whitespace();
+        out.push(ch);
+    }
+    out
+}
+
 /// Extract a DOI from pages 0-1 via regex. Returns the lowercased DOI.
 fn try_doi_regex(pages: &[String]) -> Option<String> {
     let limit = pages.len().min(2);
     for page in &pages[..limit] {
-        if let Some(m) = DOI_EXTRACT_RE.find(page) {
-            let trimmed = trim_unbalanced_brackets(m.as_str());
-            return Some(trimmed.to_lowercase());
+        let joined = collapse_doi_linebreaks(page);
+        for m in DOI_EXTRACT_RE.find_iter(&joined) {
+            if let Some(doi) = clean_doi_match(m.as_str()) {
+                return Some(doi);
+            }
         }
     }
     None
@@ -317,8 +439,8 @@ fn try_info_doi(info: &HashMap<String, String>) -> Option<String> {
     for target in &["doi", "wps-articledoi"] {
         if let Some(value) = info_value_by_key(info, target) {
             let normalized = normalize_doi(value);
-            if is_valid_doi(&normalized) {
-                return Some(normalized.to_lowercase());
+            if let Some(doi) = clean_doi_match(&normalized) {
+                return Some(doi);
             }
         }
     }
@@ -351,19 +473,83 @@ fn validate_info_title(info: &HashMap<String, String>, pages: &[String]) -> Opti
 
 // ── JSTOR cover page heuristics ─────────────────────────────────────
 
+/// Known JSTOR cover-page field labels that act as block terminators.
+const JSTOR_FIELD_LABELS: &[&str] = &[
+    "Chapter Title",
+    "Book Title",
+    "Author(s)",
+    "Source",
+    "Published by",
+    "Stable URL",
+    "Accessed",
+    "Your use of",
+    "JSTOR is",
+];
+
 /// Extract the value of a labeled JSTOR field from the text.
-/// Looks for "Label: value" where value extends to the end of the line.
+///
+/// Performs block parsing: captures from the label line through continuation
+/// lines until a blank line or another known JSTOR label is encountered.
+/// Tolerates optional whitespace before the colon (e.g. "Author(s) :").
 fn extract_jstor_field(text: &str, label: &str) -> Option<String> {
-    for line in text.lines() {
+    // Split the label into the part before ":" so we can match with optional
+    // whitespace before the colon.  e.g. "Author(s):" -> prefix_before_colon = "Author(s)"
+    let prefix_before_colon = label.strip_suffix(':').unwrap_or(label);
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut start_idx = None;
+    let mut value_parts: Vec<&str> = Vec::new();
+
+    // Pass 1: find the line that starts with the label (tolerating space before colon).
+    for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(label) {
-            let value = rest.trim().to_string();
-            if !value.is_empty() {
-                return Some(value);
+        if let Some(after_prefix) = trimmed.strip_prefix(prefix_before_colon) {
+            // After the label text, expect optional whitespace then ":"
+            let after_prefix = after_prefix.trim_start();
+            if let Some(after_colon) = after_prefix.strip_prefix(':') {
+                let first_value = after_colon.trim();
+                if !first_value.is_empty() {
+                    value_parts.push(first_value);
+                }
+                start_idx = Some(i);
+                break;
             }
         }
     }
-    None
+
+    let start_idx = start_idx?;
+
+    // Pass 2: collect continuation lines until a terminator.
+    for line in &lines[start_idx + 1..] {
+        let trimmed = line.trim();
+
+        // Blank line terminates the block.
+        if trimmed.is_empty() {
+            break;
+        }
+
+        // Another known JSTOR field label terminates the block.
+        let is_new_label = JSTOR_FIELD_LABELS.iter().any(|&lbl| {
+            if let Some(rest) = trimmed.strip_prefix(lbl) {
+                let rest = rest.trim_start();
+                rest.starts_with(':')
+            } else {
+                false
+            }
+        });
+
+        if is_new_label {
+            break;
+        }
+
+        value_parts.push(trimmed);
+    }
+
+    if value_parts.is_empty() {
+        return None;
+    }
+
+    Some(value_parts.join(" "))
 }
 
 /// Parse an "Author(s):" value into a Vec of author names.
@@ -396,7 +582,7 @@ fn parse_jstor_source(
 
     let pages = {
         static PP_RE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"pp?\.?\s*(\d+(?:\s*-\s*\d+)?)").unwrap());
+            LazyLock::new(|| Regex::new(r"\b(?:pp\.?|p\.)\s*(\d+(?:\s*-\s*\d+)?)").unwrap());
         PP_RE.captures(source).map(|c| c[1].to_string())
     };
 
@@ -460,6 +646,11 @@ fn try_jstor_cover(pages: &[String]) -> (Option<String>, Option<JstorMetadata>) 
         None => return (None, None),
     };
 
+    // Trim trailing punctuation that the greedy \S+ may have captured
+    // from surrounding sentence context (e.g. "…/stable/12345. Accessed").
+    let stable_id = stable_id.trim_end_matches(['.', ',', ';']);
+    let stable_id = trim_unbalanced_brackets(stable_id);
+
     // Derive DOI from stable ID
     let derived_doi = format!("10.2307/{}", stable_id);
 
@@ -468,6 +659,7 @@ fn try_jstor_cover(pages: &[String]) -> (Option<String>, Option<JstorMetadata>) 
         .find_iter(page0)
         .map(|m| {
             let trimmed = trim_unbalanced_brackets(m.as_str());
+            let trimmed = strip_doi_url_cruft(trimmed);
             trimmed.to_lowercase()
         })
         .collect();
@@ -768,6 +960,61 @@ mod tests {
         assert_eq!(try_isbn(&pages), Some("0306406152".to_string()));
     }
 
+    // -- Finding 5: Line-wrapped ISBN tests --
+
+    #[test]
+    fn isbn_extract_line_wrapped() {
+        // ISBN-13 split across a newline boundary
+        let pages = vec!["ISBN 978-0-306-\n40615-7".to_string()];
+        assert_eq!(try_isbn(&pages), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_line_wrapped_isbn10() {
+        // ISBN-10 split across a newline
+        let pages = vec!["ISBN 0-306-\n40615-2".to_string()];
+        assert_eq!(try_isbn(&pages), Some("0306406152".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_tab_separated() {
+        // Tab character within an ISBN (e.g. from column-based PDF layout)
+        let pages = vec!["ISBN 978-0-306\t40615-7".to_string()];
+        assert_eq!(try_isbn(&pages), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_crlf_wrapped() {
+        // CRLF line break within an ISBN
+        let pages = vec!["ISBN 978-0-306-\r\n40615-7".to_string()];
+        assert_eq!(try_isbn(&pages), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn isbn_line_wrapped_pair_still_splits() {
+        // Two ISBNs separated by newline -- should parse as two distinct ISBNs, not reject
+        // (verifies split_whitespace still separates them)
+        let pages = vec!["ISBN 978-0-306-40615-7\n978-0-262-03384-8".to_string()];
+        let result = try_isbn(&pages);
+        // First ISBN wins
+        assert_eq!(result, Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn isbn_line_wrapped_multi_reject_still_works() {
+        // 4 distinct ISBNs separated by newlines -- bibliography heuristic must still reject
+        let pages = vec![
+            "ISBN 978-0-306-40615-7\nISBN 978-0-262-03384-8\nISBN 978-0-13-468599-1\nISBN 978-0-321-12521-7".to_string()
+        ];
+        assert_eq!(try_isbn(&pages), None);
+    }
+
+    #[test]
+    fn strip_isbn_separators_strips_whitespace() {
+        // All whitespace variants should be stripped
+        assert_eq!(strip_isbn_separators("978 0\t306\n40615\r\n7"), "9780306406157");
+    }
+
     // -- Cycle 8: Info dictionary heuristics tests --
 
     #[test]
@@ -830,6 +1077,49 @@ mod tests {
         let mut info = HashMap::new();
         info.insert("isbn".to_string(), "978-0-306-40615-8".to_string());
         assert_eq!(try_info_isbn(&info), None);
+    }
+
+    // -- Finding 6: Info-dict ISBN whitespace regression tests --
+
+    #[test]
+    fn info_isbn_trailing_newline() {
+        let mut info = HashMap::new();
+        info.insert("isbn".to_string(), "978-0-306-40615-7\n".to_string());
+        assert_eq!(try_info_isbn(&info), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn info_isbn_trailing_tab() {
+        let mut info = HashMap::new();
+        info.insert("ISBN".to_string(), "978-0-306-40615-7\t".to_string());
+        assert_eq!(try_info_isbn(&info), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn info_isbn_surrounding_whitespace() {
+        let mut info = HashMap::new();
+        info.insert("isbn".to_string(), "  978-0-306-40615-7\r\n".to_string());
+        assert_eq!(try_info_isbn(&info), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn info_isbn_embedded_newline() {
+        let mut info = HashMap::new();
+        info.insert("isbn".to_string(), "978-0-306-\n40615-7".to_string());
+        assert_eq!(try_info_isbn(&info), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn info_isbn_nbsp_stripped() {
+        let mut info = HashMap::new();
+        info.insert("isbn".to_string(), "978-0-306\u{00A0}40615-7".to_string());
+        assert_eq!(try_info_isbn(&info), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn strip_isbn_separators_strips_unicode_whitespace() {
+        // Non-breaking space (U+00A0) and thin space (U+2009)
+        assert_eq!(strip_isbn_separators("978\u{00A0}0\u{2009}306-40615-7"), "9780306406157");
     }
 
     #[test]
@@ -992,6 +1282,275 @@ mod tests {
         assert_eq!(result.doi, Some("10.1038/nature12373".to_string()));
     }
 
+    // -- DOI line-wrap handling tests --
+
+    #[test]
+    fn doi_line_wrapped_rejoined() {
+        let pages = vec!["doi: 10.1016/j.cell.\n2020.01.001".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1016/j.cell.2020.01.001".to_string()),
+        );
+    }
+
+    #[test]
+    fn doi_line_wrapped_with_hyphen() {
+        let pages = vec!["10.1103/physrevlett.\n123.045701".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1103/physrevlett.123.045701".to_string()),
+        );
+    }
+
+    #[test]
+    fn doi_line_wrapped_only_first_two_pages() {
+        let pages = vec![
+            "nothing here".to_string(),
+            "nothing here either".to_string(),
+            "10.1016/j.cell.\n2020.01.001".to_string(),
+        ];
+        assert_eq!(try_doi_regex(&pages), None);
+    }
+
+    #[test]
+    fn doi_invalid_after_trim_skipped() {
+        // "(10.1234/)" -> regex matches "10.1234/)" -> trim_unbalanced_brackets -> "10.1234/"
+        // is_valid_doi("10.1234/") is false (no suffix), so it's skipped.
+        // The second DOI on the page is valid and returned.
+        let pages = vec!["(10.1234/) see 10.1038/nature12373".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    #[test]
+    fn doi_multiple_newline_wraps() {
+        // DOI wraps at two points
+        let pages = vec!["10.1016/j.\ncell.2020.\n01.001".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1016/j.cell.2020.01.001".to_string()),
+        );
+    }
+
+    // -- DOI URL-cruft stripping tests --
+
+    #[test]
+    fn doi_jsessionid_stripped() {
+        let pages = vec!["10.1000/xyz;jsessionid=ABC123".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1000/xyz".to_string()));
+    }
+
+    #[test]
+    fn doi_trailing_bare_semicolon_stripped() {
+        let pages = vec!["10.1000/xyz;".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1000/xyz".to_string()));
+    }
+
+    #[test]
+    fn doi_jsessionid_case_insensitive() {
+        let pages = vec!["10.1000/xyz;JSESSIONID=DEADBEEF".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1000/xyz".to_string()));
+    }
+
+    #[test]
+    fn doi_with_legitimate_semicolon_preserved() {
+        // Real DOI from Wiley SICI scheme — the ";2-2" at the end is part of the DOI.
+        let pages = vec!["10.1002/(SICI)1097-0258(19980815)17:15<1661::AID-SIM968>3.0.CO;2-2".to_string()];
+        assert_eq!(
+            try_doi_regex(&pages),
+            Some("10.1002/(sici)1097-0258(19980815)17:15<1661::aid-sim968>3.0.co;2-2".to_string()),
+        );
+    }
+
+    #[test]
+    fn doi_multiple_url_params_stripped() {
+        let pages = vec!["10.1038/nature12373;token=XYZ;sid=abc".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1038/nature12373".to_string()));
+    }
+
+    #[test]
+    fn doi_question_mark_query_stripped() {
+        let pages = vec!["10.1038/nature12373?download=true".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1038/nature12373".to_string()));
+    }
+
+    #[test]
+    fn doi_hash_fragment_stripped() {
+        let pages = vec!["10.1038/nature12373#section2".to_string()];
+        assert_eq!(try_doi_regex(&pages), Some("10.1038/nature12373".to_string()));
+    }
+
+    #[test]
+    fn jstor_doi_url_cruft_stripped() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345\nDOI: 10.1086/599247;jsessionid=XYZ\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.1086/599247".to_string()));
+    }
+
+    // -- Finding 3: try_info_doi cleanup consistency tests --
+
+    #[test]
+    fn info_doi_trailing_junk_extracted() {
+        let mut info = HashMap::new();
+        info.insert(
+            "doi".to_string(),
+            "10.1038/nature12373 (Author accepted manuscript)".to_string(),
+        );
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    #[test]
+    fn info_doi_trailing_period_trimmed() {
+        let mut info = HashMap::new();
+        info.insert("doi".to_string(), "10.1038/nature12373.".to_string());
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    #[test]
+    fn info_doi_trailing_comma_trimmed() {
+        let mut info = HashMap::new();
+        info.insert("doi".to_string(), "10.1016/j.cell.2020.01.001,".to_string());
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1016/j.cell.2020.01.001".to_string()),
+        );
+    }
+
+    #[test]
+    fn info_doi_url_cruft_stripped() {
+        let mut info = HashMap::new();
+        info.insert(
+            "doi".to_string(),
+            "10.1038/nature12373;jsessionid=ABC123".to_string(),
+        );
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    #[test]
+    fn info_doi_unbalanced_bracket_trimmed() {
+        let mut info = HashMap::new();
+        info.insert("doi".to_string(), "10.1000/xyz)".to_string());
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1000/xyz".to_string()),
+        );
+    }
+
+    #[test]
+    fn info_doi_https_with_trailing_junk() {
+        let mut info = HashMap::new();
+        info.insert(
+            "doi".to_string(),
+            "https://doi.org/10.1038/nature12373 retrieved 2024-01-01".to_string(),
+        );
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    #[test]
+    fn info_doi_query_string_stripped() {
+        let mut info = HashMap::new();
+        info.insert(
+            "doi".to_string(),
+            "https://doi.org/10.1038/nature12373?download=true".to_string(),
+        );
+        assert_eq!(
+            try_info_doi(&info),
+            Some("10.1038/nature12373".to_string()),
+        );
+    }
+
+    // -- Finding 4: Mixed ISBN-10+13 concatenated pair tests --
+
+    #[test]
+    fn isbn_extract_mixed_10_then_13() {
+        // ISBN-10 "0306406152" + space + ISBN-13 "9780306406157"
+        // After stripping: 23 chars. Must split as 10+13.
+        let pages = vec!["ISBN 0306406152 9780306406157".to_string()];
+        assert_eq!(try_isbn(&pages), Some("0306406152".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_mixed_13_then_10() {
+        // ISBN-13 "9780306406157" + space + ISBN-10 "0306406152"
+        // After stripping: 23 chars. Must split as 13+10.
+        let pages = vec!["ISBN 9780306406157 0306406152".to_string()];
+        assert_eq!(try_isbn(&pages), Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_mixed_10x_then_13() {
+        // ISBN-10 "0-8044-2957-X" + ISBN-13 "978-0-306-40615-7" with space
+        let pages = vec!["ISBN 0-8044-2957-X 978-0-306-40615-7".to_string()];
+        assert_eq!(try_isbn(&pages), Some("080442957X".to_string()));
+    }
+
+    #[test]
+    fn isbn_extract_mixed_13_then_10x() {
+        // ISBN-13 first, ISBN-10 with X second
+        let pages = vec!["ISBN 978-0-306-40615-7 0-8044-2957-X".to_string()];
+        assert_eq!(try_isbn(&pages), Some("9780306406157".to_string()));
+    }
+
+    // -- Finding 7: ISSN_RE case-insensitive matching tests --
+
+    #[test]
+    fn issn_extract_lowercase_label() {
+        // Lowercase "issn" label -- must match with (?i)
+        let pages = vec!["issn 0317-8471".to_string()];
+        assert_eq!(try_issn(&pages), Some("0317-8471".to_string()));
+    }
+
+    #[test]
+    fn issn_extract_mixed_case_label() {
+        // Mixed-case "Issn:" label
+        let pages = vec!["Issn: 0028-0836".to_string()];
+        assert_eq!(try_issn(&pages), Some("0028-0836".to_string()));
+    }
+
+    #[test]
+    fn issn_extract_lowercase_x_check_digit() {
+        // Lowercase x check digit -- regex must capture it, returned normalized to uppercase X
+        let pages = vec!["ISSN 0001-253x".to_string()];
+        assert_eq!(try_issn(&pages), Some("0001-253X".to_string()));
+    }
+
+    #[test]
+    fn issn_extract_lowercase_label_and_x() {
+        // Both label and check digit lowercase
+        let pages = vec!["issn: 0001-253x".to_string()];
+        assert_eq!(try_issn(&pages), Some("0001-253X".to_string()));
+    }
+
+    #[test]
+    fn issn_extract_uppercase_x_unchanged() {
+        // Uppercase X stays uppercase (non-regression for existing behavior)
+        let pages = vec!["ISSN 0250-474X".to_string()];
+        assert_eq!(try_issn(&pages), Some("0250-474X".to_string()));
+    }
+
+    #[test]
+    fn issn_extract_numeric_check_digit_unchanged() {
+        // Numeric check digit unaffected by normalization (non-regression)
+        let pages = vec!["ISSN 0317-8471".to_string()];
+        assert_eq!(try_issn(&pages), Some("0317-8471".to_string()));
+    }
+
     #[test]
     fn all_identifiers_at_once() {
         let mut info = HashMap::new();
@@ -1011,5 +1570,305 @@ mod tests {
         assert_eq!(result.doi, Some("10.1038/nature12373".to_string()));
         assert_eq!(result.info_title, Some("Quantum Entanglement".to_string()));
         assert!(result.jstor_metadata.is_none());
+    }
+
+    // -- Finding 8: JSTOR stable-URL trailing punctuation tests --
+
+    #[test]
+    fn jstor_stable_url_trailing_period_trimmed() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345. Accessed: 2024-01-01\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_trailing_comma_trimmed() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345, retrieved 2024\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_trailing_semicolon_trimmed() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345; see also\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_trailing_close_paren_trimmed() {
+        let pages = vec![
+            "(Stable URL: http://www.jstor.org/stable/12345)\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_multiple_trailing_punct_trimmed() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345.,\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_clean_id_unchanged() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/12345\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_hierarchical_id_preserved() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/j.ctt1pwtd1.8\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/j.ctt1pwtd1.8".to_string()));
+    }
+
+    #[test]
+    fn jstor_stable_url_hierarchical_id_trailing_period_trimmed() {
+        let pages = vec![
+            "Stable URL: http://www.jstor.org/stable/j.ctt1pwtd1.8. Accessed: 2024\n".to_string(),
+        ];
+        let (doi, _metadata) = try_jstor_cover(&pages);
+        // Only the final trailing period is stripped; the ".8" is preserved because
+        // trim_end_matches stops at the first non-matching char from the right.
+        assert_eq!(doi, Some("10.2307/j.ctt1pwtd1.8".to_string()));
+    }
+
+    // -- Finding 9: PP_RE mis-capture on p-final words --
+
+    #[test]
+    fn jstor_source_pages_not_captured_from_workshop() {
+        // "Workshop 12" must not be captured as pages
+        let (_, _, pages, _) = parse_jstor_source(
+            "History Workshop 12, Vol. 5, No. 2 (1998), pp. 100-130",
+        );
+        assert_eq!(pages, Some("100-130".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_pages_not_captured_from_group() {
+        // "Group 3" must not be captured as pages
+        let (_, _, pages, _) = parse_jstor_source(
+            "Research Group 3 Review, Vol. 1, No. 4 (2005), pp. 45-67",
+        );
+        assert_eq!(pages, Some("45-67".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_pages_not_captured_from_top() {
+        // "Top 10" must not be captured as pages
+        let (_, _, pages, _) = parse_jstor_source(
+            "Top 10 Digest, Vol. 2, No. 1 (2010), pp. 8-19",
+        );
+        assert_eq!(pages, Some("8-19".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_pages_pp_dot_range() {
+        // Standard "pp." form
+        let (_, _, pages, _) = parse_jstor_source(
+            "The Journal, Vol. 98, No. 3 (Mar., 2001), pp. 5-28",
+        );
+        assert_eq!(pages, Some("5-28".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_pages_pp_no_dot() {
+        // "pp" without dot (double-p form is unambiguous even without dot)
+        let (_, _, pages, _) = parse_jstor_source(
+            "The Journal, Vol. 12 (2001), pp 100-130",
+        );
+        assert_eq!(pages, Some("100-130".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_pages_p_dot_single() {
+        // "p." single-page form
+        let (_, _, pages, _) = parse_jstor_source(
+            "The Journal, Vol. 5 (1999), p. 7",
+        );
+        assert_eq!(pages, Some("7".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_pages_bare_p_no_match() {
+        // Bare "p" without dot must NOT match (too ambiguous)
+        let (_, _, pages, _) = parse_jstor_source(
+            "Appendix p 42",
+        );
+        assert_eq!(pages, None);
+    }
+
+    #[test]
+    fn jstor_source_pages_single_page_pp_dot() {
+        // "pp." with a single page number (no range)
+        let (_, _, pages, _) = parse_jstor_source(
+            "The Journal (2020), pp. 100",
+        );
+        assert_eq!(pages, Some("100".to_string()));
+    }
+
+    // -- Finding 10: JSTOR field extraction wrapped values + space-before-colon --
+
+    #[test]
+    fn jstor_source_field_wrapped_across_lines() {
+        // Source value spans two lines; continuation has year + pages.
+        let text = concat!(
+            "Author(s): John Smith\n",
+            "Source: The American Economic Review, Vol. 68, No. 5\n",
+            "(Dec., 1978), pp. 101-112\n",
+            "Published by: American Economic Association\n",
+            "Stable URL: http://www.jstor.org/stable/1811098\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("The American Economic Review, Vol. 68, No. 5 (Dec., 1978), pp. 101-112".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_author_field_space_before_colon() {
+        // "Author(s) :" with a space before the colon -- must still match.
+        let text = concat!(
+            "Author(s) : Jane Doe\n",
+            "Source: Some Journal, Vol. 1 (2000), pp. 1-10\n",
+            "Stable URL: http://www.jstor.org/stable/99999\n",
+        );
+        let result = extract_jstor_field(text, "Author(s):");
+        assert_eq!(result, Some("Jane Doe".to_string()));
+    }
+
+    #[test]
+    fn jstor_source_field_three_continuation_lines() {
+        // Value wraps over three lines before the next known label.
+        let text = concat!(
+            "Source: Proceedings of the National Academy\n",
+            "of Sciences of the United States of America,\n",
+            "Vol. 75, No. 12 (Dec., 1978), pp. 5913-5917\n",
+            "Published by: National Academy of Sciences\n",
+            "Stable URL: http://www.jstor.org/stable/68555\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("Proceedings of the National Academy of Sciences of the United States of America, Vol. 75, No. 12 (Dec., 1978), pp. 5913-5917".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_terminated_by_blank_line() {
+        // Continuation stops at a blank line even without a known label following.
+        let text = concat!(
+            "Source: The Journal of Philosophy, Vol. 2\n",
+            "(Jan., 2005), pp. 30-50\n",
+            "\n",
+            "Some unrelated text\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("The Journal of Philosophy, Vol. 2 (Jan., 2005), pp. 30-50".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_terminated_by_stable_url() {
+        // "Stable URL:" acts as a terminator even without "Published by:" in between.
+        let text = concat!(
+            "Source: Short Journal, Vol. 1 (2000), pp. 1-5\n",
+            "Stable URL: http://www.jstor.org/stable/12345\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("Short Journal, Vol. 1 (2000), pp. 1-5".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_field_terminated_by_accessed() {
+        // "Accessed:" terminates the block.
+        let text = concat!(
+            "Source: A Journal, Vol. 3\n",
+            "(1999), pp. 10-20\n",
+            "Accessed: 15-06-2024 10:30 UTC\n",
+        );
+        let result = extract_jstor_field(text, "Source:");
+        assert_eq!(
+            result,
+            Some("A Journal, Vol. 3 (1999), pp. 10-20".to_string()),
+        );
+    }
+
+    #[test]
+    fn jstor_chapter_title_field_space_before_colon() {
+        // "Chapter Title :" with space before colon.
+        let text = concat!(
+            "Chapter Title : The Big Idea\n",
+            "Author(s): Someone\n",
+            "Stable URL: http://www.jstor.org/stable/11111\n",
+        );
+        let result = extract_jstor_field(text, "Chapter Title:");
+        assert_eq!(result, Some("The Big Idea".to_string()));
+    }
+
+    #[test]
+    fn jstor_field_single_line_unchanged() {
+        // Single-line field (no wrapping) -- must still work.
+        let text = concat!(
+            "Author(s): John Smith, Jane Doe\n",
+            "Source: The Journal, Vol. 1 (2000), pp. 1-10\n",
+            "Stable URL: http://www.jstor.org/stable/12345\n",
+        );
+        let result = extract_jstor_field(text, "Author(s):");
+        assert_eq!(result, Some("John Smith, Jane Doe".to_string()));
+    }
+
+    #[test]
+    fn jstor_field_not_found_returns_none() {
+        // Label not present at all.
+        let text = "Source: Something\nStable URL: http://www.jstor.org/stable/12345\n";
+        let result = extract_jstor_field(text, "Chapter Title:");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn jstor_parses_metadata_wrapped_source() {
+        let pages = vec![
+            concat!(
+                "Chapter Title: The Theory of Everything\n",
+                "Author(s): John Smith, Jane Doe\n",
+                "Source: The Journal of Philosophy, Vol. 98, No. 3\n",
+                "(Mar., 2001), pp. 5-28\n",
+                "Published by: The Publisher\n",
+                "Stable URL: http://www.jstor.org/stable/12345\n",
+            ).to_string(),
+        ];
+        let (doi, metadata) = try_jstor_cover(&pages);
+        assert_eq!(doi, Some("10.2307/12345".to_string()));
+
+        let meta = metadata.unwrap();
+        assert_eq!(meta.chapter_title, Some("The Theory of Everything".to_string()));
+        assert_eq!(meta.authors, vec!["John Smith".to_string(), "Jane Doe".to_string()]);
+        assert_eq!(meta.source, Some("The Journal of Philosophy".to_string()));
+        assert_eq!(meta.volume, Some("98".to_string()));
+        assert_eq!(meta.number, Some("3".to_string()));
+        assert_eq!(meta.pages, Some("5-28".to_string()));
+        assert_eq!(meta.year, Some("2001".to_string()));
     }
 }
