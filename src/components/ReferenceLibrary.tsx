@@ -14,7 +14,6 @@ import {
   listBibEntries,
   getCitingPages,
   getBibKeyStates,
-  materializeCitation,
   enrichBibEntry,
   type BibEntry,
   type BibKeyState,
@@ -25,6 +24,7 @@ import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
+import { materializeAndOpen } from "../lib/materializeAndOpen";
 
 function lastName(entry: BibEntry): string {
   const first = entry.authors[0] ?? "";
@@ -287,22 +287,17 @@ export function ReferenceLibrary() {
       if (materializingKey !== null) return;
       setMaterializingKey(bibKey);
       try {
-        const meta = await materializeCitation(bibKey);
-        useWorkspaceStore.setState((state) => ({
-          pages: [...state.pages, meta],
-        }));
-        // Eagerly refresh — covers paths where lit:graph-updated won't fire
-        // (reindex error or graph index not yet ready).
+        await materializeAndOpen(bibKey, { recordDeparture });
+        // Eagerly refresh React state — covers paths where lit:graph-updated
+        // won't fire (reindex error or graph index not yet ready).
         loadBibKeyStates();
-        recordDeparture();
-        selectPage(meta.relative_path);
       } catch {
         show("Failed to create note", "error");
       } finally {
         setMaterializingKey(null);
       }
     },
-    [materializingKey, loadBibKeyStates, recordDeparture, selectPage, show],
+    [materializingKey, loadBibKeyStates, recordDeparture, show],
   );
 
   const handleEnrich = useCallback(

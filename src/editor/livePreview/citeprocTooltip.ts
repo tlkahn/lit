@@ -1,49 +1,29 @@
-import { type Extension, StateEffect, StateField } from "@codemirror/state";
+import { type Extension } from "@codemirror/state";
 import {
   type EditorView,
   type Tooltip,
-  showTooltip,
+  hoverTooltip,
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   getBibKeyStates,
-  materializeCitation,
   type BibKeyState,
 } from "../../lib/ipc";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useStatusMessageStore } from "../../stores/statusMessage";
+import { citeprocMatchesField, type CiteprocMatch } from "./citeproc";
+import { materializeAndOpen } from "../../lib/materializeAndOpen";
+import { getCurrentEditorView } from "../../lib/editorViewRef";
+import { globalJumpTracker } from "../../editor/jumpTracker";
 
-interface CiteprocTooltipState {
-  pos: number;
-  bibKey: string;
-}
-
-export const setCiteprocTooltip =
-  StateEffect.define<CiteprocTooltipState>();
-export const clearCiteprocTooltip = StateEffect.define<void>();
-
-let clearTimer: ReturnType<typeof setTimeout> | null = null;
-
-export function scheduleClearTooltip(view: EditorView): void {
-  clearTimer = setTimeout(() => {
-    clearTimer = null;
-    view.dispatch({ effects: clearCiteprocTooltip.of(undefined) });
-  }, 150);
-}
-
-export function cancelClearTooltip(): void {
-  if (clearTimer != null) {
-    clearTimeout(clearTimer);
-    clearTimer = null;
-  }
-}
+/* ── Bib key states cache ───────────────────────────────────── */
 
 let bibKeyStatesCache: Record<string, BibKeyState> | null = null;
 let bibKeyStatesFetching: Promise<Record<string, BibKeyState>> | null = null;
 
-function invalidateBibKeyStatesCache(): void {
+export function invalidateBibKeyStatesCache(): void {
   bibKeyStatesCache = null;
   bibKeyStatesFetching = null;
 }
@@ -55,23 +35,23 @@ async function getCachedBibKeyStates(): Promise<Record<string, BibKeyState>> {
     bibKeyStatesCache = states;
     bibKeyStatesFetching = null;
     return states;
+  }).catch((err) => {
+    bibKeyStatesFetching = null;
+    throw err;
   });
   return bibKeyStatesFetching;
 }
 
-function buildTooltipDom(
+/* ── Tooltip DOM builder ────────────────────────────────────── */
+
+export function buildTooltipDom(
   bibKey: string,
-  view: EditorView,
 ): HTMLElement {
   const dom = document.createElement("div");
   dom.className = "cm-citeproc-tooltip";
 
-  dom.addEventListener("mouseenter", () => {
-    cancelClearTooltip();
-  });
-  dom.addEventListener("mouseleave", () => {
-    scheduleClearTooltip(view);
-  });
+  // Note: no mouseenter/mouseleave handlers — CM6 hoverTooltip manages
+  // the hover lifecycle natively via HoverPlugin.watchTooltipLeave.
 
   const loading = document.createElement("span");
   loading.textContent = "Loading…";
@@ -101,74 +81,238 @@ function buildTooltipDom(
     btn.addEventListener("click", () => {
       if (isMaterialized) {
         useWorkspaceStore.getState().selectPage(state.page_id!);
-        view.dispatch({ effects: clearCiteprocTooltip.of(undefined) });
       } else {
         btn.disabled = true;
         btn.textContent = "Creating…";
-        materializeCitation(bibKey)
-          .then((meta) => {
-            const ws = useWorkspaceStore.getState();
-            ws.selectPage(meta.relative_path);
-            view.dispatch({ effects: clearCiteprocTooltip.of(undefined) });
+        materializeAndOpen(bibKey, {
+          recordDeparture: () => {
+            const view = getCurrentEditorView();
+            const pagePath = useWorkspaceStore.getState().currentPagePath;
+            if (view && pagePath) {
+              const head = view.state.selection.main.head;
+              const line = view.state.doc.lineAt(head);
+              globalJumpTracker.recordJump(
+                { notePath: pagePath, line: line.number, col: head - line.from },
+                { notePath: "", line: 0, col: 0 },
+              );
+            }
+          },
+        })
+          .then(() => {
+            invalidateBibKeyStatesCache();
           })
           .catch((err) => {
-            btn.disabled = false;
-            btn.textContent = "Create note";
-            useStatusMessageStore
-              .getState()
-              .show(String(err), "error");
+            const errStr = String(err);
+            if (errStr.includes("already exists")) {
+              // Note was created via another path; invalidate cache and navigate
+              invalidateBibKeyStatesCache();
+              btn.disabled = true;
+              btn.textContent = "Opening…";
+              getCachedBibKeyStates()
+                .then((freshStates) => {
+                  const freshState = freshStates[bibKey];
+                  if (freshState?.page_id) {
+                    useWorkspaceStore.getState().selectPage(freshState.page_id);
+                  }
+                })
+                .catch(() => {
+                  // If re-fetch also fails, show a generic toast
+                  useStatusMessageStore
+                    .getState()
+                    .show("Note exists but could not navigate to it", "error");
+                  btn.disabled = false;
+                  btn.textContent = "Create note";
+                });
+            } else {
+              btn.disabled = false;
+              btn.textContent = "Create note";
+              useStatusMessageStore
+                .getState()
+                .show(errStr, "error");
+            }
           });
       }
     });
 
     dom.appendChild(btn);
+  }).catch(() => {
+    dom.textContent = "";
+    const errSpan = document.createElement("span");
+    errSpan.textContent = "Failed to load — hover again to retry";
+    errSpan.style.color = "var(--text-faint)";
+    errSpan.style.fontStyle = "italic";
+    dom.appendChild(errSpan);
   });
 
   return dom;
 }
 
-const citeprocTooltipField = StateField.define<Tooltip | null>({
-  create: () => null,
-  update(value, tr) {
-    if (tr.docChanged || tr.selection) return null;
-    for (const e of tr.effects) {
-      if (e.is(setCiteprocTooltip)) {
-        const { pos, bibKey } = e.value;
-        return {
-          pos,
-          above: true,
-          create(view: EditorView) {
-            return { dom: buildTooltipDom(bibKey, view) };
-          },
-        };
+/* ── Hover tracker ViewPlugin ───────────────────────────────── */
+
+class CiteprocHoverTrackerImpl {
+  lastHoveredKey: string | null = null;
+  lastHoveredElement: HTMLElement | null = null;
+  private handler: (e: MouseEvent) => void;
+
+  constructor(private view: EditorView) {
+    this.handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const keySpan = target?.closest?.(".cm-crossref-citeproc-key") as
+        | HTMLElement
+        | null;
+      if (keySpan?.dataset?.citekey) {
+        this.lastHoveredKey = keySpan.dataset.citekey;
+        this.lastHoveredElement = keySpan;
+      } else {
+        this.lastHoveredKey = null;
+        this.lastHoveredElement = null;
       }
-      if (e.is(clearCiteprocTooltip)) return null;
-    }
-    return value;
-  },
-  provide: (f) => showTooltip.from(f),
-});
+    };
+    this.view.dom.addEventListener("mousemove", this.handler);
+  }
+
+  update(_update: ViewUpdate) {}
+
+  destroy() {
+    this.view.dom.removeEventListener("mousemove", this.handler);
+  }
+}
+
+export const citeprocHoverTracker =
+  ViewPlugin.fromClass(CiteprocHoverTrackerImpl);
+
+/* ── hoverTooltip source ────────────────────────────────────── */
+
+function findMatchAtPos(
+  matches: CiteprocMatch[],
+  pos: number,
+): CiteprocMatch | null {
+  for (const match of matches) {
+    if (pos >= match.from && pos <= match.to) return match;
+  }
+  return null;
+}
+
+export function citeprocTooltipSource(
+  view: EditorView,
+  pos: number,
+  _side: 1 | -1,
+): Tooltip | null {
+  const matches = view.state.field(citeprocMatchesField, false);
+  if (!matches) return null;
+
+  const match = findMatchAtPos(matches, pos);
+  if (!match || match.keys.length === 0) return null;
+
+  // Read the last-hovered citekey from the tracker plugin
+  const tracker = view.plugin(citeprocHoverTracker);
+  let bibKey = tracker?.lastHoveredKey ?? null;
+
+  // Validate the key belongs to this match; fall back to first key
+  if (!bibKey || !match.keys.some((k) => k.key === bibKey)) {
+    bibKey = match.keys[0]!.key;
+  }
+
+  const resolvedKey = bibKey;
+
+  // Capture the hovered DOM element for per-key tooltip anchoring.
+  // Only use it if: (1) citekey matches the resolved key, (2) element is still in the DOM.
+  const anchorElement = tracker?.lastHoveredElement ?? null;
+  const useAnchor =
+    anchorElement != null &&
+    anchorElement.dataset?.citekey === resolvedKey &&
+    anchorElement.isConnected;
+
+  return {
+    pos: match.from,
+    end: match.to,
+    above: true,
+    create() {
+      return {
+        dom: buildTooltipDom(resolvedKey),
+        getCoords: useAnchor
+          ? () => {
+              const rect = anchorElement!.getBoundingClientRect();
+              return {
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+              };
+            }
+          : undefined,
+      };
+    },
+  };
+}
+
+/* ── Tauri event listener (cache invalidation) ──────────────── */
 
 const citeprocTooltipListener = ViewPlugin.fromClass(
   class {
-    private unlisten: UnlistenFn | null = null;
+    private unlisteners: UnlistenFn[] = [];
+    private destroyed = false;
+    private unsubWorkspace: (() => void) | null = null;
 
     constructor(_view: EditorView) {
-      listen("lit:graph-updated", () => {
+      // Graph-updated listener (existing)
+      this.addListener("lit:graph-updated", () => {
         invalidateBibKeyStatesCache();
-      }).then((fn) => {
-        this.unlisten = fn;
+      });
+
+      // .bib file change listeners (mirrors ReferenceLibrary.tsx:217-254)
+      for (const eventName of [
+        "workspace://file-created",
+        "workspace://file-modified",
+        "workspace://file-deleted",
+      ] as const) {
+        this.addListener(
+          eventName,
+          (event: { payload: { path: string } }) => {
+            if (event.payload.path.toLowerCase().endsWith(".bib")) {
+              invalidateBibKeyStatesCache();
+            }
+          },
+        );
+      }
+
+      // Workspace switch invalidation
+      let lastPath = useWorkspaceStore.getState().workspacePath;
+      this.unsubWorkspace = useWorkspaceStore.subscribe((state) => {
+        if (state.workspacePath !== lastPath) {
+          lastPath = state.workspacePath;
+          invalidateBibKeyStatesCache();
+        }
+      });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private addListener(event: string, handler: (e: any) => void) {
+      listen(event, handler).then((fn) => {
+        if (this.destroyed) {
+          fn();
+        } else {
+          this.unlisteners.push(fn);
+        }
       });
     }
 
     update(_update: ViewUpdate) {}
 
     destroy() {
-      this.unlisten?.();
+      this.destroyed = true;
+      for (const fn of this.unlisteners) fn();
+      this.unsubWorkspace?.();
     }
   },
 );
 
+/* ── Public extension ───────────────────────────────────────── */
+
 export function citeprocTooltipExtension(): Extension {
-  return [citeprocTooltipField, citeprocTooltipListener];
+  return [
+    citeprocHoverTracker,
+    hoverTooltip(citeprocTooltipSource, { hideOnChange: true }),
+    citeprocTooltipListener,
+  ];
 }

@@ -1,11 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { globalJumpTracker } from "../jumpTracker";
-import {
-  setCiteprocTooltip,
-  scheduleClearTooltip,
-  cancelClearTooltip,
-} from "./citeprocTooltip";
 
 export interface CiteprocLinkInfo {
   renderedText: string;
@@ -46,13 +41,6 @@ export class CiteprocWidget extends WidgetType {
       keySpan.textContent = link.renderedText;
       if (link.bibKey) {
         keySpan.dataset.citekey = link.bibKey;
-        keySpan.addEventListener("mouseenter", () => {
-          cancelClearTooltip();
-          view.dispatch({ effects: setCiteprocTooltip.of({ pos: this.charStart, bibKey: link.bibKey! }) });
-        });
-        keySpan.addEventListener("mouseleave", () => {
-          scheduleClearTooltip(view);
-        });
       }
       keySpan.onmousedown = (e) => {
         e.preventDefault();
