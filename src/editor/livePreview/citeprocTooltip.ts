@@ -6,7 +6,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn, type Event } from "@tauri-apps/api/event";
 import {
   getBibKeyStates,
   type BibKeyState,
@@ -113,6 +113,12 @@ export function buildTooltipDom(
                   const freshState = freshStates[bibKey];
                   if (freshState?.page_id) {
                     useWorkspaceStore.getState().selectPage(freshState.page_id);
+                  } else {
+                    useStatusMessageStore
+                      .getState()
+                      .show("Note exists but could not navigate to it", "error");
+                    btn.disabled = false;
+                    btn.textContent = "Create note";
                   }
                 })
                 .catch(() => {
@@ -168,13 +174,13 @@ class CiteprocHoverTrackerImpl {
         this.lastHoveredElement = null;
       }
     };
-    this.view.dom.addEventListener("mousemove", this.handler);
+    this.view.dom.addEventListener("mouseover", this.handler);
   }
 
   update(_update: ViewUpdate) {}
 
   destroy() {
-    this.view.dom.removeEventListener("mousemove", this.handler);
+    this.view.dom.removeEventListener("mouseover", this.handler);
   }
 }
 
@@ -246,63 +252,98 @@ export function citeprocTooltipSource(
   };
 }
 
-/* ── Tauri event listener (cache invalidation) ──────────────── */
+/* ── Shared invalidation listeners (refcounted) ───────────── */
+
+let listenerRefCount = 0;
+let sharedUnlisteners: UnlistenFn[] = [];
+let sharedDestroyed = false;
+let sharedUnsubWorkspace: (() => void) | null = null;
+let listenerGeneration = 0;
+
+function addSharedListener<T>(
+  event: string,
+  handler: (e: Event<T>) => void,
+): void {
+  const gen = listenerGeneration;
+  listen<T>(event, handler).then((fn) => {
+    if (sharedDestroyed || listenerGeneration !== gen) {
+      fn();
+    } else {
+      sharedUnlisteners.push(fn);
+    }
+  });
+}
+
+export function acquireInvalidationListeners(): void {
+  listenerRefCount++;
+  if (listenerRefCount > 1) return; // already registered
+
+  sharedDestroyed = false;
+  listenerGeneration++;
+
+  // Graph-updated listener
+  addSharedListener<unknown>("lit:graph-updated", () => {
+    invalidateBibKeyStatesCache();
+  });
+
+  // .bib file change listeners
+  for (const eventName of [
+    "workspace://file-created",
+    "workspace://file-modified",
+    "workspace://file-deleted",
+  ] as const) {
+    addSharedListener<{ path: string }>(
+      eventName,
+      (event) => {
+        if (event.payload.path.toLowerCase().endsWith(".bib")) {
+          invalidateBibKeyStatesCache();
+        }
+      },
+    );
+  }
+
+  // Workspace switch invalidation
+  let lastPath = useWorkspaceStore.getState().workspacePath;
+  sharedUnsubWorkspace = useWorkspaceStore.subscribe((state) => {
+    if (state.workspacePath !== lastPath) {
+      lastPath = state.workspacePath;
+      invalidateBibKeyStatesCache();
+    }
+  });
+}
+
+export function releaseInvalidationListeners(): void {
+  listenerRefCount--;
+  if (listenerRefCount > 0) return; // other views still alive
+
+  sharedDestroyed = true;
+  for (const fn of sharedUnlisteners) fn();
+  sharedUnlisteners = [];
+  sharedUnsubWorkspace?.();
+  sharedUnsubWorkspace = null;
+}
+
+/** @internal -- test-only */
+export function _resetSharedListenersForTest(): void {
+  sharedDestroyed = true;
+  for (const fn of sharedUnlisteners) fn();
+  sharedUnlisteners = [];
+  sharedUnsubWorkspace?.();
+  sharedUnsubWorkspace = null;
+  listenerRefCount = 0;
+  sharedDestroyed = false;
+}
+
+/* ── Tauri event listener (thin ViewPlugin) ───────────────── */
 
 const citeprocTooltipListener = ViewPlugin.fromClass(
   class {
-    private unlisteners: UnlistenFn[] = [];
-    private destroyed = false;
-    private unsubWorkspace: (() => void) | null = null;
-
     constructor(_view: EditorView) {
-      // Graph-updated listener (existing)
-      this.addListener("lit:graph-updated", () => {
-        invalidateBibKeyStatesCache();
-      });
-
-      // .bib file change listeners (mirrors ReferenceLibrary.tsx:217-254)
-      for (const eventName of [
-        "workspace://file-created",
-        "workspace://file-modified",
-        "workspace://file-deleted",
-      ] as const) {
-        this.addListener(
-          eventName,
-          (event: { payload: { path: string } }) => {
-            if (event.payload.path.toLowerCase().endsWith(".bib")) {
-              invalidateBibKeyStatesCache();
-            }
-          },
-        );
-      }
-
-      // Workspace switch invalidation
-      let lastPath = useWorkspaceStore.getState().workspacePath;
-      this.unsubWorkspace = useWorkspaceStore.subscribe((state) => {
-        if (state.workspacePath !== lastPath) {
-          lastPath = state.workspacePath;
-          invalidateBibKeyStatesCache();
-        }
-      });
+      acquireInvalidationListeners();
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private addListener(event: string, handler: (e: any) => void) {
-      listen(event, handler).then((fn) => {
-        if (this.destroyed) {
-          fn();
-        } else {
-          this.unlisteners.push(fn);
-        }
-      });
-    }
-
     update(_update: ViewUpdate) {}
-
     destroy() {
-      this.destroyed = true;
-      for (const fn of this.unlisteners) fn();
-      this.unsubWorkspace?.();
+      releaseInvalidationListeners();
     }
   },
 );

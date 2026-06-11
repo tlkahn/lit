@@ -85,6 +85,9 @@ import {
   citeprocTooltipExtension,
   buildTooltipDom,
   invalidateBibKeyStatesCache,
+  acquireInvalidationListeners,
+  releaseInvalidationListeners,
+  _resetSharedListenersForTest,
 } from "./citeprocTooltip";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useStatusMessageStore } from "../../stores/statusMessage";
@@ -216,7 +219,7 @@ describe("buildTooltipDom regression", () => {
 });
 
 describe("citeprocHoverTracker", () => {
-  it("stores lastHoveredKey from mousemove on keySpan", () => {
+  it("stores lastHoveredKey from mouseover on keySpan", () => {
     const doc = "test document";
     const view = makeViewWithTracker(doc);
     const tracker = view.plugin(citeprocHoverTracker);
@@ -228,8 +231,8 @@ describe("citeprocHoverTracker", () => {
     keySpan.dataset.citekey = "smith2020";
     view.dom.appendChild(keySpan);
 
-    // Dispatch mousemove with the keySpan as target
-    const event = new MouseEvent("mousemove", {
+    // Dispatch mouseover with the keySpan as target
+    const event = new MouseEvent("mouseover", {
       bubbles: true,
       target: keySpan,
     } as MouseEventInit);
@@ -243,7 +246,7 @@ describe("citeprocHoverTracker", () => {
     view.destroy();
   });
 
-  it("clears lastHoveredKey when mousemove target is not a keySpan", () => {
+  it("clears lastHoveredKey when mouseover target is not a keySpan", () => {
     const doc = "test document";
     const view = makeViewWithTracker(doc);
     const tracker = view.plugin(citeprocHoverTracker);
@@ -252,8 +255,8 @@ describe("citeprocHoverTracker", () => {
     // First set a key
     tracker!.lastHoveredKey = "smith2020";
 
-    // Dispatch mousemove on a non-keySpan element within view.dom
-    const event = new MouseEvent("mousemove", { bubbles: true });
+    // Dispatch mouseover on a non-keySpan element within view.dom
+    const event = new MouseEvent("mouseover", { bubbles: true });
     view.dom.dispatchEvent(event);
 
     expect(tracker!.lastHoveredKey).toBeNull();
@@ -829,6 +832,75 @@ describe("F2: stale-create-note recovers on already-exists error", () => {
     expect(show).toHaveBeenCalledWith(expect.stringContaining("Graph index not ready"), "error");
   });
 
+  it("already-exists re-fetch resolves but page_id is missing shows toast and restores button", async () => {
+    const { getBibKeyStates } = await import("../../lib/ipc");
+    const getBibMock = getBibKeyStates as ReturnType<typeof vi.fn>;
+
+    // Stale cache: shadow, no page_id
+    getBibMock.mockResolvedValueOnce({
+      key1: { materialization: "shadow", page_id: null },
+    });
+    invalidateBibKeyStatesCache();
+
+    const dom = buildTooltipDom("key1");
+    await vi.waitFor(() => {
+      expect(dom.querySelector("button")?.textContent).toBe("Create note");
+    });
+
+    // materializeAndOpen rejects with "already exists"
+    materializeAndOpenMockF2.mockRejectedValueOnce(
+      new Error("A page with citekey 'key1' already exists: key1.md"),
+    );
+    // Re-fetch resolves but STILL has no page_id (graph index hasn't caught up)
+    getBibMock.mockResolvedValueOnce({
+      key1: { materialization: "shadow", page_id: null },
+    });
+
+    dom.querySelector("button")!.click();
+
+    // Button should be restored and toast shown
+    await vi.waitFor(() => {
+      const btn = dom.querySelector("button")!;
+      expect(btn.disabled).toBe(false);
+      expect(btn.textContent).toBe("Create note");
+    });
+
+    const show = useStatusMessageStore.getState().show as ReturnType<typeof vi.fn>;
+    expect(show).toHaveBeenCalledWith("Note exists but could not navigate to it", "error");
+  });
+
+  it("already-exists re-fetch resolves but key is entirely missing shows toast and restores button", async () => {
+    const { getBibKeyStates } = await import("../../lib/ipc");
+    const getBibMock = getBibKeyStates as ReturnType<typeof vi.fn>;
+
+    getBibMock.mockResolvedValueOnce({
+      key1: { materialization: "shadow", page_id: null },
+    });
+    invalidateBibKeyStatesCache();
+
+    const dom = buildTooltipDom("key1");
+    await vi.waitFor(() => {
+      expect(dom.querySelector("button")?.textContent).toBe("Create note");
+    });
+
+    materializeAndOpenMockF2.mockRejectedValueOnce(
+      new Error("File already exists: citations/key1.md"),
+    );
+    // Re-fetch resolves but key1 is not present at all
+    getBibMock.mockResolvedValueOnce({});
+
+    dom.querySelector("button")!.click();
+
+    await vi.waitFor(() => {
+      const btn = dom.querySelector("button")!;
+      expect(btn.disabled).toBe(false);
+      expect(btn.textContent).toBe("Create note");
+    });
+
+    const show = useStatusMessageStore.getState().show as ReturnType<typeof vi.fn>;
+    expect(show).toHaveBeenCalledWith("Note exists but could not navigate to it", "error");
+  });
+
   it("clicking Create note when already-exists re-fetch also fails shows fallback toast", async () => {
     const { getBibKeyStates } = await import("../../lib/ipc");
     const getBibMock = getBibKeyStates as ReturnType<typeof vi.fn>;
@@ -868,7 +940,7 @@ describe("F6: anchor-multikey — tooltip anchors per-key", () => {
     vi.restoreAllMocks();
   });
 
-  it("hover tracker stores lastHoveredElement when mousemove hits a key span", () => {
+  it("hover tracker stores lastHoveredElement when mouseover hits a key span", () => {
     const view = makeViewWithTracker("test document");
     const tracker = view.plugin(citeprocHoverTracker);
     expect(tracker).not.toBeNull();
@@ -878,7 +950,7 @@ describe("F6: anchor-multikey — tooltip anchors per-key", () => {
     keySpan.dataset.citekey = "b";
     view.dom.appendChild(keySpan);
 
-    keySpan.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    keySpan.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
 
     expect(tracker!.lastHoveredElement).toBe(keySpan);
 
@@ -886,7 +958,7 @@ describe("F6: anchor-multikey — tooltip anchors per-key", () => {
     view.destroy();
   });
 
-  it("hover tracker clears lastHoveredElement when mousemove target is not a key span", () => {
+  it("hover tracker clears lastHoveredElement when mouseover target is not a key span", () => {
     const view = makeViewWithTracker("test document");
     const tracker = view.plugin(citeprocHoverTracker);
     expect(tracker).not.toBeNull();
@@ -895,8 +967,8 @@ describe("F6: anchor-multikey — tooltip anchors per-key", () => {
     const fakeSpan = document.createElement("span");
     (tracker as unknown as { lastHoveredElement: HTMLElement | null }).lastHoveredElement = fakeSpan;
 
-    // Dispatch mousemove on a non-key-span element
-    view.dom.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    // Dispatch mouseover on a non-key-span element
+    view.dom.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
 
     expect(tracker!.lastHoveredElement).toBeNull();
     view.destroy();
@@ -1160,5 +1232,228 @@ describe("F7: materialize-and-open shared helper", () => {
     await vi.waitFor(() => {
       expect(setStateSpy).toHaveBeenCalled();
     });
+  });
+});
+
+describe("C3: dedupe-global-listeners", () => {
+  const listenMock = vi.mocked(listen);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    invalidateBibKeyStatesCache();
+    _resetSharedListenersForTest();
+  });
+
+  it("first acquire registers 4 Tauri listeners and 1 workspace subscription", () => {
+    const subscribeSpy = vi.mocked(useWorkspaceStore.subscribe);
+    subscribeSpy.mockClear();
+    listenMock.mockClear();
+
+    acquireInvalidationListeners();
+
+    expect(listenMock).toHaveBeenCalledTimes(4);
+    expect(listenMock).toHaveBeenCalledWith("lit:graph-updated", expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith("workspace://file-created", expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith("workspace://file-modified", expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith("workspace://file-deleted", expect.any(Function));
+    expect(subscribeSpy).toHaveBeenCalledTimes(1);
+
+    releaseInvalidationListeners();
+  });
+
+  it("second acquire does NOT register additional listeners", () => {
+    const subscribeSpy = vi.mocked(useWorkspaceStore.subscribe);
+    subscribeSpy.mockClear();
+    listenMock.mockClear();
+
+    acquireInvalidationListeners();
+    acquireInvalidationListeners();
+
+    expect(listenMock).toHaveBeenCalledTimes(4);
+    expect(subscribeSpy).toHaveBeenCalledTimes(1);
+
+    releaseInvalidationListeners();
+    releaseInvalidationListeners();
+  });
+
+  it("first release does not tear down listeners when refcount > 0", async () => {
+    const unlistenFns: ReturnType<typeof vi.fn>[] = [];
+    listenMock.mockImplementation(async () => {
+      const fn = vi.fn();
+      unlistenFns.push(fn);
+      return fn;
+    });
+
+    acquireInvalidationListeners();
+    acquireInvalidationListeners();
+
+    // Flush microtasks so listen promises resolve
+    await new Promise((r) => setTimeout(r, 0));
+
+    releaseInvalidationListeners(); // refcount goes from 2 to 1
+
+    // No unlisteners should have been called yet
+    for (const fn of unlistenFns) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+
+    releaseInvalidationListeners(); // refcount goes from 1 to 0 -- cleanup
+  });
+
+  it("last release tears down all listeners and workspace subscription", async () => {
+    const unlistenFns: ReturnType<typeof vi.fn>[] = [];
+    listenMock.mockImplementation(async () => {
+      const fn = vi.fn();
+      unlistenFns.push(fn);
+      return fn;
+    });
+
+    acquireInvalidationListeners();
+    acquireInvalidationListeners();
+
+    // Flush microtasks so listen promises resolve
+    await new Promise((r) => setTimeout(r, 0));
+
+    releaseInvalidationListeners(); // refcount 2 -> 1
+    releaseInvalidationListeners(); // refcount 1 -> 0
+
+    for (const fn of unlistenFns) {
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("late-resolving listen after last release immediately unlistens", async () => {
+    const unlistenFn = vi.fn();
+    let resolveListenPromise!: (fn: () => void) => void;
+    listenMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveListenPromise = resolve;
+        }),
+    );
+
+    acquireInvalidationListeners();
+    releaseInvalidationListeners(); // refcount drops to 0
+
+    // Resolve the listen promise after release
+    resolveListenPromise(unlistenFn);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(unlistenFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("late-resolving listen from previous generation immediately unlistens even if new acquire happened", async () => {
+    const gen1Resolvers: ((fn: () => void) => void)[] = [];
+    let callCount = 0;
+
+    listenMock.mockImplementation(() => {
+      callCount++;
+      if (callCount <= 4) {
+        // First generation: controllable promises
+        return new Promise((resolve) => {
+          gen1Resolvers.push(resolve);
+        });
+      }
+      // Second generation: resolve immediately
+      return Promise.resolve(() => {});
+    });
+
+    acquireInvalidationListeners(); // gen 1
+    releaseInvalidationListeners(); // refcount 0, sharedDestroyed = true
+
+    acquireInvalidationListeners(); // gen 2, sharedDestroyed = false
+    await new Promise((r) => setTimeout(r, 0)); // let gen 2 promises resolve
+
+    // Now resolve gen-1 listen promises
+    const gen1UnlistenFns: ReturnType<typeof vi.fn>[] = [];
+    for (const resolve of gen1Resolvers) {
+      const fn = vi.fn();
+      gen1UnlistenFns.push(fn);
+      resolve(fn);
+    }
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Gen-1 unlisteners should have been called immediately (generation mismatch)
+    for (const fn of gen1UnlistenFns) {
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+
+    releaseInvalidationListeners(); // clean up gen 2
+  });
+
+  it("two EditorViews share one set of listeners", async () => {
+    const unlistenFns: ReturnType<typeof vi.fn>[] = [];
+    listenMock.mockImplementation(async () => {
+      const fn = vi.fn();
+      unlistenFns.push(fn);
+      return fn;
+    });
+
+    function makeViewWithListener(doc: string): EditorView {
+      const state = EditorState.create({
+        doc,
+        extensions: [citeprocMatchesField, citeprocTooltipExtension()],
+      });
+      return new EditorView({ state, parent: document.createElement("div") });
+    }
+
+    const view1 = makeViewWithListener("test1");
+    const view2 = makeViewWithListener("test2");
+
+    // Flush microtasks
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Only 4 listeners registered total (not 8)
+    expect(unlistenFns.length).toBe(4);
+
+    view1.destroy();
+    // After first destroy, listeners should still be active
+    for (const fn of unlistenFns) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+
+    view2.destroy();
+    // After second destroy, all listeners should be cleaned up
+    for (const fn of unlistenFns) {
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("invalidation still works through shared listeners", async () => {
+    const { getBibKeyStates } = await import("../../lib/ipc");
+    const getBibMock = getBibKeyStates as ReturnType<typeof vi.fn>;
+
+    const listenerCallbacks = new Map<string, (event: unknown) => void>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    listenMock.mockImplementation(async (eventName: string, callback: any) => {
+      listenerCallbacks.set(eventName, callback as (event: unknown) => void);
+      return () => {};
+    });
+
+    // Prime the cache
+    getBibMock.mockResolvedValueOnce({ k: { materialization: "shadow" } });
+    invalidateBibKeyStatesCache();
+    const dom = buildTooltipDom("k");
+    await vi.waitFor(() => {
+      expect(dom.querySelector("button")).not.toBeNull();
+    });
+
+    acquireInvalidationListeners();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Fire a .bib file-modified event through the shared listener
+    const cb = listenerCallbacks.get("workspace://file-modified");
+    expect(cb).toBeDefined();
+    cb!({ payload: { path: "refs.bib" } });
+
+    // Cache should be invalidated
+    getBibMock.mockResolvedValueOnce({ k: { materialization: "materialized", page_id: "k.md" } });
+    const dom2 = buildTooltipDom("k");
+    await vi.waitFor(() => {
+      expect(dom2.querySelector("button")?.textContent).toBe("Open note");
+    });
+    expect(getBibMock).toHaveBeenCalledTimes(2);
+
+    releaseInvalidationListeners();
   });
 });
