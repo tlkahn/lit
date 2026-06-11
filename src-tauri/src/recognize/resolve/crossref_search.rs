@@ -4,6 +4,9 @@ use crate::bib::convert::{csl_to_bib_entry, CslItem};
 use crate::bib::types::BibEntry;
 use super::ResolveError;
 
+/// Maximum number of results to request from the CrossRef search API.
+const SEARCH_ROWS: usize = 5;
+
 #[derive(Deserialize)]
 struct CrossrefSearchResponse {
     message: CrossrefSearchMessage,
@@ -16,7 +19,7 @@ struct CrossrefSearchMessage {
 
 /// Search CrossRef by bibliographic title and optional author names.
 ///
-/// Returns up to `rows` BibEntry results from the CrossRef search API.
+/// Returns up to [`SEARCH_ROWS`] (currently 5) BibEntry results from the CrossRef search API.
 ///
 /// - `client`: a pre-configured `reqwest::Client` — should have a timeout
 ///   (recommended 10 s) and a `User-Agent` header (CrossRef etiquette requires
@@ -31,9 +34,10 @@ pub async fn search_crossref_by_title_with_base(
     authors: &[String],
     base_url: &str,
 ) -> Result<Vec<BibEntry>, ResolveError> {
+    let rows_str = SEARCH_ROWS.to_string();
     let mut query_params: Vec<(&str, &str)> = vec![
         ("query.bibliographic", title),
-        ("rows", "5"),
+        ("rows", &rows_str),
     ];
 
     let authors_joined;

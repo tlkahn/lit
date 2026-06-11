@@ -249,6 +249,12 @@ async fn resolve_to_bib_entry_with_base(
             Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
             Ok(candidates) => {
                 if let Some(best) = title_match::best_title_match(&candidates, title) {
+                    // best_title_match already guarantees the title meets the
+                    // similarity threshold; accept_candidate will re-check it
+                    // (via titles_match) as the single shared acceptance policy.
+                    // The redundancy is intentional — accept_candidate is the
+                    // uniform gate for all resolution paths (DOI, arXiv, title
+                    // search), so we always route through it.
                     if let Some(meta) = accept_candidate(
                         best.clone(),
                         ResolutionSource::CrossrefTitleSearch,

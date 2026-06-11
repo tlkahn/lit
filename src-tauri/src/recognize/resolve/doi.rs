@@ -3,11 +3,21 @@ use crate::bib::types::BibEntry;
 use crate::commands::bib_import::parse_crossref_body;
 use super::ResolveError;
 
-/// Percent-encode characters in a DOI that are unsafe in URL paths.
+/// Percent-encode the subset of URL-reserved characters that can appear in
+/// a validated DOI suffix but would break URL path semantics.
 ///
-/// DOIs can legally contain `#`, `?`, `%`, `<`, `>` which would break
-/// URL parsing if interpolated raw. Characters like `/`, `(`, `)`, `:`, `;`
-/// are allowed in URI path segments per RFC 3986 and left as-is.
+/// **Precondition:** `doi` has already passed [`is_valid_doi`], which
+/// enforces the `^10.\d{4,}/\S+$` pattern -- so whitespace and control
+/// characters are already excluded.
+///
+/// The encoded characters and why they need escaping:
+/// - `#` -- would be parsed as a fragment delimiter
+/// - `?` -- would be parsed as a query-string delimiter
+/// - `%` -- must be escaped to avoid ambiguous percent-sequences
+/// - `<`, `>` -- not valid in URI paths per RFC 3986 section 2.2
+///
+/// Characters like `/`, `(`, `)`, `:`, `;` are legal in URI path segments
+/// (RFC 3986 sub-delims / pchar) and left as-is.
 fn percent_encode_doi_path(doi: &str) -> String {
     let mut out = String::with_capacity(doi.len() + 16);
     for ch in doi.chars() {
@@ -116,7 +126,7 @@ async fn try_crossref(
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Err(ResolveError::Http(
-            "DOI not found on both doi.org and CrossRef".into(),
+            "DOI not found on CrossRef (doi.org content negotiation also failed)".into(),
         ));
     }
     let resp = super::check_status(resp, "CrossRef API")?;

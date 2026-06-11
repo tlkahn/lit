@@ -39,6 +39,7 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
     reader.config_mut().trim_text(true);
 
     let mut in_entry = false;
+    let mut saw_entry = false;
     let mut in_author = false;
 
     let mut title: Option<String> = None;
@@ -54,7 +55,10 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
                 match e.local_name().as_ref() {
-                    b"entry" => in_entry = true,
+                    b"entry" => {
+                        in_entry = true;
+                        saw_entry = true;
+                    }
                     b"author" if in_entry => in_author = true,
                     b"name" if in_author => {
                         let text = reader
@@ -129,7 +133,13 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         }
     }
 
-    let title = title.ok_or_else(|| ResolveError::Parse("arXiv ID not found".into()))?;
+    let title = title.ok_or_else(|| {
+        if saw_entry {
+            ResolveError::Parse("arXiv entry missing title".into())
+        } else {
+            ResolveError::Parse("arXiv ID not found".into())
+        }
+    })?;
 
     let csl_item = CslItem {
         // Use "article-journal" so map_entry_type produces "article"
@@ -275,6 +285,20 @@ mod tests {
   <opensearch:totalResults>0</opensearch:totalResults>
 </feed>"#;
 
+    const ENTRY_WITHOUT_TITLE_XML: &str = r#"<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"
+      xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2301.07041v2</id>
+    <summary>A summary but no title.</summary>
+    <published>2023-01-17T17:50:26Z</published>
+    <author><name>Jane Doe</name></author>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>"#;
+
     // ── Pure parse tests ───────────────────────────────────────────
 
     #[test]
@@ -359,6 +383,22 @@ mod tests {
                 assert!(
                     msg.contains("not found"),
                     "error should mention not found, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ResolveError::Parse, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_entry_without_title_returns_distinct_error() {
+        let result = parse_arxiv_atom(ENTRY_WITHOUT_TITLE_XML);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ResolveError::Parse(msg) => {
+                assert!(
+                    msg.contains("missing title"),
+                    "error should mention missing title, got: {}",
                     msg
                 );
             }
