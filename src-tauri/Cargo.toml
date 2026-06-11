@@ -66,6 +66,8 @@ aes-gcm = "0.10"
 rand = "0.8"
 # Used by the atomic .lkg import path (stage-then-rename); also used in tests.
 tempfile = "3"
+quick-xml = "0.38"
+strsim = "0.11"
 
 [[bin]]
 name = "lit-cli"
