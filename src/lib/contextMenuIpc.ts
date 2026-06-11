@@ -144,6 +144,7 @@ interface GraphContextMenuArgs {
   selectionCount: number;
   hasHeadings: boolean;
   hasExport: boolean;
+  isShadow: boolean;
 }
 
 export async function showGraphContextMenu(args: GraphContextMenuArgs): Promise<void> {
@@ -160,6 +161,7 @@ interface GraphContextMenuHandlers {
   onSplitRequest: (plan: SplitPlan, nodeId: string) => void;
   onDeleteRequest: (nodeIds: string[], labels: string[]) => void;
   onExportNetwork: (nodeId: string) => void;
+  onFetchDetails: (nodeId: string) => void;
   getNodeLabel: (nodeId: string) => string;
 }
 
@@ -206,6 +208,12 @@ export function useGraphContextMenu(handlers: GraphContextMenuHandlers) {
     unlisteners.push(
       listen<GraphContextPayload>("context-menu://graph/export-network", (event) => {
         if (!cancelled) handlersRef.current.onExportNetwork(event.payload.node_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<GraphContextPayload>("context-menu://graph/fetch-details", (event) => {
+        if (!cancelled) handlersRef.current.onFetchDetails(event.payload.node_id);
       }),
     );
 

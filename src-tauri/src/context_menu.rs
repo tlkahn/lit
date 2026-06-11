@@ -29,11 +29,13 @@ pub const CTX_GRAPH_MERGE: &str = "ctx_graph_merge";
 pub const CTX_GRAPH_SPLIT: &str = "ctx_graph_split";
 pub const CTX_GRAPH_DELETE: &str = "ctx_graph_delete";
 pub const CTX_GRAPH_EXPORT_NETWORK: &str = "ctx_graph_export_network";
+pub const CTX_GRAPH_FETCH_DETAILS: &str = "ctx_graph_fetch_details";
 
 pub const EVENT_CTX_GRAPH_MERGE: &str = "context-menu://graph/merge";
 pub const EVENT_CTX_GRAPH_SPLIT: &str = "context-menu://graph/split";
 pub const EVENT_CTX_GRAPH_DELETE: &str = "context-menu://graph/delete";
 pub const EVENT_CTX_GRAPH_EXPORT_NETWORK: &str = "context-menu://graph/export-network";
+pub const EVENT_CTX_GRAPH_FETCH_DETAILS: &str = "context-menu://graph/fetch-details";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
@@ -49,6 +51,7 @@ pub enum ContextMenuAction {
     GraphSplit,
     GraphDelete,
     GraphExportNetwork,
+    GraphFetchDetails,
 }
 
 impl ContextMenuAction {
@@ -66,6 +69,7 @@ impl ContextMenuAction {
             CTX_GRAPH_SPLIT => Some(Self::GraphSplit),
             CTX_GRAPH_DELETE => Some(Self::GraphDelete),
             CTX_GRAPH_EXPORT_NETWORK => Some(Self::GraphExportNetwork),
+            CTX_GRAPH_FETCH_DETAILS => Some(Self::GraphFetchDetails),
             _ => None,
         }
     }
@@ -175,10 +179,18 @@ pub struct GraphMenuContext {
     pub selection_count: usize,
     pub has_headings: bool,
     pub has_export: bool,
+    pub is_shadow: bool,
 }
 
 pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
     let mut items = Vec::new();
+    if ctx.is_shadow && ctx.selection_count <= 1 {
+        items.push(MenuItemSpec {
+            id: CTX_GRAPH_FETCH_DETAILS,
+            label: "Fetch details".into(),
+            enabled: true,
+        });
+    }
     if ctx.selection_count >= 2 {
         items.push(MenuItemSpec {
             id: CTX_GRAPH_MERGE,
@@ -241,6 +253,7 @@ pub fn dispatch_graph_action(
         ContextMenuAction::GraphSplit => EVENT_CTX_GRAPH_SPLIT,
         ContextMenuAction::GraphDelete => EVENT_CTX_GRAPH_DELETE,
         ContextMenuAction::GraphExportNetwork => EVENT_CTX_GRAPH_EXPORT_NETWORK,
+        ContextMenuAction::GraphFetchDetails => EVENT_CTX_GRAPH_FETCH_DETAILS,
         _ => unreachable!("dispatch_graph_action called with non-graph action"),
     };
     (event, payload)
@@ -376,6 +389,7 @@ pub fn show_graph_context_menu(
     selection_count: usize,
     has_headings: bool,
     has_export: bool,
+    is_shadow: bool,
     window: tauri::Window,
     pending: tauri::State<PendingContextMenu>,
 ) -> Result<(), String> {
@@ -387,6 +401,7 @@ pub fn show_graph_context_menu(
         selection_count,
         has_headings,
         has_export,
+        is_shadow,
     };
     let specs = graph_menu_items(&ctx);
     show_popup_menu(&specs, &window)
@@ -765,6 +780,7 @@ mod tests {
             selection_count: 3,
             has_headings: false,
             has_export: false,
+            is_shadow: false,
         };
         let items = graph_menu_items(&ctx);
         assert!(items.iter().any(|i| i.id == CTX_GRAPH_MERGE
@@ -782,6 +798,7 @@ mod tests {
             selection_count: 0,
             has_headings: true,
             has_export: false,
+            is_shadow: false,
         };
         let items = graph_menu_items(&ctx);
         assert!(!items.iter().any(|i| i.id == CTX_GRAPH_MERGE));
@@ -796,6 +813,7 @@ mod tests {
             selection_count: 1,
             has_headings: false,
             has_export: false,
+            is_shadow: false,
         };
         let items = graph_menu_items(&ctx);
         assert!(items.iter().any(|i| i.id == CTX_GRAPH_SPLIT && !i.enabled));
@@ -807,6 +825,7 @@ mod tests {
             selection_count: 0,
             has_headings: false,
             has_export: true,
+            is_shadow: false,
         };
         let items = graph_menu_items(&ctx);
         assert!(items.iter().any(|i| i.id == CTX_GRAPH_EXPORT_NETWORK
@@ -820,6 +839,7 @@ mod tests {
             selection_count: 0,
             has_headings: false,
             has_export: false,
+            is_shadow: false,
         };
         let items = graph_menu_items(&ctx);
         assert!(!items.iter().any(|i| i.id == CTX_GRAPH_EXPORT_NETWORK));
@@ -935,6 +955,158 @@ mod tests {
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["node_id"], "abc");
         assert_eq!(json["node_ids"], serde_json::json!(["abc", "def"]));
+    }
+
+    // --- Phase 6: Graph "Fetch details" context menu for shadow nodes ---
+
+    #[test]
+    fn graph_fetch_details_constant_equals_expected_value() {
+        assert_eq!(CTX_GRAPH_FETCH_DETAILS, "ctx_graph_fetch_details");
+    }
+
+    #[test]
+    fn graph_fetch_details_event_constant_equals_expected_value() {
+        assert_eq!(EVENT_CTX_GRAPH_FETCH_DETAILS, "context-menu://graph/fetch-details");
+    }
+
+    #[test]
+    fn from_id_maps_graph_fetch_details() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_GRAPH_FETCH_DETAILS),
+            Some(ContextMenuAction::GraphFetchDetails)
+        );
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_no_selection_includes_fetch_details() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: false,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_FETCH_DETAILS
+            && i.label == "Fetch details"
+            && i.enabled));
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_single_selection_includes_fetch_details() {
+        let ctx = GraphMenuContext {
+            selection_count: 1,
+            has_headings: false,
+            has_export: false,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(items.iter().any(|i| i.id == CTX_GRAPH_FETCH_DETAILS));
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_multi_selection_excludes_fetch_details() {
+        let ctx = GraphMenuContext {
+            selection_count: 2,
+            has_headings: false,
+            has_export: false,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_FETCH_DETAILS));
+    }
+
+    #[test]
+    fn graph_menu_items_not_shadow_excludes_fetch_details() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: false,
+            is_shadow: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_FETCH_DETAILS));
+    }
+
+    #[test]
+    fn graph_menu_items_not_shadow_with_selection_excludes_fetch_details() {
+        let ctx = GraphMenuContext {
+            selection_count: 1,
+            has_headings: true,
+            has_export: true,
+            is_shadow: false,
+        };
+        let items = graph_menu_items(&ctx);
+        assert!(!items.iter().any(|i| i.id == CTX_GRAPH_FETCH_DETAILS));
+    }
+
+    #[test]
+    fn graph_menu_items_shadow_fetch_details_appears_first() {
+        let ctx = GraphMenuContext {
+            selection_count: 0,
+            has_headings: false,
+            has_export: true,
+            is_shadow: true,
+        };
+        let items = graph_menu_items(&ctx);
+        assert_eq!(items[0].id, CTX_GRAPH_FETCH_DETAILS);
+    }
+
+    #[test]
+    fn dispatch_graph_fetch_details_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_graph_action(
+            ContextMenuAction::GraphFetchDetails,
+            "bib:smith2024",
+            &[],
+        );
+        assert_eq!(event, EVENT_CTX_GRAPH_FETCH_DETAILS);
+        assert_eq!(payload.node_id, "bib:smith2024");
+    }
+
+    #[test]
+    fn graph_fetch_details_id_does_not_collide_with_other_context_menu_ids() {
+        let other_ids = [
+            CTX_TRASH_RESTORE,
+            CTX_TRASH_PURGE,
+            CTX_SIDEBAR_RENAME,
+            CTX_SIDEBAR_EXTERNAL_EDITOR,
+            CTX_SIDEBAR_EXPORT_NETWORK,
+            CTX_SIDEBAR_TRASH,
+            CTX_MINDMAP_EDIT,
+            CTX_MINDMAP_EXPORT_NETWORK,
+            CTX_GRAPH_MERGE,
+            CTX_GRAPH_SPLIT,
+            CTX_GRAPH_DELETE,
+            CTX_GRAPH_EXPORT_NETWORK,
+        ];
+        for oid in &other_ids {
+            assert_ne!(
+                CTX_GRAPH_FETCH_DETAILS, *oid,
+                "CTX_GRAPH_FETCH_DETAILS collides with {oid}"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_fetch_details_id_does_not_collide_with_app_menu_ids() {
+        use crate::menu;
+        let app_menu_ids = [
+            menu::MENU_ID_OPEN_WORKSPACE,
+            menu::MENU_ID_INSTALL_CLI,
+            menu::MENU_ID_OPEN_PREFERENCES,
+            menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            menu::MENU_ID_CLOSE,
+            menu::MENU_ID_EXPORT_MARKDOWN,
+            menu::MENU_ID_BUY_LICENSE,
+            menu::MENU_ID_ENTER_LICENSE_KEY,
+            menu::MENU_ID_LICENSE_INFO,
+            menu::MENU_ID_ABOUT,
+        ];
+        for aid in &app_menu_ids {
+            assert_ne!(
+                CTX_GRAPH_FETCH_DETAILS, *aid,
+                "CTX_GRAPH_FETCH_DETAILS collides with app menu ID {aid}"
+            );
+        }
     }
 
     #[test]

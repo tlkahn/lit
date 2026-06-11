@@ -6,6 +6,7 @@ import * as graphLayout from "../lib/graphLayout";
 import * as qualityTiers from "../lib/qualityTiers";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
+import { useStatusMessageStore } from "../stores/statusMessage";
 
 const mockSigmaKill = vi.fn();
 const mockSigmaOn = vi.fn();
@@ -45,6 +46,7 @@ describe("GraphView", () => {
     lastSigmaOptions = {};
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false });
+    useStatusMessageStore.setState({ message: null, variant: "success" });
     resetListenMock();
     mockListen();
     mockInvoke((cmd) => {
@@ -1250,6 +1252,7 @@ describe("GraphView", () => {
         selectionCount: 0,
         hasHeadings: true,
         hasExport: true,
+        isShadow: false,
       });
     });
   });
@@ -2289,6 +2292,298 @@ describe("GraphView", () => {
     expect(useGraphSelectionStore.getState().selectedNodes).toContain("a.md");
     // b.md at (50,50) is outside
     expect(useGraphSelectionStore.getState().selectedNodes).not.toContain("b.md");
+  });
+
+  // --- Phase 6: Shadow node context menu ---
+
+  it("right-click on bib: node skips readPage and sends isShadow=true, hasHeadings=false", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+    expect(rightClickHandler).toBeDefined();
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await act(async () => {
+      rightClickHandler!({ node: "bib:smith2024", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", expect.objectContaining({
+        nodeId: "bib:smith2024",
+        hasHeadings: false,
+        isShadow: true,
+      }));
+    });
+    expect(invoke).not.toHaveBeenCalledWith("read_page", expect.anything());
+  });
+
+  it("right-click on regular .md node sends isShadow=false", async () => {
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView onExportNetwork={vi.fn()} />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    const rightClickHandler = mockSigmaOn.mock.calls.find(
+      (call) => call[0] === "rightClickNode",
+    )?.[1];
+
+    await act(async () => {
+      rightClickHandler!({ node: "a.md", event: { original: { preventDefault: vi.fn() }, x: 100, y: 200 } });
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("show_graph_context_menu", expect.objectContaining({
+        isShadow: false,
+      }));
+    });
+  });
+
+  it("fetch-details event calls enrichBibEntry with correct bibKey and workspacePath", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [
+              { id: "a.md", title: "A" },
+              { id: "b.md", title: "B" },
+            ],
+            edges: [["a.md", "b.md"]],
+            pagerank: { "a.md": 0.4, "b.md": 0.6 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
+        case "enrich_bib_entry":
+          return { entry: {}, fields_added: [], references_found: 0, references_appended: 0, shadow_nodes_created: 0 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    });
+
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
+        bibKey: "smith2024",
+        workspacePath: "/test/ws",
+      });
+    });
+  });
+
+  it("fetch-details success shows toast with enrichment summary", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [{ id: "a.md", title: "A" }],
+            edges: [],
+            pagerank: { "a.md": 0.4 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        case "enrich_bib_entry":
+          return { entry: {}, fields_added: ["abstract", "doi"], references_found: 10, references_appended: 10, shadow_nodes_created: 3 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    });
+
+    await waitFor(() => {
+      const msg = useStatusMessageStore.getState().message;
+      expect(msg).toMatch(/smith2024/);
+      expect(msg).toMatch(/abstract/);
+      expect(msg).toContain("references added");
+      expect(msg).toContain("shadow nodes created");
+      expect(useStatusMessageStore.getState().variant).toBe("success");
+    });
+  });
+
+  it("fetch-details error shows error toast", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [{ id: "a.md", title: "A" }],
+            edges: [],
+            pagerank: { "a.md": 0.4 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        case "enrich_bib_entry":
+          throw new Error("Network timeout");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    });
+
+    await waitFor(() => {
+      expect(useStatusMessageStore.getState().message).toBe("Network timeout");
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+  });
+
+  it("fetch-details error does not produce unhandled rejection", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [{ id: "a.md", title: "A" }],
+            edges: [],
+            pagerank: { "a.md": 0.4 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        case "enrich_bib_entry":
+          throw new Error("some failure");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const unhandled = vi.fn();
+    window.addEventListener("unhandledrejection", unhandled);
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    });
+
+    await waitFor(() => {
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+
+    expect(unhandled).not.toHaveBeenCalled();
+    window.removeEventListener("unhandledrejection", unhandled);
+  });
+
+  it("fetch-details success with capped references shows 'of N' qualifier", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [{ id: "a.md", title: "A" }],
+            edges: [],
+            pagerank: { "a.md": 0.4 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        case "enrich_bib_entry":
+          return { entry: {}, fields_added: [], references_found: 150, references_appended: 30, shadow_nodes_created: 0 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    });
+
+    await waitFor(() => {
+      const msg = useStatusMessageStore.getState().message;
+      expect(msg).toContain("30 of 150 references added");
+    });
+  });
+
+  it("fetch-details with no enrichment changes shows minimal toast", async () => {
+    const { useWorkspaceStore } = await import("../stores/workspace");
+    useWorkspaceStore.setState({ workspacePath: "/test/ws" });
+
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "get_graph_subgraph":
+          return {
+            nodes: [{ id: "a.md", title: "A" }],
+            edges: [],
+            pagerank: { "a.md": 0.4 },
+            positions: {},
+          };
+        case "show_graph_context_menu":
+          return null;
+        case "read_page":
+          return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
+        case "enrich_bib_entry":
+          return { entry: {}, fields_added: [], references_found: 0, references_appended: 0, shadow_nodes_created: 0 };
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    const GraphView = (await import("./GraphView")).default;
+    render(<GraphView />);
+    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
+
+    await act(async () => {
+      emitMockEvent("context-menu://graph/fetch-details", { node_id: "bib:smith2024", node_ids: [] });
+    });
+
+    await waitFor(() => {
+      expect(useStatusMessageStore.getState().message).toBe("Enriched smith2024");
+    });
   });
 
   it("camera panning re-enabled after empty lasso", async () => {

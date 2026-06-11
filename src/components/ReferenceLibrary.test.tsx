@@ -1003,4 +1003,313 @@ describe("ReferenceLibrary", () => {
     expect(screen.queryByTestId("badge-has-note")).not.toBeInTheDocument();
     expect(screen.getByTestId("badge-enriched")).toBeInTheDocument();
   });
+
+  describe("Fetch details button", () => {
+    const enrichResult = {
+      entry: { ...sanderson, abstract_text: "Enriched abstract" },
+      fields_added: ["abstract", "journal"],
+      references_found: 5,
+      references_appended: 5,
+      shadow_nodes_created: 3,
+    };
+
+    it("shows 'Fetch details' button for shadow materialization entries", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      const btn = screen.getByTestId("fetch-details-btn");
+      expect(btn).toBeInTheDocument();
+      expect(btn.textContent).toBe("Fetch details");
+    });
+
+    it("shows 'Refresh' button for partial materialization entries without page_id", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      const btn = screen.getByTestId("fetch-details-btn");
+      expect(btn).toBeInTheDocument();
+      expect(btn.textContent).toBe("Refresh");
+    });
+
+    it("hides button when page_id is set (materialized entry)", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.queryByTestId("fetch-details-btn")).not.toBeInTheDocument();
+    });
+
+    it("hides button when page_id is set even if partial", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: "notes/sanderson.md" } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.queryByTestId("fetch-details-btn")).not.toBeInTheDocument();
+    });
+
+    it("shows 'Fetch details' button when entry has no bibKeyState at all", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = {};
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      const btn = screen.getByTestId("fetch-details-btn");
+      expect(btn).toBeInTheDocument();
+      expect(btn.textContent).toBe("Fetch details");
+    });
+
+    it("clicking 'Fetch details' calls enrich_bib_entry with correct args", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "enrich_bib_entry");
+        expect(call).toBeTruthy();
+        expect(call!.args).toEqual({ bibKey: "sanderson2009", workspacePath: "/workspace" });
+      });
+    });
+
+    it("successful enrichment re-fetches entries and bib key states", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const entriesBefore = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+      const statesBefore = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        const entriesAfter = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+        expect(entriesAfter).toBeGreaterThan(entriesBefore);
+      });
+      await waitFor(() => {
+        const statesAfter = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
+        expect(statesAfter).toBeGreaterThan(statesBefore);
+      });
+    });
+
+    it("successful enrichment shows success toast", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return enrichResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        const msg = useStatusMessageStore.getState().message;
+        expect(msg).toMatch(/sanderson2009/);
+        expect(msg).toMatch(/abstract/);
+        expect(msg).toContain("references added");
+      });
+    });
+
+    it("enrichment error shows error toast", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") throw new Error("Network timeout");
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        expect(useStatusMessageStore.getState().variant).toBe("error");
+      });
+    });
+
+    it("toast shows capped reference count when references are truncated", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      const cappedResult = {
+        ...enrichResult,
+        references_found: 150,
+        references_appended: 30,
+        shadow_nodes_created: 25,
+      };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return cappedResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        const msg = useStatusMessageStore.getState().message;
+        expect(msg).toContain("30 of 150 references added");
+      });
+    });
+
+    it("toast shows uncapped reference count without qualifier", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      const uncappedResult = {
+        ...enrichResult,
+        references_found: 5,
+        references_appended: 5,
+        shadow_nodes_created: 3,
+      };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return uncappedResult;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        const msg = useStatusMessageStore.getState().message;
+        expect(msg).toContain("5 references added");
+        expect(msg).not.toContain("of 5");
+      });
+    });
+
+    it("button shows loading state while enriching", async () => {
+      const user = userEvent.setup();
+      bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+      let resolveEnrich!: (value: typeof enrichResult) => void;
+      const deferredEnrich = new Promise<typeof enrichResult>((r) => {
+        resolveEnrich = r;
+      });
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "enrich_bib_entry") return deferredEnrich;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("fetch-details-btn"));
+
+      await waitFor(() => {
+        const btn = screen.getByTestId("fetch-details-btn");
+        expect(btn).toBeDisabled();
+        expect(btn.textContent).toMatch(/Fetching/i);
+      });
+
+      await act(async () => {
+        resolveEnrich(enrichResult);
+      });
+
+      await waitFor(() => {
+        const btn = screen.getByTestId("fetch-details-btn");
+        expect(btn).not.toBeDisabled();
+        expect(btn.textContent).toBe("Fetch details");
+      });
+    });
+  });
 });

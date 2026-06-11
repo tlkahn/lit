@@ -57,6 +57,12 @@ pub struct CslItem {
     #[serde(rename = "abstract")]
     pub abstract_text: Option<String>,
     pub subject: Option<Vec<String>>,
+    pub volume: Option<String>,
+    pub issue: Option<String>,
+    pub page: Option<String>,
+    pub publisher: Option<String>,
+    #[serde(rename = "ISSN")]
+    pub issn: Option<StringOrSeq>,
 }
 
 static TAG_RE: LazyLock<Regex> =
@@ -165,6 +171,11 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         doi: item.doi.as_deref().map(normalize_doi),
         journal: item.container_title.clone().and_then(|ct| ct.into_first()),
         url: item.url.clone(),
+        volume: item.volume.clone(),
+        number: item.issue.clone(),
+        pages: item.page.clone(),
+        publisher: item.publisher.clone(),
+        issn: item.issn.clone().and_then(|i| i.into_first()),
         tags: item.subject.clone().unwrap_or_default(),
     }
 }
@@ -508,7 +519,12 @@ mod tests {
             "DOI": "10.1038/nature12373",
             "URL": "https://doi.org/10.1038/nature12373",
             "abstract": "<jats:p>Summary of the paper</jats:p>",
-            "subject": ["Physics", "Quantum"]
+            "subject": ["Physics", "Quantum"],
+            "volume": "500",
+            "issue": "7460",
+            "page": "54-58",
+            "publisher": "Springer Science and Business Media LLC",
+            "ISSN": ["0028-0836", "1476-4687"]
         }"#;
         let item: CslItem = serde_json::from_str(json).unwrap();
         let entry = csl_to_bib_entry(&item);
@@ -522,6 +538,11 @@ mod tests {
         assert_eq!(entry.url, Some("https://doi.org/10.1038/nature12373".to_string()));
         assert_eq!(entry.abstract_text, Some("Summary of the paper".to_string()));
         assert_eq!(entry.tags, vec!["Physics", "Quantum"]);
+        assert_eq!(entry.volume, Some("500".to_string()));
+        assert_eq!(entry.number, Some("7460".to_string()));
+        assert_eq!(entry.pages, Some("54-58".to_string()));
+        assert_eq!(entry.publisher, Some("Springer Science and Business Media LLC".to_string()));
+        assert_eq!(entry.issn, Some("0028-0836".to_string()));
     }
 
     #[test]
@@ -666,5 +687,94 @@ mod tests {
         let item: CslItem = serde_json::from_str(json).unwrap();
         let entry = csl_to_bib_entry(&item);
         assert_eq!(entry.title, "Thermometry");
+    }
+
+    // ── Group 7: CslItem new field deserialization ──────────────────
+
+    #[test]
+    fn deserialize_crossref_volume() {
+        let json = r#"{"volume": "500"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.volume, Some("500".to_string()));
+    }
+
+    #[test]
+    fn deserialize_crossref_issue() {
+        let json = r#"{"issue": "7460"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.issue, Some("7460".to_string()));
+    }
+
+    #[test]
+    fn deserialize_crossref_page() {
+        let json = r#"{"page": "54-58"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.page, Some("54-58".to_string()));
+    }
+
+    #[test]
+    fn deserialize_crossref_publisher() {
+        let json = r#"{"publisher": "Springer Science and Business Media LLC"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.publisher, Some("Springer Science and Business Media LLC".to_string()));
+    }
+
+    #[test]
+    fn deserialize_crossref_issn_as_array() {
+        let json = r#"{"ISSN": ["0028-0836", "1476-4687"]}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert!(item.issn.is_some());
+        assert_eq!(item.issn.unwrap().into_first(), Some("0028-0836".to_string()));
+    }
+
+    #[test]
+    fn deserialize_crossref_issn_as_string() {
+        let json = r#"{"ISSN": "0028-0836"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert!(item.issn.is_some());
+        assert_eq!(item.issn.unwrap().into_first(), Some("0028-0836".to_string()));
+    }
+
+    // ── Group 8: csl_to_bib_entry mapping of new fields ─────────────
+
+    #[test]
+    fn csl_to_bib_entry_maps_volume_issue_page_publisher_issn() {
+        let json = r#"{
+            "type": "journal-article",
+            "title": ["Probing condensed matter physics"],
+            "author": [
+                {"family": "Kucsko", "given": "Georg"},
+                {"family": "Maurer", "given": "Peter C."}
+            ],
+            "container-title": ["Nature"],
+            "issued": {"date-parts": [[2013, 7, 31]]},
+            "DOI": "10.1038/nature12373",
+            "URL": "https://doi.org/10.1038/nature12373",
+            "abstract": "<jats:p>Summary of the paper</jats:p>",
+            "subject": ["Physics", "Quantum"],
+            "volume": "500",
+            "issue": "7460",
+            "page": "54-58",
+            "publisher": "Springer Science and Business Media LLC",
+            "ISSN": ["0028-0836", "1476-4687"]
+        }"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        let entry = csl_to_bib_entry(&item);
+        assert_eq!(entry.volume, Some("500".to_string()));
+        assert_eq!(entry.number, Some("7460".to_string()));
+        assert_eq!(entry.pages, Some("54-58".to_string()));
+        assert_eq!(entry.publisher, Some("Springer Science and Business Media LLC".to_string()));
+        assert_eq!(entry.issn, Some("0028-0836".to_string()));
+    }
+
+    #[test]
+    fn csl_to_bib_entry_issn_array_takes_first() {
+        let json = r#"{
+            "title": "X",
+            "ISSN": ["1111-2222", "3333-4444"]
+        }"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        let entry = csl_to_bib_entry(&item);
+        assert_eq!(entry.issn, Some("1111-2222".to_string()));
     }
 }
