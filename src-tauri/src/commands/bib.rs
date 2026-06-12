@@ -569,6 +569,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -651,6 +652,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -685,6 +687,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -737,6 +740,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let body = super::build_citation_body(&entry);

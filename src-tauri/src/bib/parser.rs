@@ -112,6 +112,7 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
             pages: fields.get("pages").cloned(),
             publisher: fields.get("publisher").cloned(),
             issn: fields.get("issn").cloned(),
+            isbn: fields.get("isbn").cloned(),
             tags: match fields.get("keywords") {
                 Some(kw) => kw
                     .split(',')

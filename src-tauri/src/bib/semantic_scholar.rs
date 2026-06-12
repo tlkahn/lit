@@ -171,6 +171,7 @@ pub fn s2_paper_to_bib_entry(paper: &S2Paper) -> BibEntry {
         pages,
         publisher: None,
         issn: None,
+        isbn: None,
         tags: vec![],
     }
 }
@@ -219,6 +220,7 @@ pub fn s2_ref_to_bib_entry(reference: &S2Reference) -> BibEntry {
         pages: None,
         publisher: None,
         issn: None,
+        isbn: None,
         tags: vec![],
     }
 }

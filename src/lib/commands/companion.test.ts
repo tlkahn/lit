@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { PaneNode } from "../../stores/panes";
 import { _clear, hasCommand, executeCommand, getVisibleCommands } from "../commandRegistry";
 
 // --- pane store mock -------------------------------------------------------
 const mockPaneState = vi.hoisted(() => {
-  const state = {
+  const state: {
+    root: { type: string; id: string; [k: string]: unknown };
+    focusedPaneId: string;
+    splitPane: ReturnType<typeof vi.fn>;
+    setPanePage: ReturnType<typeof vi.fn>;
+    focusPane: ReturnType<typeof vi.fn>;
+  } = {
     root: {
       type: "leaf" as const,
       id: "src-pane",
@@ -133,7 +140,7 @@ describe("initCompanionCommands", () => {
         { type: "leaf", id: "src-pane", pagePath: "paper.md" },
         { type: "leaf", id: "vacant-pane", pagePath: null },
       ],
-    } as any;
+    } as PaneNode;
     initCompanionCommands();
     executeCommand("companion.open");
 
@@ -154,7 +161,7 @@ describe("initCompanionCommands", () => {
         { type: "leaf", id: "src-pane", pagePath: "paper.md" },
         { type: "leaf", id: "other-pane", pagePath: "other.md" },
       ],
-    } as any;
+    } as PaneNode;
     initCompanionCommands();
     executeCommand("companion.open");
 

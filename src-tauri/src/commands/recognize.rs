@@ -101,6 +101,7 @@ fn build_prefilled_entry(ids: &ExtractedIdentifiers, file: &str) -> BibEntry {
         pages: None,
         publisher: None,
         issn: ids.issn.clone(),
+        isbn: ids.isbn.clone(),
         tags: vec![],
     };
 
@@ -301,6 +302,7 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
                 tags: vec![],
             },
         };
@@ -338,6 +340,7 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
                 tags: vec![],
             },
             file: "assets/pdf/scanned.pdf".to_string(),
@@ -369,6 +372,7 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
                 tags: vec![],
             },
             file: "test.pdf".to_string(),
@@ -525,7 +529,7 @@ mod tests {
         use crate::bib::cache::BibCache;
         use crate::bib::parser::parse_bibtex;
         use crate::bib::writer::append_entries_to_file;
-        use crate::recognize::resolve::resolve_to_bib_entry_with_base;
+        use crate::recognize::resolve::{resolve_to_bib_entry_with_base, BaseUrls};
         use wiremock::matchers::{header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -556,14 +560,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &ids,
             None,
             true,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -634,6 +643,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let outcomes =
