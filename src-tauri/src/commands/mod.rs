@@ -23,3 +23,4 @@ pub mod workspace;
 pub mod academic_export;
 pub mod enrich;
 pub mod recognize;
+pub mod reindex_queue;
