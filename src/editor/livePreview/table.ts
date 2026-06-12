@@ -30,6 +30,33 @@ export function parseTableAlignment(delimiterLine: string): Alignment[] {
   });
 }
 
+export interface StrippedQuote {
+  text: string;
+  prefixes: string[];
+}
+
+const QUOTE_PREFIX_RE = /^(\s*>\s?)+/;
+
+export function stripQuotePrefixes(raw: string): StrippedQuote {
+  const lines = raw.split("\n");
+  const prefixes: string[] = [];
+  const stripped = lines.map((line) => {
+    const match = QUOTE_PREFIX_RE.exec(line);
+    const prefix = match ? match[0] : "";
+    prefixes.push(prefix);
+    return line.slice(prefix.length);
+  });
+  return { text: stripped.join("\n"), prefixes };
+}
+
+export function applyQuotePrefixes(serialized: string, prefixes: string[]): string {
+  const lastPrefix = prefixes.length > 0 ? prefixes[prefixes.length - 1]! : "";
+  return serialized
+    .split("\n")
+    .map((line, i) => (i < prefixes.length ? prefixes[i]! : lastPrefix) + line)
+    .join("\n");
+}
+
 export function parseTable(text: string): ParsedTable | null {
   const lines = text.split("\n");
   if (lines.length < 2) return null;

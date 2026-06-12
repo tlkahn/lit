@@ -3,6 +3,7 @@ import { Decoration, type DecorationSet, type EditorView } from "@codemirror/vie
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget } from "./widgets";
+import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
 import { FootnoteRefWidget } from "./footnoteWidgets";
 import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
@@ -780,11 +781,13 @@ function addTableBlockReplacement(
   to: number,
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
-  const text = state.doc.sliceString(from, to);
+  const raw = state.doc.sliceString(from, to);
+  const { text, prefixes } = stripQuotePrefixes(raw);
+  if (!parseTable(text)) return;
   decos.push({
     from,
     to,
-    deco: Decoration.replace({ widget: new EditableTableWidget(text, from) }),
+    deco: Decoration.replace({ widget: new EditableTableWidget(text, from, raw.length, prefixes) }),
   });
 }
 

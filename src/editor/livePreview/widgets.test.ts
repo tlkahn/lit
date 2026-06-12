@@ -14,6 +14,7 @@ import {
   clearFailedImageCache,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
+import { stripQuotePrefixes } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { navigateToPageFacet } from "./navigateToPageFacet";
 import { getKatexSync } from "./katexLoader";
@@ -512,6 +513,15 @@ describe("DisplayMathWidget", () => {
 describe("EditableTableWidget", () => {
   const basicTable = "| a | b |\n| --- | --- |\n| 1 | 2 |";
 
+  function makeWidget(
+    text: string,
+    from = 0,
+    rawLength = text.length,
+    prefixes = text.split("\n").map(() => ""),
+  ): EditableTableWidget {
+    return new EditableTableWidget(text, from, rawLength, prefixes);
+  }
+
   function makeTableView(doc?: string): EditorView {
     const state = EditorState.create({ doc: doc ?? basicTable });
     return new EditorView({ state, parent: document.createElement("div") });
@@ -519,7 +529,7 @@ describe("EditableTableWidget", () => {
 
   it("toDOM returns a container div with correct class", () => {
     const view = makeTableView();
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     expect(el.tagName).toBe("DIV");
     expect(el.className).toBe("cm-preview-table-container");
@@ -528,7 +538,7 @@ describe("EditableTableWidget", () => {
 
   it("container holds a table with correct class", () => {
     const view = makeTableView();
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     const table = el.querySelector("table");
     expect(table).not.toBeNull();
@@ -538,7 +548,7 @@ describe("EditableTableWidget", () => {
 
   it("has correct thead/tbody structure with correct number of rows/cells", () => {
     const view = makeTableView();
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     expect(el.querySelectorAll("thead th")).toHaveLength(2);
     expect(el.querySelectorAll("tbody td")).toHaveLength(2);
@@ -548,7 +558,7 @@ describe("EditableTableWidget", () => {
   it("header cells render renderInlineMarkdown() HTML", () => {
     const rich = "| **bold** |\n| --- |\n| text |";
     const view = makeTableView(rich);
-    const widget = new EditableTableWidget(rich, 0);
+    const widget = makeWidget(rich, 0);
     const el = widget.toDOM(view);
     const th = el.querySelector("thead th");
     expect(th!.innerHTML).toContain("<strong>");
@@ -558,7 +568,7 @@ describe("EditableTableWidget", () => {
   it("body cells render renderInlineMarkdown() HTML", () => {
     const rich = "| h |\n| --- |\n| *italic* |";
     const view = makeTableView(rich);
-    const widget = new EditableTableWidget(rich, 0);
+    const widget = makeWidget(rich, 0);
     const el = widget.toDOM(view);
     const td = el.querySelector("tbody td");
     expect(td!.innerHTML).toContain("<em>");
@@ -567,7 +577,7 @@ describe("EditableTableWidget", () => {
 
   it("cells have contenteditable attribute", () => {
     const view = makeTableView();
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     const th = el.querySelector("thead th")!;
     const td = el.querySelector("tbody td")!;
@@ -578,7 +588,7 @@ describe("EditableTableWidget", () => {
 
   it("cells have data-row and data-col attributes", () => {
     const view = makeTableView();
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     const ths = el.querySelectorAll("thead th");
     expect(ths[0]!.getAttribute("data-row")).toBe("0");
@@ -594,7 +604,7 @@ describe("EditableTableWidget", () => {
   it("assigns correct data-row for multiple body rows", () => {
     const multiRow = "| h |\n| --- |\n| r1 |\n| r2 |";
     const view = makeTableView(multiRow);
-    const widget = new EditableTableWidget(multiRow, 0);
+    const widget = makeWidget(multiRow, 0);
     const el = widget.toDOM(view);
     const tds = el.querySelectorAll("tbody td");
     expect(tds[1]!.getAttribute("data-row")).toBe("2");
@@ -604,7 +614,7 @@ describe("EditableTableWidget", () => {
   it("applies text-align based on alignment", () => {
     const aligned = "| L | R | C |\n| :--- | ---: | :---: |\n| a | b | c |";
     const view = makeTableView(aligned);
-    const widget = new EditableTableWidget(aligned, 0);
+    const widget = makeWidget(aligned, 0);
     const el = widget.toDOM(view);
     const ths = el.querySelectorAll<HTMLElement>("thead th");
     expect(ths[0]!.style.textAlign).toBe("left");
@@ -620,7 +630,7 @@ describe("EditableTableWidget", () => {
   it("renders header-only table without tbody", () => {
     const headerOnly = "| H |\n| --- |";
     const view = makeTableView(headerOnly);
-    const widget = new EditableTableWidget(headerOnly, 0);
+    const widget = makeWidget(headerOnly, 0);
     const el = widget.toDOM(view);
     expect(el.querySelector("thead")).not.toBeNull();
     expect(el.querySelector("tbody")).toBeNull();
@@ -630,7 +640,7 @@ describe("EditableTableWidget", () => {
   it("clicking a cell with inline formatting selects all content on focus", () => {
     const rich = "| text $E=mc^2$ more |\n| --- |\n| val |";
     const view = makeTableView(rich);
-    const widget = new EditableTableWidget(rich, 0);
+    const widget = makeWidget(rich, 0);
     const el = widget.toDOM(view);
     document.body.appendChild(el);
     const th = el.querySelector("thead th") as HTMLElement;
@@ -650,7 +660,7 @@ describe("EditableTableWidget", () => {
 
   it("clicking a plain text cell places cursor at end without selecting", () => {
     const view = makeTableView();
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     document.body.appendChild(el);
     const th = el.querySelector("thead th") as HTMLElement;
@@ -668,7 +678,7 @@ describe("EditableTableWidget", () => {
   it("blurring a cell with changed content dispatches view.dispatch", () => {
     const view = makeTableView();
     const dispatchSpy = vi.spyOn(view, "dispatch");
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
     td.dispatchEvent(new FocusEvent("focus"));
@@ -683,7 +693,7 @@ describe("EditableTableWidget", () => {
   it("blurring with unchanged content does not dispatch", () => {
     const view = makeTableView();
     const dispatchSpy = vi.spyOn(view, "dispatch");
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
     td.dispatchEvent(new FocusEvent("focus"));
@@ -695,7 +705,7 @@ describe("EditableTableWidget", () => {
   it("pressing Enter commits and blurs", () => {
     const view = makeTableView();
     const dispatchSpy = vi.spyOn(view, "dispatch");
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     const el = widget.toDOM(view);
     const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
     td.dispatchEvent(new FocusEvent("focus"));
@@ -708,27 +718,69 @@ describe("EditableTableWidget", () => {
   });
 
   it("eq returns true for same tableText and from", () => {
-    const a = new EditableTableWidget(basicTable, 0);
-    const b = new EditableTableWidget(basicTable, 0);
+    const a = makeWidget(basicTable, 0);
+    const b = makeWidget(basicTable, 0);
     expect(a.eq(b)).toBe(true);
   });
 
   it("eq returns false for different tableText", () => {
-    const a = new EditableTableWidget(basicTable, 0);
-    const b = new EditableTableWidget("| x |\n| --- |\n| y |", 0);
+    const a = makeWidget(basicTable, 0);
+    const b = makeWidget("| x |\n| --- |\n| y |", 0);
     expect(a.eq(b)).toBe(false);
   });
 
   it("eq returns false when from differs", () => {
-    expect(new EditableTableWidget(basicTable, 0).eq(new EditableTableWidget(basicTable, 10))).toBe(false);
+    expect(makeWidget(basicTable, 0).eq(makeWidget(basicTable, 10))).toBe(false);
+  });
+
+  it("eq returns false when prefixes differ", () => {
+    const a = makeWidget(basicTable, 0, basicTable.length, ["", "", ""]);
+    const b = makeWidget(basicTable, 0, basicTable.length, ["", "> ", "> "]);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  describe("table inside blockquote", () => {
+    const quotedRaw = "| a | b |\n> | --- | --- |\n> | 1 | 2 |";
+
+    it("renders a non-empty table from stripped text", () => {
+      const { text, prefixes } = stripQuotePrefixes(quotedRaw);
+      const view = makeTableView(quotedRaw);
+      const widget = makeWidget(text, 0, quotedRaw.length, prefixes);
+      const el = widget.toDOM(view);
+      expect(el.querySelector("table")).not.toBeNull();
+      expect(el.querySelectorAll("thead th")).toHaveLength(2);
+      expect(el.querySelectorAll("tbody td")).toHaveLength(2);
+      view.destroy();
+    });
+
+    it("write-back re-applies quote prefixes and replaces the raw range", () => {
+      const { text, prefixes } = stripQuotePrefixes(quotedRaw);
+      const view = makeTableView(quotedRaw);
+      const dispatchSpy = vi.spyOn(view, "dispatch");
+      const widget = makeWidget(text, 0, quotedRaw.length, prefixes);
+      const el = widget.toDOM(view);
+      const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+      td.dispatchEvent(new FocusEvent("focus"));
+      td.textContent = "changed";
+      td.dispatchEvent(new FocusEvent("blur"));
+      expect(dispatchSpy).toHaveBeenCalled();
+      const call = dispatchSpy.mock.calls[0]![0] as { changes: { from: number; to: number; insert: string } };
+      expect(call.changes.to).toBe(quotedRaw.length);
+      const lines = call.changes.insert.split("\n");
+      expect(lines[0]!.startsWith(">")).toBe(false);
+      expect(lines[1]!.startsWith("> ")).toBe(true);
+      expect(lines[2]!.startsWith("> ")).toBe(true);
+      expect(call.changes.insert).toContain("changed");
+      view.destroy();
+    });
   });
 
   it("updateDOM rebuilds table in existing container", () => {
     const view = makeTableView();
-    const a = new EditableTableWidget(basicTable, 0);
+    const a = makeWidget(basicTable, 0);
     const dom = a.toDOM(view);
     const newTable = "| x |\n| --- |\n| 1 |";
-    const b = new EditableTableWidget(newTable, 0);
+    const b = makeWidget(newTable, 0);
     expect(b.updateDOM(dom, view)).toBe(true);
     expect(dom.querySelector("table")).not.toBeNull();
     const ths = dom.querySelectorAll<HTMLElement>("thead th");
@@ -742,19 +794,19 @@ describe("EditableTableWidget", () => {
 
   it("updateDOM returns false when parse fails", () => {
     const view = makeTableView();
-    const a = new EditableTableWidget(basicTable, 0);
+    const a = makeWidget(basicTable, 0);
     const dom = a.toDOM(view);
-    const b = new EditableTableWidget("not a table", 0);
+    const b = makeWidget("not a table", 0);
     expect(b.updateDOM(dom, view)).toBe(false);
     view.destroy();
   });
 
   it("updateDOM preserves container element identity", () => {
     const view = makeTableView();
-    const a = new EditableTableWidget(basicTable, 0);
+    const a = makeWidget(basicTable, 0);
     const dom = a.toDOM(view);
     const ref = dom;
-    const b = new EditableTableWidget("| y |\n| --- |\n| 2 |", 0);
+    const b = makeWidget("| y |\n| --- |\n| 2 |", 0);
     b.updateDOM(dom, view);
     expect(dom).toBe(ref);
     expect(dom.className).toBe("cm-preview-table-container");
@@ -762,7 +814,7 @@ describe("EditableTableWidget", () => {
   });
 
   it("ignoreEvent returns true for all events", () => {
-    const widget = new EditableTableWidget(basicTable, 0);
+    const widget = makeWidget(basicTable, 0);
     expect(widget.ignoreEvent()).toBe(true);
   });
 
@@ -790,7 +842,7 @@ describe("EditableTableWidget", () => {
     it("plain click on wikilink in cell calls navigateToPage with departurePos", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
-      const widget = new EditableTableWidget(wikiTable, 0);
+      const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -808,7 +860,7 @@ describe("EditableTableWidget", () => {
         extensions: [navigateToPageFacet.of(nav)],
       });
       const view = new EditorView({ state, parent: document.createElement("div") });
-      const widget = new EditableTableWidget(sectionTable, 0);
+      const widget = makeWidget(sectionTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -826,7 +878,7 @@ describe("EditableTableWidget", () => {
         extensions: [navigateToPageFacet.of(nav)],
       });
       const view = new EditorView({ state, parent: document.createElement("div") });
-      const widget = new EditableTableWidget(hashTable, 0);
+      const widget = makeWidget(hashTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -842,7 +894,7 @@ describe("EditableTableWidget", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
       vi.spyOn(view, "posAtCoords").mockReturnValue(15);
-      const widget = new EditableTableWidget(wikiTable, 5);
+      const widget = makeWidget(wikiTable, 5);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -857,7 +909,7 @@ describe("EditableTableWidget", () => {
       const view = makeTableViewWithFacet(nav);
       vi.spyOn(view, "posAtCoords").mockReturnValue(null);
       vi.spyOn(view, "posAtDOM").mockReturnValue(7);
-      const widget = new EditableTableWidget(wikiTable, 42);
+      const widget = makeWidget(wikiTable, 42);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -870,7 +922,7 @@ describe("EditableTableWidget", () => {
     it("cmd+click does NOT navigate", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
-      const widget = new EditableTableWidget(wikiTable, 0);
+      const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -888,7 +940,7 @@ describe("EditableTableWidget", () => {
     it("plain click on non-wikilink cell does NOT navigate", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
-      const widget = new EditableTableWidget(wikiTable, 0);
+      const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const th = el.querySelector("thead th")!;
@@ -905,7 +957,7 @@ describe("EditableTableWidget", () => {
     it("plain click prevents cell focus via stopPropagation", () => {
       const nav = vi.fn();
       const view = makeTableViewWithFacet(nav);
-      const widget = new EditableTableWidget(wikiTable, 0);
+      const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -917,7 +969,7 @@ describe("EditableTableWidget", () => {
 
     it("no error when facet not provided", () => {
       const view = makeTableView();
-      const widget = new EditableTableWidget(wikiTable, 0);
+      const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
       const span = el.querySelector(".cm-preview-wikilink")!;
@@ -940,7 +992,7 @@ describe("EditableTableWidget", () => {
       const view = new EditorView({ state, parent: document.createElement("div") });
       vi.spyOn(view, "posAtDOM").mockReturnValue(10);
       const dispatchSpy = vi.spyOn(view, "dispatch");
-      const widget = new EditableTableWidget(basicTable, 10);
+      const widget = makeWidget(basicTable, 10);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
 
@@ -969,12 +1021,12 @@ describe("EditableTableWidget", () => {
       const posAtDOMSpy = vi.spyOn(view, "posAtDOM");
 
       posAtDOMSpy.mockReturnValue(10);
-      const oldWidget = new EditableTableWidget(basicTable, 10);
+      const oldWidget = makeWidget(basicTable, 10);
       const dom = oldWidget.toDOM(view);
       document.body.appendChild(dom);
 
       posAtDOMSpy.mockReturnValue(20);
-      const newWidget = new EditableTableWidget(basicTable, 20);
+      const newWidget = makeWidget(basicTable, 20);
       newWidget.updateDOM(dom, view);
 
       const th = dom.querySelector("thead th")!;
@@ -998,7 +1050,7 @@ describe("EditableTableWidget", () => {
       });
       const view = new EditorView({ state, parent: document.createElement("div") });
       const dispatchSpy = vi.spyOn(view, "dispatch");
-      const widget = new EditableTableWidget(wikiTable, 0);
+      const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
 
