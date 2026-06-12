@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 use crate::bib::types::BibEntry;
 use crate::bib::writer::SaveOutcome;
@@ -101,6 +102,8 @@ fn build_prefilled_entry(ids: &ExtractedIdentifiers, file: &str) -> BibEntry {
         pages: None,
         publisher: None,
         issn: ids.issn.clone(),
+        isbn: ids.isbn.clone(),
+        arxiv_id: ids.arxiv.clone(),
         tags: vec![],
     };
 
@@ -132,23 +135,22 @@ fn build_prefilled_entry(ids: &ExtractedIdentifiers, file: &str) -> BibEntry {
 #[tauri::command]
 pub async fn recognize_pdf(
     pdf_path: String,
-    bib_path: String,
     workspace_path: String,
     pdf_state: tauri::State<'_, crate::commands::pdf_viewer::PdfViewerState>,
-    cache: tauri::State<'_, crate::bib::cache::BibCache>,
     graph_state: tauri::State<'_, Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<RecognizeResult, String> {
     use std::path::PathBuf;
 
-    use crate::bib::writer::append_entries_to_file;
+    use crate::bib::db::{all_live_keys, upsert_bib_item, UpsertOutcome};
+    use crate::bib::writer::generate_key;
+    use crate::commands::page::lookup_graph_index;
     use crate::pdf::PdfRenderThread;
     use crate::recognize::attach::ensure_pdf_in_workspace;
     use crate::recognize::identifiers::extract_identifiers;
     use crate::recognize::resolve::resolve_to_bib_entry_default;
 
     let workspace_root = PathBuf::from(&workspace_path);
-    let bib = PathBuf::from(&bib_path);
     let pdf = PathBuf::from(&pdf_path);
 
     // 1. Copy/reference PDF in workspace (up front, every branch carries valid file)
@@ -190,31 +192,42 @@ pub async fn recognize_pdf(
             let mut entry = meta.entry;
             entry.file = Some(file.clone());
 
-            // Append to bib file
-            let outcomes =
-                append_entries_to_file(&[entry.clone()], &bib, &workspace_root, &cache)?;
+            // Get graph index and upsert into DB
+            let gi = lookup_graph_index(&graph_state, &workspace_root)
+                .ok_or_else(|| "Graph index not ready".to_string())?;
+            let outcome = {
+                let store = gi.store();
+                let live_keys = all_live_keys(&store.conn).map_err(|e| e.to_string())?;
+                let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
+                entry.key = generated_key;
+                let upsert_result = upsert_bib_item(&store.conn, &entry, None, None, false)
+                    .map_err(|e| e.to_string())?;
+                // Map UpsertOutcome to SaveOutcome
+                match upsert_result {
+                    UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
+                        entry.key = cite_key.clone();
+                        if entry.doi.is_some() {
+                            SaveOutcome::Saved { key: cite_key }
+                        } else {
+                            SaveOutcome::SavedNoDoi { key: cite_key }
+                        }
+                    }
+                    UpsertOutcome::DedupSkipped { existing_key } => {
+                        let doi = entry.doi.clone().unwrap_or_default();
+                        entry.key = existing_key.clone();
+                        SaveOutcome::DuplicateDoi { doi, existing_key }
+                    }
+                }
+            };
+
+            // Clean up the copied file if this was a duplicate
+            cleanup_copy_on_duplicate(&outcome, &copied_to);
 
             // Refresh graph shadows
             crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
 
-            // Return the first outcome (we only appended one entry)
-            let outcome = outcomes
-                .into_iter()
-                .next()
-                .ok_or_else(|| "append_entries_to_file returned empty outcomes".to_string())?;
-
-            // Clean up the copied file if this was a duplicate — avoids
-            // accumulating orphaned paper-1.pdf, paper-2.pdf, ... on
-            // repeated imports of the same paper.
-            cleanup_copy_on_duplicate(&outcome, &copied_to);
-
-            // Update entry key from outcome
-            let final_key = match &outcome {
-                SaveOutcome::Saved { key } => key.clone(),
-                SaveOutcome::SavedNoDoi { key } => key.clone(),
-                SaveOutcome::DuplicateDoi { existing_key, .. } => existing_key.clone(),
-            };
-            entry.key = final_key;
+            // Emit bib-items-changed event
+            let _ = app_handle.emit("lit:bib-items-changed", ());
 
             Ok(RecognizeResult::Resolved {
                 outcome,
@@ -248,23 +261,46 @@ pub async fn recognize_pdf(
 
 #[tauri::command]
 pub async fn import_recognized_entry(
-    entry: BibEntry,
-    bib_path: String,
+    mut entry: BibEntry,
     workspace_path: String,
-    cache: tauri::State<'_, crate::bib::cache::BibCache>,
     graph_state: tauri::State<'_, Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<SaveOutcome>, String> {
     use std::path::PathBuf;
 
-    use crate::bib::writer::append_entries_to_file;
+    use crate::bib::db::{all_live_keys, upsert_bib_item, UpsertOutcome};
+    use crate::bib::writer::generate_key;
+    use crate::commands::page::lookup_graph_index;
 
     let workspace_root = PathBuf::from(&workspace_path);
-    let bib = PathBuf::from(&bib_path);
 
-    let outcomes = append_entries_to_file(&[entry], &bib, &workspace_root, &cache)?;
+    let gi = lookup_graph_index(&graph_state, &workspace_root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let outcome = {
+        let store = gi.store();
+        let live_keys = all_live_keys(&store.conn).map_err(|e| e.to_string())?;
+        let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
+        entry.key = generated_key;
+        let upsert_result = upsert_bib_item(&store.conn, &entry, None, None, false)
+            .map_err(|e| e.to_string())?;
+        match upsert_result {
+            UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
+                if entry.doi.is_some() {
+                    SaveOutcome::Saved { key: cite_key }
+                } else {
+                    SaveOutcome::SavedNoDoi { key: cite_key }
+                }
+            }
+            UpsertOutcome::DedupSkipped { existing_key } => {
+                let doi = entry.doi.clone().unwrap_or_default();
+                SaveOutcome::DuplicateDoi { doi, existing_key }
+            }
+        }
+    };
+
     crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
-    Ok(outcomes)
+    let _ = app_handle.emit("lit:bib-items-changed", ());
+    Ok(vec![outcome])
 }
 
 #[cfg(test)]
@@ -301,6 +337,8 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
+                arxiv_id: None,
                 tags: vec![],
             },
         };
@@ -338,6 +376,8 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
+                arxiv_id: None,
                 tags: vec![],
             },
             file: "assets/pdf/scanned.pdf".to_string(),
@@ -369,6 +409,8 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
+                arxiv_id: None,
                 tags: vec![],
             },
             file: "test.pdf".to_string(),
@@ -518,6 +560,26 @@ mod tests {
         assert_eq!(entry.year, "");
     }
 
+    #[test]
+    fn test_build_prefilled_entry_sets_isbn_and_arxiv_from_ids() {
+        let ids = ExtractedIdentifiers {
+            isbn: Some("978-0-306-40615-7".to_string()),
+            arxiv: Some("2301.07041".to_string()),
+            ..Default::default()
+        };
+        let entry = build_prefilled_entry(&ids, "assets/pdf/test.pdf");
+        assert_eq!(entry.isbn, Some("978-0-306-40615-7".to_string()));
+        assert_eq!(entry.arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn test_build_prefilled_entry_minimal_isbn_arxiv_none() {
+        let ids = ExtractedIdentifiers::default();
+        let entry = build_prefilled_entry(&ids, "assets/pdf/test.pdf");
+        assert_eq!(entry.isbn, None);
+        assert_eq!(entry.arxiv_id, None);
+    }
+
     // ── wiremock integration test: resolve + write file field ─────────
 
     #[tokio::test]
@@ -634,6 +696,8 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
+            arxiv_id: None,
             tags: vec![],
         };
         let outcomes =

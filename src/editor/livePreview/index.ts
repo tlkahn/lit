@@ -24,7 +24,7 @@ import { citeprocTooltipExtension } from "./citeprocTooltip";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
-export { noteDirFacet } from "./citeproc";
+export { noteDirFacet, notePathFacet } from "./citeproc";
 export { mediaThumbnailsFacet } from "./mediaThumbnails";
 export { navigateToPageFacet } from "./navigateToPageFacet";
 

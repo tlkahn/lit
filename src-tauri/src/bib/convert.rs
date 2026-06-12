@@ -177,6 +177,8 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         pages: item.page.clone(),
         publisher: item.publisher.clone(),
         issn: item.issn.clone().and_then(|i| i.into_first()),
+        isbn: None,
+        arxiv_id: None,
         tags: item.subject.clone().unwrap_or_default(),
     }
 }

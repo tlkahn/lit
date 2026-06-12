@@ -57,7 +57,6 @@ beforeEach(() => {
 
   mockInvoke((cmd, args) => {
     invokedCommands.push({ cmd, args: args ?? {} });
-    if (cmd === "list_bib_files") return ["/workspace/refs.bib", "/workspace/other.bib"];
     if (cmd === "recognize_pdf") return resolvedResult;
     if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
     throw new Error(`Unknown command: ${cmd}`);
@@ -133,7 +132,7 @@ describe("ImportPdfDialog", () => {
     expect(container.querySelector("[data-testid='import-pdf-choose-btn']")).toBeTruthy();
   });
 
-  // Group 2: Idle phase + bib file picker
+  // Group 2: Idle phase
 
   it("shows Choose PDF button in idle state", () => {
     const { container } = render(
@@ -142,54 +141,12 @@ describe("ImportPdfDialog", () => {
     expect(container.querySelector("[data-testid='import-pdf-choose-btn']")).toBeTruthy();
   });
 
-  it("loads bib files on open", async () => {
+  it("does not render BibFilePicker", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='import-pdf-bib-select']") as HTMLSelectElement;
-      expect(select).toBeTruthy();
-      const options = Array.from(select.options).map((o) => o.value);
-      expect(options).toContain("/workspace/refs.bib");
-      expect(options).toContain("/workspace/other.bib");
-    });
-    const call = invokedCommands.find((c) => c.cmd === "list_bib_files");
-    expect(call).toBeTruthy();
-  });
-
-  it("defaults to refs.bib when no bib files exist", async () => {
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return [];
-      if (cmd === "recognize_pdf") return resolvedResult;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    const { container } = render(
-      <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
-    );
-
-    await waitFor(() => {
-      const newInput = container.querySelector("[data-testid='import-pdf-bib-new-input']") as HTMLInputElement;
-      expect(newInput).toBeTruthy();
-      expect(newInput.value).toBe("refs.bib");
-    });
-  });
-
-  it("allows selecting an existing bib file", async () => {
-    const { container } = render(
-      <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
-    );
-
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='import-pdf-bib-select']") as HTMLSelectElement;
-      expect(select).toBeTruthy();
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-
-    const bibSelect = container.querySelector("[data-testid='import-pdf-bib-select']") as HTMLSelectElement;
-    fireEvent.change(bibSelect, { target: { value: "/workspace/other.bib" } });
-    expect(bibSelect.value).toBe("/workspace/other.bib");
+    expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeNull();
+    expect(container.querySelector("[data-testid='import-pdf-bib-new-input']")).toBeNull();
   });
 
   // Group 3: Progress phase (resolved result)
@@ -201,12 +158,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='import-pdf-bib-select']") as HTMLSelectElement;
-      expect(select).toBeTruthy();
-      expect(select.options.length).toBeGreaterThan(0);
-    });
 
     const chooseBtn = container.querySelector("[data-testid='import-pdf-choose-btn']") as HTMLButtonElement;
     await act(async () => {
@@ -230,7 +181,6 @@ describe("ImportPdfDialog", () => {
     });
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return deferred;
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -241,10 +191,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     const chooseBtn = container.querySelector("[data-testid='import-pdf-choose-btn']") as HTMLButtonElement;
     await act(async () => {
@@ -267,10 +213,6 @@ describe("ImportPdfDialog", () => {
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={onImported} />,
     );
 
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
-
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
     });
@@ -285,7 +227,6 @@ describe("ImportPdfDialog", () => {
   it("resolved result with SavedNoDoi outcome shows correct toast", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return {
         ...resolvedResult,
         outcome: { SavedNoDoi: { key: "manual2024" } },
@@ -300,10 +241,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={onImported} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -320,7 +257,6 @@ describe("ImportPdfDialog", () => {
   it("resolved result with DuplicateDoi outcome shows duplicate toast", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return {
         ...resolvedResult,
         outcome: { DuplicateDoi: { doi: "10.1/x", existing_key: "old2019" } },
@@ -336,10 +272,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={onClose} onImported={onImported} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -379,7 +311,6 @@ describe("ImportPdfDialog", () => {
   it("needs_confirmation result shows confirm form with reason banner", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -390,10 +321,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -413,7 +340,6 @@ describe("ImportPdfDialog", () => {
   it("needs_confirmation with no_identifier shows generic message", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return {
         ...needsConfirmResult,
         reason: "no_identifier",
@@ -427,10 +353,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -446,7 +368,6 @@ describe("ImportPdfDialog", () => {
   it("needs_confirmation with no_match shows generic message", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return {
         ...needsConfirmResult,
         reason: "no_match",
@@ -460,10 +381,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -479,7 +396,6 @@ describe("ImportPdfDialog", () => {
   it("needs_confirmation with offline_error shows message and Retry button", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return {
         ...needsConfirmResult,
         reason: "offline_error",
@@ -494,10 +410,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -514,7 +426,6 @@ describe("ImportPdfDialog", () => {
   it("confirm form pre-fills fields from prefilled entry", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -525,10 +436,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -553,7 +460,6 @@ describe("ImportPdfDialog", () => {
   it("editing fields and clicking Save calls importRecognizedEntry", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
       throw new Error(`Unknown command: ${cmd}`);
@@ -566,10 +472,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={onImported} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -596,7 +498,6 @@ describe("ImportPdfDialog", () => {
   it("Save on confirm form preserves file field unchanged", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
       throw new Error(`Unknown command: ${cmd}`);
@@ -608,10 +509,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -645,7 +542,6 @@ describe("ImportPdfDialog", () => {
 
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return confirmResultWithIssn;
       if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
       throw new Error(`Unknown command: ${cmd}`);
@@ -657,10 +553,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -689,7 +581,6 @@ describe("ImportPdfDialog", () => {
   it("confirm form save splits authors on semicolons only, preserving Last, First format", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       if (cmd === "import_recognized_entry") return [{ Saved: { key: "manual2024" } }];
       throw new Error(`Unknown command: ${cmd}`);
@@ -701,10 +592,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -735,7 +622,6 @@ describe("ImportPdfDialog", () => {
   it("confirm form save success shows toast with key from SaveOutcome", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       if (cmd === "import_recognized_entry") return [{ Saved: { key: "savedkey2024" } }];
       throw new Error(`Unknown command: ${cmd}`);
@@ -748,10 +634,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={onImported} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -776,7 +658,6 @@ describe("ImportPdfDialog", () => {
   it("confirm form save error shows error banner", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       if (cmd === "import_recognized_entry") throw new Error("Write failed");
       throw new Error(`Unknown command: ${cmd}`);
@@ -788,10 +669,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -815,7 +692,6 @@ describe("ImportPdfDialog", () => {
   it("confirm form save with DuplicateDoi closes dialog after toast", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") return needsConfirmResult;
       if (cmd === "import_recognized_entry")
         return [{ DuplicateDoi: { doi: "10.1/x", existing_key: "old2019" } }];
@@ -830,10 +706,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={onClose} onImported={onImported} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -861,7 +733,6 @@ describe("ImportPdfDialog", () => {
   it("recognize_pdf error shows error banner with retry", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") throw new Error("PDF processing failed");
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -872,10 +743,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -893,7 +760,6 @@ describe("ImportPdfDialog", () => {
     let callCount = 0;
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") {
         callCount++;
         if (callCount === 1) throw new Error("PDF processing failed");
@@ -908,10 +774,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);
@@ -933,7 +795,6 @@ describe("ImportPdfDialog", () => {
     let callCount = 0;
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "recognize_pdf") {
         callCount++;
         if (callCount === 1) return {
@@ -952,10 +813,6 @@ describe("ImportPdfDialog", () => {
     const { container } = render(
       <ImportPdfDialog open={true} onClose={vi.fn()} onImported={vi.fn()} />,
     );
-
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='import-pdf-bib-select']")).toBeTruthy();
-    });
 
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='import-pdf-choose-btn']")!);

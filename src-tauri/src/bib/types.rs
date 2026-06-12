@@ -30,6 +30,10 @@ pub struct BibEntry {
     pub publisher: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isbn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arxiv_id: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tags: Vec<String>,
 }

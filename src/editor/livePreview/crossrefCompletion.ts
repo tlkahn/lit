@@ -5,9 +5,10 @@ import {
   startCompletion,
 } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
-import { getDefinitions } from "../../lib/ipc";
+import { getDefinitions, listBibEntries, ensureInCompanionBib, type BibEntry } from "../../lib/ipc";
+import { useWorkspaceStore } from "../../stores/workspace";
 import { frontmatterFacet } from "./crossref";
-import { bibEntriesField } from "./citeproc";
+import { bibEntriesField, notePathFacet } from "./citeproc";
 
 export interface TriggerInfo {
   from: number;
@@ -105,13 +106,37 @@ export async function crossrefCompletionSource(
   }
 
   if (trigger.refType === "bib") {
+    const workspacePath = useWorkspaceStore.getState().workspacePath;
+    const notePath = state.facet(notePathFacet);
     const bibData = state.field(bibEntriesField, false);
-    if (!bibData) return null;
-    const options: Completion[] = bibData.entries.map((entry) => ({
+
+    let allEntries: BibEntry[] = [];
+    if (workspacePath) {
+      try {
+        allEntries = await listBibEntries(workspacePath);
+      } catch {
+        // fall through to note-scoped only
+      }
+    }
+
+    const noteKeys = new Set(bibData?.entries.map(e => e.key) ?? []);
+    const renderedCitations = bibData?.renderedCitations ?? {};
+
+    const mergedEntries: BibEntry[] = [
+      ...(bibData?.entries ?? []),
+      ...allEntries.filter(e => !noteKeys.has(e.key)),
+    ];
+
+    if (mergedEntries.length === 0) return null;
+
+    const options: Completion[] = mergedEntries.map((entry) => ({
       label: entry.key,
-      detail: bibData.renderedCitations[entry.key] ?? entry.key,
+      detail: renderedCitations[entry.key] ?? `${entry.authors.join(", ")} (${entry.year})`,
       apply: (view: EditorView, _completion: Completion, _from: number, to: number) => {
         view.dispatch({ changes: { from: trigger.bibFrom!, to, insert: entry.key } });
+        if (workspacePath && notePath) {
+          ensureInCompanionBib(entry.key, notePath, workspacePath).catch(() => {});
+        }
       },
     }));
     return {

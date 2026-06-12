@@ -42,7 +42,6 @@ import {
   saveBibEntry,
   parseCslJson,
   saveBibEntries,
-  listBibFiles,
   materializeCitation,
   enrichBibEntry,
   type EnrichResult,
@@ -52,6 +51,11 @@ import {
   isSavedNoDoi,
   recognizePdf,
   importRecognizedEntry,
+  bibSearch,
+  bibGet,
+  bibUpdateFields,
+  bibDelete,
+  ensureInCompanionBib,
   type RecognizeResult,
   type ConfirmReason,
   pdfOpen,
@@ -685,8 +689,6 @@ describe("ipc", () => {
             { Saved: { key: "doe2021" } },
             { DuplicateDoi: { doi: "10.1000/dup", existing_key: "old2019" } },
           ];
-        case "list_bib_files":
-          return ["/workspace/refs.bib", "/workspace/papers/extra.bib"];
         case "materialize_citation":
           return {
             title: `Smith (2020) ${(args as Record<string, unknown>)?.bibKey}`,
@@ -737,6 +739,26 @@ describe("ipc", () => {
         case "import_recognized_entry": {
           return [{ Saved: { key: "manual2024" } }];
         }
+        case "bib_search":
+          return [{
+            key: "smith2020", authors: ["Smith, John"], title: "A Study",
+            year: "2020", entry_type: "article", line_number: 0,
+          }];
+        case "bib_get": {
+          const a = args as Record<string, unknown>;
+          if (a?.citeKey === "nonexistent") return null;
+          return {
+            key: a?.citeKey ?? "smith2020",
+            authors: ["Smith, John"], title: "A Study",
+            year: "2020", entry_type: "article", line_number: 0,
+          };
+        }
+        case "bib_update_fields":
+          return true;
+        case "bib_delete":
+          return true;
+        case "ensure_in_companion_bib":
+          return "assets/bib/Note.bib";
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1009,7 +1031,7 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("lookup_doi", { doi: "10.1038/nature12373" });
   });
 
-  it("saveBibEntry invokes save_bib_entry with entry and paths", async () => {
+  it("saveBibEntry invokes save_bib_entry with entry and workspacePath (no bibPath)", async () => {
     const entry = {
       key: "",
       authors: ["Smith, John"],
@@ -1019,13 +1041,12 @@ describe("ipc", () => {
       line_number: 0,
       doi: "10.1000/test",
     };
-    const result: SaveOutcome[] = await saveBibEntry(entry, "/workspace/refs.bib", "/workspace");
+    const result: SaveOutcome[] = await saveBibEntry(entry, "/workspace");
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ Saved: { key: "smith2020" } });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("save_bib_entry", {
       entry,
-      bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
   });
@@ -1040,13 +1061,12 @@ describe("ipc", () => {
     });
   });
 
-  it("saveBibEntries invokes save_bib_entries and returns mixed outcomes", async () => {
+  it("saveBibEntries invokes save_bib_entries with entries and workspacePath (no bibPath)", async () => {
     const entries = [
       { key: "doe2021", authors: ["Doe, Jane"], title: "Parsed Paper", year: "2021", entry_type: "article", line_number: 0 },
     ];
     const result = await saveBibEntries(
       entries,
-      "/workspace/refs.bib",
       "/workspace",
     );
     expect(result).toHaveLength(2);
@@ -1055,16 +1075,8 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("save_bib_entries", {
       entries,
-      bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
-  });
-
-  it("listBibFiles invokes list_bib_files with workspacePath", async () => {
-    const files = await listBibFiles("/workspace");
-    expect(files).toEqual(["/workspace/refs.bib", "/workspace/papers/extra.bib"]);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("list_bib_files", { workspacePath: "/workspace" });
   });
 
   it("materializeCitation invokes materialize_citation and returns PageMeta", async () => {
@@ -2183,7 +2195,6 @@ describe("ipc", () => {
   it("recognizePdf calls recognize_pdf with correct args", async () => {
     const result: RecognizeResult = await recognizePdf(
       "/external/paper.pdf",
-      "/workspace/refs.bib",
       "/workspace",
     );
     expect(result.kind).toBe("resolved");
@@ -2198,7 +2209,6 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("recognize_pdf", {
       pdfPath: "/external/paper.pdf",
-      bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
   });
@@ -2226,7 +2236,6 @@ describe("ipc", () => {
     });
     const result = await recognizePdf(
       "/external/scanned.pdf",
-      "/workspace/refs.bib",
       "/workspace",
     );
     expect(result.kind).toBe("needs_confirmation");
@@ -2272,7 +2281,6 @@ describe("ipc", () => {
     };
     const outcomes = await importRecognizedEntry(
       entry,
-      "/workspace/refs.bib",
       "/workspace",
     );
     expect(outcomes).toHaveLength(1);
@@ -2280,7 +2288,68 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("import_recognized_entry", {
       entry,
-      bibPath: "/workspace/refs.bib",
+      workspacePath: "/workspace",
+    });
+  });
+
+  // ── New DB-backed bib commands ─────────────────────────────────
+
+  it("bibSearch calls bib_search with query and limit", async () => {
+    const results = await bibSearch("Smith", 10, "/workspace");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.key).toBe("smith2020");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("bib_search", {
+      query: "Smith",
+      limit: 10,
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("bibGet calls bib_get and returns entry", async () => {
+    const result = await bibGet("smith2020", "/workspace");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("smith2020");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("bib_get", {
+      citeKey: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("bibGet returns null for missing key", async () => {
+    const result = await bibGet("nonexistent", "/workspace");
+    expect(result).toBeNull();
+  });
+
+  it("bibUpdateFields calls bib_update_fields and returns boolean", async () => {
+    const result = await bibUpdateFields("smith2020", { title: "New" }, "/workspace");
+    expect(result).toBe(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("bib_update_fields", {
+      citeKey: "smith2020",
+      fields: { title: "New" },
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("bibDelete calls bib_delete and returns boolean", async () => {
+    const result = await bibDelete("smith2020", "/workspace");
+    expect(result).toBe(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("bib_delete", {
+      citeKey: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("ensureInCompanionBib calls ensure_in_companion_bib and returns path", async () => {
+    const result = await ensureInCompanionBib("smith2020", "Note.md", "/workspace");
+    expect(result).toBe("assets/bib/Note.bib");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("ensure_in_companion_bib", {
+      citeKey: "smith2020",
+      notePath: "Note.md",
       workspacePath: "/workspace",
     });
   });

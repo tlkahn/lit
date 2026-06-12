@@ -32,6 +32,10 @@ export const noteDirFacet = Facet.define<string, string>({
   combine: (values) => values[0] ?? "",
 });
 
+export const notePathFacet = Facet.define<string, string>({
+  combine: (values) => values[0] ?? "",
+});
+
 export const setBibData = StateEffect.define<BibData>();
 
 export const bibEntriesField = StateField.define<BibData>({

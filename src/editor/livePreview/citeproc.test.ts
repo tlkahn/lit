@@ -5,6 +5,7 @@ import {
   bibEntriesField,
   setBibData,
   noteDirFacet,
+  notePathFacet,
   scanCiteprocCitations,
   citeprocExtension,
   citeprocMatchesField,
@@ -76,6 +77,21 @@ describe("noteDirFacet", () => {
 
     const state2 = EditorState.create({ doc: "" });
     expect(state2.facet(noteDirFacet)).toBe("");
+  });
+});
+
+describe("notePathFacet", () => {
+  it("can be set and read", () => {
+    const state = EditorState.create({
+      doc: "",
+      extensions: [notePathFacet.of("notes/MyNote.md")],
+    });
+    expect(state.facet(notePathFacet)).toBe("notes/MyNote.md");
+  });
+
+  it("defaults to empty string when not provided", () => {
+    const state = EditorState.create({ doc: "" });
+    expect(state.facet(notePathFacet)).toBe("");
   });
 });
 

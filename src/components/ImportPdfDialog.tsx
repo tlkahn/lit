@@ -13,8 +13,6 @@ import {
   type RecognizeResult,
   type ConfirmReason,
 } from "../lib/ipc";
-import { useBibFilePicker } from "../hooks/useBibFilePicker";
-import { BibFilePicker } from "./BibFilePicker";
 import { SpinnerSvg } from "./SpinnerSvg";
 
 type DialogPhase = "idle" | "progress" | "confirm" | "error";
@@ -44,7 +42,6 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
   const show = useStatusMessageStore((s) => s.show);
 
   const [phase, setPhase] = useState<DialogPhase>("idle");
-  const bib = useBibFilePicker(workspacePath, open);
   const [error, setError] = useState<string | null>(null);
 
   // For confirm form
@@ -105,8 +102,6 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
 
-  const effectiveBibPath = bib.effectiveBibPath;
-
   // Shared SaveOutcome dispatch
   function handleSaveOutcome(outcome: SaveOutcome) {
     if (isDuplicateDoi(outcome)) {
@@ -145,12 +140,12 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
 
   // Start recognition flow
   async function startRecognition(chosenPdfPath: string) {
-    if (!effectiveBibPath || !workspacePath) return;
+    if (!workspacePath) return;
     setPhase("progress");
     setError(null);
     show("Recognizing PDF...", "progress");
     try {
-      const result = await recognizePdf(chosenPdfPath, effectiveBibPath, workspacePath);
+      const result = await recognizePdf(chosenPdfPath, workspacePath);
       handleRecognizeResult(result);
     } catch (e) {
       setPhase("error");
@@ -165,7 +160,6 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
       open &&
       initialPdfPath &&
       pdfPath === initialPdfPath &&
-      effectiveBibPath &&
       phase === "idle" &&
       !autoStartFired.current
     ) {
@@ -175,7 +169,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
     if (!open) {
       autoStartFired.current = false;
     }
-  }, [open, pdfPath, effectiveBibPath, phase, initialPdfPath]);
+  }, [open, pdfPath, phase, initialPdfPath]);
 
   // Choose PDF and start recognition
   async function handleChoosePdf() {
@@ -201,7 +195,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
 
   // Save confirmed entry
   async function handleConfirmSave() {
-    if (!confirmData || !effectiveBibPath || !workspacePath) return;
+    if (!confirmData || !workspacePath) return;
     setSaving(true);
     setError(null);
     try {
@@ -219,7 +213,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
         journal: editFields.journal || undefined,
         file: confirmData.file,
       };
-      const outcomes = await importRecognizedEntry(entry, effectiveBibPath, workspacePath);
+      const outcomes = await importRecognizedEntry(entry, workspacePath);
       const first = outcomes[0];
       if (first) {
         handleSaveOutcome(first);
@@ -401,17 +395,6 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
             </button>
           )}
 
-          {/* Bib file picker (shown in idle and confirm phases) */}
-          {(phase === "idle" || phase === "confirm") && (
-            <BibFilePicker
-              bibFiles={bib.bibFiles}
-              selectedBibFile={bib.selectedBibFile}
-              onSelectedBibFileChange={bib.setSelectedBibFile}
-              newBibPath={bib.newBibPath}
-              onNewBibPathChange={bib.setNewBibPath}
-              testIdPrefix="import-pdf"
-            />
-          )}
         </div>
 
         {/* Footer */}
@@ -426,7 +409,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
           {phase === "confirm" && (
             <button
               data-testid="import-pdf-confirm-save-btn"
-              disabled={!effectiveBibPath || saving}
+              disabled={saving}
               onClick={handleConfirmSave}
               className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
             >

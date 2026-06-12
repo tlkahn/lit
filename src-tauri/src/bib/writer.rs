@@ -88,6 +88,17 @@ pub fn serialize_bib_entry(entry: &BibEntry) -> String {
         out.push_str(&format!("  issn = {{{}}},\n", sanitize_bib_value(issn)));
     }
 
+    // isbn
+    if let Some(ref isbn) = entry.isbn {
+        out.push_str(&format!("  isbn = {{{}}},\n", sanitize_bib_value(isbn)));
+    }
+
+    // arxiv_id -> eprint + archiveprefix
+    if let Some(ref arxiv_id) = entry.arxiv_id {
+        out.push_str(&format!("  eprint = {{{}}},\n", sanitize_bib_value(arxiv_id)));
+        out.push_str("  archiveprefix = {arXiv},\n");
+    }
+
     // abstract
     if let Some(ref abstract_text) = entry.abstract_text {
         out.push_str(&format!("  abstract = {{{}}},\n", sanitize_bib_value(abstract_text)));
@@ -516,6 +527,8 @@ mod tests {
             pages: Some("100--115".to_string()),
             publisher: Some("Nature Publishing".to_string()),
             issn: None,
+            isbn: None,
+            arxiv_id: None,
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -540,6 +553,8 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
+            arxiv_id: None,
             tags: vec![],
         }
     }
@@ -1599,6 +1614,55 @@ mod tests {
         assert_eq!(parsed[0].title, entry.title);
         assert_eq!(parsed[0].doi, entry.doi);
         assert_eq!(parsed[0].url, entry.url);
+    }
+
+    // ── isbn / arxiv_id serialization tests ──────────────────────
+
+    #[test]
+    fn serialize_isbn_round_trips() {
+        let mut entry = minimal_entry();
+        entry.isbn = Some("9780306406157".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed[0].isbn, Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn serialize_arxiv_id_emits_eprint_and_archiveprefix() {
+        let mut entry = minimal_entry();
+        entry.arxiv_id = Some("2301.07041".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        assert!(bib_str.contains("eprint = {2301.07041}"), "should contain eprint field");
+        assert!(bib_str.contains("archiveprefix = {arXiv}"), "should contain archiveprefix field");
+    }
+
+    #[test]
+    fn serialize_arxiv_id_round_trips() {
+        let mut entry = minimal_entry();
+        entry.arxiv_id = Some("2301.07041".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed[0].arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn serialize_omits_none_isbn_and_arxiv_id() {
+        let entry = minimal_entry();
+        let bib_str = serialize_bib_entry(&entry);
+        assert!(!bib_str.contains("isbn"), "should not contain isbn when None");
+        assert!(!bib_str.contains("eprint"), "should not contain eprint when None");
+        assert!(!bib_str.contains("archiveprefix"), "should not contain archiveprefix when None");
+    }
+
+    #[test]
+    fn serialize_both_isbn_and_arxiv_id() {
+        let mut entry = minimal_entry();
+        entry.isbn = Some("978-0-306-40615-7".to_string());
+        entry.arxiv_id = Some("2301.07041".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed[0].isbn, Some("978-0-306-40615-7".to_string()));
+        assert_eq!(parsed[0].arxiv_id, Some("2301.07041".to_string()));
     }
 
     #[test]

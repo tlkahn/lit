@@ -552,7 +552,6 @@ describe("ReferenceLibrary", () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args });
       if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "list_bib_files") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -568,7 +567,6 @@ describe("ReferenceLibrary", () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args });
       if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "lookup_doi") return {
         key: "new2025",
         authors: ["New, A."],
@@ -600,14 +598,7 @@ describe("ReferenceLibrary", () => {
       expect(screen.getByTestId("add-reference-preview")).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      const select = screen.getByTestId("add-reference-bib-select") as HTMLSelectElement;
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-    fireEvent.change(screen.getByTestId("add-reference-bib-select"), {
-      target: { value: "/workspace/refs.bib" },
-    });
-
+    // Save (no bib file selection needed)
     const beforeCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
     await act(async () => {
       fireEvent.click(screen.getByTestId("add-reference-save-btn"));
@@ -1241,7 +1232,6 @@ describe("ReferenceLibrary", () => {
       mockInvoke((cmd, args) => {
         invokedCommands.push({ cmd, args });
         if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "list_bib_files") return [];
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
         throw new Error(`Unknown command: ${cmd}`);
@@ -1275,7 +1265,6 @@ describe("ReferenceLibrary", () => {
       mockInvoke((cmd, args) => {
         invokedCommands.push({ cmd, args });
         if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
         if (cmd === "recognize_pdf") return resolvedResult;
@@ -1292,11 +1281,6 @@ describe("ReferenceLibrary", () => {
       // Mock the file dialog to return a PDF path
       const { open } = await import("@tauri-apps/plugin-dialog");
       (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/workspace/paper.pdf");
-
-      // Wait for bib select to load
-      await waitFor(() => {
-        expect(screen.getByTestId("import-pdf-bib-select")).toBeInTheDocument();
-      });
 
       const beforeCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
 
@@ -1620,6 +1604,216 @@ describe("ReferenceLibrary", () => {
     });
   });
 
+  it("reloads entries when lit:bib-items-changed event fires", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    const before = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    fixture = [{ ...sanderson, title: "The Saiva Age (updated)" }, flood, abrams];
+    emitMockEvent("lit:bib-items-changed", {});
+
+    await waitFor(() =>
+      expect(screen.getByText("The Saiva Age (updated)")).toBeInTheDocument(),
+    );
+    const after = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it("shows Delete button in expanded row", async () => {
+    const user = userEvent.setup();
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    expect(screen.getByTestId("delete-entry-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("delete-entry-btn").textContent).toBe("Delete");
+  });
+
+  it("Delete button calls bibDelete and reloads on success", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_delete") return true;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("delete-entry-btn"));
+
+    await waitFor(() => {
+      const call = invokedCommands.find((c) => c.cmd === "bib_delete");
+      expect(call).toBeTruthy();
+      expect(call!.args).toEqual({ citeKey: "sanderson2009", workspacePath: "/workspace" });
+    });
+
+    vi.mocked(window.confirm).mockRestore();
+  });
+
+  it("Delete button shows confirm dialog before deleting", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_delete") return true;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("delete-entry-btn"));
+
+    expect(invokedCommands.find((c) => c.cmd === "bib_delete")).toBeUndefined();
+
+    vi.mocked(window.confirm).mockRestore();
+  });
+
+  it("Delete button shows error toast on failure", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_delete") throw new Error("DB locked");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("delete-entry-btn"));
+
+    await waitFor(() => {
+      expect(useStatusMessageStore.getState().message).toMatch(/DB locked/);
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+
+    vi.mocked(window.confirm).mockRestore();
+  });
+
+  it("shows Edit button in expanded row", async () => {
+    const user = userEvent.setup();
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+
+    expect(screen.getByTestId("edit-entry-btn")).toBeInTheDocument();
+  });
+
+  it("clicking Edit shows inline edit fields with pre-populated values", async () => {
+    const user = userEvent.setup();
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+
+    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
+    expect(titleInput.value).toBe("The Saiva Age");
+    const authorsInput = screen.getByTestId("edit-field-authors") as HTMLInputElement;
+    expect(authorsInput.value).toBe("Sanderson, Alexis");
+    const yearInput = screen.getByTestId("edit-field-year") as HTMLInputElement;
+    expect(yearInput.value).toBe("2009");
+    const journalInput = screen.getByTestId("edit-field-journal") as HTMLInputElement;
+    expect(journalInput.value).toBe("Journal of Indology");
+  });
+
+  it("Edit Cancel returns to display mode", async () => {
+    const user = userEvent.setup();
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+    expect(screen.getByTestId("edit-field-title")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("edit-cancel-btn"));
+    expect(screen.queryByTestId("edit-field-title")).not.toBeInTheDocument();
+    // Static display should be restored — title text visible (in both collapsed row and expanded card)
+    expect(screen.getAllByText("The Saiva Age").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("Edit Save calls bibUpdateFields and reloads", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_update_fields") return true;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+
+    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
+    await user.clear(titleInput);
+    await user.type(titleInput, "Updated Title");
+
+    const beforeCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+
+    await user.click(screen.getByTestId("edit-save-btn"));
+
+    await waitFor(() => {
+      const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+      expect(call).toBeTruthy();
+      expect(call!.args).toMatchObject({
+        citeKey: "sanderson2009",
+        workspacePath: "/workspace",
+      });
+    });
+    await waitFor(() => {
+      const afterCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+      expect(afterCount).toBeGreaterThan(beforeCount);
+    });
+    // Edit mode should be exited
+    expect(screen.queryByTestId("edit-field-title")).not.toBeInTheDocument();
+  });
+
+  it("Edit Save shows error toast on failure", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_update_fields") throw new Error("Update failed");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+    await user.click(screen.getByTestId("edit-save-btn"));
+
+    await waitFor(() => {
+      expect(useStatusMessageStore.getState().message).toMatch(/Update failed/);
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+  });
+
   describe("Drag-drop", () => {
     /** Mock the panel's bounding rect so checkHit succeeds for drops at (50,50). */
     function mockPanelHitArea() {
@@ -1686,7 +1880,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+
         if (cmd === "recognize_pdf") return resolvedResult;
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -1766,7 +1960,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+
         if (cmd === "recognize_pdf") return recognizePromise;
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -1813,7 +2007,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+
         if (cmd === "recognize_pdf") return recognizePromise;
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -1934,7 +2128,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
+
         if (cmd === "recognize_pdf") return resolvedResult;
         throw new Error(`Unknown command: ${cmd}`);
       });

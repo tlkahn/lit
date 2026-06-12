@@ -3,6 +3,16 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+static ARXIV_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"arxiv\.org/abs/([a-zA-Z\-]+/\d{7}(?:v\d+)?|\d{4}\.\d{4,6}(?:v\d+)?)").unwrap()
+});
+
+pub(crate) fn extract_arxiv_id_from_url(url: &str) -> Option<String> {
+    ARXIV_URL_RE
+        .captures(url)
+        .map(|caps| caps[1].to_string())
+}
+
 pub(crate) static ENTRY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*@(\w+)\s*\{(.+)").unwrap());
 
@@ -112,6 +122,23 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
             pages: fields.get("pages").cloned(),
             publisher: fields.get("publisher").cloned(),
             issn: fields.get("issn").cloned(),
+            isbn: fields.get("isbn").cloned(),
+            arxiv_id: {
+                let eprint = fields.get("eprint").cloned();
+                let archive_prefix = fields.get("archiveprefix").cloned();
+                if let Some(ref ep) = eprint {
+                    if archive_prefix
+                        .as_deref()
+                        .map_or(false, |p| p.eq_ignore_ascii_case("arxiv"))
+                    {
+                        Some(ep.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    fields.get("url").and_then(|u| extract_arxiv_id_from_url(u))
+                }
+            },
             tags: match fields.get("keywords") {
                 Some(kw) => kw
                     .split(',')
@@ -644,5 +671,71 @@ mod tests {
         assert_eq!(find_value_end("{unclosed", 0), None);
         assert_eq!(find_value_end("\"unclosed", 0), None);
         assert_eq!(find_value_end("", 0), None);
+    }
+
+    // ── isbn / arxiv_id tests ──────────────────────────────────────
+
+    #[test]
+    fn parse_extracts_isbn_field() {
+        let input = "@book{b2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  isbn = {978-0-306-40615-7}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].isbn, Some("978-0-306-40615-7".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_arxiv_eprint_with_archiveprefix() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  eprint = {2301.07041},\n  archiveprefix = {arXiv}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn parse_eprint_without_archiveprefix_ignored() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  eprint = {2301.07041}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, None);
+    }
+
+    #[test]
+    fn parse_eprint_with_wrong_archiveprefix_ignored() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  eprint = {2301.07041},\n  archiveprefix = {HAL}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, None);
+    }
+
+    #[test]
+    fn parse_arxiv_id_from_url_fallback() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  url = {https://arxiv.org/abs/2301.07041}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_id_from_url_old_style() {
+        let input = "@article{a2007,\n  author = {Smith, John},\n  title = {T},\n  year = {2007},\n  url = {https://arxiv.org/abs/hep-ph/0703105v1}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, Some("hep-ph/0703105v1".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_id_no_eprint_no_url() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  url = {https://example.com}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, None);
+    }
+
+    #[test]
+    fn parse_isbn_and_arxiv_id_both_none_by_default() {
+        let input = "@article{a2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].isbn, None);
+        assert_eq!(entries[0].arxiv_id, None);
+    }
+
+    #[test]
+    fn parse_archiveprefix_case_insensitive() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  eprint = {2301.07041},\n  archiveprefix = {ARXIV}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, Some("2301.07041".to_string()));
     }
 }

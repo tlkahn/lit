@@ -161,7 +161,17 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         issn: None,
     };
 
-    Ok(csl_to_bib_entry(&csl_item))
+    let mut entry = csl_to_bib_entry(&csl_item);
+    if let Some(ref url_str) = entry.url {
+        let marker = "/abs/";
+        if let Some(pos) = url_str.find(marker) {
+            let id = &url_str[pos + marker.len()..];
+            if !id.is_empty() {
+                entry.arxiv_id = Some(id.to_string());
+            }
+        }
+    }
+    Ok(entry)
 }
 
 /// Resolve an arXiv ID to a `BibEntry` by fetching metadata from the arXiv API.
@@ -441,6 +451,24 @@ mod tests {
         assert_eq!(name.family, Some("Aristotle".to_string()));
         assert_eq!(name.given, None);
         assert_eq!(name.literal, None);
+    }
+
+    #[test]
+    fn parse_arxiv_atom_sets_arxiv_id() {
+        let entry = parse_arxiv_atom(SINGLE_AUTHOR_XML).expect("should parse");
+        assert_eq!(entry.arxiv_id, Some("2301.07041v2".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_atom_old_style_sets_arxiv_id() {
+        let entry = parse_arxiv_atom(OLD_STYLE_ID_XML).expect("should parse");
+        assert_eq!(entry.arxiv_id, Some("hep-ph/0703105v1".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_atom_isbn_is_none() {
+        let entry = parse_arxiv_atom(SINGLE_AUTHOR_XML).expect("should parse");
+        assert_eq!(entry.isbn, None);
     }
 
     #[test]

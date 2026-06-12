@@ -7,7 +7,7 @@ import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
-import { livePreviewExtension, frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePreview";
+import { livePreviewExtension, frontmatterFacet, noteDirFacet, notePathFacet, mediaThumbnailsFacet } from "./livePreview";
 import { foldExtension, type FoldConfig } from "./fold";
 import { focusModeExtension } from "./focusMode";
 import { annotationExtension } from "./livePreview/annotationState";
@@ -28,6 +28,7 @@ export interface ExtensionConfig {
   foldConfig?: FoldConfig;
   crossrefCompartment: Compartment;
   noteDirCompartment: Compartment;
+  notePathCompartment: Compartment;
   mediaThumbnailsCompartment: Compartment;
   annotationCompartment: Compartment;
   annotationEnabled?: boolean;
@@ -37,6 +38,7 @@ export interface ExtensionConfig {
   editorLocked?: boolean;
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  notePath?: string;
   mediaThumbnails?: boolean;
   keymapBindings?: import("@codemirror/view").KeyBinding[];
   onChange?: (content: string) => void;
@@ -58,6 +60,7 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     livePreviewExtension({ openUrl: config.openUrl, openFilePath: config.openFilePath, resolveImageSrc: config.resolveImageSrc, navigateToPage: config.navigateToPage }),
     config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.noteDirCompartment.of(noteDirFacet.of(config.noteDir ?? "")),
+    config.notePathCompartment.of(notePathFacet.of(config.notePath ?? "")),
     config.mediaThumbnailsCompartment.of(mediaThumbnailsFacet.of(config.mediaThumbnails ?? true)),
     config.annotationCompartment.of(
       (config.annotationEnabled ?? true) ? annotationExtension() : [],

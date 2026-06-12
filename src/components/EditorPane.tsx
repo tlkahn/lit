@@ -264,6 +264,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         onViewChange={handleViewChange}
         keymapBindings={editorBindings}
         noteDir={noteDir}
+        notePath={pagePath ?? ""}
         resolveImageSrc={resolveImageSrc}
         openFilePath={openFilePath}
         navigateToPage={navigateToPage}

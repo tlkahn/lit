@@ -6,7 +6,7 @@ import { createExtensions } from "./extensions";
 import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
 import { focusModeExtension } from "./focusMode";
-import { frontmatterFacet, noteDirFacet, mediaThumbnailsFacet } from "./livePreview";
+import { frontmatterFacet, noteDirFacet, notePathFacet, mediaThumbnailsFacet } from "./livePreview";
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
@@ -23,6 +23,7 @@ export interface UseCodeMirrorProps {
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
+  notePath?: string;
   openFilePath?: (path: string) => void;
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
@@ -30,7 +31,7 @@ export interface UseCodeMirrorProps {
 export function useCodeMirror(props: UseCodeMirrorProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, onChange, onSelectionChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, openFilePath, navigateToPage } = props;
+  const { containerRef, doc, onChange, onSelectionChange, resolveImageSrc, onDocReplaced, keymapBindings, frontmatter, noteDir, notePath, openFilePath, navigateToPage } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
@@ -38,6 +39,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const foldCompartment = useRef(new Compartment());
   const crossrefCompartment = useRef(new Compartment());
   const noteDirCompartment = useRef(new Compartment());
+  const notePathCompartment = useRef(new Compartment());
   const annotationCompartment = useRef(new Compartment());
   const mediaThumbnailsCompartment = useRef(new Compartment());
   const focusModeCompartment = useRef(new Compartment());
@@ -71,6 +73,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       foldCompartment: foldCompartment.current,
       crossrefCompartment: crossrefCompartment.current,
       noteDirCompartment: noteDirCompartment.current,
+      notePathCompartment: notePathCompartment.current,
       annotationCompartment: annotationCompartment.current,
       annotationEnabled,
       mediaThumbnailsCompartment: mediaThumbnailsCompartment.current,
@@ -82,6 +85,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
       noteDir,
+      notePath,
       keymapBindings,
       onChange: (content) => {
         if (!suppressOnChange.current) {
@@ -265,6 +269,16 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       ),
     });
   }, [noteDir]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    v.dispatch({
+      effects: notePathCompartment.current.reconfigure(
+        notePathFacet.of(notePath ?? ""),
+      ),
+    });
+  }, [notePath]);
 
   return { view };
 }

@@ -749,6 +749,8 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
+            arxiv_id: None,
             tags: vec![],
         }
     }

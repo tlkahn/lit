@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 17;
+pub const CURRENT_SCHEMA_VERSION: i64 = 18;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -178,7 +178,9 @@ impl Store {
                 "schema version from the future — resetting store"
             );
             self.conn.execute_batch(
-                "DROP TABLE IF EXISTS conversation_messages;
+                "DROP TABLE IF EXISTS bib_source_files;
+                 DROP TABLE IF EXISTS bib_items;
+                 DROP TABLE IF EXISTS conversation_messages;
                  DROP TABLE IF EXISTS conversations;
                  DROP TABLE IF EXISTS annotations_fts;
                  DROP TABLE IF EXISTS annotations;
@@ -461,6 +463,53 @@ impl Store {
                  END;
 
                  UPDATE meta SET value = '17' WHERE key = 'schema_version';"
+            )?;
+        }
+
+        if version < 18 {
+            info!(from = version, to = 18, "migrating schema: adding bib_items and bib_source_files");
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS bib_items (
+                    id INTEGER PRIMARY KEY,
+                    cite_key TEXT NOT NULL UNIQUE,
+                    entry_type TEXT NOT NULL,
+                    title TEXT,
+                    authors TEXT,
+                    year TEXT,
+                    doi TEXT,
+                    isbn TEXT,
+                    arxiv_id TEXT,
+                    url TEXT,
+                    journal TEXT,
+                    publisher TEXT,
+                    abstract TEXT,
+                    issn TEXT,
+                    volume TEXT,
+                    number TEXT,
+                    pages TEXT,
+                    file TEXT,
+                    tags TEXT,
+                    raw_bibtex TEXT,
+                    source_file TEXT,
+                    source_line INTEGER,
+                    deleted_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_bib_doi
+                    ON bib_items(doi) WHERE doi IS NOT NULL AND deleted_at IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_bib_isbn
+                    ON bib_items(isbn) WHERE isbn IS NOT NULL AND deleted_at IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_bib_arxiv
+                    ON bib_items(arxiv_id) WHERE arxiv_id IS NOT NULL AND deleted_at IS NULL;
+                CREATE INDEX IF NOT EXISTS idx_bib_deleted
+                    ON bib_items(deleted_at);
+                CREATE TABLE IF NOT EXISTS bib_source_files (
+                    path TEXT PRIMARY KEY,
+                    mtime INTEGER NOT NULL,
+                    last_ingested TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                UPDATE meta SET value = '18' WHERE key = 'schema_version';"
             )?;
         }
 
@@ -1555,6 +1604,8 @@ mod tests {
         assert!(tables.contains(&"edges".to_string()));
         assert!(tables.contains(&"sync".to_string()));
         assert!(tables.contains(&"meta".to_string()));
+        assert!(tables.contains(&"bib_items".to_string()));
+        assert!(tables.contains(&"bib_source_files".to_string()));
     }
 
     // --- with_savepoint ---
@@ -1687,7 +1738,7 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
-        for table in &["annotations", "annotations_fts", "node_positions"] {
+        for table in &["annotations", "annotations_fts", "node_positions", "bib_items", "bib_source_files"] {
             let count: i64 = store.conn.query_row(
                 &format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0),
             ).unwrap();
@@ -3122,8 +3173,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_seventeen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 17);
+    fn schema_version_is_eighteen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 18);
     }
 
     #[test]
@@ -5089,5 +5140,242 @@ mod tests {
             err_msg.contains("is_stub inconsistent with materialization"),
             "unexpected error message: {err_msg}"
         );
+    }
+
+    // --- Phase 1: bib_items / bib_source_files ---
+
+    #[test]
+    fn bib_items_table_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bib_items'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn bib_source_files_table_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bib_source_files'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn bib_items_cite_key_unique_constraint() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type) VALUES ('smith2024', 'article')",
+            [],
+        ).unwrap();
+        let result = store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type) VALUES ('smith2024', 'book')",
+            [],
+        );
+        assert!(result.is_err(), "duplicate cite_key should be rejected");
+    }
+
+    #[test]
+    fn bib_items_doi_unique_for_live_rows() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, doi) VALUES ('a2024', 'article', '10.1234/foo')",
+            [],
+        ).unwrap();
+        let result = store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, doi) VALUES ('b2024', 'article', '10.1234/foo')",
+            [],
+        );
+        assert!(result.is_err(), "duplicate doi among live rows should be rejected");
+
+        // Tombstoned row + live row with same doi should coexist
+        store.conn.execute("DELETE FROM bib_items WHERE cite_key = 'a2024'", []).unwrap();
+        store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, doi, deleted_at) VALUES ('a2024', 'article', '10.1234/foo', '2025-01-01')",
+            [],
+        ).unwrap();
+        let result2 = store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, doi) VALUES ('c2024', 'article', '10.1234/foo')",
+            [],
+        );
+        assert!(result2.is_ok(), "live row should coexist with tombstoned row having same doi");
+    }
+
+    #[test]
+    fn bib_items_isbn_unique_for_live_rows() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, isbn) VALUES ('a2024', 'book', '978-3-16-148410-0')",
+            [],
+        ).unwrap();
+        let result = store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, isbn) VALUES ('b2024', 'book', '978-3-16-148410-0')",
+            [],
+        );
+        assert!(result.is_err(), "duplicate isbn among live rows should be rejected");
+    }
+
+    #[test]
+    fn bib_items_arxiv_unique_for_live_rows() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, arxiv_id) VALUES ('a2024', 'article', '2301.12345')",
+            [],
+        ).unwrap();
+        let result = store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type, arxiv_id) VALUES ('b2024', 'article', '2301.12345')",
+            [],
+        );
+        assert!(result.is_err(), "duplicate arxiv_id among live rows should be rejected");
+    }
+
+    #[test]
+    fn bib_items_deleted_at_index_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bib_deleted'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn bib_items_timestamps_default() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO bib_items(cite_key, entry_type) VALUES ('smith2024', 'article')",
+            [],
+        ).unwrap();
+        let (created, updated): (String, String) = store.conn.query_row(
+            "SELECT created_at, updated_at FROM bib_items WHERE cite_key = 'smith2024'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert!(!created.is_empty(), "created_at should have a default value");
+        assert!(!updated.is_empty(), "updated_at should have a default value");
+    }
+
+    #[test]
+    fn bib_source_files_mtime_required() {
+        let store = Store::open_memory().unwrap();
+        let result = store.conn.execute(
+            "INSERT INTO bib_source_files(path) VALUES ('refs.bib')",
+            [],
+        );
+        assert!(result.is_err(), "inserting into bib_source_files without mtime should fail");
+    }
+
+    #[test]
+    fn v17_to_v18_migration_creates_bib_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT '', materialization TEXT NOT NULL DEFAULT 'materialized'
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '',
+                    source_line INTEGER DEFAULT 0, edge_kind TEXT NOT NULL DEFAULT 'wikilink');
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL, uuid TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL);
+                INSERT INTO meta(key, value) VALUES ('schema_version', '17');",
+            ).unwrap();
+
+            conn.execute(
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                 VALUES ('a.md', 'Alpha', 'p1', '{}', 1, 0)",
+                [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        let bib_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bib_items'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(bib_count, 1, "bib_items table should exist after v18 migration");
+
+        let bsf_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bib_source_files'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(bsf_count, 1, "bib_source_files table should exist after v18 migration");
+
+        // Pre-existing data survives
+        let title: String = store.conn.query_row(
+            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(title, "Alpha");
+
+        // Partial unique indexes exist
+        for idx_name in &["idx_bib_doi", "idx_bib_isbn", "idx_bib_arxiv", "idx_bib_deleted"] {
+            let idx: i64 = store.conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                [idx_name],
+                |r| r.get(0),
+            ).unwrap();
+            assert_eq!(idx, 1, "index {idx_name} should exist after v18 migration");
+        }
+    }
+
+    #[test]
+    fn future_version_drops_bib_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let store = Store::open(&db_path).unwrap();
+            store.conn.execute(
+                "INSERT INTO bib_items(cite_key, entry_type) VALUES ('smith2024', 'article')",
+                [],
+            ).unwrap();
+            store.conn.execute(
+                "INSERT INTO bib_source_files(path, mtime) VALUES ('refs.bib', 1700000000)",
+                [],
+            ).unwrap();
+            store.conn.execute(
+                "UPDATE meta SET value = '999' WHERE key = 'schema_version'", [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        for table in &["bib_items", "bib_source_files"] {
+            let count: i64 = store.conn.query_row(
+                &format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 0, "table {} should be empty after future-schema reset", table);
+        }
     }
 }

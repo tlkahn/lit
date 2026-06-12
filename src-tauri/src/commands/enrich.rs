@@ -3,18 +3,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
-use crate::bib::cache::BibCache;
+use crate::bib::db::{self, UpsertOutcome};
 use crate::bib::semantic_scholar::{
     lookup_by_doi_with_base as s2_lookup_by_doi_with_base, s2_paper_to_bib_entry,
     s2_ref_to_bib_entry, search_by_title_with_base, S2Paper,
 };
 use crate::bib::types::BibEntry;
-use crate::bib::writer::{append_entries_to_file, update_entry_fields, SaveOutcome};
-use crate::commands::bib::build_bib_index;
 use crate::commands::bib_import::{fetch_crossref_by_doi, HTTP_CLIENT};
 use crate::commands::graph::GraphRegistry;
+use crate::commands::page::lookup_graph_index;
 
 const MAX_REFERENCES: usize = 30;
 
@@ -128,23 +127,19 @@ async fn fetch_s2_with_base(
 pub async fn enrich_bib_entry(
     bib_key: String,
     workspace_path: String,
-    cache: State<'_, BibCache>,
     graph_state: State<'_, Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<EnrichResult, String> {
     let root = PathBuf::from(&workspace_path);
-    let index = build_bib_index(&root, &cache);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
 
-    let existing = index
-        .get(&bib_key)
-        .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
-        .clone();
-
-    let bib_file_str = existing
-        .bib_file
-        .as_ref()
-        .ok_or_else(|| format!("Entry '{}' has no bib_file path", bib_key))?;
-    let bib_path = PathBuf::from(bib_file_str);
+    let existing = {
+        let store = gi.store();
+        db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
+    };
 
     // Fetch from CrossRef (non-fatal on failure)
     let crossref_entry = if let Some(ref doi) = existing.doi {
@@ -162,15 +157,17 @@ pub async fn enrich_bib_entry(
     let new_fields = merge_enrichment_fields(&existing, crossref_entry.as_ref(), s2_entry);
     let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
 
-    // Update entry fields if any new fields were found
+    // Update entry fields via DB if any new fields were found
     if !new_fields.is_empty() {
-        let modified = update_entry_fields(&bib_path, &bib_key, &new_fields, &cache)?;
+        let store = gi.store();
+        let modified = db::update_bib_fields(&store.conn, &bib_key, &new_fields)
+            .map_err(|e| e.to_string())?;
         if !modified {
             fields_added.clear();
         }
     }
 
-    // Append S2 references as minimal BibEntries
+    // Append S2 references as minimal BibEntries via DB
     let mut shadow_nodes_created: usize = 0;
     let mut references_appended: usize = 0;
     let references_found;
@@ -187,15 +184,14 @@ pub async fn enrich_bib_entry(
                 .collect();
             references_appended = ref_entries.len();
 
-            let outcomes =
-                append_entries_to_file(&ref_entries, &bib_path, &root, &cache)?;
-
-            shadow_nodes_created = outcomes
-                .iter()
-                .filter(|o| {
-                    matches!(o, SaveOutcome::Saved { .. } | SaveOutcome::SavedNoDoi { .. })
-                })
-                .count();
+            let store = gi.store();
+            for ref_entry in &ref_entries {
+                let outcome = db::upsert_bib_item(&store.conn, ref_entry, None, None, false)
+                    .map_err(|e| e.to_string())?;
+                if matches!(outcome, UpsertOutcome::Inserted { .. } | UpsertOutcome::Updated { .. }) {
+                    shadow_nodes_created += 1;
+                }
+            }
         }
     } else {
         references_found = 0;
@@ -204,12 +200,16 @@ pub async fn enrich_bib_entry(
     // Refresh shadows in the graph index
     crate::commands::graph::refresh_graph_shadows(&graph_state, &root, &app_handle);
 
-    // Re-read the entry to get the enriched version
-    let updated_index = build_bib_index(&root, &cache);
-    let updated_entry = updated_index
-        .get(&bib_key)
-        .cloned()
-        .unwrap_or(existing);
+    // Emit bib-items-changed event
+    let _ = app_handle.emit("lit:bib-items-changed", ());
+
+    // Re-read the entry from DB to get the enriched version
+    let updated_entry = {
+        let store = gi.store();
+        db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .unwrap_or(existing)
+    };
 
     Ok(EnrichResult {
         entry: updated_entry,
@@ -225,6 +225,7 @@ mod tests {
     use super::*;
     use crate::bib::cache::BibCache;
     use crate::bib::types::BibEntry;
+    use crate::bib::writer::{append_entries_to_file, update_entry_fields};
     use std::fs;
     use tempfile::TempDir;
 
@@ -247,6 +248,8 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
+            arxiv_id: None,
             tags: vec![],
         };
         overrides(&mut entry);
@@ -754,5 +757,97 @@ mod tests {
 
         assert!(!fields_added.is_empty(), "fields_added should still contain the added field");
         assert!(fields_added.contains(&"doi".to_string()));
+    }
+
+    // ── DB enrichment pipeline tests ─────────────────────────────
+
+    #[test]
+    fn enrichment_pipeline_with_db() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+        let mut existing = make_entry(|e| {
+            e.key = "smith2024".to_string();
+            e.doi = Some("10.1/existing".to_string());
+        });
+        db::upsert_bib_item(&store.conn, &existing, None, None, false).unwrap();
+
+        // Simulate CrossRef result
+        let crossref = make_entry(|e| {
+            e.abstract_text = Some("Enriched abstract".to_string());
+            e.url = Some("https://enriched.example.com".to_string());
+        });
+
+        // Simulate S2 result
+        let s2 = make_entry(|e| {
+            e.journal = Some("Nature".to_string());
+        });
+
+        let new_fields = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
+        assert!(new_fields.contains_key("abstract"));
+        assert!(new_fields.contains_key("url"));
+        assert!(new_fields.contains_key("journal"));
+
+        // Apply enrichment fields via DB
+        let updated = db::update_bib_fields(&store.conn, "smith2024", &new_fields).unwrap();
+        assert!(updated);
+
+        let fetched = db::get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.abstract_text, Some("Enriched abstract".to_string()));
+        assert_eq!(fetched.url, Some("https://enriched.example.com".to_string()));
+        assert_eq!(fetched.journal, Some("Nature".to_string()));
+        // Existing doi should be untouched
+        assert_eq!(fetched.doi, Some("10.1/existing".to_string()));
+
+        // Append reference entries via DB
+        let ref_entries = vec![
+            make_entry(|e| {
+                e.key = "ref1".to_string();
+                e.title = "Reference Paper 1".to_string();
+                e.doi = Some("10.1/ref1".to_string());
+            }),
+            make_entry(|e| {
+                e.key = "ref2".to_string();
+                e.title = "Reference Paper 2".to_string();
+            }),
+        ];
+
+        let mut shadow_count = 0usize;
+        for ref_entry in &ref_entries {
+            let outcome = db::upsert_bib_item(&store.conn, ref_entry, None, None, false).unwrap();
+            if matches!(outcome, db::UpsertOutcome::Inserted { .. } | db::UpsertOutcome::Updated { .. }) {
+                shadow_count += 1;
+            }
+        }
+        assert_eq!(shadow_count, 2);
+        assert_eq!(db::list_bib_items(&store.conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn enrich_bib_file_untouched() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let dir = TempDir::new().unwrap();
+        let bib_path = dir.path().join("refs.bib");
+        let original_content = "@article{smith2024,\n  author = {Smith, John},\n  title = {Test Paper},\n  year = {2024},\n  doi = {10.1/existing}\n}\n";
+        fs::write(&bib_path, original_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let existing = make_entry(|e| {
+            e.key = "smith2024".to_string();
+            e.doi = Some("10.1/existing".to_string());
+        });
+        db::upsert_bib_item(&store.conn, &existing, None, None, false).unwrap();
+
+        // Simulate enrichment via DB only
+        let mut fields = HashMap::new();
+        fields.insert("abstract".to_string(), "New abstract".to_string());
+        db::update_bib_fields(&store.conn, "smith2024", &fields).unwrap();
+
+        // The .bib file content should remain unchanged
+        let file_content = fs::read_to_string(&bib_path).unwrap();
+        assert_eq!(file_content, original_content, ".bib file should be untouched by DB enrichment");
     }
 }
