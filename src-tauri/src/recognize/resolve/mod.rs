@@ -8,6 +8,7 @@ use crate::recognize::identifiers::ExtractedIdentifiers;
 pub mod arxiv;
 pub mod crossref_search;
 pub mod doi;
+pub mod isbn;
 pub mod title_match;
 
 #[derive(Debug)]
@@ -34,6 +35,8 @@ pub enum ResolutionSource {
     DoiContentNegotiation,
     CrossrefApi,
     ArxivApi,
+    OpenLibraryApi,
+    GoogleBooksApi,
     CrossrefTitleSearch,
 }
 
@@ -81,6 +84,8 @@ pub async fn resolve_to_bib_entry(
         "https://doi.org",
         "https://api.crossref.org",
         "https://export.arxiv.org",
+        "https://openlibrary.org",
+        "https://www.googleapis.com",
     )
     .await
 }
@@ -187,6 +192,8 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
     doi_base_url: &str,
     crossref_base_url: &str,
     arxiv_base_url: &str,
+    open_library_base_url: &str,
+    google_books_base_url: &str,
 ) -> Result<Option<ResolvedMetadata>, ResolveError> {
     // Step 1: DOI resolution
     if let Some(ref doi_str) = identifiers.doi {
@@ -230,7 +237,24 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
         }
     }
 
-    // Step 3: CrossRef title search
+    // Step 3: ISBN resolution (Open Library → Google Books)
+    if let Some(ref isbn_str) = identifiers.isbn {
+        match isbn::resolve_isbn_with_base(client, isbn_str, open_library_base_url, google_books_base_url).await {
+            Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
+            Ok((entry, path)) => {
+                let source = match path {
+                    isbn::IsbnPath::OpenLibrary => ResolutionSource::OpenLibraryApi,
+                    isbn::IsbnPath::GoogleBooks => ResolutionSource::GoogleBooksApi,
+                };
+                if let Some(meta) = accept_candidate(entry, source, extracted_title, true, &[]) {
+                    return Ok(Some(meta));
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "ISBN resolution failed, falling through"),
+        }
+    }
+
+    // Step 4: CrossRef title search
     if let Some(title) = extracted_title {
         let authors: Vec<String> = identifiers
             .jstor_metadata
@@ -331,6 +355,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -397,6 +423,8 @@ mod tests {
             &doi_server.uri(),
             &doi_server.uri(),
             &arxiv_server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -444,6 +472,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -465,6 +495,8 @@ mod tests {
             None,
             true,
             "http://localhost:1", // unreachable, but won't be called
+            "http://localhost:1",
+            "http://localhost:1",
             "http://localhost:1",
             "http://localhost:1",
         )
@@ -531,6 +563,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -572,6 +606,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -615,6 +651,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -665,6 +703,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -716,6 +756,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -749,6 +791,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         }
     }
@@ -1140,6 +1183,8 @@ mod tests {
             &doi_server.uri(),
             &doi_server.uri(),
             &arxiv_server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -1195,5 +1240,165 @@ mod tests {
         let json = serde_json::to_value(&meta_skipped).unwrap();
         assert_eq!(json["validation"], "skipped");
         assert!(json.get("cross_validated").is_none());
+    }
+
+    // --- ISBN cascade tests ---
+
+    #[tokio::test]
+    async fn isbn_resolves_via_open_library_when_no_doi_or_arxiv() {
+        let ol_server = MockServer::start().await;
+        let client = test_client();
+
+        let ol_response = r#"{"ISBN:9780306406157":{"title":"Fundamentals of Wavelets","authors":[{"name":"Jaideva Goswami"}],"publishers":[{"name":"Wiley"}],"publish_date":"1999","identifiers":{"isbn_13":["9780306406157"]}}}"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_response))
+            .mount(&ol_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            None,
+            true,
+            "http://localhost:1",
+            "http://localhost:1",
+            "http://localhost:1",
+            &ol_server.uri(),
+            "http://localhost:1",
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(meta.source, ResolutionSource::OpenLibraryApi);
+        assert_eq!(meta.entry.title, "Fundamentals of Wavelets");
+        assert_eq!(meta.entry.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[tokio::test]
+    async fn doi_resolves_first_isbn_not_called() {
+        let doi_server = MockServer::start().await;
+        let isbn_server = MockServer::start().await;
+        let client = test_client();
+
+        let csl_json = r#"{
+            "type": "journal-article",
+            "title": "Probing condensed matter physics",
+            "author": [{"family": "Kucsko", "given": "Georg"}],
+            "container-title": "Nature",
+            "issued": {"date-parts": [[2013]]},
+            "DOI": "10.1038/nature12373"
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/10.1038/nature12373"))
+            .and(header("Accept", "application/vnd.citationstyles.csl+json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(csl_json))
+            .mount(&doi_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&isbn_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            doi: Some("10.1038/nature12373".to_string()),
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            None,
+            true,
+            &doi_server.uri(),
+            &doi_server.uri(),
+            "http://localhost:1",
+            &isbn_server.uri(),
+            &isbn_server.uri(),
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(meta.source, ResolutionSource::DoiContentNegotiation);
+    }
+
+    #[tokio::test]
+    async fn isbn_empty_title_falls_through_to_title_search() {
+        let ol_server = MockServer::start().await;
+        let crossref_server = MockServer::start().await;
+        let client = test_client();
+
+        // Open Library returns a book with empty title — should be rejected
+        let ol_response = r#"{"ISBN:9780306406157":{"title":"","authors":[{"name":"Someone"}],"publishers":[{"name":"Pub"}],"publish_date":"2000","identifiers":{"isbn_13":["9780306406157"]}}}"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_response))
+            .mount(&ol_server)
+            .await;
+
+        // Google Books also returns empty — ISBN fully fails
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"totalItems":0,"items":[]}"#),
+            )
+            .mount(&ol_server)
+            .await;
+
+        // CrossRef title search picks it up
+        let crossref_response = r#"{
+            "status": "ok",
+            "message": {
+                "items": [{
+                    "title": ["Fundamentals of Wavelets"],
+                    "author": [{"family": "Goswami", "given": "Jaideva"}],
+                    "container-title": ["Wiley"],
+                    "issued": {"date-parts": [[1999]]},
+                    "type": "journal-article",
+                    "DOI": "10.1000/test123"
+                }]
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/works"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(crossref_response))
+            .mount(&crossref_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            Some("Fundamentals of Wavelets"),
+            false,
+            "http://localhost:1",
+            &crossref_server.uri(),
+            "http://localhost:1",
+            &ol_server.uri(),
+            &ol_server.uri(),
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(meta.source, ResolutionSource::CrossrefTitleSearch);
     }
 }

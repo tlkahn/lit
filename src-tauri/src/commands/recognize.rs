@@ -101,6 +101,7 @@ fn build_prefilled_entry(ids: &ExtractedIdentifiers, file: &str) -> BibEntry {
         pages: None,
         publisher: None,
         issn: ids.issn.clone(),
+        isbn: ids.isbn.clone(),
         tags: vec![],
     };
 
@@ -301,6 +302,7 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
                 tags: vec![],
             },
         };
@@ -338,6 +340,7 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
                 tags: vec![],
             },
             file: "assets/pdf/scanned.pdf".to_string(),
@@ -369,6 +372,7 @@ mod tests {
                 pages: None,
                 publisher: None,
                 issn: None,
+                isbn: None,
                 tags: vec![],
             },
             file: "test.pdf".to_string(),
@@ -564,6 +568,8 @@ mod tests {
             &server.uri(),
             &server.uri(),
             &server.uri(),
+            "http://localhost:1",
+            "http://localhost:1",
         )
         .await;
 
@@ -634,6 +640,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let outcomes =

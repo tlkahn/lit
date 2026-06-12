@@ -417,6 +417,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let results = append_entries_to_file(
@@ -459,6 +460,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let results = append_entries_to_file(
@@ -503,6 +505,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         };
         let results = append_entries_to_file(

@@ -88,6 +88,11 @@ pub fn serialize_bib_entry(entry: &BibEntry) -> String {
         out.push_str(&format!("  issn = {{{}}},\n", sanitize_bib_value(issn)));
     }
 
+    // isbn
+    if let Some(ref isbn) = entry.isbn {
+        out.push_str(&format!("  isbn = {{{}}},\n", sanitize_bib_value(isbn)));
+    }
+
     // abstract
     if let Some(ref abstract_text) = entry.abstract_text {
         out.push_str(&format!("  abstract = {{{}}},\n", sanitize_bib_value(abstract_text)));
@@ -516,6 +521,7 @@ mod tests {
             pages: Some("100--115".to_string()),
             publisher: Some("Nature Publishing".to_string()),
             issn: None,
+            isbn: None,
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -540,6 +546,7 @@ mod tests {
             pages: None,
             publisher: None,
             issn: None,
+            isbn: None,
             tags: vec![],
         }
     }

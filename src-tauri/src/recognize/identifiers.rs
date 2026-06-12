@@ -160,6 +160,45 @@ pub fn clean_isbn(raw: &str) -> Option<String> {
     }
 }
 
+pub fn isbn10_to_isbn13(isbn10: &str) -> Option<String> {
+    let cleaned = strip_isbn_separators(isbn10);
+    if cleaned.len() != 10 {
+        return None;
+    }
+    let body = &cleaned[..9];
+    if !body.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let isbn13_body = format!("978{}", body);
+    let sum: u32 = isbn13_body
+        .bytes()
+        .enumerate()
+        .map(|(i, b)| {
+            let d = (b - b'0') as u32;
+            if i % 2 == 0 { d } else { d * 3 }
+        })
+        .sum();
+    let check = (10 - (sum % 10)) % 10;
+    Some(format!("{}{}", isbn13_body, check))
+}
+
+pub fn normalize_to_isbn13(isbn: &str) -> Option<String> {
+    let cleaned = strip_isbn_separators(isbn);
+    match cleaned.len() {
+        13 => {
+            if validate_isbn_13(&cleaned.bytes().map(|b| {
+                if b == b'X' || b == b'x' { 10 } else { b - b'0' }
+            }).collect::<Vec<_>>()) {
+                Some(cleaned)
+            } else {
+                None
+            }
+        }
+        10 => isbn10_to_isbn13(&cleaned),
+        _ => None,
+    }
+}
+
 pub fn validate_issn(s: &str) -> bool {
     let cleaned: String = s.chars().filter(|&c| c != '-').collect();
     if cleaned.len() != 8 {
@@ -2121,5 +2160,63 @@ mod tests {
         ];
         let (doi, _metadata) = try_jstor_cover(&pages);
         assert_eq!(doi, Some("10.1086/599247".to_string()));
+    }
+
+    #[test]
+    fn isbn10_to_isbn13_known_pair() {
+        assert_eq!(
+            isbn10_to_isbn13("0306406152"),
+            Some("9780306406157".to_string())
+        );
+    }
+
+    #[test]
+    fn isbn10_to_isbn13_with_hyphens() {
+        assert_eq!(
+            isbn10_to_isbn13("0-306-40615-2"),
+            Some("9780306406157".to_string())
+        );
+    }
+
+    #[test]
+    fn isbn10_to_isbn13_trailing_x() {
+        assert_eq!(
+            isbn10_to_isbn13("080442957X"),
+            Some("9780804429573".to_string())
+        );
+    }
+
+    #[test]
+    fn isbn10_to_isbn13_wrong_length() {
+        assert_eq!(isbn10_to_isbn13("12345"), None);
+    }
+
+    #[test]
+    fn normalize_to_isbn13_passthrough_valid_13() {
+        assert_eq!(
+            normalize_to_isbn13("9780306406157"),
+            Some("9780306406157".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_to_isbn13_converts_isbn10() {
+        assert_eq!(
+            normalize_to_isbn13("0306406152"),
+            Some("9780306406157".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_to_isbn13_rejects_invalid_13() {
+        assert_eq!(normalize_to_isbn13("9780306406158"), None);
+    }
+
+    #[test]
+    fn normalize_to_isbn13_strips_hyphens() {
+        assert_eq!(
+            normalize_to_isbn13("978-0-306-40615-7"),
+            Some("9780306406157".to_string())
+        );
     }
 }
