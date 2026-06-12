@@ -1,5 +1,6 @@
 use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
+use crate::commands::reindex_queue::{ChangeKind, ReindexQueue};
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::graph::indexer::GraphIndex;
 use crate::graph::rewriter::LinkRedirect;
@@ -65,14 +66,28 @@ pub fn write_page(
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
+    queue: State<Arc<ReindexQueue>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
+    let t_start = std::time::Instant::now();
     ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
+    let write_ms = t_start.elapsed().as_millis() as u64;
 
-    reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
-        gi.reindex_file(&relative_path, ann)
-    });
+    // Reindex off the hot path: rapid autosaves coalesce in the background
+    // queue instead of serializing 100ms+ reindexes onto the main thread.
+    if let Some(gi) = lookup_graph_index(&graph_state, &root) {
+        let ann = crate::preferences::annotations_enabled(&app_handle);
+        let handle = app_handle.clone();
+        queue.inner().schedule(
+            root.clone(),
+            ChangeKind::Changed,
+            relative_path.clone(),
+            move |diff| gi.batch_reindex(diff, ann),
+            move |result| crate::commands::graph::emit_reindex_side_effects(&handle, result),
+        );
+    }
+    tracing::info!(path = %relative_path, write_ms, "perf: write_page");
 
     Ok(())
 }
@@ -295,6 +310,14 @@ pub fn read_code_file(
     ops::read_code_file(&root, &relative_path, &registry).map_err(|e| e.to_string())
 }
 
+/// Whether a workspace-relative path is a BibTeX file. `.bib` saves trigger a
+/// background bib re-ingest instead of a page reindex.
+fn is_bib_path(relative_path: &str) -> bool {
+    std::path::Path::new(relative_path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("bib"))
+}
+
 #[tauri::command]
 pub fn write_code_file(
     relative_path: String,
@@ -302,15 +325,58 @@ pub fn write_code_file(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    queue: State<Arc<ReindexQueue>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
-    ops::write_code_file(&root, &relative_path, &body, &registry).map_err(|e| e.to_string())
+    ops::write_code_file(&root, &relative_path, &body, &registry).map_err(|e| e.to_string())?;
+
+    // Bib edits no longer ride along with md-save reindexes (those skip the
+    // bib ingest now), so schedule a background re-ingest + shadow refresh.
+    // Separate queue lane from page diffs: refresh_shadows ignores the diff,
+    // so coalescing page paths into it would drop their reindex.
+    if is_bib_path(&relative_path) {
+        if let Some(gi) = lookup_graph_index(&graph_state, &root) {
+            let handle = app_handle.clone();
+            queue.inner().schedule(
+                bib_refresh_lane(&root),
+                ChangeKind::Changed,
+                relative_path.clone(),
+                move |_diff| gi.refresh_shadows().map(|_changed| vec![]),
+                move |result| {
+                    crate::commands::graph::emit_reindex_result(&handle, result);
+                    use tauri::Emitter;
+                    let _ = handle.emit("lit:bib-items-changed", ());
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Queue key for background bib refreshes — distinct from the page-reindex
+/// lane (keyed by the workspace root) so the two never coalesce into each
+/// other's `run` closure. Never a real workspace root: it's a subpath.
+fn bib_refresh_lane(root: &std::path::Path) -> PathBuf {
+    root.join(".lit/__bib_refresh__")
 }
 
 #[cfg(test)]
 mod tests {
     use crate::graph::rewriter::{plan_vault_rewrites, apply_planned_rewrites, LinkRedirect};
     use crate::oplog::store::{OpLogStore, Action};
+
+    #[test]
+    fn is_bib_path_matches_bib_extension_only() {
+        assert!(super::is_bib_path("refs.bib"));
+        assert!(super::is_bib_path("assets/bib/Note.bib"));
+        assert!(super::is_bib_path("REFS.BIB"), "extension match must be case-insensitive");
+        assert!(!super::is_bib_path("note.md"));
+        assert!(!super::is_bib_path("script.py"));
+        assert!(!super::is_bib_path("bib"), "bare filename without extension is not a bib");
+        assert!(!super::is_bib_path("archive.bib.bak"));
+    }
 
     fn write_file(dir: &std::path::Path, rel: &str, content: &str) {
         let path = dir.join(rel);

@@ -788,13 +788,70 @@ impl GraphIndex {
         if diff.is_empty() {
             return Ok(vec![]);
         }
+        let t_start = std::time::Instant::now();
         let store = self.store.lock().unwrap();
+        let lock_ms = t_start.elapsed().as_millis() as u64;
         let mut reverse = self.reverse_stems.lock().unwrap();
+
+        let bib_in_diff = diff
+            .new
+            .iter()
+            .chain(diff.changed.iter())
+            .chain(diff.deleted.iter())
+            .any(|p| Path::new(p).extension().is_some_and(|e| e.eq_ignore_ascii_case("bib")));
+
+        // Keys cited by the changed/deleted pages *before* their edges are
+        // replaced — needed so removing a page's last citation still prunes
+        // the now-orphaned shadow. Also any citekeys the diff pages declared
+        // before the edit, so removing a `citekey:` re-resolves its key.
+        let mut affected: HashSet<String> = if bib_in_diff {
+            HashSet::new()
+        } else {
+            let before_sources: Vec<String> =
+                diff.changed.iter().chain(diff.deleted.iter()).cloned().collect();
+            let mut keys = store.cited_keys_for_sources(&before_sources)?;
+            keys.extend(citekeys_of_pages(&store, &before_sources)?);
+            keys
+        };
+
+        let t = std::time::Instant::now();
         let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
-        crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
-        resolve_shadows_tx(&store)?;
+        let reindex_ms = t.elapsed().as_millis() as u64;
+        let t = std::time::Instant::now();
+        if bib_in_diff {
+            crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
+        }
+        let ingest_ms = t.elapsed().as_millis() as u64;
+        let t = std::time::Instant::now();
+        let mut affected_count = 0usize;
+        if bib_in_diff {
+            resolve_shadows_tx(&store)?;
+        } else {
+            let after_sources: Vec<String> =
+                diff.new.iter().chain(diff.changed.iter()).cloned().collect();
+            affected.extend(store.cited_keys_for_sources(&after_sources)?);
+            // Citekeys the diff pages declare now — a new/edited `citekey:`
+            // must re-point existing `bib:X` edges to the page.
+            affected.extend(citekeys_of_pages(&store, &after_sources)?);
+            affected_count = affected.len();
+            resolve_shadows_scoped_tx(&store, &affected)?;
+        }
+        let shadows_ms = t.elapsed().as_millis() as u64;
+        let t = std::time::Instant::now();
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
+        let kg_rebuild_ms = t.elapsed().as_millis() as u64;
+        info!(
+            lock_ms,
+            reindex_ms,
+            ingest_ms,
+            shadows_ms,
+            kg_rebuild_ms,
+            scoped = !bib_in_diff,
+            affected_keys = affected_count,
+            total_ms = t_start.elapsed().as_millis() as u64,
+            "perf: batch_reindex"
+        );
         Ok(result.removed_annotation_uuids)
     }
 
@@ -1254,6 +1311,100 @@ fn resolve_shadows_tx(
     store.with_savepoint("resolve_shadows", || {
         resolve_shadows(store)
     })
+}
+
+/// Citekeys declared in the frontmatter of the given pages (as currently
+/// stored). Lets `batch_reindex` widen its affected-key set when a diff page
+/// adds, edits, or removes a `citekey:` declaration.
+fn citekeys_of_pages(store: &Store, pages: &[String]) -> Result<HashSet<String>, GraphError> {
+    use rusqlite::OptionalExtension;
+    let mut keys = HashSet::new();
+    for page in pages {
+        let citekey: Option<Option<String>> = store.conn.query_row(
+            "SELECT json_extract(frontmatter, '$.citekey') FROM nodes WHERE id = ?1",
+            [page],
+            |row| row.get(0),
+        ).optional().map_err(GraphError::from)?;
+        if let Some(Some(key)) = citekey {
+            keys.insert(key);
+        }
+    }
+    Ok(keys)
+}
+
+/// Run [`resolve_shadows_scoped`] inside a database transaction.
+fn resolve_shadows_scoped_tx(
+    store: &Store,
+    affected_keys: &HashSet<String>,
+) -> Result<(), GraphError> {
+    store.with_savepoint("resolve_shadows_scoped", || {
+        resolve_shadows_scoped(store, affected_keys)
+    })
+}
+
+/// Scoped variant of [`resolve_shadows`]: only re-resolves the given cited
+/// keys instead of every citation in the workspace. Used by `batch_reindex`
+/// for md-only diffs so a single-page save stays O(keys-on-that-page).
+fn resolve_shadows_scoped(
+    store: &Store,
+    affected_keys: &HashSet<String>,
+) -> Result<(), GraphError> {
+    if affected_keys.is_empty() {
+        return Ok(());
+    }
+    // One pass over citekey pages instead of a per-key `page_for_citekey`
+    // scan — that query json_extracts every node row, which at hundreds of
+    // affected keys costs more than the full resolver this replaces.
+    let citekey_map: HashMap<String, String> = store.citekey_pages()?.into_iter().collect();
+    for raw_key in affected_keys {
+        let bib_id = format!("bib:{}", raw_key);
+        let still_cited: bool = store.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'citation' AND raw_target = ?1",
+            [raw_key],
+            |row| row.get::<_, i64>(0).map(|n| n > 0),
+        ).map_err(GraphError::from)?;
+
+        if !still_cited {
+            store.prune_shadow_if_uncited(&bib_id)?;
+            continue;
+        }
+
+        if let Some(page_id) = citekey_map.get(raw_key.as_str()) {
+            // A real page claims this key — route edges to it and drop any
+            // shadow the key previously resolved to.
+            store.conn.execute(
+                "UPDATE edges SET target = ?1 WHERE raw_target = ?2 AND edge_kind = 'citation'",
+                rusqlite::params![page_id, raw_key],
+            ).map_err(GraphError::from)?;
+            store.prune_shadow_if_uncited(&bib_id)?;
+        } else if let Some(entry) = crate::bib::db::get_bib_item(&store.conn, raw_key)? {
+            let mat = if entry.abstract_text.is_some() {
+                super::types::Materialization::Partial
+            } else {
+                super::types::Materialization::Shadow
+            };
+            store.upsert_shadow(&bib_id, &shadow_title(&entry), mat)?;
+            store.conn.execute(
+                "UPDATE edges SET target = ?1 WHERE raw_target = ?2 AND edge_kind = 'citation'",
+                rusqlite::params![bib_id, raw_key],
+            ).map_err(GraphError::from)?;
+        } else {
+            // No citekey page and no live bib item (e.g. tombstoned): the
+            // shadow is no longer backed — drop it (which also removes edges
+            // targeting it) and sweep any bib:* edges left dangling.
+            let is_shadow: bool = store.conn.query_row(
+                "SELECT COUNT(*) FROM nodes
+                 WHERE id = ?1 AND materialization IN ('shadow', 'partial')",
+                [&bib_id],
+                |row| row.get::<_, i64>(0).map(|n| n > 0),
+            ).map_err(GraphError::from)?;
+            if is_shadow {
+                store.delete_node(&bib_id)?;
+            }
+            store.prune_dangling_citation_edges_for(std::slice::from_ref(raw_key))?;
+        }
+    }
+    Ok(())
 }
 
 /// After all edges are inserted, create shadow/partial nodes for cited bib
@@ -5757,6 +5908,283 @@ mod tests {
         }
     }
 
+    // --- scoped shadow resolution (md-only diffs through batch_reindex) ---
+
+    #[test]
+    fn scoped_resolve_adds_shadow_for_newly_cited_key() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "No citations yet.");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(
+                !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+                "no shadow before the key is cited"
+            );
+        }
+
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        gi.reindex_file("a.md", true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must be created for newly cited key, nodes: {:?}",
+            meta
+        );
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation)
+            .expect("citation edge must exist");
+        assert_eq!(cite.1, "bib:smith2024", "edge must be retargeted to the shadow");
+    }
+
+    #[test]
+    fn scoped_resolve_prunes_shadow_when_last_citation_removed() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [@smith2024].");
+        write_md(dir.path(), "b.md", "Also [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Remove the citation from a.md — b.md still cites it, shadow stays.
+        write_md(dir.path(), "a.md", "Nothing here.");
+        gi.reindex_file("a.md", true).unwrap();
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(
+                meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+                "shadow must survive while another page cites it"
+            );
+        }
+
+        // Remove the last citation — shadow must be pruned.
+        write_md(dir.path(), "b.md", "Nothing here either.");
+        gi.reindex_file("b.md", true).unwrap();
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must be pruned when the last citation is removed, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn scoped_resolve_leaves_unrelated_shadows_intact() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [@smith2024].");
+        write_md(dir.path(), "b.md", "See [@jones2023].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n@article{jones2023,\n  author = {Jones},\n  title = {Beta},\n  year = {2023}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Reindex a.md only — b.md's shadow must not be touched.
+        write_md(dir.path(), "a.md", "See [@smith2024] still.");
+        gi.reindex_file("a.md", true).unwrap();
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:jones2023"),
+            "unrelated shadow must survive a scoped reindex, nodes: {:?}",
+            meta
+        );
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "b.md" && *k == EdgeKind::Citation)
+            .expect("b.md citation edge must survive");
+        assert_eq!(cite.1, "bib:jones2023");
+    }
+
+    #[test]
+    fn scoped_resolve_citekey_page_precedence() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "No citations yet.");
+        write_md(
+            dir.path(),
+            "smith-note.md",
+            "---\ncitekey: smith2024\n---\nNotes on Smith.",
+        );
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Cite the key from a.md — must resolve to the citekey page, no shadow.
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        gi.reindex_file("a.md", true).unwrap();
+
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation)
+            .expect("citation edge must exist");
+        assert_eq!(cite.1, "smith-note.md", "citekey page takes precedence over bib shadow");
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "no shadow when a citekey page claims the key, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn scoped_resolve_new_citekey_page_repoints_existing_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(meta.iter().any(|(id, _, _)| id == "bib:smith2024"), "shadow exists initially");
+        }
+
+        // A new page claims the citekey — reindexing only that page must
+        // re-point a.md's existing edge and prune the shadow.
+        write_md(
+            dir.path(),
+            "smith-note.md",
+            "---\ncitekey: smith2024\n---\nNotes.",
+        );
+        let diff = DiffResult {
+            new: vec!["smith-note.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        let cite = edges
+            .iter()
+            .find(|(s, _, _, _, _, k)| s == "a.md" && *k == EdgeKind::Citation)
+            .expect("citation edge must exist");
+        assert_eq!(cite.1, "smith-note.md", "existing edge must re-point to the new citekey page");
+
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must be pruned once the citekey page claims the key, nodes: {:?}",
+            meta
+        );
+    }
+
+    #[test]
+    fn scoped_resolve_drops_dangling_edges_for_tombstoned_key() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [@smith2024].");
+        write_md(dir.path(), "b.md", "Also [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Tombstone the bib item, then re-save a.md (still citing the key).
+        {
+            let store = gi.store.lock().unwrap();
+            assert!(crate::bib::db::tombstone_bib_item(&store.conn, "smith2024").unwrap());
+        }
+        write_md(dir.path(), "a.md", "See [@smith2024] again.");
+        gi.reindex_file("a.md", true).unwrap();
+
+        // The shadow is no longer backed by a bib item — it must be gone,
+        // along with every bib:* edge that pointed at it (b.md's included).
+        let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+        assert!(
+            !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "tombstoned key's shadow must be dropped, nodes: {:?}",
+            meta
+        );
+        let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
+        assert!(
+            !edges.iter().any(|(_, t, _, _, _, _)| t == "bib:smith2024"),
+            "no edge may keep targeting the dropped shadow, edges: {:?}",
+            edges
+        );
+    }
+
+    // --- ingest gating in batch_reindex ---
+
+    #[test]
+    fn batch_reindex_skips_ingest_when_no_bib_in_diff() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Nothing yet.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // A .bib appears on disk, but the diff is md-only — it must NOT be
+        // ingested on the editor-save hot path.
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        write_md(dir.path(), "a.md", "Changed.");
+        gi.reindex_file("a.md", true).unwrap();
+
+        let store = gi.store.lock().unwrap();
+        let ledger_count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM bib_source_files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ledger_count, 0, "md-only diff must not touch the bib ingest ledger");
+        let item = crate::bib::db::get_bib_item(&store.conn, "smith2024").unwrap();
+        assert!(item.is_none(), "md-only diff must not ingest new bib items");
+    }
+
+    #[test]
+    fn batch_reindex_ingests_and_fully_resolves_when_bib_in_diff() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "See [@smith2024].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(!meta.iter().any(|(id, _, _)| id == "bib:smith2024"), "no shadow yet");
+        }
+
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        let diff = DiffResult {
+            new: vec!["refs.bib".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        let store = gi.store.lock().unwrap();
+        let item = crate::bib::db::get_bib_item(&store.conn, "smith2024").unwrap();
+        assert!(item.is_some(), "bib-in-diff must ingest the new bib file");
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "bib-in-diff must resolve shadows vault-wide, nodes: {:?}",
+            meta
+        );
+    }
+
     #[test]
     fn resolve_shadows_tx_wraps_in_transaction() {
         let dir = create_workspace();
@@ -6118,10 +6546,11 @@ mod tests {
             "@book{doe2022,\n  author = {Doe},\n  title = {Gamma},\n  year = {2022}\n}",
         );
 
-        // Also add a citation to the new entry
+        // Also add a citation to the new entry. The .bib must be part of the
+        // diff — md-only diffs skip ingest on the editor-save hot path.
         write_md(dir.path(), "b.md", "See [@doe2022].");
         let diff = DiffResult {
-            new: vec!["b.md".to_string()],
+            new: vec!["b.md".to_string(), "extra.bib".to_string()],
             changed: vec![],
             deleted: vec![],
         };

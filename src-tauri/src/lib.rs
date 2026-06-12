@@ -128,6 +128,7 @@ pub fn run() {
         .manage(InitialCol(Mutex::new(cli_col)))
         .manage(Arc::new(WriteHashRegistry::new()))
         .manage(Arc::new(GraphRegistry::new()))
+        .manage(Arc::new(commands::reindex_queue::ReindexQueue::new()))
         .manage(Arc::new(commands::graph::GraphBuildState::new()))
         .manage(Arc::new(seed::SeedState::new()))
         .manage(Arc::new(OpLogRegistry::new()))
