@@ -79,6 +79,9 @@ export function _resetBibCacheForTesting(): void {
   }
 }
 
+/** @internal Exported for tests only */
+export const _getWorkspaceBibEntriesForTesting = getWorkspaceBibEntries;
+
 export interface TriggerInfo {
   from: number;
   phase: "type" | "id";
@@ -175,51 +178,19 @@ export async function crossrefCompletionSource(
   }
 
   if (trigger.refType === "bib") {
-    const workspacePath = useWorkspaceStore.getState().workspacePath;
-    const notePath = state.facet(notePathFacet);
     const bibData = state.field(bibEntriesField, false);
+    const entries = bibData?.entries ?? [];
+    if (entries.length === 0) return null;
 
-    const allEntries = workspacePath
-      ? await getWorkspaceBibEntries(workspacePath)
-      : [];
-
-    const noteKeys = new Set(bibData?.entries.map(e => e.key) ?? []);
-    const renderedCitations = bibData?.renderedCitations ?? {};
-
-    const mergedEntries: BibEntry[] = [
-      ...(bibData?.entries ?? []),
-      ...allEntries.filter(e => !noteKeys.has(e.key)),
-    ];
-
-    if (mergedEntries.length === 0) return null;
-
-    const options: Completion[] = mergedEntries.map((entry) => ({
+    const renderedCitations = bibData!.renderedCitations;
+    const options: Completion[] = entries.map((entry) => ({
       label: entry.key,
-      detail: renderedCitations[entry.key] ?? `${entry.authors.join(", ")} (${entry.year})`,
+      detail: renderedCitations[entry.key] ?? entry.key,
       apply: (view: EditorView, _completion: Completion, _from: number, to: number) => {
         view.dispatch({ changes: { from: trigger.bibFrom!, to, insert: entry.key } });
-        if (workspacePath && notePath) {
-          ensureInCompanionBib(entry.key, notePath, workspacePath, true)
-            .then((result) => {
-              if (result.bibliography_value) {
-                emitFrontmatterPatch(notePath, {
-                  bibliography: result.bibliography_value,
-                });
-              }
-              // Trigger citeproc to re-read the (possibly updated) .bib file
-              view.dispatch({ effects: refetchBib.of(null) });
-            })
-            .catch((err) => {
-              console.warn(`[crossrefCompletion] ensureInCompanionBib failed for key "${entry.key}":`, err);
-            });
-        }
       },
     }));
-    return {
-      from: trigger.from,
-      options,
-      validFor: /^[a-zA-Z0-9_-]*$/,
-    };
+    return { from: trigger.from, options, validFor: /^[a-zA-Z0-9_-]*$/ };
   }
 
   const frontmatter = state.facet(frontmatterFacet);
