@@ -417,6 +417,167 @@ describe("click handler — decoration hit-testing", () => {
     view.destroy();
   });
 
+  it("cmd+click on tilde path shows error toast and does not navigate", () => {
+    const selectPage = vi.fn();
+    const show = vi.fn();
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+
+    const doc = "  file = {~/Documents/foo.pdf},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledWith("Cannot open path: ~/Documents/foo.pdf", "error");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on Windows drive path shows error toast and does not navigate", () => {
+    const selectPage = vi.fn();
+    const show = vi.fn();
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+
+    const doc = "  file = {C:\\Users\\x\\foo.pdf},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledWith("Cannot open path: C:\\Users\\x\\foo.pdf", "error");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on UNC path shows error toast and does not navigate", () => {
+    const selectPage = vi.fn();
+    const show = vi.fn();
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+
+    const doc = "  file = {\\\\server\\share\\x.pdf},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledWith("Cannot open path: \\\\server\\share\\x.pdf", "error");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on unindexed extension shows 'Cannot open file type' toast, not 'File not found'", () => {
+    const selectPage = vi.fn();
+    const show = vi.fn();
+    // Even though the path might exist on disk, .png is not indexed by scan_pages
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+
+    const doc = "  file = {assets/figure.png},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledWith("Cannot open file type: .png", "error");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on file with no extension shows 'Cannot open file type' toast", () => {
+    const selectPage = vi.fn();
+    const show = vi.fn();
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+
+    const doc = "  file = {Makefile},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 2);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledWith("Cannot open file type: (no extension)", "error");
+    view.dom.remove();
+    view.destroy();
+  });
+
   it("cmd+click on absolute path bypasses existence check even with empty pages", () => {
     const selectPage = vi.fn();
     const show = vi.fn();
@@ -445,6 +606,105 @@ describe("click handler — decoration hit-testing", () => {
 
     expect(selectPage).toHaveBeenCalledWith("/Users/x/papers/foo.pdf");
     expect(show).not.toHaveBeenCalled();
+    view.dom.remove();
+    view.destroy();
+  });
+});
+
+describe("decoration offset — substring regression", () => {
+  it('decorates the value, not the field name, in file = {file}', () => {
+    const doc = "  file = {file},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to) => {
+      decoFrom = from;
+      decoTo = to;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(decoTo).toBeDefined();
+    // The decorated text must be the value "file" inside braces, not the field name
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("file");
+    // The value starts after the opening brace at index 10 in the doc
+    expect(decoFrom!).toBe(10);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it('decorates "f" inside braces in file = {f}', () => {
+    const doc = "  file = {f},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to) => {
+      decoFrom = from;
+      decoTo = to;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(decoTo).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("f");
+    expect(decoFrom!).toBe(10);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it('decorates "e" inside braces in file = {e}', () => {
+    const doc = "  file = {e},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to) => {
+      decoFrom = from;
+      decoTo = to;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(decoTo).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("e");
+    expect(decoFrom!).toBe(10);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it('decorates the full path in file = {my/file/report.pdf}', () => {
+    const doc = "  file = {my/file/report.pdf},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to) => {
+      decoFrom = from;
+      decoTo = to;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(decoTo).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("my/file/report.pdf");
+    expect(decoFrom!).toBe(10);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it('decorates "file.pdf" correctly in file = {file.pdf} (sanity check)', () => {
+    const doc = "  file = {file.pdf},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to) => {
+      decoFrom = from;
+      decoTo = to;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(decoTo).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("file.pdf");
+    expect(decoFrom!).toBe(10);
     view.dom.remove();
     view.destroy();
   });

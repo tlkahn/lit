@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath } from "./pathUtils";
+import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath } from "./pathUtils";
 
 describe("resolveRelativePath", () => {
   it("resolves simple relative path", () => {
@@ -88,6 +88,36 @@ describe("isAbsolutePath", () => {
 
   it("rejects dot-relative path", () => {
     expect(isAbsolutePath("./foo.pdf")).toBe(false);
+  });
+
+  it("detects UNC path", () => {
+    expect(isAbsolutePath("\\\\server\\share\\x.pdf")).toBe(true);
+  });
+
+  it("rejects single backslash prefix", () => {
+    expect(isAbsolutePath("\\foo")).toBe(false);
+  });
+});
+
+describe("isOpenablePath", () => {
+  it("accepts Unix absolute path", () => {
+    expect(isOpenablePath("/Users/x/foo.pdf")).toBe(true);
+  });
+
+  it("rejects tilde path", () => {
+    expect(isOpenablePath("~/Documents/foo.pdf")).toBe(false);
+  });
+
+  it("rejects Windows drive path", () => {
+    expect(isOpenablePath("C:\\foo.pdf")).toBe(false);
+  });
+
+  it("rejects UNC path", () => {
+    expect(isOpenablePath("\\\\server\\share\\x.pdf")).toBe(false);
+  });
+
+  it("rejects relative path", () => {
+    expect(isOpenablePath("papers/foo.pdf")).toBe(false);
   });
 });
 

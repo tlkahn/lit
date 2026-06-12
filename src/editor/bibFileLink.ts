@@ -6,7 +6,8 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { getFileDir, isAbsolutePath, resolveRelativePath } from "../lib/pathUtils";
+import { getFileDir, isAbsolutePath, isOpenablePath, resolveRelativePath } from "../lib/pathUtils";
+import { INDEXED_EXTENSIONS } from "../hooks/useLeafFileType";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
 import { modKeyTracker, modHeldLinkStyle } from "./modKeyTracker";
@@ -40,7 +41,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     let m: RegExpExecArray | null;
     while ((m = re.exec(line.text)) !== null) {
       const path = m[1] ?? m[2]!;
-      const pathStart = line.from + m.index + m[0].indexOf(path);
+      const pathStart = line.from + m.index + m[0].lastIndexOf(path);
       const pathEnd = pathStart + path.length;
       ranges.push({ from: pathStart, to: pathEnd });
     }
@@ -66,6 +67,14 @@ export const bibFileLinkPlugin = ViewPlugin.fromClass(
   },
   { decorations: (v) => v.decorations },
 );
+
+/** Extract lowercase extension from a path, or empty string if none. */
+function getExtension(path: string): string {
+  const dot = path.lastIndexOf(".");
+  const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (dot < 0 || dot < slash) return "";
+  return path.slice(dot + 1).toLowerCase();
+}
 
 function createBibFileClickHandler(): Extension {
   return EditorView.domEventHandlers({
@@ -97,7 +106,22 @@ function createBibFileClickHandler(): Extension {
         dir != null && !isAbsolutePath(filePath)
           ? resolveRelativePath(dir, filePath)
           : filePath;
-      if (!isAbsolutePath(filePath)) {
+      if (isAbsolutePath(filePath)) {
+        if (!isOpenablePath(filePath)) {
+          useStatusMessageStore
+            .getState()
+            .show(`Cannot open path: ${filePath}`, "error");
+          return true;
+        }
+        // Unix absolute — pass through, skip existence check
+      } else {
+        const ext = getExtension(filePath);
+        if (!ext || !INDEXED_EXTENSIONS.has(ext)) {
+          useStatusMessageStore
+            .getState()
+            .show(`Cannot open file type: ${ext ? `.${ext}` : "(no extension)"}`, "error");
+          return true;
+        }
         const pages = useWorkspaceStore.getState().pages;
         const pageExists = pages.some((p) => p.relative_path === resolved);
         if (!pageExists) {

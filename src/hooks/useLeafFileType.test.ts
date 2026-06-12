@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getFileType } from "./useLeafFileType";
+import { getFileType, INDEXED_EXTENSIONS } from "./useLeafFileType";
 import type { PageMeta } from "../lib/ipc";
 
 function meta(
@@ -72,5 +72,22 @@ describe("getFileType", () => {
 
   it("does NOT sniff an uppercase .RS extension as code (case-sensitive)", () => {
     expect(getFileType("main.RS", [])).toBe("markdown");
+  });
+});
+
+describe("INDEXED_EXTENSIONS", () => {
+  it("contains md, pdf, and bib", () => {
+    expect(INDEXED_EXTENSIONS.has("md")).toBe(true);
+    expect(INDEXED_EXTENSIONS.has("pdf")).toBe(true);
+    expect(INDEXED_EXTENSIONS.has("bib")).toBe(true);
+  });
+
+  it("does NOT contain image or text extensions", () => {
+    expect(INDEXED_EXTENSIONS.has("png")).toBe(false);
+    expect(INDEXED_EXTENSIONS.has("jpg")).toBe(false);
+    expect(INDEXED_EXTENSIONS.has("jpeg")).toBe(false);
+    expect(INDEXED_EXTENSIONS.has("gif")).toBe(false);
+    expect(INDEXED_EXTENSIONS.has("svg")).toBe(false);
+    expect(INDEXED_EXTENSIONS.has("txt")).toBe(false);
   });
 });
