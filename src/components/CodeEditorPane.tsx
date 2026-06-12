@@ -12,7 +12,11 @@ import {
   registerPaneView,
   unregisterPaneView,
   setFocusedPane,
+  getPaneView,
 } from "../lib/editorViewRef";
+import { useWorkspaceStore } from "../stores/workspace";
+import { EditorSelection } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { bibFileLinkExtension } from "../editor/bibFileLink";
 
 function basename(path: string): string {
@@ -62,6 +66,25 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     return [bibFileLinkExtension(pagePath)];
   }, [pagePath]);
 
+  const handleDocReplaced = useCallback(() => {
+    requestAnimationFrame(() => {
+      const view = getPaneView(paneId);
+      if (!view) return;
+      const { pendingCursorLine, pendingCursorCol } = useWorkspaceStore.getState();
+      if (pendingCursorLine != null) {
+        const lineNum = Math.min(pendingCursorLine, view.state.doc.lines);
+        const line = view.state.doc.line(lineNum);
+        const col = pendingCursorCol ?? 0;
+        const pos = line.from + Math.min(col, line.length);
+        view.dispatch({
+          selection: EditorSelection.cursor(pos),
+          effects: EditorView.scrollIntoView(pos, { y: "center" }),
+        });
+        useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
+      }
+    });
+  }, [paneId]);
+
   const { view } = useCodeMirrorCode({
     containerRef,
     doc: body,
@@ -69,6 +92,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     onChange: handleChange,
     onSelectionChange: handleSelectionChange,
     keymapBindings: editorBindings,
+    onDocReplaced: handleDocReplaced,
     extraExtensions,
   });
 
