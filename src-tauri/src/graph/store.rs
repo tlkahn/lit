@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 18;
+pub const CURRENT_SCHEMA_VERSION: i64 = 19;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -513,6 +513,14 @@ impl Store {
             )?;
         }
 
+        if version < 19 {
+            info!(from = version, to = 19, "migrating schema: indexing edges(edge_kind, raw_target)");
+            self.conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_edges_kind_raw_target ON edges(edge_kind, raw_target);
+                 UPDATE meta SET value = '19' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -622,6 +630,56 @@ impl Store {
         Ok(count)
     }
 
+    /// Deletes the given `bib:*` shadow/partial node if no citation edge
+    /// targets it anymore. Returns true if the node was pruned. Materialized
+    /// pages and non-shadow nodes are never touched.
+    pub fn prune_shadow_if_uncited(&self, bib_id: &str) -> Result<bool, GraphError> {
+        let is_shadow: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM nodes
+             WHERE id = ?1 AND materialization IN ('shadow', 'partial')",
+            [bib_id],
+            |row| row.get::<_, i64>(0).map(|n| n > 0),
+        )?;
+        if !is_shadow {
+            return Ok(false);
+        }
+        let cited: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'citation' AND target = ?1",
+            [bib_id],
+            |row| row.get::<_, i64>(0).map(|n| n > 0),
+        )?;
+        if cited {
+            return Ok(false);
+        }
+        self.delete_node(bib_id)?;
+        Ok(true)
+    }
+
+    /// Distinct citation `raw_target`s of edges originating from the given
+    /// source pages. Used to scope shadow resolution to the keys a reindexed
+    /// page actually cites.
+    pub fn cited_keys_for_sources(&self, sources: &[String]) -> Result<HashSet<String>, GraphError> {
+        // Stay well under SQLite's bound-parameter cap (32,766).
+        const CHUNK: usize = 500;
+        let mut keys = HashSet::new();
+        for chunk in sources.chunks(CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT DISTINCT raw_target FROM edges
+                 WHERE edge_kind = 'citation' AND source IN ({placeholders})"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(chunk.iter()),
+                |row| row.get::<_, String>(0),
+            )?;
+            for row in rows {
+                keys.insert(row?);
+            }
+        }
+        Ok(keys)
+    }
+
     pub fn prune_dangling_citation_edges(&self) -> Result<usize, GraphError> {
         let deleted = self.conn.execute(
             "DELETE FROM edges
@@ -630,6 +688,25 @@ impl Store {
                AND target NOT IN (SELECT id FROM nodes)",
             [],
         )?;
+        Ok(deleted)
+    }
+
+    /// Like [`prune_dangling_citation_edges`](Self::prune_dangling_citation_edges)
+    /// but limited to edges whose `raw_target` is one of the given keys.
+    pub fn prune_dangling_citation_edges_for(&self, raw_keys: &[String]) -> Result<usize, GraphError> {
+        const CHUNK: usize = 500;
+        let mut deleted = 0usize;
+        for chunk in raw_keys.chunks(CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "DELETE FROM edges
+                 WHERE edge_kind = 'citation'
+                   AND raw_target IN ({placeholders})
+                   AND target LIKE 'bib:%'
+                   AND target NOT IN (SELECT id FROM nodes)"
+            );
+            deleted += self.conn.execute(&sql, rusqlite::params_from_iter(chunk.iter()))?;
+        }
         Ok(deleted)
     }
 
@@ -1659,6 +1736,20 @@ mod tests {
     }
 
     #[test]
+    fn migration_v19_creates_raw_target_index() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_edges_kind_raw_target'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "expected idx_edges_kind_raw_target index to exist");
+    }
+
+    #[test]
     fn has_data_empty_store() {
         let store = Store::open_memory().unwrap();
         assert!(!store.has_data().unwrap());
@@ -2679,6 +2770,106 @@ mod tests {
         assert_eq!(raw[0], ("a.md".into(), "b.md".into(), "B".into()));
     }
 
+    // --- cited_keys_for_sources ---
+
+    #[test]
+    fn cited_keys_for_sources_returns_distinct_keys_for_given_sources() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "smith2024", "ctx", "smith2024", 1, EdgeKind::Citation).unwrap();
+        store.insert_edge("a.md", "smith2024", "ctx2", "smith2024", 5, EdgeKind::Citation).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "b", 2, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("b.md", "jones2023", "ctx", "jones2023", 1, EdgeKind::Citation).unwrap();
+        store.insert_edge("c.md", "doe2020", "ctx", "doe2020", 1, EdgeKind::Citation).unwrap();
+
+        let keys = store
+            .cited_keys_for_sources(&["a.md".to_string(), "b.md".to_string()])
+            .unwrap();
+        let expected: HashSet<String> =
+            ["smith2024".to_string(), "jones2023".to_string()].into_iter().collect();
+        assert_eq!(keys, expected);
+    }
+
+    #[test]
+    fn cited_keys_for_sources_handles_more_sources_than_param_limit() {
+        // Bundled SQLite caps bound parameters at 32,766 — exceed it to prove
+        // the IN list is chunked.
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("note0.md", "smith2024", "ctx", "smith2024", 1, EdgeKind::Citation).unwrap();
+        store.insert_edge("note32999.md", "jones2023", "ctx", "jones2023", 1, EdgeKind::Citation).unwrap();
+
+        let sources: Vec<String> = (0..33000).map(|i| format!("note{i}.md")).collect();
+        let keys = store.cited_keys_for_sources(&sources).unwrap();
+        let expected: HashSet<String> =
+            ["smith2024".to_string(), "jones2023".to_string()].into_iter().collect();
+        assert_eq!(keys, expected);
+    }
+
+    // --- prune_shadow_if_uncited ---
+
+    #[test]
+    fn prune_shadow_if_uncited_deletes_uncited_shadow() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
+
+        let pruned = store.prune_shadow_if_uncited("bib:smith2024").unwrap();
+
+        assert!(pruned, "uncited shadow should be pruned");
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM nodes WHERE id = 'bib:smith2024'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "shadow node should be deleted");
+    }
+
+    #[test]
+    fn prune_shadow_if_uncited_keeps_cited_shadow_and_real_pages() {
+        let store = Store::open_memory().unwrap();
+
+        // Cited shadow must survive.
+        store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
+        store.insert_edge("a.md", "bib:smith2024", "ctx", "smith2024", 1, EdgeKind::Citation).unwrap();
+        assert!(!store.prune_shadow_if_uncited("bib:smith2024").unwrap());
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM nodes WHERE id = 'bib:smith2024'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "cited shadow must be kept");
+
+        // Uncited but materialized node with a bib: id must survive.
+        let page = make_node("bib:jones2023", "Jones 2023", &[], json!({}));
+        store.upsert_node(&page, 1).unwrap();
+        assert!(!store.prune_shadow_if_uncited("bib:jones2023").unwrap());
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM nodes WHERE id = 'bib:jones2023'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "materialized node must never be pruned");
+    }
+
+    // --- prune_dangling_citation_edges_for ---
+
+    #[test]
+    fn prune_dangling_citation_edges_for_only_touches_given_keys() {
+        let store = Store::open_memory().unwrap();
+        // Two dangling citation edges: bib:* targets with no matching node.
+        store.insert_edge("a.md", "bib:gone2020", "ctx", "gone2020", 1, EdgeKind::Citation).unwrap();
+        store.insert_edge("b.md", "bib:other2021", "ctx", "other2021", 1, EdgeKind::Citation).unwrap();
+
+        let pruned = store
+            .prune_dangling_citation_edges_for(&["gone2020".to_string()])
+            .unwrap();
+
+        assert_eq!(pruned, 1);
+        let remaining: Vec<String> = {
+            let mut stmt = store
+                .conn
+                .prepare("SELECT raw_target FROM edges WHERE edge_kind = 'citation'")
+                .unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+        };
+        assert_eq!(remaining, vec!["other2021".to_string()], "unrelated dangling edge must survive");
+    }
+
     // --- Backlinks ---
 
     #[test]
@@ -3173,8 +3364,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_eighteen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 18);
+    fn schema_version_is_nineteen() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 19);
     }
 
     #[test]

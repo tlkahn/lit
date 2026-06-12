@@ -41,11 +41,19 @@ pub fn get_definitions(
     frontmatter: Option<serde_json::Map<String, serde_json::Value>>,
     app_handle: tauri::AppHandle,
 ) -> Vec<Definition> {
+    let t_start = std::time::Instant::now();
     let prefs = preferences::read_preferences(&app_handle);
     let config =
         preferences::crossref_config_from_preferences(&prefs, frontmatter.as_ref());
     let doc = Document::parse(&content, config);
-    doc.get_definitions().to_vec()
+    let defs = doc.get_definitions().to_vec();
+    tracing::info!(
+        content_len = content.len(),
+        defs = defs.len(),
+        total_ms = t_start.elapsed().as_millis() as u64,
+        "perf: get_definitions"
+    );
+    defs
 }
 
 #[tauri::command]
