@@ -520,6 +520,8 @@ export type ResolutionSource =
   | "DoiContentNegotiation"
   | "CrossrefApi"
   | "ArxivApi"
+  | "OpenLibraryApi"
+  | "GoogleBooksApi"
   | "CrossrefTitleSearch";
 
 export type ValidationStatus = "validated" | "skipped";

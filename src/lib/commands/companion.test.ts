@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { _clear, hasCommand, executeCommand, getVisibleCommands } from "../commandRegistry";
 import type { PaneNode } from "../../stores/panes";
+import { _clear, hasCommand, executeCommand, getVisibleCommands } from "../commandRegistry";
 
 // --- pane store mock -------------------------------------------------------
 const mockPaneState = vi.hoisted(() => {
-  const state = {
+  const state: {
+    root: { type: string; id: string; [k: string]: unknown };
+    focusedPaneId: string;
+    splitPane: ReturnType<typeof vi.fn>;
+    setPanePage: ReturnType<typeof vi.fn>;
+    focusPane: ReturnType<typeof vi.fn>;
+  } = {
     root: {
       type: "leaf" as const,
       id: "src-pane",

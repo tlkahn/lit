@@ -12,7 +12,7 @@ use super::ResolveError;
 /// particles** (e.g., "van", "de", "von") -- "Pieter van der Berg" will
 /// produce `family: "Berg", given: "Pieter van der"` rather than the
 /// correct `family: "van der Berg", given: "Pieter"`.
-fn split_flat_name(name: &str) -> CslName {
+pub(crate) fn split_flat_name(name: &str) -> CslName {
     let trimmed = name.trim();
     if let Some(pos) = trimmed.rfind(' ') {
         CslName {
@@ -159,6 +159,7 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         page: None,
         publisher: None,
         issn: None,
+        isbn: None,
     };
 
     let mut entry = csl_to_bib_entry(&csl_item);
