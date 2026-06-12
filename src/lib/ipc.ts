@@ -585,12 +585,20 @@ export async function bibDelete(
   return invoke<boolean>("bib_delete", { citeKey, workspacePath });
 }
 
+export interface EnsureCompanionBibResult {
+  bib_path: string;
+  bibliography_value: string | null;
+}
+
 export async function ensureInCompanionBib(
   citeKey: string,
   notePath: string,
   workspacePath: string,
-): Promise<string> {
-  return invoke<string>("ensure_in_companion_bib", { citeKey, notePath, workspacePath });
+  skipNoteRewrite: boolean = false,
+): Promise<EnsureCompanionBibResult> {
+  return invoke<EnsureCompanionBibResult>("ensure_in_companion_bib", {
+    citeKey, notePath, workspacePath, skipNoteRewrite,
+  });
 }
 
 // Graph

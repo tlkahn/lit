@@ -1,4 +1,4 @@
-use crate::bib::convert::{csl_to_bib_entry, CslDate, CslItem, CslName, StringOrSeq};
+use crate::bib::convert::{csl_to_bib_entry, normalize_arxiv_id, CslDate, CslItem, CslName, StringOrSeq};
 use crate::bib::types::BibEntry;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
@@ -167,7 +167,7 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         if let Some(pos) = url_str.find(marker) {
             let id = &url_str[pos + marker.len()..];
             if !id.is_empty() {
-                entry.arxiv_id = Some(id.to_string());
+                entry.arxiv_id = Some(normalize_arxiv_id(id));
             }
         }
     }
@@ -456,13 +456,13 @@ mod tests {
     #[test]
     fn parse_arxiv_atom_sets_arxiv_id() {
         let entry = parse_arxiv_atom(SINGLE_AUTHOR_XML).expect("should parse");
-        assert_eq!(entry.arxiv_id, Some("2301.07041v2".to_string()));
+        assert_eq!(entry.arxiv_id, Some("2301.07041".to_string()));
     }
 
     #[test]
     fn parse_arxiv_atom_old_style_sets_arxiv_id() {
         let entry = parse_arxiv_atom(OLD_STYLE_ID_XML).expect("should parse");
-        assert_eq!(entry.arxiv_id, Some("hep-ph/0703105v1".to_string()));
+        assert_eq!(entry.arxiv_id, Some("hep-ph/0703105".to_string()));
     }
 
     #[test]

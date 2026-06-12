@@ -1619,6 +1619,51 @@ describe("ReferenceLibrary", () => {
     expect(after).toBeGreaterThan(before);
   });
 
+  it("loads entries after graph becomes ready via lit:graph-updated when initial mount fails", async () => {
+    let listCallCount = 0;
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") {
+        listCallCount++;
+        if (listCallCount === 1) throw new Error("Graph index not ready");
+        return fixture;
+      }
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() =>
+      expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+    );
+
+    emitMockEvent("lit:graph-updated", {});
+
+    await waitFor(() =>
+      expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
+    );
+  });
+
+  it("lit:graph-updated re-fetches both entries and bib key states", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    const entriesBefore = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    const statesBefore = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
+
+    emitMockEvent("lit:graph-updated", {});
+
+    await waitFor(() => {
+      const entriesAfter = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+      expect(entriesAfter).toBeGreaterThan(entriesBefore);
+    });
+    await waitFor(() => {
+      const statesAfter = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
+      expect(statesAfter).toBeGreaterThan(statesBefore);
+    });
+  });
+
   it("shows Delete button in expanded row", async () => {
     const user = userEvent.setup();
     render(<ReferenceLibrary />);

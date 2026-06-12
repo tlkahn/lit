@@ -4,11 +4,80 @@ import {
   type Completion,
   startCompletion,
 } from "@codemirror/autocomplete";
-import type { EditorView } from "@codemirror/view";
+import { ViewPlugin, type ViewUpdate, EditorView } from "@codemirror/view";
 import { getDefinitions, listBibEntries, ensureInCompanionBib, type BibEntry } from "../../lib/ipc";
+import { emitFrontmatterPatch } from "../../lib/frontmatterBus";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { frontmatterFacet } from "./crossref";
-import { bibEntriesField, notePathFacet } from "./citeproc";
+import { bibEntriesField, notePathFacet, citeprocMatchesField } from "./citeproc";
+import { listen } from "@tauri-apps/api/event";
+
+// --- Workspace bib cache: one IPC fetch, refreshed on lit:bib-items-changed ---
+
+interface WorkspaceBibCache {
+  workspacePath: string;
+  entries: BibEntry[];
+  promise: Promise<BibEntry[]> | null;
+}
+
+let bibCache: WorkspaceBibCache | null = null;
+let unlistenBibChanged: (() => void) | null = null;
+
+function invalidateBibCache(): void {
+  if (bibCache) {
+    bibCache.entries = [];
+    bibCache.promise = null;
+  }
+}
+
+function initBibCacheListener(): void {
+  if (unlistenBibChanged) return;
+  listen("lit:bib-items-changed", invalidateBibCache).then((unlisten) => {
+    unlistenBibChanged = unlisten;
+  });
+}
+
+async function getWorkspaceBibEntries(workspacePath: string): Promise<BibEntry[]> {
+  initBibCacheListener();
+
+  // Cache hit: same workspace, entries populated
+  if (bibCache?.workspacePath === workspacePath && bibCache.entries.length > 0) {
+    return bibCache.entries;
+  }
+  // In-flight request for same workspace: coalesce
+  if (bibCache?.workspacePath === workspacePath && bibCache.promise) {
+    return bibCache.promise;
+  }
+
+  const cache: WorkspaceBibCache = { workspacePath, entries: [], promise: null };
+  bibCache = cache;
+
+  cache.promise = listBibEntries(workspacePath)
+    .then((entries) => {
+      if (bibCache === cache) {
+        cache.entries = entries;
+        cache.promise = null;
+      }
+      return entries;
+    })
+    .catch(() => {
+      if (bibCache === cache) {
+        cache.promise = null;
+      }
+      return [] as BibEntry[];
+    });
+
+  return cache.promise;
+}
+
+/** @internal Exported for tests only */
+export function _resetBibCacheForTesting(): void {
+  bibCache = null;
+  if (unlistenBibChanged) {
+    unlistenBibChanged();
+    unlistenBibChanged = null;
+  }
+}
 
 export interface TriggerInfo {
   from: number;
@@ -110,14 +179,9 @@ export async function crossrefCompletionSource(
     const notePath = state.facet(notePathFacet);
     const bibData = state.field(bibEntriesField, false);
 
-    let allEntries: BibEntry[] = [];
-    if (workspacePath) {
-      try {
-        allEntries = await listBibEntries(workspacePath);
-      } catch {
-        // fall through to note-scoped only
-      }
-    }
+    const allEntries = workspacePath
+      ? await getWorkspaceBibEntries(workspacePath)
+      : [];
 
     const noteKeys = new Set(bibData?.entries.map(e => e.key) ?? []);
     const renderedCitations = bibData?.renderedCitations ?? {};
@@ -135,7 +199,15 @@ export async function crossrefCompletionSource(
       apply: (view: EditorView, _completion: Completion, _from: number, to: number) => {
         view.dispatch({ changes: { from: trigger.bibFrom!, to, insert: entry.key } });
         if (workspacePath && notePath) {
-          ensureInCompanionBib(entry.key, notePath, workspacePath).catch(() => {});
+          ensureInCompanionBib(entry.key, notePath, workspacePath, true)
+            .then((result) => {
+              if (result.bibliography_value) {
+                emitFrontmatterPatch(notePath, {
+                  bibliography: result.bibliography_value,
+                });
+              }
+            })
+            .catch(() => {});
         }
       },
     }));
@@ -164,3 +236,80 @@ export async function crossrefCompletionSource(
     return null;
   }
 }
+
+/**
+ * Reconciliation plugin: when citeproc rendering cannot resolve a citation key
+ * (the key is not in the note's .bib files) but the key exists in the workspace
+ * DB, call ensureInCompanionBib to materialize it into the companion .bib file.
+ * This closes the manual-typing/paste gap where the completion apply handler
+ * is the only code path that calls ensureInCompanionBib.
+ *
+ * Each key is reconciled at most once per editor session to avoid repeated IPC.
+ * Debounced to 1 second after the last doc change.
+ */
+export const bibReconciliationPlugin = ViewPlugin.fromClass(
+  class {
+    private reconciledKeys = new Set<string>();
+    private timer: ReturnType<typeof setTimeout> | null = null;
+
+    constructor(private view: EditorView) {
+      this.scheduleReconcile();
+    }
+
+    update(update: ViewUpdate) {
+      if (!update.docChanged) return;
+      this.scheduleReconcile();
+    }
+
+    private scheduleReconcile() {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        this.reconcile();
+      }, 1000);
+    }
+
+    private async reconcile() {
+      const workspacePath = useWorkspaceStore.getState().workspacePath;
+      const notePath = this.view.state.facet(notePathFacet);
+      if (!workspacePath || !notePath) return;
+
+      const bibData = this.view.state.field(bibEntriesField, false);
+      if (!bibData) return;
+
+      const matches = this.view.state.field(citeprocMatchesField);
+      const unresolvedKeys: string[] = [];
+      for (const match of matches) {
+        for (const k of match.keys) {
+          if (bibData.byKey.has(k.key)) continue;
+          if (this.reconciledKeys.has(k.key)) continue;
+          unresolvedKeys.push(k.key);
+        }
+      }
+
+      if (unresolvedKeys.length === 0) return;
+
+      const wsEntries = await getWorkspaceBibEntries(workspacePath);
+      const wsKeySet = new Set(wsEntries.map((e) => e.key));
+
+      for (const key of unresolvedKeys) {
+        if (!wsKeySet.has(key)) continue;
+        this.reconciledKeys.add(key);
+        try {
+          const result = await ensureInCompanionBib(key, notePath, workspacePath, true);
+          if (result.bibliography_value) {
+            emitFrontmatterPatch(notePath, {
+              bibliography: result.bibliography_value,
+            });
+          }
+        } catch {
+          // Best-effort; key stays unresolved until a page reload
+        }
+      }
+    }
+
+    destroy() {
+      if (this.timer) clearTimeout(this.timer);
+    }
+  },
+);

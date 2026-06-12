@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 use crate::bib::types::BibEntry;
 use crate::bib::writer::SaveOutcome;
@@ -223,11 +222,7 @@ pub async fn recognize_pdf(
             // Clean up the copied file if this was a duplicate
             cleanup_copy_on_duplicate(&outcome, &copied_to);
 
-            // Refresh graph shadows
-            crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
-
-            // Emit bib-items-changed event
-            let _ = app_handle.emit("lit:bib-items-changed", ());
+            crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
 
             Ok(RecognizeResult::Resolved {
                 outcome,
@@ -298,8 +293,7 @@ pub async fn import_recognized_entry(
         }
     };
 
-    crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
-    let _ = app_handle.emit("lit:bib-items-changed", ());
+    crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
     Ok(vec![outcome])
 }
 

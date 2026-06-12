@@ -1,16 +1,20 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import {
   parseTrigger,
   crossrefCompletionSource,
+  _resetBibCacheForTesting,
+  bibReconciliationPlugin,
   type TriggerInfo,
 } from "./crossrefCompletion";
 import { frontmatterFacet } from "./crossref";
-import { bibEntriesField, setBibData, notePathFacet, type BibData } from "./citeproc";
-import { mockInvoke } from "../../test/tauri-mock";
+import { bibEntriesField, setBibData, notePathFacet, citeprocMatchesField, type BibData } from "./citeproc";
+import { mockInvoke, mockListen, emitMockEvent } from "../../test/tauri-mock";
 import { useWorkspaceStore } from "../../stores/workspace";
 import type { BibEntry } from "../../lib/ipc";
+import * as frontmatterBus from "../../lib/frontmatterBus";
+import { EditorView } from "@codemirror/view";
 
 function trigger(doc: string, cursorPos?: number): TriggerInfo | null {
   const state = EditorState.create({ doc });
@@ -269,6 +273,7 @@ describe("crossrefCompletionSource — workspace-wide bib merge", () => {
   ];
 
   beforeEach(() => {
+    _resetBibCacheForTesting();
     useWorkspaceStore.setState({ workspacePath: "/workspace" });
   });
 
@@ -325,13 +330,13 @@ describe("crossrefCompletionSource — workspace-wide bib merge", () => {
     expect(jonesOpt!.detail).toBe("Jones, J. (2021)");
   });
 
-  it("apply calls ensureInCompanionBib when notePath is set", async () => {
-    const ensureCalls: { citeKey: string; notePath: string; workspacePath: string }[] = [];
+  it("apply calls ensureInCompanionBib with skipNoteRewrite when notePath is set", async () => {
+    const ensureCalls: { citeKey: string; notePath: string; workspacePath: string; skipNoteRewrite: boolean }[] = [];
     mockInvoke((cmd, args) => {
       if (cmd === "list_bib_entries") return workspaceEntries;
       if (cmd === "ensure_in_companion_bib") {
-        ensureCalls.push(args as { citeKey: string; notePath: string; workspacePath: string });
-        return "refs.bib";
+        ensureCalls.push(args as { citeKey: string; notePath: string; workspacePath: string; skipNoteRewrite: boolean });
+        return { bib_path: "refs.bib", bibliography_value: null };
       }
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -363,6 +368,7 @@ describe("crossrefCompletionSource — workspace-wide bib merge", () => {
       citeKey: "jones2021",
       notePath: "notes/MyNote.md",
       workspacePath: "/workspace",
+      skipNoteRewrite: true,
     });
   });
 
@@ -399,5 +405,347 @@ describe("crossrefCompletionSource — workspace-wide bib merge", () => {
     const emptyBib: BibData = { entries: [], renderedCitations: {}, byKey: new Map() };
     const result = await getCompletions("[@bib:", emptyBib);
     expect(result).toBeNull();
+  });
+
+  it("apply emits frontmatter patch when bibliography_value is returned", async () => {
+    const emitSpy = vi.spyOn(frontmatterBus, "emitFrontmatterPatch");
+
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        return { bib_path: "assets/bib/MyNote.bib", bibliography_value: "assets/bib/MyNote.bib" };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const result = await getCompletions("[@bib:", noteScopedBibData, "notes/MyNote.md");
+    const opt = result!.options.find((o) => o.label === "jones2021");
+    const mockDispatch = vi.fn();
+    const fakeView = {
+      dispatch: mockDispatch,
+      state: {
+        facet: (f: unknown) => {
+          if (f === notePathFacet) return "notes/MyNote.md";
+          return "";
+        },
+      },
+    } as unknown as import("@codemirror/view").EditorView;
+    (opt!.apply as (view: import("@codemirror/view").EditorView, completion: import("@codemirror/autocomplete").Completion, from: number, to: number) => void)(fakeView, opt!, 6, 6);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(emitSpy).toHaveBeenCalledOnce();
+    expect(emitSpy).toHaveBeenCalledWith("notes/MyNote.md", {
+      bibliography: "assets/bib/MyNote.bib",
+    });
+
+    emitSpy.mockRestore();
+  });
+
+  it("apply does not emit frontmatter patch when bibliography_value is null", async () => {
+    const emitSpy = vi.spyOn(frontmatterBus, "emitFrontmatterPatch");
+
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const result = await getCompletions("[@bib:", noteScopedBibData, "notes/MyNote.md");
+    const opt = result!.options.find((o) => o.label === "jones2021");
+    const mockDispatch = vi.fn();
+    const fakeView = {
+      dispatch: mockDispatch,
+      state: {
+        facet: (f: unknown) => {
+          if (f === notePathFacet) return "notes/MyNote.md";
+          return "";
+        },
+      },
+    } as unknown as import("@codemirror/view").EditorView;
+    (opt!.apply as (view: import("@codemirror/view").EditorView, completion: import("@codemirror/autocomplete").Completion, from: number, to: number) => void)(fakeView, opt!, 6, 6);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(emitSpy).not.toHaveBeenCalled();
+
+    emitSpy.mockRestore();
+  });
+});
+
+describe("workspace bib cache (getWorkspaceBibEntries)", () => {
+  const workspaceEntries: BibEntry[] = [
+    { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 },
+    { key: "jones2021", authors: ["Jones, J."], title: "Dogs", year: "2021", entry_type: "article", line_number: 5 },
+  ];
+
+  beforeEach(() => {
+    _resetBibCacheForTesting();
+    useWorkspaceStore.setState({ workspacePath: "/workspace" });
+  });
+
+  async function getCompletions(doc: string) {
+    const state = EditorState.create({
+      doc,
+      extensions: [bibEntriesField, frontmatterFacet.of({})],
+    });
+    const ctx = {
+      state,
+      pos: doc.length,
+      explicit: true,
+    } as unknown as CompletionContext;
+    return crossrefCompletionSource(ctx);
+  }
+
+  it("caches entries after first fetch -- second call does not invoke IPC", async () => {
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") {
+        callCount++;
+        return workspaceEntries;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    await getCompletions("[@bib:");
+    await getCompletions("[@bib:");
+    expect(callCount).toBe(1);
+  });
+
+  it("invalidates cache when lit:bib-items-changed fires", async () => {
+    let callCount = 0;
+    mockListen();
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") {
+        callCount++;
+        return workspaceEntries;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    await getCompletions("[@bib:");
+    expect(callCount).toBe(1);
+
+    emitMockEvent("lit:bib-items-changed", {});
+    await getCompletions("[@bib:");
+    expect(callCount).toBe(2);
+  });
+
+  it("coalesces concurrent requests into one IPC call", async () => {
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") {
+        callCount++;
+        return workspaceEntries;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const [r1, r2] = await Promise.all([
+      getCompletions("[@bib:"),
+      getCompletions("[@bib:"),
+    ]);
+    expect(callCount).toBe(1);
+    expect(r1!.options.length).toBe(2);
+    expect(r2!.options.length).toBe(2);
+  });
+
+  it("retries on next invocation after fetch failure", async () => {
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") {
+        callCount++;
+        if (callCount === 1) throw new Error("DB error");
+        return workspaceEntries;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const r1 = await getCompletions("[@bib:");
+    // First call fails, entries should be empty => null result
+    expect(r1).toBeNull();
+
+    const r2 = await getCompletions("[@bib:");
+    expect(r2).not.toBeNull();
+    expect(r2!.options.length).toBe(2);
+    expect(callCount).toBe(2);
+  });
+
+  it("resets cache when workspace path changes", async () => {
+    const paths: string[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_bib_entries") {
+        paths.push((args as { workspacePath: string }).workspacePath);
+        return workspaceEntries;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    await getCompletions("[@bib:");
+    useWorkspaceStore.setState({ workspacePath: "/workspace2" });
+    await getCompletions("[@bib:");
+
+    expect(paths).toEqual(["/workspace", "/workspace2"]);
+  });
+
+  it("completion does not await IPC on every keystroke (regression)", async () => {
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") {
+        callCount++;
+        return workspaceEntries;
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await getCompletions("[@bib:");
+    }
+    expect(callCount).toBe(1);
+  });
+});
+
+describe("bibReconciliationPlugin -- manual-typing reconciliation", () => {
+  const workspaceEntries: BibEntry[] = [
+    { key: "jones2021", authors: ["Jones"], title: "Dogs", year: "2021", entry_type: "article", line_number: 5 },
+    { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 },
+  ];
+
+  // bibData where only smith2020 is resolved
+  const bibData: BibData = {
+    entries: [
+      { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 },
+    ],
+    renderedCitations: { smith2020: "Smith (2020)" },
+    byKey: new Map([["smith2020", { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 }]]),
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    _resetBibCacheForTesting();
+    useWorkspaceStore.setState({ workspacePath: "/workspace" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function createEditorView(doc: string, bib: BibData, notePath: string): EditorView {
+    const exts = [
+      bibEntriesField,
+      citeprocMatchesField,
+      notePathFacet.of(notePath),
+      frontmatterFacet.of({}),
+      bibReconciliationPlugin,
+    ];
+    let state = EditorState.create({ doc, extensions: exts });
+    state = state.update({ effects: setBibData.of(bib) }).state;
+    const parent = document.createElement("div");
+    return new EditorView({ state, parent });
+  }
+
+  it("calls ensureInCompanionBib for unresolved keys that exist in workspace DB", async () => {
+    const ensureCalls: string[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        ensureCalls.push((args as { citeKey: string }).citeKey);
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // Doc has [@jones2021] which is NOT in bibData.byKey
+    const view = createEditorView("see [@jones2021]", bibData, "notes/Test.md");
+
+    // Advance past the 1s debounce
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(ensureCalls).toContain("jones2021");
+    view.destroy();
+  });
+
+  it("does not reconcile keys already in note-scoped bib data", async () => {
+    const ensureCalls: string[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        ensureCalls.push((args as { citeKey: string }).citeKey);
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // smith2020 IS in bibData.byKey -- should not trigger reconciliation
+    const view = createEditorView("see [@smith2020]", bibData, "notes/Test.md");
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(ensureCalls).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("reconciles each key at most once per editor session", async () => {
+    const ensureCalls: string[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        ensureCalls.push((args as { citeKey: string }).citeKey);
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const view = createEditorView("see [@jones2021]", bibData, "notes/Test.md");
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(ensureCalls).toHaveLength(1);
+
+    // Simulate another doc change
+    view.dispatch({ changes: { from: 0, insert: " " } });
+    await vi.advanceTimersByTimeAsync(1100);
+
+    // Should still be only 1 call
+    expect(ensureCalls).toHaveLength(1);
+    view.destroy();
+  });
+
+  it("emits frontmatter patch when bibliography_value is returned", async () => {
+    const emitSpy = vi.spyOn(frontmatterBus, "emitFrontmatterPatch");
+
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        return { bib_path: "assets/bib/Test.bib", bibliography_value: "assets/bib/Test.bib" };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const view = createEditorView("see [@jones2021]", bibData, "notes/Test.md");
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(emitSpy).toHaveBeenCalledWith("notes/Test.md", {
+      bibliography: "assets/bib/Test.bib",
+    });
+
+    emitSpy.mockRestore();
+    view.destroy();
+  });
+
+  it("skips keys that do not exist in workspace DB", async () => {
+    const ensureCalls: string[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        ensureCalls.push((args as { citeKey: string }).citeKey);
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // "nonexistent" is not in workspaceEntries and not in bibData.byKey
+    const view = createEditorView("see [@nonexistent]", bibData, "notes/Test.md");
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(ensureCalls).toHaveLength(0);
+    view.destroy();
   });
 });

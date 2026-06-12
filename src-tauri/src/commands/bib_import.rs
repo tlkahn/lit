@@ -2,8 +2,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
 use serde::Deserialize;
-use tauri::Emitter;
-
 use crate::bib::convert::{csl_to_bib_entry, is_valid_doi, normalize_doi, CslItem};
 use crate::bib::db::{all_live_keys, upsert_bib_item, UpsertOutcome};
 use crate::bib::types::BibEntry;
@@ -127,8 +125,7 @@ pub fn save_bib_entry(
         }
     };
 
-    crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
-    let _ = app_handle.emit("lit:bib-items-changed", ());
+    crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
     Ok(vec![outcome])
 }
 
@@ -180,8 +177,7 @@ pub fn save_bib_entries(
         results
     };
 
-    crate::commands::graph::refresh_graph_shadows(&graph_state, &workspace_root, &app_handle);
-    let _ = app_handle.emit("lit:bib-items-changed", ());
+    crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
     Ok(outcomes)
 }
 

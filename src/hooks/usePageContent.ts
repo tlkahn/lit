@@ -20,6 +20,7 @@ import {
 } from "../lib/sharedDocs";
 import { extractHeadings } from "../lib/headings";
 import { frontmatterLineCount } from "../lib/pathUtils";
+import { onFrontmatterPatch } from "../lib/frontmatterBus";
 import { useWorkspaceStore } from "../stores/workspace";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 
@@ -96,6 +97,36 @@ export function usePageContent(
       setCurrentFrontmatterLineCount(frontmatterLineCount(content.rawYaml));
     });
 
+    const unsubFmBus = onFrontmatterPatch(pagePath, (_path, patch) => {
+      // Compute updated frontmatter from the shared doc (source of truth)
+      const fmDoc = getDoc(pagePath);
+      const currentFm = fmDoc?.frontmatter ?? {};
+      const updatedFm = { ...currentFm, ...patch };
+
+      // Update React state
+      setFrontmatter(updatedFm);
+      setIsDirty(true);
+      setDirty(true);
+
+      // Update shared doc + schedule save
+      if (fmDoc) {
+        fmDoc.frontmatter = updatedFm;
+        // Append new fields to rawYaml for line-count accuracy
+        let updatedRawYaml = fmDoc.rawYaml || "";
+        for (const [key, value] of Object.entries(patch)) {
+          if (!updatedRawYaml.includes(`${key}:`)) {
+            const yamlVal = typeof value === "string" ? `'${value}'` : String(value);
+            updatedRawYaml = updatedRawYaml.trimEnd() + `\n${key}: ${yamlVal}\n`;
+          }
+        }
+        fmDoc.rawYaml = updatedRawYaml;
+        setRawYaml(updatedRawYaml);
+        sharedSetBody(pagePath, fmDoc.body, paneId);
+      }
+
+      updatePaneContent(paneId, { frontmatter: updatedFm });
+    });
+
     const doc = getDoc(pagePath);
     if (doc && doc.loaded) {
       setBody(doc.body);
@@ -151,6 +182,7 @@ export function usePageContent(
       unsubBody();
       unsubSave();
       unsubContentReload();
+      unsubFmBus();
       if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
       release(pagePath, paneId);
     };

@@ -758,7 +758,7 @@ describe("ipc", () => {
         case "bib_delete":
           return true;
         case "ensure_in_companion_bib":
-          return "assets/bib/Note.bib";
+          return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2343,14 +2343,27 @@ describe("ipc", () => {
     });
   });
 
-  it("ensureInCompanionBib calls ensure_in_companion_bib and returns path", async () => {
+  it("ensureInCompanionBib calls ensure_in_companion_bib and returns result", async () => {
     const result = await ensureInCompanionBib("smith2020", "Note.md", "/workspace");
-    expect(result).toBe("assets/bib/Note.bib");
+    expect(result).toEqual({ bib_path: "assets/bib/Note.bib", bibliography_value: null });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("ensure_in_companion_bib", {
       citeKey: "smith2020",
       notePath: "Note.md",
       workspacePath: "/workspace",
+      skipNoteRewrite: false,
+    });
+  });
+
+  it("ensureInCompanionBib sends skipNoteRewrite when true", async () => {
+    const result = await ensureInCompanionBib("smith2020", "Note.md", "/workspace", true);
+    expect(result).toEqual({ bib_path: "assets/bib/Note.bib", bibliography_value: null });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("ensure_in_companion_bib", {
+      citeKey: "smith2020",
+      notePath: "Note.md",
+      workspacePath: "/workspace",
+      skipNoteRewrite: true,
     });
   });
 

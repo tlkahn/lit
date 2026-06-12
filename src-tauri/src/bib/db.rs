@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 use rusqlite::{params, Connection, OptionalExtension};
 use walkdir::WalkDir;
 
-use crate::bib::convert::normalize_doi;
+use crate::bib::convert::{normalize_arxiv_id, normalize_doi};
 use crate::bib::types::BibEntry;
 use crate::bib::writer::serialize_bib_entry;
 use crate::graph::error::GraphError;
@@ -18,7 +18,7 @@ pub enum UpsertOutcome {
     /// An existing row was updated (includes revive-from-tombstone).
     Updated { cite_key: String },
     /// A live row with a different cite_key already holds this identifier;
-    /// the caller's entry was skipped (only when from_scan=true).
+    /// the caller's entry was skipped.
     DedupSkipped { existing_key: String },
 }
 
@@ -64,6 +64,65 @@ fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
     })
 }
 
+/// Normalize a title for dedup comparison: lowercase, strip punctuation, collapse whitespace.
+/// This is a simplified version of recognize::resolve::title_match::normalize_title,
+/// duplicated here to avoid a cross-module dependency from bib -> recognize.
+fn normalize_title_for_dedup(title: &str) -> String {
+    title
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_punctuation() {
+                ' '
+            } else if !c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Check if a live row exists with the same normalized title and year.
+/// Only used as a fallback when no identifier (doi/isbn/arxiv) is present.
+/// Returns the cite_key of the matching row, if any.
+fn find_live_by_title_year(
+    conn: &Connection,
+    title: &str,
+    year: &str,
+) -> Result<Option<String>, GraphError> {
+    if title.trim().is_empty() {
+        return Ok(None);
+    }
+    let normalized = normalize_title_for_dedup(title);
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT cite_key, title, year FROM bib_items \
+         WHERE deleted_at IS NULL AND title IS NOT NULL AND title != ''",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (key, existing_title, existing_year) = row?;
+        let existing_title = existing_title.unwrap_or_default();
+        let existing_year = existing_year.unwrap_or_default();
+        if existing_year == year && normalize_title_for_dedup(&existing_title) == normalized {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
+}
+
 /// Check if a live row exists with the given identifier value.
 /// Returns the cite_key of the matching row, if any.
 fn find_live_by_field(
@@ -90,9 +149,9 @@ pub fn upsert_bib_item(
 ) -> Result<UpsertOutcome, GraphError> {
     let doi = entry.doi.as_deref().map(normalize_doi);
     let isbn = entry.isbn.as_deref();
-    let arxiv_id = entry.arxiv_id.as_deref();
+    let arxiv_id = entry.arxiv_id.as_deref().map(normalize_arxiv_id);
 
-    // Dedup precedence: doi > isbn > arxiv_id (live rows only)
+    // Dedup precedence: doi > isbn > arxiv_id > title+year (live rows only)
     let dedup_match = if let Some(ref d) = doi {
         find_live_by_field(conn, "doi", d)?
     } else {
@@ -103,25 +162,30 @@ pub fn upsert_bib_item(
     } else {
         None
     })
-    .or(if let Some(a) = arxiv_id {
+    .or(if let Some(ref a) = arxiv_id {
         find_live_by_field(conn, "arxiv_id", a)?
     } else {
         None
     });
 
+    // Title+year fallback dedup: only when the incoming entry has NO identifiers
+    let dedup_match = if dedup_match.is_none()
+        && doi.is_none()
+        && isbn.is_none()
+        && arxiv_id.is_none()
+    {
+        find_live_by_title_year(conn, &entry.title, &entry.year)?
+    } else {
+        dedup_match
+    };
+
     if let Some(ref existing_key) = dedup_match {
         if existing_key != &entry.key {
-            if from_scan {
-                return Ok(UpsertOutcome::DedupSkipped {
-                    existing_key: existing_key.clone(),
-                });
-            } else {
-                // Non-scan: update the existing row with all fields
-                update_row_full(conn, existing_key, entry, &doi, source_file, source_line)?;
-                return Ok(UpsertOutcome::Updated {
-                    cite_key: existing_key.clone(),
-                });
-            }
+            // Duplicate detected under a different key (by identifier or
+            // title+year); always skip. Callers decide cleanup.
+            return Ok(UpsertOutcome::DedupSkipped {
+                existing_key: existing_key.clone(),
+            });
         }
     }
 
@@ -137,9 +201,9 @@ pub fn upsert_bib_item(
     if let Some((_id, _deleted_at)) = existing {
         if from_scan {
             // Gap-fill: only fill NULL/empty fields, but always refresh source_file, source_line, raw_bibtex
-            gap_fill_row(conn, &entry.key, entry, &doi, source_file, source_line)?;
+            gap_fill_row(conn, &entry.key, entry, &doi, &arxiv_id, source_file, source_line)?;
         } else {
-            update_row_full(conn, &entry.key, entry, &doi, source_file, source_line)?;
+            update_row_full(conn, &entry.key, entry, &doi, &arxiv_id, source_file, source_line)?;
         }
         return Ok(UpsertOutcome::Updated {
             cite_key: entry.key.clone(),
@@ -165,7 +229,7 @@ pub fn upsert_bib_item(
             entry.year,
             doi,
             entry.isbn,
-            entry.arxiv_id,
+            arxiv_id,
             entry.url,
             entry.journal,
             entry.publisher,
@@ -193,6 +257,7 @@ fn update_row_full(
     cite_key: &str,
     entry: &BibEntry,
     doi: &Option<String>,
+    arxiv_id: &Option<String>,
     source_file: Option<&str>,
     source_line: Option<usize>,
 ) -> Result<(), GraphError> {
@@ -217,7 +282,7 @@ fn update_row_full(
             entry.year,
             doi,
             entry.isbn,
-            entry.arxiv_id,
+            arxiv_id,
             entry.url,
             entry.journal,
             entry.publisher,
@@ -244,6 +309,7 @@ fn gap_fill_row(
     cite_key: &str,
     entry: &BibEntry,
     doi: &Option<String>,
+    arxiv_id: &Option<String>,
     source_file: Option<&str>,
     source_line: Option<usize>,
 ) -> Result<(), GraphError> {
@@ -256,7 +322,7 @@ fn gap_fill_row(
         "UPDATE bib_items SET
             entry_type = COALESCE(NULLIF(entry_type, ''), ?1),
             title = COALESCE(NULLIF(title, ''), ?2),
-            authors = COALESCE(NULLIF(authors, ''), COALESCE(NULLIF(authors, '[]'), ?3)),
+            authors = COALESCE(NULLIF(NULLIF(authors, ''), '[]'), ?3),
             year = COALESCE(NULLIF(year, ''), ?4),
             doi = COALESCE(doi, ?5),
             isbn = COALESCE(isbn, ?6),
@@ -270,7 +336,7 @@ fn gap_fill_row(
             number = COALESCE(number, ?14),
             pages = COALESCE(pages, ?15),
             file = COALESCE(file, ?16),
-            tags = COALESCE(NULLIF(tags, ''), COALESCE(NULLIF(tags, '[]'), ?17)),
+            tags = COALESCE(NULLIF(NULLIF(tags, ''), '[]'), ?17),
             source_file = ?18,
             source_line = ?19,
             raw_bibtex = ?20,
@@ -284,7 +350,7 @@ fn gap_fill_row(
             entry.year,
             doi,
             entry.isbn,
-            entry.arxiv_id,
+            arxiv_id,
             entry.url,
             entry.journal,
             entry.publisher,
@@ -371,7 +437,7 @@ pub fn update_bib_fields(
             "year" => entry.year = value.clone(),
             "doi" => entry.doi = Some(value.clone()),
             "isbn" => entry.isbn = Some(value.clone()),
-            "arxiv_id" => entry.arxiv_id = Some(value.clone()),
+            "arxiv_id" => entry.arxiv_id = Some(normalize_arxiv_id(value)),
             "url" => entry.url = Some(value.clone()),
             "journal" => entry.journal = Some(value.clone()),
             "publisher" => entry.publisher = Some(value.clone()),
@@ -660,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_dedup_by_doi_non_scan_updates() {
+    fn test_upsert_dedup_by_doi_non_scan_skips() {
         let store = Store::open_memory().unwrap();
         let a = test_entry_with_doi("entryA", "10.1000/x");
         upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
@@ -670,11 +736,12 @@ mod tests {
         let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
         assert_eq!(
             result,
-            UpsertOutcome::Updated { cite_key: "entryA".to_string() }
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() }
         );
 
+        // Original entry must be untouched
         let fetched = get_bib_item(&store.conn, "entryA").unwrap().unwrap();
-        assert_eq!(fetched.title, "Updated Title");
+        assert_eq!(fetched.title, "Title for entryA");
     }
 
     #[test]
@@ -850,6 +917,101 @@ mod tests {
         let b = test_entry_with_doi("entryB", "10.1000/x");
         let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
         assert_eq!(result, UpsertOutcome::Inserted { cite_key: "entryB".to_string() });
+    }
+
+    // ── Regression tests: identifier match under different key must DedupSkip regardless of from_scan ──
+
+    #[test]
+    fn test_upsert_dedup_by_doi_non_scan_returns_dedup_skipped() {
+        let store = Store::open_memory().unwrap();
+        let a = test_entry_with_doi("entryA", "10.1000/x");
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let b = test_entry_with_doi("entryB", "10.1000/x");
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_upsert_dedup_non_scan_preserves_existing_entry() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry_with_doi("entryA", "10.1000/x");
+        a.title = "Rich Title".to_string();
+        a.abstract_text = Some("Rich abstract".to_string());
+        a.file = Some("/path/to/paper.pdf".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry_with_doi("entryB", "10.1000/x");
+        b.title = "Stub".to_string();
+        b.abstract_text = None;
+        b.file = None;
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() }
+        );
+
+        // Original entry must be completely untouched
+        let fetched = get_bib_item(&store.conn, "entryA").unwrap().unwrap();
+        assert_eq!(fetched.title, "Rich Title");
+        assert_eq!(fetched.abstract_text, Some("Rich abstract".to_string()));
+        assert_eq!(fetched.file, Some("/path/to/paper.pdf".to_string()));
+
+        // Entry B must NOT exist in DB
+        assert!(get_bib_item(&store.conn, "entryB").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_upsert_dedup_by_isbn_non_scan_returns_dedup_skipped() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.isbn = Some("978-3-16-148410-0".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.isbn = Some("978-3-16-148410-0".to_string());
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_upsert_dedup_by_arxiv_non_scan_returns_dedup_skipped() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.arxiv_id = Some("2301.12345".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.arxiv_id = Some("2301.12345".to_string());
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() }
+        );
+    }
+
+    #[test]
+    fn test_upsert_same_key_same_doi_non_scan_updates() {
+        let store = Store::open_memory().unwrap();
+        let a = test_entry_with_doi("entryA", "10.1000/x");
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut a2 = test_entry_with_doi("entryA", "10.1000/x");
+        a2.title = "Updated Title".to_string();
+        let result = upsert_bib_item(&store.conn, &a2, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Updated { cite_key: "entryA".to_string() }
+        );
+
+        let fetched = get_bib_item(&store.conn, "entryA").unwrap().unwrap();
+        assert_eq!(fetched.title, "Updated Title");
     }
 
     // ── Get/List/Search tests ─────────────────────────────────────
@@ -1376,5 +1538,355 @@ mod tests {
         assert_eq!(stats.entries_inserted, 1);
         assert!(get_bib_item(&store.conn, "smith2024").unwrap().is_none(),
             ".bib inside hidden dir must not be ingested");
+    }
+
+    // ── F8: arxiv_id normalization and dedup ───────────────────────
+
+    #[test]
+    fn test_upsert_normalizes_arxiv_id() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.arxiv_id = Some("2301.07041v2".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.arxiv_id, Some("2301.07041".to_string()),
+            "arxiv_id must be normalized (version suffix stripped) on insert");
+    }
+
+    #[test]
+    fn test_upsert_dedup_arxiv_api_then_bib_ingest() {
+        let store = Store::open_memory().unwrap();
+        // Simulate arXiv API path: stores versioned ID
+        let mut a = test_entry("entryA");
+        a.arxiv_id = Some("2301.07041v2".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        // Simulate .bib ingest path: stores bare eprint
+        let mut b = test_entry("entryB");
+        b.arxiv_id = Some("2301.07041".to_string());
+        let result = upsert_bib_item(&store.conn, &b, None, None, true).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() },
+            "versioned API ID and bare bib ID must dedup after normalization"
+        );
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_upsert_dedup_bib_ingest_then_arxiv_api() {
+        let store = Store::open_memory().unwrap();
+        // Simulate .bib ingest path first: bare eprint
+        let mut a = test_entry("entryA");
+        a.arxiv_id = Some("2301.07041".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, true).unwrap();
+
+        // Simulate arXiv API path: versioned ID
+        let mut b = test_entry("entryB");
+        b.arxiv_id = Some("2301.07041v2".to_string());
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() },
+            "bare bib ID and versioned API ID must dedup after normalization"
+        );
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 1);
+    }
+
+    // ── F6 regression: gap_fill_row empty-array JSON short-circuit ──
+
+    #[test]
+    fn test_gap_fill_authors_from_empty_json_array() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.authors = vec![];
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut scan = test_entry("smith2024");
+        scan.authors = vec!["Smith, John".to_string()];
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.authors, vec!["Smith, John"],
+            "scan must fill authors when stored value is empty JSON array '[]'");
+    }
+
+    #[test]
+    fn test_gap_fill_tags_from_empty_json_array() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.tags = vec![];
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut scan = test_entry("smith2024");
+        scan.tags = vec!["machine-learning".to_string(), "nlp".to_string()];
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.tags, vec!["machine-learning", "nlp"],
+            "scan must fill tags when stored value is empty JSON array '[]'");
+    }
+
+    #[test]
+    fn test_gap_fill_authors_preserves_existing_real_authors() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.authors = vec!["Existing, Author".to_string()];
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut scan = test_entry("smith2024");
+        scan.authors = vec!["New, Author".to_string()];
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.authors, vec!["Existing, Author"],
+            "scan must not overwrite existing real authors");
+    }
+
+    #[test]
+    fn test_gap_fill_tags_preserves_existing_real_tags() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.tags = vec!["existing-tag".to_string()];
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut scan = test_entry("smith2024");
+        scan.tags = vec!["new-tag".to_string()];
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.tags, vec!["existing-tag"],
+            "scan must not overwrite existing real tags");
+    }
+
+    #[test]
+    fn test_gap_fill_authors_from_empty_string() {
+        let store = Store::open_memory().unwrap();
+        // Insert a row with authors = '' (empty string, not JSON array) via raw SQL
+        let a = test_entry("smith2024");
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+        store.conn.execute(
+            "UPDATE bib_items SET authors = '' WHERE cite_key = 'smith2024'",
+            [],
+        ).unwrap();
+
+        let mut scan = test_entry("smith2024");
+        scan.authors = vec!["Smith".to_string()];
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.authors, vec!["Smith"],
+            "scan must fill authors when stored value is empty string");
+    }
+
+    #[test]
+    fn test_gap_fill_authors_and_tags_both_empty_array() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.authors = vec![];
+        a.tags = vec![];
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut scan = test_entry("smith2024");
+        scan.authors = vec!["A".to_string()];
+        scan.tags = vec!["t".to_string()];
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.authors, vec!["A"],
+            "scan must fill authors when both authors and tags are empty arrays");
+        assert_eq!(fetched.tags, vec!["t"],
+            "scan must fill tags when both authors and tags are empty arrays");
+    }
+
+    // ── F7: title+year dedup for identifier-less entries ─────────
+
+    #[test]
+    fn test_normalize_title_for_dedup() {
+        assert_eq!(
+            normalize_title_for_dedup("Hello, World! A Study: of Things."),
+            "hello world a study of things"
+        );
+        assert_eq!(
+            normalize_title_for_dedup("  quantum   entanglement "),
+            "quantum entanglement"
+        );
+        assert_eq!(normalize_title_for_dedup(""), "");
+    }
+
+    #[test]
+    fn test_upsert_dedup_by_title_year_no_identifiers() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.title = "Machine Learning Overview".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("smith2024a");
+        b.title = "Machine Learning Overview".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "smith2024".to_string() },
+            "identifier-less entry with same title+year must dedup"
+        );
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_upsert_dedup_by_title_year_case_insensitive() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.title = "Quantum Computing".to_string();
+        a.year = "2023".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.title = "quantum computing".to_string();
+        b.year = "2023".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() },
+            "title+year dedup must be case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_upsert_dedup_by_title_year_ignores_punctuation() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.title = "Hello, World: A Study".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.title = "Hello World A Study".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::DedupSkipped { existing_key: "entryA".to_string() },
+            "title+year dedup must ignore punctuation"
+        );
+    }
+
+    #[test]
+    fn test_upsert_no_dedup_different_title_same_author_year() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.title = "Paper A".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("smith2024a");
+        b.title = "Paper B".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Inserted { cite_key: "smith2024a".to_string() },
+            "different titles must not dedup even with same year"
+        );
+    }
+
+    #[test]
+    fn test_upsert_no_dedup_same_title_different_year() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.title = "Same Title".to_string();
+        a.year = "2023".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.title = "Same Title".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Inserted { cite_key: "entryB".to_string() },
+            "same title but different year must not dedup"
+        );
+    }
+
+    #[test]
+    fn test_upsert_title_year_dedup_skipped_when_identifiers_present() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.doi = Some("10.1/x".to_string());
+        a.title = "Same Title".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.doi = Some("10.1/y".to_string()); // different doi
+        b.title = "Same Title".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Inserted { cite_key: "entryB".to_string() },
+            "identifier-bearing entries must use identifier dedup only, not title+year"
+        );
+    }
+
+    #[test]
+    fn test_upsert_title_year_dedup_empty_title_no_dedup() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.title = "".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut b = test_entry("entryB");
+        b.title = "".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Inserted { cite_key: "entryB".to_string() },
+            "empty titles must not dedup against each other"
+        );
+    }
+
+    #[test]
+    fn test_upsert_title_year_dedup_same_key_updates_not_skips() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("smith2024");
+        a.title = "Some Title".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let mut a2 = test_entry("smith2024");
+        a2.title = "Some Title".to_string();
+        a2.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &a2, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Updated { cite_key: "smith2024".to_string() },
+            "same key must update, not dedup-skip"
+        );
+    }
+
+    #[test]
+    fn test_upsert_title_year_dedup_ignores_tombstoned() {
+        let store = Store::open_memory().unwrap();
+        let mut a = test_entry("entryA");
+        a.title = "Some Title".to_string();
+        a.year = "2024".to_string();
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+        tombstone_bib_item(&store.conn, "entryA").unwrap();
+
+        let mut b = test_entry("entryB");
+        b.title = "Some Title".to_string();
+        b.year = "2024".to_string();
+        let result = upsert_bib_item(&store.conn, &b, None, None, false).unwrap();
+        assert_eq!(
+            result,
+            UpsertOutcome::Inserted { cite_key: "entryB".to_string() },
+            "tombstoned rows must not trigger title+year dedup"
+        );
     }
 }

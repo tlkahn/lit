@@ -212,12 +212,13 @@ export function ReferenceLibrary() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
+      loadEntries();
       loadBibKeyStates();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
-  }, [loadBibKeyStates]);
+  }, [loadEntries, loadBibKeyStates]);
 
   useEffect(() => {
     let cancelled = false;

@@ -1,3 +1,4 @@
+use crate::bib::convert::normalize_arxiv_id;
 use crate::bib::types::BibEntry;
 use regex::Regex;
 use std::collections::HashMap;
@@ -131,12 +132,15 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
                         .as_deref()
                         .map_or(false, |p| p.eq_ignore_ascii_case("arxiv"))
                     {
-                        Some(ep.clone())
+                        Some(normalize_arxiv_id(ep))
                     } else {
                         None
                     }
                 } else {
-                    fields.get("url").and_then(|u| extract_arxiv_id_from_url(u))
+                    fields
+                        .get("url")
+                        .and_then(|u| extract_arxiv_id_from_url(u))
+                        .map(|id| normalize_arxiv_id(&id))
                 }
             },
             tags: match fields.get("keywords") {
@@ -714,7 +718,14 @@ mod tests {
     fn parse_arxiv_id_from_url_old_style() {
         let input = "@article{a2007,\n  author = {Smith, John},\n  title = {T},\n  year = {2007},\n  url = {https://arxiv.org/abs/hep-ph/0703105v1}\n}";
         let entries = parse_bibtex(input);
-        assert_eq!(entries[0].arxiv_id, Some("hep-ph/0703105v1".to_string()));
+        assert_eq!(entries[0].arxiv_id, Some("hep-ph/0703105".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_eprint_with_version_suffix_normalized() {
+        let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  eprint = {2301.07041v3},\n  archiveprefix = {arXiv}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].arxiv_id, Some("2301.07041".to_string()));
     }
 
     #[test]
