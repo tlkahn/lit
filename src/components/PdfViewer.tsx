@@ -11,8 +11,11 @@ const MAX_CACHE = 5;
 // transitions (prefetched j/k flips) don't flash it on every keypress.
 const SPINNER_GRACE_MS = 150;
 
-function getEffectiveDpi(): number {
-  return Math.round(BASE_DPI * (window.devicePixelRatio || 1));
+const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+const ZOOM_DEFAULT_INDEX = 5;
+
+function getEffectiveDpi(zoom: number = 1): number {
+  return Math.round(BASE_DPI * (window.devicePixelRatio || 1) * zoom);
 }
 
 function cacheKey(pageIndex: number, dpi: number): string {
@@ -70,6 +73,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
+  const zoomIndexRef = useRef(ZOOM_DEFAULT_INDEX);
   const cacheRef = useRef(new Map<string, RenderedPage>());
   const navSeqRef = useRef(0);
   // True after the first <img> onLoad/onError fires for the current file.
@@ -98,6 +102,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     filePathRef.current = filePath;
     cacheRef.current.clear();
     hasEverPaintedRef.current = false;
+    zoomIndexRef.current = ZOOM_DEFAULT_INDEX;
+
     setRendered(null);
     setLoadedSrc(null);
     setError(null);
@@ -112,7 +118,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         currentPageRef.current = 0;
         onPageCountRef.current?.(info.page_count);
 
-        const dpi = getEffectiveDpi();
+        const dpi = getEffectiveDpi(ZOOM_LEVELS[ZOOM_DEFAULT_INDEX]);
         const page = await pdfRenderPage(0, dpi, paneId);
         if (cancelled) return;
         cacheSet(cacheRef.current, cacheKey(0, dpi), page);
@@ -146,7 +152,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       // this same one and getting dropped by the same-page guard above.
       currentPageRef.current = index;
       try {
-        const dpi = getEffectiveDpi();
+        const dpi = getEffectiveDpi(ZOOM_LEVELS[zoomIndexRef.current]);
         const key = cacheKey(index, dpi);
         const cached = cacheGet(cacheRef.current, key);
         if (cached && filePathRef.current === filePath) {
@@ -209,8 +215,66 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     return () => clearTimeout(t);
   }, [transitioning]);
 
+  const renderAtZoom = useCallback(
+    async (newZoomIndex: number) => {
+      const pageIndex = currentPageRef.current;
+      const mySeq = ++navSeqRef.current;
+      const dpi = getEffectiveDpi(ZOOM_LEVELS[newZoomIndex]);
+      const key = cacheKey(pageIndex, dpi);
+      const cached = cacheGet(cacheRef.current, key);
+      if (cached && filePathRef.current === filePath) {
+        setRendered(cached);
+        prefetchAdjacent(pageIndex, pdfInfo?.page_count ?? 0, dpi);
+        return;
+      }
+
+      setPageLoading(true);
+      try {
+        const rp = await pdfRenderPage(pageIndex, dpi, paneId);
+        if (filePathRef.current === filePath && navSeqRef.current === mySeq) {
+          cacheSet(cacheRef.current, key, rp);
+          setRendered(rp);
+          prefetchAdjacent(pageIndex, pdfInfo?.page_count ?? 0, dpi);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (navSeqRef.current === mySeq) setPageLoading(false);
+      }
+    },
+    [filePath, paneId, pdfInfo, prefetchAdjacent],
+  );
+
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        const next = Math.min(zoomIndexRef.current + 1, ZOOM_LEVELS.length - 1);
+        if (next !== zoomIndexRef.current) {
+          zoomIndexRef.current = next;
+          renderAtZoom(next);
+        }
+        return;
+      }
+      if (mod && e.key === "-") {
+        e.preventDefault();
+        const next = Math.max(zoomIndexRef.current - 1, 0);
+        if (next !== zoomIndexRef.current) {
+          zoomIndexRef.current = next;
+          renderAtZoom(next);
+        }
+        return;
+      }
+      if (mod && e.key === "0") {
+        e.preventDefault();
+        if (zoomIndexRef.current !== ZOOM_DEFAULT_INDEX) {
+          zoomIndexRef.current = ZOOM_DEFAULT_INDEX;
+          renderAtZoom(ZOOM_DEFAULT_INDEX);
+        }
+        return;
+      }
+
       const pageCount = pdfInfo?.page_count ?? 0;
       // Read the synchronous source of truth (the ref) that goToPage's guard
       // uses. On a rapid double-press the React `currentPage` state is still
@@ -230,7 +294,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         }
       }
     },
-    [pdfInfo, goToPage],
+    [pdfInfo, goToPage, renderAtZoom],
   );
 
   if (error) {
@@ -269,7 +333,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
           src={src ?? undefined}
           alt={`Page ${currentPage + 1}`}
           className="mx-auto shadow-lg"
-          style={{ maxWidth: "100%", width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
+          style={{ width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
           onLoad={(e) => { hasEverPaintedRef.current = true; setLoadedSrc(e.currentTarget.getAttribute("src")); }}
           // A failed image load must not strand the spinner — the IPC render
           // already succeeded, so just end the transition.
