@@ -916,16 +916,44 @@ describe("PdfViewer", () => {
     fireEvent.load(screen.getByTestId("pdf-page-image"));
   });
 
-  it("Cmd+= zooms in and re-renders at higher DPI", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+  it("calls registerZoomHandlers with zoomIn/zoomOut/zoomReset", async () => {
+    const registerZoomHandlers = vi.fn();
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={registerZoomHandlers}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
 
+    expect(registerZoomHandlers).toHaveBeenCalled();
+    const handlers = registerZoomHandlers.mock.calls[0]![0];
+    expect(typeof handlers.zoomIn).toBe("function");
+    expect(typeof handlers.zoomOut).toBe("function");
+    expect(typeof handlers.zoomReset).toBe("function");
+  });
+
+  it("zoomIn from registerZoomHandlers re-renders at higher DPI", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(zoomHandlers).not.toBeNull();
+
     const { invoke } = await import("@tauri-apps/api/core");
     (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    zoomHandlers!.zoomIn();
 
     await waitFor(() => {
       const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
@@ -936,17 +964,25 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("Cmd+- zooms out and re-renders at lower DPI", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+  it("zoomOut from registerZoomHandlers re-renders at lower DPI", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(zoomHandlers).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
     (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    // Zoom out from default 1.0x → 0.9x: Math.round(144 * 1 * 0.9) = 130
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", metaKey: true });
+    // Zoom out from default 1.0x -> 0.9x: Math.round(144 * 1 * 0.9) = 130
+    zoomHandlers!.zoomOut();
 
     await waitFor(() => {
       const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
@@ -956,37 +992,44 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("Cmd+0 resets zoom to default DPI", async () => {
+  it("zoomReset from registerZoomHandlers resets to default DPI", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
     const onPageChange = vi.fn();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(zoomHandlers).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
 
-    // Zoom out twice: 1.0 → 0.9 → 0.8
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", metaKey: true });
+    // Zoom out twice: 1.0 -> 0.9 -> 0.8
+    zoomHandlers!.zoomOut();
     await waitFor(() => {
       const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: unknown[]) => c[0] === "pdf_render_page");
       expect(renderCalls.some((c: unknown[]) => (c[1] as Record<string, unknown>).dpi === 130)).toBe(true);
     });
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", metaKey: true });
+    zoomHandlers!.zoomOut();
     await waitFor(() => {
       const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: unknown[]) => c[0] === "pdf_render_page");
-      // 0.8x: Math.round(144 * 0.8) = 115
       expect(renderCalls.some((c: unknown[]) => (c[1] as Record<string, unknown>).dpi === 115)).toBe(true);
     });
 
-    // Reset with Cmd+0 (1.0x / DPI 144 is cached from initial render, so
-    // verify the reset took effect by navigating to a new page afterwards).
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "0", metaKey: true });
+    // Reset zoom
+    zoomHandlers!.zoomReset();
 
     (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    // Navigate to page 1 — should render at default DPI (144), not 0.8x (115)
+    // Navigate to page 1 -- should render at default DPI (144), not 0.8x (115)
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(1);
@@ -999,16 +1042,24 @@ describe("PdfViewer", () => {
   });
 
   it("zoom is clamped at max (no-op at highest level)", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(zoomHandlers).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
 
-    // Zoom in 7 times to reach max (index 5 → 12, which is 3.0x)
+    // Zoom in 7 times to reach max (index 5 -> 12, which is 3.0x)
     for (let i = 0; i < 7; i++) {
-      fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+      zoomHandlers!.zoomIn();
       await waitFor(() => {
         const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
           .filter((c: unknown[]) => c[0] === "pdf_render_page");
@@ -1019,7 +1070,7 @@ describe("PdfViewer", () => {
     (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
 
     // One more zoom in should be a no-op
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    zoomHandlers!.zoomIn();
 
     await Promise.resolve();
     const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
@@ -1028,16 +1079,24 @@ describe("PdfViewer", () => {
   });
 
   it("zoom is clamped at min (no-op at lowest level)", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(zoomHandlers).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
 
-    // Zoom out 5 times to reach min (index 5 → 0, which is 0.5x)
+    // Zoom out 5 times to reach min (index 5 -> 0, which is 0.5x)
     for (let i = 0; i < 5; i++) {
-      fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", metaKey: true });
+      zoomHandlers!.zoomOut();
       await waitFor(() => {
         const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
           .filter((c: unknown[]) => c[0] === "pdf_render_page");
@@ -1048,7 +1107,7 @@ describe("PdfViewer", () => {
     (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
 
     // One more zoom out should be a no-op
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", metaKey: true });
+    zoomHandlers!.zoomOut();
 
     await Promise.resolve();
     const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
@@ -1057,16 +1116,25 @@ describe("PdfViewer", () => {
   });
 
   it("page navigation after zoom uses the zoomed DPI", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
     const onPageChange = vi.fn();
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(zoomHandlers).not.toBeNull();
 
     const { invoke } = await import("@tauri-apps/api/core");
 
-    // Zoom in once (1.0 → 1.1)
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    // Zoom in once (1.0 -> 1.1)
+    zoomHandlers!.zoomIn();
     await waitFor(() => {
       const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: unknown[]) => c[0] === "pdf_render_page");
@@ -1089,13 +1157,21 @@ describe("PdfViewer", () => {
   });
 
   it("file change resets zoom to default", async () => {
-    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    const { rerender } = render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
     });
+    expect(zoomHandlers).not.toBeNull();
 
-    // Zoom in
-    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    // Zoom in via callback
+    zoomHandlers!.zoomIn();
     const { invoke } = await import("@tauri-apps/api/core");
     await waitFor(() => {
       const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
@@ -1124,7 +1200,13 @@ describe("PdfViewer", () => {
       }
     });
 
-    rerender(<PdfViewer filePath="/test/other.pdf" paneId="pane-1" />);
+    rerender(
+      <PdfViewer
+        filePath="/test/other.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
 
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
@@ -1185,5 +1267,466 @@ describe("PdfViewer", () => {
     expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
 
     fireEvent.load(screen.getByTestId("pdf-page-image"));
+  });
+
+  it("zoom during slow page navigation still fires onPageChange for the new page", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    const onPageChange = vi.fn();
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(zoomHandlers).not.toBeNull();
+
+    // Make page 1 render slow at default DPI, but resolve immediately at zoom DPI.
+    let resolveSlowRender!: (v: unknown) => void;
+    const slowRender = new Promise((r) => { resolveSlowRender = r; });
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_render_page") {
+        const a = args as Record<string, unknown>;
+        const idx = (a?.pageIndex ?? 0) as number;
+        const dpi = (a?.dpi ?? 0) as number;
+        // Default DPI (144) for page 1 is slow; zoomed DPI (158) resolves immediately.
+        if (idx === 1 && dpi === 144) return slowRender;
+        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+      }
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // Navigate to page 1 (slow render in flight).
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
+
+    // Zoom in while page 1 render is pending via registered callback.
+    zoomHandlers!.zoomIn();
+
+    // onPageChange(1) must fire even though the original goToPage render
+    // was superseded -- the zoom rendered page 1 successfully.
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(1);
+    });
+
+    // Clean up the deferred slow render.
+    resolveSlowRender({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
+  });
+
+  it("applies maxWidth:100% at default zoom so wide pages fit the container", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.maxWidth).toBe("100%");
+    });
+  });
+
+  it("removes maxWidth constraint when zoomed in beyond 1x", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(zoomHandlers).not.toBeNull();
+
+    zoomHandlers!.zoomIn();
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.maxWidth).toBe("");
+    });
+  });
+
+  it("restores maxWidth:100% when zooming back to 1x from above", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(zoomHandlers).not.toBeNull();
+
+    // Zoom in to 1.1x
+    zoomHandlers!.zoomIn();
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls.some((c: unknown[]) => (c[1] as Record<string, unknown>).dpi === 158)).toBe(true);
+    });
+
+    // Zoom back to 1.0x
+    zoomHandlers!.zoomOut();
+    await waitFor(() => {
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls.some((c: unknown[]) => (c[1] as Record<string, unknown>).dpi === 144)).toBe(true);
+    });
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.maxWidth).toBe("100%");
+    });
+  });
+
+  it("clears spinner when a cache-hit zoom supersedes a slow in-flight zoom render", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+
+    // 1. Wait for initial load (page 0 at DPI 144 is cached) and paint it.
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+    expect(zoomHandlers).not.toBeNull();
+
+    // 2. Zoom in once: index 5 -> 6, DPI = Math.round(144*1.1) = 158.
+    //    Resolves immediately via default mock, caching page 0 at DPI 158.
+    zoomHandlers!.zoomIn();
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls.some((c: unknown[]) => (c[1] as Record<string, unknown>).dpi === 158)).toBe(true);
+    });
+    // Paint the zoomed image so loadedSrc is up to date.
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    // 3. Swap mock to return a deferred (never-resolving) promise for renders.
+    let resolveDeferred!: (v: unknown) => void;
+    const deferred = new Promise((r) => { resolveDeferred = r; });
+    mockInvoke((cmd) => {
+      if (cmd === "pdf_render_page") return deferred;
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    // 4. Zoom in again: index 6 -> 7, DPI = Math.round(144*1.25) = 180.
+    //    Cache miss -- slow render in flight, pageLoading=true.
+    zoomHandlers!.zoomIn();
+
+    // Wait for the spinner to appear (past grace period).
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
+    });
+
+    // 5. Zoom back out: index 7 -> 6, DPI 158 -- cache hit from step 2.
+    zoomHandlers!.zoomOut();
+    // Paint the (already-known) cached image.
+    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    // 6. Wait past the grace period; the spinner must NOT be stuck.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+
+    // Clean up: resolve the deferred so no dangling promise warnings.
+    resolveDeferred({ ...mockRenderedPage, page_index: 0, png_path: "/tmp/lit-pdf-test/page_0.png" });
+  });
+
+  it("file change restores maxWidth:100% after being zoomed beyond 1x", async () => {
+    let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+    const { rerender } = render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    });
+    expect(zoomHandlers).not.toBeNull();
+
+    // Zoom in to 1.1x (beyond 1.0x -- maxWidth should be removed).
+    zoomHandlers!.zoomIn();
+    const { invoke } = await import("@tauri-apps/api/core");
+    await waitFor(() => {
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls.some((c: unknown[]) => (c[1] as Record<string, unknown>).dpi === 158)).toBe(true);
+    });
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.style.maxWidth).toBe("");
+    });
+
+    // Switch to a different file -- zoom should reset to default (1.0x) and
+    // maxWidth should be back to "100%".
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "pdf_open":
+          return { page_count: 2, path: "/test/other.pdf" };
+        case "pdf_render_page": {
+          const a = args as Record<string, unknown>;
+          const idx = a?.pageIndex ?? 0;
+          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/other_page_${idx}.png` };
+        }
+        case "pdf_prefetch":
+          return null;
+        case "pdf_close":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    rerender(
+      <PdfViewer
+        filePath="/test/other.pdf"
+        paneId="pane-1"
+        registerZoomHandlers={(h) => { zoomHandlers = h; }}
+      />,
+    );
+
+    await waitFor(() => {
+      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
+      expect(img.src).toContain("other_page_0");
+      expect(img.style.maxWidth).toBe("100%");
+    });
+  });
+
+  it("rapid multi-step zoom coalesces into a single render at the final DPI", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+      render(
+        <PdfViewer
+          filePath="/test/doc.pdf"
+          paneId="pane-1"
+          registerZoomHandlers={(h) => { zoomHandlers = h; }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      });
+      expect(zoomHandlers).not.toBeNull();
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      // Fire 5 rapid zoomIn calls with no timer advancement between them.
+      // Default index is 5; after 5 calls: 6,7,8,9,10 (zoom 2.0x).
+      await act(async () => {
+        for (let i = 0; i < 5; i++) {
+          zoomHandlers!.zoomIn();
+        }
+      });
+
+      // Before the debounce fires, no renders should have been dispatched.
+      const renderCallsBefore = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCallsBefore).toHaveLength(0);
+
+      // Advance past the debounce delay and flush resulting microtasks.
+      await act(async () => {
+        vi.advanceTimersByTime(150);
+      });
+
+      await waitFor(() => {
+        const renderCallsAfter = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => c[0] === "pdf_render_page");
+        // Exactly 1 render for the final zoom level.
+        expect(renderCallsAfter).toHaveLength(1);
+        // Zoom index 10 = 2.0x, DPI = Math.round(144 * 2.0) = 288
+        expect(renderCallsAfter[0]![1]).toEqual(expect.objectContaining({ dpi: 288 }));
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("page navigation (j/k) is NOT debounced -- renders immediately", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      (invoke as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+      // Press j to go to next page.
+      await act(async () => {
+        fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
+      });
+
+      // The render should happen immediately (no debounce), before advancing timers.
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      expect(renderCalls.length).toBeGreaterThanOrEqual(1);
+      expect(renderCalls[0]![1]).toEqual(expect.objectContaining({ pageIndex: 1 }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("zoom debounce timer is cleared on file change", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+      const { rerender } = render(
+        <PdfViewer
+          filePath="/test/doc.pdf"
+          paneId="pane-1"
+          registerZoomHandlers={(h) => { zoomHandlers = h; }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      });
+      expect(zoomHandlers).not.toBeNull();
+
+      // Fire a zoom-in (starts debounce timer).
+      await act(async () => {
+        zoomHandlers!.zoomIn();
+      });
+
+      // Switch to a different file before the debounce fires.
+      mockInvoke((cmd, args) => {
+        switch (cmd) {
+          case "pdf_open":
+            return { page_count: 2, path: "/test/other.pdf" };
+          case "pdf_render_page": {
+            const a = args as Record<string, unknown>;
+            const idx = a?.pageIndex ?? 0;
+            return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/other_page_${idx}.png` };
+          }
+          case "pdf_prefetch":
+            return null;
+          case "pdf_close":
+            return null;
+          default:
+            throw new Error(`Unknown command: ${cmd}`);
+        }
+      });
+
+      await act(async () => {
+        rerender(
+          <PdfViewer
+            filePath="/test/other.pdf"
+            paneId="pane-1"
+            registerZoomHandlers={(h) => { zoomHandlers = h; }}
+          />,
+        );
+      });
+
+      // Advance past debounce delay + flush.
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      });
+
+      const { invoke } = await import("@tauri-apps/api/core");
+      // After the file change, renders should only be at default DPI (144)
+      // for the new file, not at the zoomed DPI (158) from the stale timer.
+      const renderCalls = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => c[0] === "pdf_render_page");
+      const allDpis = renderCalls.map((c: unknown[]) => (c[1] as Record<string, unknown>).dpi);
+      // The last render(s) should all be at default DPI 144 (the new file).
+      const lastDpi = allDpis[allDpis.length - 1];
+      expect(lastDpi).toBe(144);
+      // There should be no DPI-158 renders after the file change triggered
+      // a new DPI-144 render sequence.
+      const indexOfFirstDefault = allDpis.indexOf(144);
+      const dpisAfterFileChange = allDpis.slice(indexOfFirstDefault);
+      expect(dpisAfterFileChange.every((d: unknown) => d === 144)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("getEffectiveDpi clamps to MAX_EFFECTIVE_DPI on high-DPR devices at max zoom", async () => {
+    // Simulate dpr=2 (retina display).
+    Object.defineProperty(window, "devicePixelRatio", { writable: true, value: 2 });
+
+    const allDpis: number[] = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "pdf_render_page") {
+        const a = args as Record<string, unknown>;
+        const dpi = a?.dpi as number;
+        allDpis.push(dpi);
+        const idx = (a?.pageIndex ?? 0) as number;
+        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
+      }
+      if (cmd === "pdf_open") return mockPdfInfo;
+      if (cmd === "pdf_prefetch") return null;
+      if (cmd === "pdf_close") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let zoomHandlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void } | null = null;
+      render(
+        <PdfViewer
+          filePath="/test/doc.pdf"
+          paneId="pane-1"
+          registerZoomHandlers={(h) => { zoomHandlers = h; }}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      });
+      expect(zoomHandlers).not.toBeNull();
+
+      // Zoom to max (3.0x) by calling zoomIn 7 times (index 5 -> 12).
+      // Rapid calls are debounced, so fire them all then advance timers.
+      await act(async () => {
+        for (let i = 0; i < 7; i++) {
+          zoomHandlers!.zoomIn();
+        }
+      });
+
+      // Advance past the debounce delay and flush.
+      await act(async () => {
+        vi.advanceTimersByTime(200);
+      });
+
+      await waitFor(() => {
+        // At least the initial render + the debounced zoom render
+        expect(allDpis.length).toBeGreaterThanOrEqual(2);
+      });
+
+      // At dpr=2 and zoom=3.0x, unclamped DPI would be 864. All DPI values
+      // passed to the backend should be <= MAX_EFFECTIVE_DPI (600).
+      for (const dpi of allDpis) {
+        expect(dpi).toBeLessThanOrEqual(600);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -6,16 +6,18 @@ import type { PdfInfo, RenderedPage } from "../lib/ipc";
 import { SpinnerSvg } from "./SpinnerSvg";
 
 const BASE_DPI = 144;
+export const MAX_EFFECTIVE_DPI = 600;
 const MAX_CACHE = 5;
 // Delay before the page-transition spinner becomes visible, so fast
 // transitions (prefetched j/k flips) don't flash it on every keypress.
 const SPINNER_GRACE_MS = 150;
+export const ZOOM_RENDER_DEBOUNCE_MS = 120;
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 const ZOOM_DEFAULT_INDEX = 5;
 
 function getEffectiveDpi(zoom: number = 1): number {
-  return Math.round(BASE_DPI * (window.devicePixelRatio || 1) * zoom);
+  return Math.min(MAX_EFFECTIVE_DPI, Math.round(BASE_DPI * (window.devicePixelRatio || 1) * zoom));
 }
 
 function cacheKey(pageIndex: number, dpi: number): string {
@@ -57,9 +59,14 @@ interface PdfViewerProps {
    * keyboard handler reads currentPageRef directly.
    */
   registerGetCurrentPage?: (fn: () => number) => void;
+  /**
+   * Publish this viewer's zoom callbacks so external owners (e.g. the global
+   * command registry) can drive zoom without needing DOM focus on the viewer.
+   */
+  registerZoomHandlers?: (handlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void }) => void;
 }
 
-export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage, registerZoomHandlers }: PdfViewerProps) {
   const [pdfInfo, setPdfInfo] = useState<PdfInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
@@ -73,9 +80,12 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
+  const [zoomIndex, setZoomIndex] = useState(ZOOM_DEFAULT_INDEX);
   const zoomIndexRef = useRef(ZOOM_DEFAULT_INDEX);
   const cacheRef = useRef(new Map<string, RenderedPage>());
   const navSeqRef = useRef(0);
+  const zoomDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pagePublishPendingRef = useRef(false);
   // True after the first <img> onLoad/onError fires for the current file.
   // Suppresses the `loadedSrc !== src` branch of `transitioning` during the
   // initial decode after the "Loading PDF…" screen disappears, preventing a
@@ -93,6 +103,11 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     onPageCountRef.current = onPageCount;
   }, [onPageCount]);
 
+  const updateZoomIndex = useCallback((index: number) => {
+    zoomIndexRef.current = index;
+    setZoomIndex(index);
+  }, []);
+
   const prefetchAdjacent = useCallback((pageIndex: number, pageCount: number, dpi: number) => {
     if (pageIndex > 0) pdfPrefetch(pageIndex - 1, dpi, paneId).catch(() => {});
     if (pageIndex < pageCount - 1) pdfPrefetch(pageIndex + 1, dpi, paneId).catch(() => {});
@@ -103,6 +118,12 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     cacheRef.current.clear();
     hasEverPaintedRef.current = false;
     zoomIndexRef.current = ZOOM_DEFAULT_INDEX;
+    setZoomIndex(ZOOM_DEFAULT_INDEX);
+    pagePublishPendingRef.current = false;
+    if (zoomDebounceRef.current !== null) {
+      clearTimeout(zoomDebounceRef.current);
+      zoomDebounceRef.current = null;
+    }
 
     setRendered(null);
     setLoadedSrc(null);
@@ -140,53 +161,60 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     };
   }, [filePath, paneId, prefetchAdjacent]);
 
+  const renderPage = useCallback(
+    async (pageIndex: number, dpi: number, opts?: { publishPage?: boolean }) => {
+      const mySeq = ++navSeqRef.current;
+      const key = cacheKey(pageIndex, dpi);
+      const cached = cacheGet(cacheRef.current, key);
+      if (cached && filePathRef.current === filePath) {
+        setRendered(cached);
+        setPageLoading(false);
+        const shouldPublish = opts?.publishPage || (pagePublishPendingRef.current && pageIndex === currentPageRef.current);
+        if (shouldPublish) {
+          setCurrentPage(pageIndex);
+          onPageChange?.(pageIndex);
+          pagePublishPendingRef.current = false;
+        }
+        prefetchAdjacent(pageIndex, pdfInfo?.page_count ?? 0, dpi);
+        return;
+      }
+
+      setPageLoading(true);
+      try {
+        const rp = await pdfRenderPage(pageIndex, dpi, paneId);
+        if (filePathRef.current === filePath && navSeqRef.current === mySeq) {
+          cacheSet(cacheRef.current, key, rp);
+          setRendered(rp);
+          const shouldPublish = opts?.publishPage || (pagePublishPendingRef.current && pageIndex === currentPageRef.current);
+          if (shouldPublish) {
+            setCurrentPage(pageIndex);
+            currentPageRef.current = pageIndex;
+            onPageChange?.(pageIndex);
+            pagePublishPendingRef.current = false;
+          }
+          prefetchAdjacent(pageIndex, pdfInfo?.page_count ?? 0, dpi);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (navSeqRef.current === mySeq) setPageLoading(false);
+      }
+    },
+    [filePath, paneId, pdfInfo, prefetchAdjacent, onPageChange],
+  );
+
   const goToPage = useCallback(
     async (index: number) => {
       if (index === currentPageRef.current) return;
-      // Monotonic navigation token: any newer navigation (even a synchronous
-      // cache hit) supersedes an in-flight slow render so it cannot revert us.
-      const mySeq = ++navSeqRef.current;
       // Advance the ref synchronously to the navigation target so a rapid
       // second key-press (which reads currentPageRef before this invocation's
       // awaited render commits) derives the *next* target instead of recomputing
       // this same one and getting dropped by the same-page guard above.
       currentPageRef.current = index;
-      try {
-        const dpi = getEffectiveDpi(ZOOM_LEVELS[zoomIndexRef.current]);
-        const key = cacheKey(index, dpi);
-        const cached = cacheGet(cacheRef.current, key);
-        if (cached && filePathRef.current === filePath) {
-          setRendered(cached);
-          setCurrentPage(index);
-          // currentPageRef already set to index synchronously above.
-          onPageChange?.(index);
-          prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
-          return;
-        }
-
-        setPageLoading(true);
-        try {
-          const rp = await pdfRenderPage(index, dpi, paneId);
-          if (filePathRef.current === filePath && navSeqRef.current === mySeq) {
-            cacheSet(cacheRef.current, key, rp);
-            setRendered(rp);
-            setCurrentPage(index);
-            currentPageRef.current = index;
-            onPageChange?.(index);
-            prefetchAdjacent(index, pdfInfo?.page_count ?? 0, dpi);
-          }
-        } finally {
-          // Only tear down the spinner if this navigation is still current. A
-          // superseded navigation must leave the spinner up for the newer
-          // (current) navigation that is still rendering; that navigation owns
-          // clearing it when its own render resolves.
-          if (navSeqRef.current === mySeq) setPageLoading(false);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
+      pagePublishPendingRef.current = true;
+      await renderPage(index, getEffectiveDpi(ZOOM_LEVELS[zoomIndexRef.current]), { publishPage: true });
     },
-    [filePath, paneId, pdfInfo, prefetchAdjacent, onPageChange],
+    [renderPage],
   );
 
   useEffect(() => {
@@ -216,65 +244,48 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   }, [transitioning]);
 
   const renderAtZoom = useCallback(
-    async (newZoomIndex: number) => {
-      const pageIndex = currentPageRef.current;
-      const mySeq = ++navSeqRef.current;
-      const dpi = getEffectiveDpi(ZOOM_LEVELS[newZoomIndex]);
-      const key = cacheKey(pageIndex, dpi);
-      const cached = cacheGet(cacheRef.current, key);
-      if (cached && filePathRef.current === filePath) {
-        setRendered(cached);
-        prefetchAdjacent(pageIndex, pdfInfo?.page_count ?? 0, dpi);
-        return;
+    (newZoomIndex: number) => {
+      if (zoomDebounceRef.current !== null) {
+        clearTimeout(zoomDebounceRef.current);
       }
-
-      setPageLoading(true);
-      try {
-        const rp = await pdfRenderPage(pageIndex, dpi, paneId);
-        if (filePathRef.current === filePath && navSeqRef.current === mySeq) {
-          cacheSet(cacheRef.current, key, rp);
-          setRendered(rp);
-          prefetchAdjacent(pageIndex, pdfInfo?.page_count ?? 0, dpi);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (navSeqRef.current === mySeq) setPageLoading(false);
-      }
+      zoomDebounceRef.current = setTimeout(() => {
+        zoomDebounceRef.current = null;
+        const pageIndex = currentPageRef.current;
+        renderPage(pageIndex, getEffectiveDpi(ZOOM_LEVELS[newZoomIndex]));
+      }, ZOOM_RENDER_DEBOUNCE_MS);
     },
-    [filePath, paneId, pdfInfo, prefetchAdjacent],
+    [renderPage],
   );
+
+  const zoomIn = useCallback(() => {
+    const next = Math.min(zoomIndexRef.current + 1, ZOOM_LEVELS.length - 1);
+    if (next !== zoomIndexRef.current) {
+      updateZoomIndex(next);
+      renderAtZoom(next);
+    }
+  }, [updateZoomIndex, renderAtZoom]);
+
+  const zoomOut = useCallback(() => {
+    const next = Math.max(zoomIndexRef.current - 1, 0);
+    if (next !== zoomIndexRef.current) {
+      updateZoomIndex(next);
+      renderAtZoom(next);
+    }
+  }, [updateZoomIndex, renderAtZoom]);
+
+  const zoomReset = useCallback(() => {
+    if (zoomIndexRef.current !== ZOOM_DEFAULT_INDEX) {
+      updateZoomIndex(ZOOM_DEFAULT_INDEX);
+      renderAtZoom(ZOOM_DEFAULT_INDEX);
+    }
+  }, [updateZoomIndex, renderAtZoom]);
+
+  useEffect(() => {
+    registerZoomHandlers?.({ zoomIn, zoomOut, zoomReset });
+  }, [registerZoomHandlers, zoomIn, zoomOut, zoomReset]);
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        const next = Math.min(zoomIndexRef.current + 1, ZOOM_LEVELS.length - 1);
-        if (next !== zoomIndexRef.current) {
-          zoomIndexRef.current = next;
-          renderAtZoom(next);
-        }
-        return;
-      }
-      if (mod && e.key === "-") {
-        e.preventDefault();
-        const next = Math.max(zoomIndexRef.current - 1, 0);
-        if (next !== zoomIndexRef.current) {
-          zoomIndexRef.current = next;
-          renderAtZoom(next);
-        }
-        return;
-      }
-      if (mod && e.key === "0") {
-        e.preventDefault();
-        if (zoomIndexRef.current !== ZOOM_DEFAULT_INDEX) {
-          zoomIndexRef.current = ZOOM_DEFAULT_INDEX;
-          renderAtZoom(ZOOM_DEFAULT_INDEX);
-        }
-        return;
-      }
-
       const pageCount = pdfInfo?.page_count ?? 0;
       // Read the synchronous source of truth (the ref) that goToPage's guard
       // uses. On a rapid double-press the React `currentPage` state is still
@@ -294,7 +305,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         }
       }
     },
-    [pdfInfo, goToPage, renderAtZoom],
+    [pdfInfo, goToPage],
   );
 
   if (error) {
@@ -333,7 +344,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
           src={src ?? undefined}
           alt={`Page ${currentPage + 1}`}
           className="mx-auto shadow-lg"
-          style={{ width: `${rendered.width / (window.devicePixelRatio || 1)}px` }}
+          style={{
+            width: `${rendered.width / (window.devicePixelRatio || 1)}px`,
+            maxWidth: ZOOM_LEVELS[zoomIndex]! <= 1 ? '100%' : undefined,
+          }}
           onLoad={(e) => { hasEverPaintedRef.current = true; setLoadedSrc(e.currentTarget.getAttribute("src")); }}
           // A failed image load must not strand the spinner — the IPC render
           // already succeeded, so just end the transition.

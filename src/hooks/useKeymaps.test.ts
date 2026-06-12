@@ -924,6 +924,32 @@ describe("useKeymaps", () => {
     expect(mockView.focus).toHaveBeenCalled();
   });
 
+  // --- PDF zoom commands ---
+
+  it("pdf.zoomIn is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pdf.zoomIn")).toBe(true);
+  });
+
+  it("pdf.zoomOut is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pdf.zoomOut")).toBe(true);
+  });
+
+  it("pdf.zoomReset is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pdf.zoomReset")).toBe(true);
+  });
+
+  it("pdf.zoomIn/zoomOut/zoomReset appear in getVisibleCommands", async () => {
+    await loadHook();
+    const visible = getVisibleCommands("zoom");
+    const ids = visible.map((c) => c.id);
+    expect(ids).toContain("pdf.zoomIn");
+    expect(ids).toContain("pdf.zoomOut");
+    expect(ids).toContain("pdf.zoomReset");
+  });
+
   it("pane.focusContentNext appears in command palette even with single pane", async () => {
     await loadHook();
     usePaneStore.setState(createInitialState());

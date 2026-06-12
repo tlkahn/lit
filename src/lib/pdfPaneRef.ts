@@ -3,6 +3,11 @@
 // goToPage here to drive it, avoiding controlled `page` state plumbing through
 // the pane store (which risks the onPageChange/page feedback loop in PdfViewer).
 
+import { usePaneStore, findLeaf } from "../stores/panes";
+import { useWorkspaceStore } from "../stores/workspace";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { getFileType } from "../hooks/useLeafFileType";
+
 type GoToPage = (pageIndex: number) => void;
 
 const goToPageFns = new Map<string, GoToPage>();
@@ -73,9 +78,49 @@ export function clearForwardSync(paneId: string, token: number): void {
   }
 }
 
+// --- Zoom handler registry ---
+
+export interface PdfZoomHandlers {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
+}
+
+const zoomHandlerFns = new Map<string, PdfZoomHandlers>();
+
+export function registerPdfZoomHandlers(paneId: string, handlers: PdfZoomHandlers): void {
+  zoomHandlerFns.set(paneId, handlers);
+}
+
+export function unregisterPdfZoomHandlers(paneId: string): void {
+  zoomHandlerFns.delete(paneId);
+}
+
+export function getPdfZoomHandlers(paneId: string): PdfZoomHandlers | null {
+  return zoomHandlerFns.get(paneId) ?? null;
+}
+
+/**
+ * Resolve the active PDF pane: the focused pane if it's a PDF, otherwise the
+ * linked pane (via panePdfLink) if it's a PDF. Returns null when no PDF pane
+ * is reachable. Used by global commands (pdf.zoomIn etc.) to find their target.
+ */
+export function getActivePdfPaneId(): string | null {
+  const { focusedPaneId, root } = usePaneStore.getState();
+  const pages = useWorkspaceStore.getState().pages;
+  const leaf = findLeaf(root, focusedPaneId);
+  if (leaf && getFileType(leaf.pagePath, pages) === "pdf") return focusedPaneId;
+  const linked = usePanePdfLinkStore.getState().getLinkedPane(focusedPaneId);
+  if (!linked) return null;
+  const linkedLeaf = findLeaf(root, linked);
+  if (linkedLeaf && getFileType(linkedLeaf.pagePath, pages) === "pdf") return linked;
+  return null;
+}
+
 export function _resetForTesting(): void {
   goToPageFns.clear();
   currentPageFns.clear();
+  zoomHandlerFns.clear();
   forwardSyncInFlight.clear();
   nextToken = 1;
 }

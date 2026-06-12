@@ -21,17 +21,21 @@ const mockGoToPage = vi.fn();
 // Defaults to true so existing tests register a ready closure on mount.
 let mockReady = true;
 
+const mockZoomHandlers = { zoomIn: vi.fn(), zoomOut: vi.fn(), zoomReset: vi.fn() };
+
 vi.mock("./PdfViewer", () => ({
   PdfViewer: ({
     filePath,
     paneId,
     registerGoToPage,
+    registerZoomHandlers,
     onPageChange,
     onPageCount,
   }: {
     filePath: string;
     paneId: string;
     registerGoToPage?: (fn: (i: number) => void, ready: boolean) => void;
+    registerZoomHandlers?: (handlers: { zoomIn: () => void; zoomOut: () => void; zoomReset: () => void }) => void;
     onPageChange?: (i: number) => void;
     onPageCount?: (count: number) => void;
   }) => {
@@ -40,6 +44,9 @@ vi.mock("./PdfViewer", () => ({
     useEffect(() => {
       registerGoToPage?.(mockGoToPage, mockReady);
     }, [registerGoToPage]);
+    useEffect(() => {
+      registerZoomHandlers?.(mockZoomHandlers);
+    }, [registerZoomHandlers]);
     // Expose buttons the test can click to drive callbacks, plus a button that
     // re-registers with ready=true to mimic the second (ready) registration.
     return (
@@ -85,6 +92,9 @@ beforeEach(() => {
   resetEditorViewRef();
   resetMarkerCache();
   mockGoToPage.mockClear();
+  mockZoomHandlers.zoomIn.mockClear();
+  mockZoomHandlers.zoomOut.mockClear();
+  mockZoomHandlers.zoomReset.mockClear();
   mockReady = true;
   return cleanup;
 });
@@ -289,6 +299,20 @@ describe("PdfViewerPane", () => {
         // regardless of readiness.
         expect(pdfPaneRef.getPdfGoToPage("p1")).toBeTypeOf("function");
       });
+    });
+  });
+
+  describe("zoom handler registration", () => {
+    it("registers zoom handlers in pdfPaneRef under its paneId", () => {
+      render(<PdfViewerPane paneId="p1" />);
+      expect(pdfPaneRef.getPdfZoomHandlers("p1")).not.toBeNull();
+    });
+
+    it("unregisters zoom handlers on unmount", () => {
+      const { unmount } = render(<PdfViewerPane paneId="p1" />);
+      expect(pdfPaneRef.getPdfZoomHandlers("p1")).not.toBeNull();
+      unmount();
+      expect(pdfPaneRef.getPdfZoomHandlers("p1")).toBeNull();
     });
   });
 

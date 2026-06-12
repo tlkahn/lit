@@ -11,6 +11,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
 import { getCurrentEditorView, getPaneView, setFocusedPane, isFocusInsideContentPane } from "../lib/editorViewRef";
+import { getActivePdfPaneId, getPdfZoomHandlers } from "../lib/pdfPaneRef";
 import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
@@ -265,6 +266,36 @@ export function ensureCommandsRegistered() {
     action: () => {
       const view = getCurrentEditorView();
       if (view) batchFireReplacingAnnotations(view);
+    },
+  });
+  registerCommand({
+    id: "pdf.zoomIn",
+    label: "PDF: Zoom In",
+    keywords: ["pdf", "zoom", "in", "magnify"],
+    action: () => {
+      const paneId = getActivePdfPaneId();
+      if (!paneId) return false;
+      getPdfZoomHandlers(paneId)?.zoomIn();
+    },
+  });
+  registerCommand({
+    id: "pdf.zoomOut",
+    label: "PDF: Zoom Out",
+    keywords: ["pdf", "zoom", "out", "shrink"],
+    action: () => {
+      const paneId = getActivePdfPaneId();
+      if (!paneId) return false;
+      getPdfZoomHandlers(paneId)?.zoomOut();
+    },
+  });
+  registerCommand({
+    id: "pdf.zoomReset",
+    label: "PDF: Reset Zoom",
+    keywords: ["pdf", "zoom", "reset", "default"],
+    action: () => {
+      const paneId = getActivePdfPaneId();
+      if (!paneId) return false;
+      getPdfZoomHandlers(paneId)?.zoomReset();
     },
   });
 }
