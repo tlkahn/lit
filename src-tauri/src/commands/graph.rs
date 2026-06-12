@@ -87,6 +87,17 @@ pub(crate) fn refresh_graph_shadows(
     }
 }
 
+/// Post-mutation protocol: refresh shadow nodes then emit the bib-items-changed event.
+/// Every DB-mutating bib command must call this after a successful write.
+pub(crate) fn notify_bib_changed(
+    graph_state: &Arc<GraphRegistry>,
+    workspace_root: &Path,
+    app_handle: &tauri::AppHandle,
+) {
+    refresh_graph_shadows(graph_state, workspace_root, app_handle);
+    let _ = app_handle.emit("lit:bib-items-changed", ());
+}
+
 pub struct GraphRegistry {
     pub indices: Mutex<HashMap<PathBuf, Arc<GraphIndex>>>,
 }

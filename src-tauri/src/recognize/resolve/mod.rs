@@ -835,6 +835,7 @@ mod tests {
             publisher: None,
             issn: None,
             isbn: None,
+            arxiv_id: None,
             tags: vec![],
         }
     }

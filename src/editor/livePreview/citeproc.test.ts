@@ -5,10 +5,12 @@ import {
   bibEntriesField,
   setBibData,
   noteDirFacet,
+  notePathFacet,
   scanCiteprocCitations,
   citeprocExtension,
   citeprocMatchesField,
   buildCiteprocLinks,
+  refetchBib,
   type BibData,
 } from "./citeproc";
 import { frontmatterFacet } from "./crossref";
@@ -76,6 +78,21 @@ describe("noteDirFacet", () => {
 
     const state2 = EditorState.create({ doc: "" });
     expect(state2.facet(noteDirFacet)).toBe("");
+  });
+});
+
+describe("notePathFacet", () => {
+  it("can be set and read", () => {
+    const state = EditorState.create({
+      doc: "",
+      extensions: [notePathFacet.of("notes/MyNote.md")],
+    });
+    expect(state.facet(notePathFacet)).toBe("notes/MyNote.md");
+  });
+
+  it("defaults to empty string when not provided", () => {
+    const state = EditorState.create({ doc: "" });
+    expect(state.facet(notePathFacet)).toBe("");
   });
 });
 
@@ -773,6 +790,93 @@ describe("citeprocPlugin bib fetch", () => {
 
     const data = view.state.field(bibEntriesField);
     expect(data.entries).toEqual([]);
+
+    view.destroy();
+  });
+});
+
+describe("refetchBib effect", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("triggers citeprocPlugin to re-fetch bib data", async () => {
+    let fetchCount = 0;
+    const entry: BibEntry = {
+      key: "smith2020",
+      authors: ["Smith"],
+      title: "Test",
+      year: "2020",
+      entry_type: "article",
+      line_number: 5,
+      bib_file: "refs.bib",
+    };
+
+    mockInvoke((cmd) => {
+      if (cmd === "resolve_all_decorations") return { citations: [], definition_tags: [] };
+      if (cmd === "resolve_bib_entries") {
+        fetchCount++;
+        return [entry];
+      }
+      if (cmd === "render_bib_citations") return { smith2020: "Smith 2020" };
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const state = EditorState.create({
+      doc: "See [@smith2020] here",
+      extensions: [
+        citeprocExtension(),
+        frontmatterFacet.of({ bibliography: "refs.bib" }),
+        noteDirFacet.of("/notes"),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // Wait for initial fetch
+    await vi.advanceTimersByTimeAsync(200);
+    const initialFetchCount = fetchCount;
+    expect(initialFetchCount).toBeGreaterThanOrEqual(1);
+
+    // Dispatch refetchBib effect — no frontmatter or noteDir change
+    view.dispatch({ effects: refetchBib.of(null) });
+    await vi.advanceTimersByTimeAsync(200);
+
+    // Should have re-fetched
+    expect(fetchCount).toBe(initialFetchCount + 1);
+
+    view.destroy();
+  });
+
+  it("is a no-op when no bibliography paths are configured", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "resolve_all_decorations") return { citations: [], definition_tags: [] };
+      if (cmd === "resolve_bib_entries") throw new Error("should not be called");
+      if (cmd === "render_bib_citations") throw new Error("should not be called");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [
+        citeprocExtension(),
+        frontmatterFacet.of({}),
+        noteDirFacet.of("/notes"),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    // Dispatch refetchBib — should not cause a fetch (no bibliography paths)
+    expect(() => {
+      view.dispatch({ effects: refetchBib.of(null) });
+    }).not.toThrow();
+
+    await vi.advanceTimersByTimeAsync(200);
 
     view.destroy();
   });

@@ -1,4 +1,4 @@
-use crate::bib::convert::{csl_to_bib_entry, CslDate, CslItem, CslName, StringOrSeq};
+use crate::bib::convert::{csl_to_bib_entry, normalize_arxiv_id, CslDate, CslItem, CslName, StringOrSeq};
 use crate::bib::types::BibEntry;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
@@ -162,7 +162,17 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         isbn: None,
     };
 
-    Ok(csl_to_bib_entry(&csl_item))
+    let mut entry = csl_to_bib_entry(&csl_item);
+    if let Some(ref url_str) = entry.url {
+        let marker = "/abs/";
+        if let Some(pos) = url_str.find(marker) {
+            let id = &url_str[pos + marker.len()..];
+            if !id.is_empty() {
+                entry.arxiv_id = Some(normalize_arxiv_id(id));
+            }
+        }
+    }
+    Ok(entry)
 }
 
 /// Resolve an arXiv ID to a `BibEntry` by fetching metadata from the arXiv API.
@@ -442,6 +452,24 @@ mod tests {
         assert_eq!(name.family, Some("Aristotle".to_string()));
         assert_eq!(name.given, None);
         assert_eq!(name.literal, None);
+    }
+
+    #[test]
+    fn parse_arxiv_atom_sets_arxiv_id() {
+        let entry = parse_arxiv_atom(SINGLE_AUTHOR_XML).expect("should parse");
+        assert_eq!(entry.arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_atom_old_style_sets_arxiv_id() {
+        let entry = parse_arxiv_atom(OLD_STYLE_ID_XML).expect("should parse");
+        assert_eq!(entry.arxiv_id, Some("hep-ph/0703105".to_string()));
+    }
+
+    #[test]
+    fn parse_arxiv_atom_isbn_is_none() {
+        let entry = parse_arxiv_atom(SINGLE_AUTHOR_XML).expect("should parse");
+        assert_eq!(entry.isbn, None);
     }
 
     #[test]

@@ -12,8 +12,6 @@ import {
   isSavedNoDoi,
   type BibEntry,
 } from "../lib/ipc";
-import { useBibFilePicker } from "../hooks/useBibFilePicker";
-import { BibFilePicker } from "./BibFilePicker";
 
 type Mode = "doi" | "import";
 
@@ -41,7 +39,6 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
   const [importError, setImportError] = useState<string | null>(null);
 
   // Shared state
-  const bib = useBibFilePicker(workspacePath, open);
   const [saving, setSaving] = useState(false);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -76,8 +73,6 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
 
-  const effectiveBibPath = bib.effectiveBibPath;
-
   // DOI lookup
   async function handleLookup() {
     const trimmed = doi.trim();
@@ -97,14 +92,14 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
 
   // DOI save
   async function handleSave() {
-    if (!lookupResult || !effectiveBibPath || !workspacePath) return;
+    if (!lookupResult || !workspacePath) return;
     setSaving(true);
     try {
-      const outcomes = await saveBibEntry(lookupResult, effectiveBibPath, workspacePath);
+      const outcomes = await saveBibEntry(lookupResult, workspacePath);
       const first = outcomes[0];
       if (first && isDuplicateDoi(first)) {
         show(
-          `DOI already exists as @${first.DuplicateDoi.existing_key}`,
+          `Already in your library as @${first.DuplicateDoi.existing_key}`,
           "error",
         );
       } else if (first && isSaved(first)) {
@@ -142,10 +137,10 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
 
   // Import: save
   async function handleImport() {
-    if (!effectiveBibPath || !workspacePath || importEntries.length === 0) return;
+    if (!workspacePath || importEntries.length === 0) return;
     setSaving(true);
     try {
-      const outcomes = await saveBibEntries(importEntries, effectiveBibPath, workspacePath);
+      const outcomes = await saveBibEntries(importEntries, workspacePath);
       const saved = outcomes.filter((o) => isSaved(o) || isSavedNoDoi(o)).length;
       const duplicates = outcomes.filter((o) => isDuplicateDoi(o)).length;
       const parts: string[] = [];
@@ -171,7 +166,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
   if (!open) return null;
 
   const hasResult = mode === "doi" ? lookupResult !== null : importEntries.length > 0;
-  const canSave = hasResult && !!effectiveBibPath && !saving;
+  const canSave = hasResult && !saving;
 
   return (
     <div
@@ -313,15 +308,6 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
             </>
           )}
 
-          {/* Shared bib file picker */}
-          <BibFilePicker
-            bibFiles={bib.bibFiles}
-            selectedBibFile={bib.selectedBibFile}
-            onSelectedBibFileChange={bib.setSelectedBibFile}
-            newBibPath={bib.newBibPath}
-            onNewBibPathChange={bib.setNewBibPath}
-            testIdPrefix="add-reference"
-          />
         </div>
 
         {/* Footer */}

@@ -1,20 +1,22 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
+use rusqlite::Connection;
 use tauri::State;
 
 use crate::bib::cache::BibCache;
 use crate::bib::types::BibEntry;
+use crate::bib::writer::serialize_bib_entry;
 use crate::commands::graph::GraphRegistry;
 use crate::commands::oplog::OpLogRegistry;
 use crate::commands::page::{lookup_graph_index, reindex_and_emit};
 use crate::commands::workspace::{get_workspace_root, WorkspaceRegistry};
 use crate::graph::indexer::shadow_title;
 use crate::oplog::store::Action;
-use crate::workspace::frontmatter::serialize_frontmatter;
+use crate::workspace::frontmatter::{parse_frontmatter, serialize_frontmatter};
 use crate::workspace::normalize::{normalize_to_nfc, validate_within_root, FORBIDDEN_CHARS};
 use crate::workspace::ops;
 use crate::workspace::page::{FileType, PageMeta};
@@ -70,63 +72,16 @@ pub fn scan_workspace_bibs(root: &Path, cache: &BibCache) -> Vec<BibEntry> {
     all
 }
 
-/// Build a key -> BibEntry index from all `.bib` files in the workspace.
-/// Used by the graph indexer to create shadow nodes for cited bib keys.
-///
-/// Returns a cached result when the index cache is warm (populated by a
-/// previous call and not yet invalidated via [`BibCache::mark_index_dirty`]).
-/// This avoids the O(filesystem) `WalkDir` on the hot path (pure `.md` saves).
-pub fn build_bib_index(root: &Path, cache: &BibCache) -> HashMap<String, BibEntry> {
-    if let Some(cached) = cache.get_cached_index() {
-        return cached;
-    }
-    let index: HashMap<String, BibEntry> = scan_workspace_bibs(root, cache)
-        .into_iter()
-        .map(|e| (e.key.clone(), e))
-        .collect();
-    cache.set_cached_index(index.clone());
-    index
-}
-
-/// Look up a single bib entry by key, preferring a targeted cache lookup
-/// that clones only the matched entry.  Falls back to `build_bib_index`
-/// (full walk + full clone) when the index cache is cold.
-pub fn lookup_bib_entry(root: &Path, cache: &BibCache, key: &str) -> Option<BibEntry> {
-    // Fast path: index cache is warm, clone only the one entry.
-    if let Some(entry) = cache.get_entry(key) {
-        return Some(entry);
-    }
-    // Cold cache: build the full index (populates the cache for later),
-    // then extract the single entry.
-    build_bib_index(root, cache).remove(key)
-}
-
-pub fn scan_workspace_bib_paths(root: &Path) -> Vec<String> {
-    let mut paths = Vec::new();
-    for entry in walkdir::WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| !is_hidden(e))
-    {
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("bib") {
-            continue;
-        }
-        paths.push(path.to_string_lossy().to_string());
-    }
-    paths.sort();
-    paths
-}
-
 #[tauri::command]
 pub fn list_bib_entries(
     workspace_path: String,
-    cache: tauri::State<BibCache>,
-) -> Vec<BibEntry> {
-    scan_workspace_bibs(Path::new(&workspace_path), &cache)
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<Vec<BibEntry>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::list_bib_items(&store.conn).map_err(|e| e.to_string())
 }
 
 /// Build frontmatter for a citation note from a BibEntry.
@@ -264,7 +219,6 @@ pub fn materialize_citation(
     bib_key: String,
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
-    cache: State<BibCache>,
     registry: State<Arc<WriteHashRegistry>>,
     oplog_state: State<Arc<OpLogRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
@@ -273,24 +227,30 @@ pub fn materialize_citation(
     // 1. Resolve workspace root
     let root = get_workspace_root(&state, window.label())?;
 
-    // 2. Look up BibEntry
-    let entry = lookup_bib_entry(&root, &cache, &bib_key)
-        .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?;
-
-    // 3. Check no citekey page already exists
+    // 2. Get graph index first (needed for both DB lookup and citekey check)
     let gi = lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    // 3. Look up BibEntry from DB
+    let entry = {
+        let store = gi.store();
+        crate::bib::db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?
+    };
+
+    // 4. Check no citekey page already exists
     if let Some(page_id) = gi.store().page_for_citekey(&bib_key).map_err(|e| e.to_string())? {
         return Err(format!(
             "A page with citekey '{bib_key}' already exists: {page_id}"
         ));
     }
 
-    // 4. Read citation.notesDir from preferences
+    // 5. Read citation.notesDir from preferences
     let prefs = crate::preferences::read_preferences(&app_handle);
     let notes_dir = crate::preferences::citation_notes_dir(&prefs);
 
-    // 5. Build and validate relative path
+    // 6. Build and validate relative path
     let relative_path = build_citation_note_path(&root, &bib_key, &notes_dir)?;
 
     // 6. Check the file doesn't already exist on disk
@@ -360,12 +320,796 @@ pub fn materialize_citation(
     Ok(page_meta)
 }
 
+// ── New DB-backed commands ───────────────────────────────────────
+
+#[tauri::command]
+pub fn bib_search(
+    query: String,
+    limit: usize,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<Vec<BibEntry>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::search_bib_items(&store.conn, &query, limit)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn bib_get(
+    cite_key: String,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<Option<BibEntry>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::get_bib_item(&store.conn, &cite_key)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn bib_update_fields(
+    cite_key: String,
+    fields: HashMap<String, String>,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<bool, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    let updated = crate::bib::db::update_bib_fields(&store.conn, &cite_key, &fields)
+        .map_err(|e| e.to_string())?;
+    if updated {
+        crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+    }
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn bib_delete(
+    cite_key: String,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<bool, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let deleted = {
+        let store = gi.store();
+        crate::bib::db::tombstone_bib_item(&store.conn, &cite_key)
+            .map_err(|e| e.to_string())?
+    };
+    if deleted {
+        crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+    }
+    Ok(deleted)
+}
+
+/// Extract bibliography paths from YAML frontmatter.
+fn extract_bib_paths_from_yaml(fm: &IndexMap<String, serde_yaml::Value>) -> Vec<String> {
+    let Some(bib) = fm.get("bibliography") else {
+        return Vec::new();
+    };
+    match bib {
+        serde_yaml::Value::String(s) => vec![s.clone()],
+        serde_yaml::Value::Sequence(seq) => seq
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EnsureCompanionBibResult {
+    pub bib_path: String,
+    /// Set to the auto-generated bibliography relative path (e.g.
+    /// "assets/bib/Note.bib") when the note had NO `bibliography:` frontmatter
+    /// field and the caller asked to skip the note rewrite. `None` when the
+    /// field was already present or was written by Rust.
+    pub bibliography_value: Option<String>,
+}
+
+/// Inner implementation of ensure_in_companion_bib, testable without Tauri state.
+fn ensure_in_companion_bib_inner(
+    cite_key: &str,
+    note_path: &str,
+    workspace_root: &Path,
+    conn: &Connection,
+    cache: &BibCache,
+    skip_note_rewrite: bool,
+) -> Result<EnsureCompanionBibResult, String> {
+    // ── Reject absolute note_path ────────────────────────────────────
+    // Path::join discards the root when the argument is absolute, so
+    // an absolute note_path would let the caller read/write anywhere.
+    if Path::new(note_path).is_absolute() {
+        return Err(format!(
+            "note_path must be a relative path within the workspace, got absolute: {note_path}"
+        ));
+    }
+
+    // ── Validate note_path stays within workspace ──────────────────
+    validate_within_root(workspace_root, note_path)
+        .map_err(|e| format!("note_path escapes workspace: {e}"))?;
+
+    // Read the note file (now safe — note_path is validated relative)
+    let abs_note = workspace_root.join(note_path);
+    let note_content = fs::read_to_string(&abs_note)
+        .map_err(|e| format!("Failed to read note '{}': {}", note_path, e))?;
+
+    // Parse frontmatter
+    let parsed = parse_frontmatter(&note_content);
+    let fm = parsed.map;
+    let body = parsed.body;
+
+    // Extract bibliography paths
+    let bib_paths = extract_bib_paths_from_yaml(&fm);
+
+    // Determine the companion bib path
+    let (companion_bib_rel, bibliography_value) = if bib_paths.is_empty() {
+        // Auto-create assets/bib/<NoteStem>.bib
+        let note_stem = Path::new(note_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("note");
+        let note_dir = Path::new(note_path)
+            .parent()
+            .unwrap_or(Path::new(""));
+        let bib_value = format!("assets/bib/{}.bib", note_stem);
+        let bib_rel = if note_dir == Path::new("") {
+            bib_value.clone()
+        } else {
+            format!("{}/assets/bib/{}.bib", note_dir.display(), note_stem)
+        };
+        let abs_bib = workspace_root.join(&bib_rel);
+        if let Some(parent) = abs_bib.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create bib dir: {}", e))?;
+        }
+        if !abs_bib.exists() {
+            fs::write(&abs_bib, "")
+                .map_err(|e| format!("Failed to create bib file: {}", e))?;
+        }
+
+        let bib_val = if skip_note_rewrite {
+            // Caller (editor) will inject the field into the live buffer.
+            Some(bib_value)
+        } else {
+            // Write frontmatter directly (non-editor callers).
+            let mut new_fm = fm;
+            new_fm.insert(
+                "bibliography".to_string(),
+                serde_yaml::Value::String(bib_value),
+            );
+            let new_content = serialize_frontmatter(&new_fm, body);
+            fs::write(&abs_note, new_content)
+                .map_err(|e| format!("Failed to update note frontmatter: {}", e))?;
+            None
+        };
+
+        (bib_rel, bib_val)
+    } else {
+        // Use the first bibliography path, resolve relative to note dir
+        let first_bib = &bib_paths[0];
+        let note_dir = Path::new(note_path).parent().unwrap_or(Path::new(""));
+        let resolved = if note_dir == Path::new("") {
+            first_bib.clone()
+        } else {
+            format!("{}/{}", note_dir.display(), first_bib)
+        };
+        // Normalize path (remove ./ etc.)
+        let norm = PathBuf::from(&resolved);
+        (norm.to_string_lossy().to_string(), None)
+    };
+
+    // ── Validate resolved bib path stays within workspace ──────────
+    validate_within_root(workspace_root, &companion_bib_rel)
+        .map_err(|e| format!("bibliography path escapes workspace: {e}"))?;
+
+    // Get the entry from DB
+    let entry = crate::bib::db::get_bib_item(conn, cite_key)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Bib key '{}' not found in database", cite_key))?;
+
+    // Check if the key already exists in the target .bib file
+    let abs_bib = workspace_root.join(&companion_bib_rel);
+    let existing_content = fs::read_to_string(&abs_bib).unwrap_or_default();
+    let existing_entries = crate::bib::parser::parse_bibtex(&existing_content);
+    let key_exists = existing_entries.iter().any(|e| e.key == cite_key);
+
+    if !key_exists {
+        // Append the serialized entry directly
+        let bib_str = serialize_bib_entry(&entry);
+        // Create parent directories if needed (declared bib path may point to
+        // a not-yet-existing directory, e.g. assets/bib/Foo.bib).
+        if let Some(parent) = abs_bib.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create bib directory: {}", e))?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&abs_bib)
+            .map_err(|e| format!("Failed to open bib file for append: {}", e))?;
+        use std::io::Write;
+        if !existing_content.is_empty() && !existing_content.ends_with('\n') {
+            writeln!(file).map_err(|e| e.to_string())?;
+        }
+        write!(file, "{}", bib_str).map_err(|e| e.to_string())?;
+        writeln!(file).map_err(|e| e.to_string())?;
+
+        // Invalidate per-file parse cache for the modified bib file
+        cache.invalidate(&abs_bib.to_path_buf());
+    }
+
+    Ok(EnsureCompanionBibResult { bib_path: companion_bib_rel, bibliography_value })
+}
+
+#[tauri::command]
+pub fn ensure_in_companion_bib(
+    cite_key: String,
+    note_path: String,
+    workspace_path: String,
+    skip_note_rewrite: bool,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+    cache: tauri::State<BibCache>,
+) -> Result<EnsureCompanionBibResult, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    ensure_in_companion_bib_inner(&cite_key, &note_path, &root, &store.conn, &cache, skip_note_rewrite)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bib::cache::BibCache;
+    use crate::bib::db;
+    use crate::graph::store::Store;
+    use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
+
+    fn test_entry(key: &str) -> BibEntry {
+        BibEntry {
+            key: key.to_string(),
+            entry_type: "article".to_string(),
+            title: format!("Title for {}", key),
+            authors: vec!["Author, Test".to_string()],
+            year: "2024".to_string(),
+            line_number: 0,
+            bib_file: None,
+            abstract_text: None,
+            doi: None,
+            isbn: None,
+            arxiv_id: None,
+            url: None,
+            journal: None,
+            publisher: None,
+            issn: None,
+            volume: None,
+            number: None,
+            pages: None,
+            file: None,
+            tags: vec![],
+        }
+    }
+
+    // ── DB-backed bib_search tests ────────────────────────────────
+
+    #[test]
+    fn test_bib_search_returns_matching_entries() {
+        let store = Store::open_memory().unwrap();
+        let mut e1 = test_entry("smith2024");
+        e1.title = "Machine Learning Overview".to_string();
+        db::upsert_bib_item(&store.conn, &e1, None, None, false).unwrap();
+        let mut e2 = test_entry("jones2023");
+        e2.title = "Quantum Computing".to_string();
+        db::upsert_bib_item(&store.conn, &e2, None, None, false).unwrap();
+
+        let results = db::search_bib_items(&store.conn, "Machine", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "smith2024");
+    }
+
+    #[test]
+    fn test_bib_get_returns_entry() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let fetched = db::get_bib_item(&store.conn, "smith2024").unwrap();
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().key, "smith2024");
+    }
+
+    #[test]
+    fn test_bib_get_returns_none_for_missing() {
+        let store = Store::open_memory().unwrap();
+        let fetched = db::get_bib_item(&store.conn, "nonexistent").unwrap();
+        assert!(fetched.is_none());
+    }
+
+    #[test]
+    fn test_bib_update_fields_updates_entry() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("title".to_string(), "Updated Title".to_string());
+        let updated = db::update_bib_fields(&store.conn, "smith2024", &fields).unwrap();
+        assert!(updated);
+
+        let fetched = db::get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.title, "Updated Title");
+    }
+
+    #[test]
+    fn test_bib_delete_tombstones_entry() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let deleted = db::tombstone_bib_item(&store.conn, "smith2024").unwrap();
+        assert!(deleted);
+
+        let fetched = db::get_bib_item(&store.conn, "smith2024").unwrap();
+        assert!(fetched.is_none());
+    }
+
+    // ── extract_bib_paths_from_yaml tests ─────────────────────────
+
+    #[test]
+    fn test_extract_bib_paths_from_yaml_single_string() {
+        let mut fm = IndexMap::new();
+        fm.insert(
+            "bibliography".to_string(),
+            serde_yaml::Value::String("assets/bib/Note.bib".to_string()),
+        );
+        let paths = extract_bib_paths_from_yaml(&fm);
+        assert_eq!(paths, vec!["assets/bib/Note.bib"]);
+    }
+
+    #[test]
+    fn test_extract_bib_paths_from_yaml_array() {
+        let mut fm = IndexMap::new();
+        fm.insert(
+            "bibliography".to_string(),
+            serde_yaml::Value::Sequence(vec![
+                serde_yaml::Value::String("a.bib".to_string()),
+                serde_yaml::Value::String("b.bib".to_string()),
+            ]),
+        );
+        let paths = extract_bib_paths_from_yaml(&fm);
+        assert_eq!(paths, vec!["a.bib", "b.bib"]);
+    }
+
+    #[test]
+    fn test_extract_bib_paths_from_yaml_absent() {
+        let fm = IndexMap::new();
+        let paths = extract_bib_paths_from_yaml(&fm);
+        assert!(paths.is_empty());
+    }
+
+    // ── ensure_in_companion_bib helper tests ─────────────────────
+
+    #[test]
+    fn test_ensure_in_companion_bib_auto_creates_bib_file() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.doi = Some("10.1/test".to_string());
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_ok(), "got: {:?}", result);
+        let r = result.unwrap();
+        assert!(r.bib_path.contains("assets/bib/Note.bib"));
+
+        // The .bib file should exist and contain the entry
+        let abs_bib = dir.path().join(&r.bib_path);
+        assert!(abs_bib.exists(), "bib file should be created");
+        let content = fs::read_to_string(&abs_bib).unwrap();
+        assert!(content.contains("smith2024"), "bib file should contain the entry key");
+    }
+
+    #[test]
+    fn test_ensure_in_companion_bib_uses_existing_bibliography() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\nbibliography: refs.bib\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+        fs::write(dir.path().join("refs.bib"), "").unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_ok(), "got: {:?}", result);
+        let r = result.unwrap();
+        assert_eq!(r.bib_path, "refs.bib");
+    }
+
+    #[test]
+    fn test_ensure_in_companion_bib_appends_if_key_missing() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\nbibliography: refs.bib\n---\n\nContent.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+        fs::write(dir.path().join("refs.bib"), "").unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(dir.path().join("refs.bib")).unwrap();
+        assert!(content.contains("smith2024"), "entry should be appended");
+    }
+
+    #[test]
+    fn test_ensure_in_companion_bib_skips_if_key_present() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\nbibliography: refs.bib\n---\n\nContent.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+        let existing_bib = "@article{smith2024,\n  author = {Author, Test},\n  title = {A Paper},\n  year = {2024}\n}\n";
+        fs::write(dir.path().join("refs.bib"), existing_bib).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        )
+        .unwrap();
+
+        // Parse the bib file and count entries with key smith2024
+        let content = fs::read_to_string(dir.path().join("refs.bib")).unwrap();
+        let entries = crate::bib::parser::parse_bibtex(&content);
+        let matching = entries.iter().filter(|e| e.key == "smith2024").count();
+        assert_eq!(matching, 1, "entry should not be duplicated, found {matching} entries with key smith2024");
+    }
+
+    #[test]
+    fn test_ensure_skip_note_rewrite_does_not_modify_note() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.doi = Some("10.1/test".to_string());
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            true, // skip_note_rewrite
+        );
+        assert!(result.is_ok(), "got: {:?}", result);
+        let r = result.unwrap();
+
+        // Note file should NOT have been modified
+        let note_on_disk = fs::read_to_string(dir.path().join("Note.md")).unwrap();
+        assert_eq!(note_on_disk, note_content, "note should not be modified on disk");
+
+        // bibliography_value should be returned
+        assert_eq!(
+            r.bibliography_value,
+            Some("assets/bib/Note.bib".to_string()),
+            "should return bibliography_value when skipping note rewrite"
+        );
+    }
+
+    #[test]
+    fn test_ensure_skip_note_rewrite_creates_bib_file() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.doi = Some("10.1/test".to_string());
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            true, // skip_note_rewrite
+        )
+        .unwrap();
+
+        // The .bib file should still be created and contain the entry
+        let abs_bib = dir.path().join("assets/bib/Note.bib");
+        assert!(abs_bib.exists(), "bib file should be created even with skip_note_rewrite");
+        let content = fs::read_to_string(&abs_bib).unwrap();
+        assert!(content.contains("smith2024"), "bib file should contain the entry key");
+    }
+
+    #[test]
+    fn test_ensure_no_skip_writes_note_as_before() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.doi = Some("10.1/test".to_string());
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false, // do NOT skip note rewrite
+        );
+        assert!(result.is_ok(), "got: {:?}", result);
+        let r = result.unwrap();
+
+        // Note file should have bibliography field
+        let note_on_disk = fs::read_to_string(dir.path().join("Note.md")).unwrap();
+        assert!(note_on_disk.contains("bibliography:"), "note should have bibliography field");
+
+        // bibliography_value should be None (Rust wrote it)
+        assert_eq!(r.bibliography_value, None, "bibliography_value should be None when note was rewritten");
+    }
+
+    #[test]
+    fn test_ensure_existing_bibliography_returns_none() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\nbibliography: refs.bib\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+        fs::write(dir.path().join("refs.bib"), "").unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        // Even with skip_note_rewrite=true, bibliography_value should be None
+        // because the field already exists
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            true,
+        );
+        assert!(result.is_ok(), "got: {:?}", result);
+        let r = result.unwrap();
+        assert_eq!(r.bibliography_value, None, "should be None when bibliography field already exists");
+    }
+
+    #[test]
+    fn test_ensure_result_has_correct_bib_path() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Test Note\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.doi = Some("10.1/test".to_string());
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            true,
+        );
+        let r = result.unwrap();
+        assert_eq!(r.bib_path, "assets/bib/Note.bib");
+    }
+
+    // ── Workspace-containment validation tests ───────────────────────
+
+    #[test]
+    fn test_ensure_rejects_absolute_note_path() {
+        let dir = TempDir::new().unwrap();
+        // Create a note at the absolute path to prove it's the validation
+        // (not a missing-file error) that triggers the rejection.
+        let abs_path = dir.path().join("Note.md");
+        fs::write(&abs_path, "---\ntitle: Test\n---\nBody.\n").unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            &abs_path.to_string_lossy(),
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("absolute") || err.contains("relative"),
+            "error should mention absolute/relative, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_ensure_rejects_traversal_note_path() {
+        let dir = TempDir::new().unwrap();
+        // Create a note inside the workspace so the only failure is the
+        // traversal validation, not a missing-file error.
+        fs::write(dir.path().join("Note.md"), "---\ntitle: T\n---\n").unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "../../../tmp/Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("escapes workspace") || err.contains("escapes"),
+            "error should mention workspace escape, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_ensure_rejects_traversal_bibliography_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        // Note whose frontmatter points outside the workspace
+        let note_content =
+            "---\ntitle: Evil\nbibliography: '../../../../tmp/evil.bib'\n---\nBody.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("escapes workspace") || err.contains("bibliography"),
+            "error should mention workspace escape, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_ensure_rejects_absolute_bibliography_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        let note_content = "---\ntitle: Evil\nbibliography: '/tmp/evil.bib'\n---\nBody.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("escapes workspace")
+                || err.contains("absolute")
+                || err.contains("bibliography"),
+            "error should reject absolute bib path, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_ensure_subdirectory_note_with_valid_bib_works() {
+        let dir = TempDir::new().unwrap();
+        // Note in a subdirectory with a valid relative bibliography path
+        let sub = dir.path().join("notes");
+        fs::create_dir(&sub).unwrap();
+        let note_content =
+            "---\ntitle: Sub Note\nbibliography: '../refs.bib'\n---\nBody.\n";
+        fs::write(sub.join("Note.md"), note_content).unwrap();
+        // refs.bib is in workspace root — notes/../refs.bib resolves to refs.bib
+        fs::write(dir.path().join("refs.bib"), "").unwrap();
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "notes/Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        // This SHOULD succeed: notes/../refs.bib resolves to refs.bib, still inside workspace
+        assert!(
+            result.is_ok(),
+            "valid .. traversal within workspace should work, got: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap().bib_path, "notes/../refs.bib");
+    }
 
     fn sample_bib() -> &'static str {
         "@article{smith2020,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2020},\n  doi = {10.1/x},\n  keywords = {ml, nlp}\n}"
@@ -524,30 +1268,6 @@ mod tests {
         assert_eq!(entries[0].tags, vec!["ml", "nlp"]);
     }
 
-    // --- build_bib_index caching tests ---
-
-    #[test]
-    fn build_bib_index_caches_result() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(&bib_path, sample_bib()).unwrap();
-
-        let cache = BibCache::new();
-
-        // First call populates the index cache
-        let index1 = build_bib_index(dir.path(), &cache);
-        assert_eq!(index1.len(), 1);
-        assert!(index1.contains_key("smith2020"));
-
-        // Delete the .bib file from disk but do NOT mark dirty
-        fs::remove_file(&bib_path).unwrap();
-
-        // Second call should return cached result (proves no re-walk)
-        let index2 = build_bib_index(dir.path(), &cache);
-        assert_eq!(index2.len(), 1, "cached result should be returned even though .bib file is gone");
-        assert!(index2.contains_key("smith2020"));
-    }
-
     // --- build_citation_frontmatter ---
 
     fn sample_citation_entry() -> BibEntry {
@@ -570,6 +1290,7 @@ mod tests {
             publisher: None,
             issn: None,
             isbn: None,
+            arxiv_id: None,
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -653,6 +1374,7 @@ mod tests {
             publisher: None,
             issn: None,
             isbn: None,
+            arxiv_id: None,
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -688,6 +1410,7 @@ mod tests {
             publisher: None,
             issn: None,
             isbn: None,
+            arxiv_id: None,
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -741,6 +1464,7 @@ mod tests {
             publisher: None,
             issn: None,
             isbn: None,
+            arxiv_id: None,
             tags: vec![],
         };
         let body = super::build_citation_body(&entry);
@@ -930,68 +1654,127 @@ mod tests {
         );
     }
 
-    // --- lookup_bib_entry tests ---
-
     #[test]
-    fn lookup_bib_entry_cold_cache_fallback() {
+    fn test_ensure_declared_bib_file_missing_on_disk() {
+        // Regression: when frontmatter declares bibliography: refs.bib but the
+        // file does not exist on disk, the append branch must create it instead
+        // of failing with NotFound.
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("refs.bib"), sample_bib()).unwrap();
+        let note_content = "---\ntitle: Test Note\nbibliography: refs.bib\n---\n\nSome content.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+        // Intentionally do NOT create refs.bib on disk
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
         let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_ok(), "should succeed even when declared bib file is missing, got: {:?}", result);
+        let r = result.unwrap();
+        assert_eq!(r.bib_path, "refs.bib");
 
-        // Cache is cold -- lookup should fall back to build_bib_index
-        let result = lookup_bib_entry(dir.path(), &cache, "smith2020");
-        assert!(result.is_some(), "cold-cache fallback must find the entry");
-        assert_eq!(result.unwrap().key, "smith2020");
-
-        // After the fallback, the index cache should now be warm
-        assert!(cache.get_cached_index().is_some(), "fallback should populate index cache");
+        // The .bib file should now exist on disk and contain the cite key
+        let abs_bib = dir.path().join("refs.bib");
+        assert!(abs_bib.exists(), "refs.bib should be created on disk");
+        let content = fs::read_to_string(&abs_bib).unwrap();
+        assert!(content.contains("smith2024"), "bib file should contain the entry key");
     }
 
     #[test]
-    fn lookup_bib_entry_warm_cache_fast_path() {
+    fn test_ensure_declared_bib_nested_dir_missing() {
+        // When frontmatter declares bibliography: assets/bib/Deep.bib and
+        // neither the directory nor the file exist, both must be created.
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("refs.bib"), sample_bib()).unwrap();
+        let note_content = "---\ntitle: Test Note\nbibliography: assets/bib/Deep.bib\n---\n\nContent.\n";
+        fs::write(dir.path().join("Note.md"), note_content).unwrap();
+        // Intentionally do NOT create assets/bib/ directory
+
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        db::upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
         let cache = BibCache::new();
+        let result = ensure_in_companion_bib_inner(
+            "smith2024",
+            "Note.md",
+            dir.path(),
+            &store.conn,
+            &cache,
+            false,
+        );
+        assert!(result.is_ok(), "should succeed even when parent dirs are missing, got: {:?}", result);
+        let r = result.unwrap();
+        assert_eq!(r.bib_path, "assets/bib/Deep.bib");
 
-        // Warm the cache
-        build_bib_index(dir.path(), &cache);
-
-        // Delete the .bib file -- warm cache should still return the entry
-        fs::remove_file(dir.path().join("refs.bib")).unwrap();
-
-        let result = lookup_bib_entry(dir.path(), &cache, "smith2020");
-        assert!(result.is_some(), "warm cache fast path must return the entry");
-        assert_eq!(result.unwrap().key, "smith2020");
+        // The nested .bib file should now exist and contain the cite key
+        let abs_bib = dir.path().join("assets/bib/Deep.bib");
+        assert!(abs_bib.exists(), "assets/bib/Deep.bib should be created on disk");
+        let content = fs::read_to_string(&abs_bib).unwrap();
+        assert!(content.contains("smith2024"), "bib file should contain the entry key");
     }
 
+    /// Regression test for F10: bib_update_fields must trigger refresh_shadows
+    /// so that shadow node titles in the graph reflect updated DB fields.
     #[test]
-    fn lookup_bib_entry_missing_key() {
+    fn test_bib_update_fields_refreshes_shadow_title() {
+        use crate::graph::indexer::GraphIndex;
+
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("refs.bib"), sample_bib()).unwrap();
-        let cache = BibCache::new();
+        let root = dir.path().to_path_buf();
 
-        let result = lookup_bib_entry(dir.path(), &cache, "nonexistent");
-        assert!(result.is_none(), "missing key should return None");
-    }
+        // Write a .md file citing [@smith2024]
+        fs::write(dir.path().join("a.md"), "See [@smith2024].").unwrap();
 
-    #[test]
-    fn build_bib_index_re_walks_after_dirty() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(&bib_path, sample_bib()).unwrap();
+        // Write a .bib file so the initial build ingests the entry
+        fs::write(
+            dir.path().join("refs.bib"),
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Original Title},\n  year = {2024}\n}",
+        ).unwrap();
 
-        let cache = BibCache::new();
+        // Build GraphIndex (ingests .bib into DB and creates shadow nodes)
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
 
-        // First call populates the index cache
-        let index1 = build_bib_index(dir.path(), &cache);
-        assert_eq!(index1.len(), 1);
+        // Verify initial shadow title contains "Original Title"
+        {
+            let store = gi.store();
+            let titles = store.node_titles().unwrap();
+            let title = titles.get("bib:smith2024").expect("shadow should exist after build");
+            assert!(
+                title.contains("Original Title"),
+                "initial shadow title should contain 'Original Title', got: {title}"
+            );
+        }
 
-        // Delete the .bib file from disk, then mark dirty
-        fs::remove_file(&bib_path).unwrap();
-        cache.mark_index_dirty();
+        // Update title in DB (simulating what bib_update_fields does)
+        let mut fields = HashMap::new();
+        fields.insert("title".to_string(), "Updated Title".to_string());
+        {
+            let store = gi.store();
+            let updated = db::update_bib_fields(&store.conn, "smith2024", &fields).unwrap();
+            assert!(updated);
+        }
 
-        // Now build_bib_index should re-walk and find nothing
-        let index2 = build_bib_index(dir.path(), &cache);
-        assert!(index2.is_empty(), "after mark_index_dirty and file deletion, index should be empty");
+        // Refresh shadows (this is what notify_bib_changed does internally)
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows should detect the title change");
+
+        // Verify updated shadow title contains "Updated Title"
+        {
+            let store = gi.store();
+            let titles = store.node_titles().unwrap();
+            let title = titles.get("bib:smith2024").expect("shadow should still exist");
+            assert!(
+                title.contains("Updated Title"),
+                "shadow title should be updated to contain 'Updated Title', got: {title}"
+            );
+        }
     }
 }

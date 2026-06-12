@@ -1,13 +1,13 @@
-use std::path::Path;
-use std::sync::LazyLock;
+use std::path::PathBuf;
+use std::sync::{Arc, LazyLock};
 
 use serde::Deserialize;
-
-use crate::bib::cache::BibCache;
 use crate::bib::convert::{csl_to_bib_entry, is_valid_doi, normalize_doi, CslItem};
+use crate::bib::db::save_entry_with_generated_key;
 use crate::bib::types::BibEntry;
-use crate::bib::writer::{append_entries_to_file, SaveOutcome};
-use crate::commands::bib::scan_workspace_bib_paths;
+use crate::bib::writer::SaveOutcome;
+use crate::commands::graph::GraphRegistry;
+use crate::commands::page::lookup_graph_index;
 
 /// Wrapper for the Crossref API JSON envelope.
 #[derive(Deserialize)]
@@ -34,10 +34,6 @@ fn parse_csl_json_inner(json_str: &str) -> Result<Vec<BibEntry>, String> {
         return Ok(vec![csl_to_bib_entry(&item)]);
     }
     Err("Failed to parse CSL-JSON: expected an array or single CSL-JSON item".to_string())
-}
-
-fn list_bib_files_inner(workspace_path: &Path) -> Vec<String> {
-    scan_workspace_bib_paths(workspace_path)
 }
 
 // ── Tauri commands ──────────────────────────────────────────────────
@@ -108,17 +104,23 @@ pub async fn lookup_doi(doi: String) -> Result<BibEntry, String> {
 
 #[tauri::command]
 pub fn save_bib_entry(
-    entry: BibEntry,
-    bib_path: String,
+    mut entry: BibEntry,
     workspace_path: String,
-    cache: tauri::State<BibCache>,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Vec<SaveOutcome>, String> {
-    append_entries_to_file(
-        &[entry],
-        Path::new(&bib_path),
-        Path::new(&workspace_path),
-        &cache,
-    )
+    let workspace_root = PathBuf::from(&workspace_path);
+
+    let gi = lookup_graph_index(&graph_state, &workspace_root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let outcome = {
+        let store = gi.store();
+        save_entry_with_generated_key(&store.conn, &mut entry)
+            .map_err(|e| e.to_string())?
+    };
+
+    crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
+    Ok(vec![outcome])
 }
 
 fn read_csl_file(json_path: &str) -> Result<String, String> {
@@ -134,30 +136,32 @@ pub fn parse_csl_json(json_path: String) -> Result<Vec<BibEntry>, String> {
 #[tauri::command]
 pub fn save_bib_entries(
     entries: Vec<BibEntry>,
-    bib_path: String,
     workspace_path: String,
-    cache: tauri::State<BibCache>,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Vec<SaveOutcome>, String> {
-    append_entries_to_file(
-        &entries,
-        Path::new(&bib_path),
-        Path::new(&workspace_path),
-        &cache,
-    )
-}
+    let workspace_root = PathBuf::from(&workspace_path);
 
-#[tauri::command]
-pub fn list_bib_files(
-    workspace_path: String,
-    _cache: tauri::State<BibCache>,
-) -> Vec<String> {
-    list_bib_files_inner(Path::new(&workspace_path))
+    let gi = lookup_graph_index(&graph_state, &workspace_root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let outcomes = {
+        let store = gi.store();
+        let mut results = Vec::with_capacity(entries.len());
+        for mut entry in entries {
+            let outcome = save_entry_with_generated_key(&store.conn, &mut entry)
+                .map_err(|e| e.to_string())?;
+            results.push(outcome);
+        }
+        results
+    };
+
+    crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
+    Ok(outcomes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bib::cache::BibCache;
     use std::fs;
     use tempfile::TempDir;
 
@@ -337,256 +341,6 @@ mod tests {
         let path = dir.path().join("nope.json");
         let result = read_csl_file(path.to_str().unwrap());
         assert!(result.unwrap_err().contains("Failed to read"));
-    }
-
-    // ── Group 3: list_bib_files_inner ───────────────────────────────
-
-    #[test]
-    fn list_bib_files_empty_workspace() {
-        let dir = TempDir::new().unwrap();
-        let files = list_bib_files_inner(dir.path());
-        assert!(files.is_empty());
-    }
-
-    #[test]
-    fn list_bib_files_finds_all_bib_files() {
-        let dir = TempDir::new().unwrap();
-        fs::write(
-            dir.path().join("root.bib"),
-            "@article{a,\n  author = {A},\n  title = {A},\n  year = {2020}\n}",
-        )
-        .unwrap();
-        let sub = dir.path().join("papers");
-        fs::create_dir(&sub).unwrap();
-        fs::write(
-            sub.join("nested.bib"),
-            "@book{b,\n  author = {B},\n  title = {B},\n  year = {2021}\n}",
-        )
-        .unwrap();
-        let files = list_bib_files_inner(dir.path());
-        assert_eq!(files.len(), 2);
-        assert!(files.iter().any(|f| f.ends_with("root.bib")));
-        assert!(files.iter().any(|f| f.ends_with("nested.bib")));
-    }
-
-    #[test]
-    fn list_bib_files_deduplicates() {
-        let dir = TempDir::new().unwrap();
-        // File with two entries -- should still yield one unique path
-        fs::write(
-            dir.path().join("refs.bib"),
-            "@article{a,\n  author={A},\n  title={A},\n  year={2020}\n}\n\n@book{b,\n  author={B},\n  title={B},\n  year={2021}\n}",
-        )
-        .unwrap();
-        let files = list_bib_files_inner(dir.path());
-        assert_eq!(files.len(), 1);
-    }
-
-    #[test]
-    fn list_bib_files_skips_hidden_dirs() {
-        let dir = TempDir::new().unwrap();
-        let hidden = dir.path().join(".obsidian");
-        fs::create_dir(&hidden).unwrap();
-        fs::write(
-            hidden.join("hidden.bib"),
-            "@article{h,\n  author={H},\n  title={H},\n  year={2020}\n}",
-        )
-        .unwrap();
-        fs::write(
-            dir.path().join("visible.bib"),
-            "@article{v,\n  author={V},\n  title={V},\n  year={2020}\n}",
-        )
-        .unwrap();
-        let files = list_bib_files_inner(dir.path());
-        assert_eq!(files.len(), 1);
-        assert!(files[0].ends_with("visible.bib"));
-    }
-
-    // ── Group 4: save_bib_entry (via append_entries_to_file) ────────
-
-    #[test]
-    fn save_bib_entry_new_file() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        let cache = BibCache::new();
-        let entry = BibEntry {
-            key: "smith2020".to_string(),
-            authors: vec!["Smith, John".to_string()],
-            title: "Test Paper".to_string(),
-            year: "2020".to_string(),
-            entry_type: "article".to_string(),
-            line_number: 0,
-            bib_file: None,
-            abstract_text: None,
-            doi: Some("10.1000/test".to_string()),
-            journal: None,
-            url: None,
-            file: None,
-            volume: None,
-            number: None,
-            pages: None,
-            publisher: None,
-            issn: None,
-            isbn: None,
-            tags: vec![],
-        };
-        let results = append_entries_to_file(
-            &[entry],
-            &bib_path,
-            dir.path(),
-            &cache,
-        )
-        .unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0], SaveOutcome::Saved { .. }));
-        assert!(bib_path.exists());
-    }
-
-    #[test]
-    fn save_bib_entry_appends_to_existing() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(
-            &bib_path,
-            "@article{doe2019,\n  author = {Doe, Jane},\n  title = {Existing},\n  year = {2019}\n}",
-        )
-        .unwrap();
-        let cache = BibCache::new();
-        let entry = BibEntry {
-            key: "smith2020".to_string(),
-            authors: vec!["Smith, John".to_string()],
-            title: "New Paper".to_string(),
-            year: "2020".to_string(),
-            entry_type: "article".to_string(),
-            line_number: 0,
-            bib_file: None,
-            abstract_text: None,
-            doi: Some("10.1000/new".to_string()),
-            journal: None,
-            url: None,
-            file: None,
-            volume: None,
-            number: None,
-            pages: None,
-            publisher: None,
-            issn: None,
-            isbn: None,
-            tags: vec![],
-        };
-        let results = append_entries_to_file(
-            &[entry],
-            &bib_path,
-            dir.path(),
-            &cache,
-        )
-        .unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0], SaveOutcome::Saved { .. }));
-        let content = fs::read_to_string(&bib_path).unwrap();
-        let parsed = crate::bib::parser::parse_bibtex(&content);
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn save_bib_entry_deduplicates_by_doi() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(
-            &bib_path,
-            "@article{doe2019,\n  author = {Doe},\n  title = {X},\n  year = {2019},\n  doi = {10.1000/dup}\n}",
-        )
-        .unwrap();
-        let cache = BibCache::new();
-        let entry = BibEntry {
-            key: "smith2020".to_string(),
-            authors: vec!["Smith, John".to_string()],
-            title: "Dup Paper".to_string(),
-            year: "2020".to_string(),
-            entry_type: "article".to_string(),
-            line_number: 0,
-            bib_file: None,
-            abstract_text: None,
-            doi: Some("10.1000/dup".to_string()),
-            journal: None,
-            url: None,
-            file: None,
-            volume: None,
-            number: None,
-            pages: None,
-            publisher: None,
-            issn: None,
-            isbn: None,
-            tags: vec![],
-        };
-        let results = append_entries_to_file(
-            &[entry],
-            &bib_path,
-            dir.path(),
-            &cache,
-        )
-        .unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(matches!(&results[0], SaveOutcome::DuplicateDoi { .. }));
-    }
-
-    // ── Group 5: save_bib_entries (parse + append) ───────────────────
-
-    #[test]
-    fn save_bib_entries_multiple_entries() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        let cache = BibCache::new();
-        let json = r#"[
-            {"type": "article-journal", "title": "A", "author": [{"family": "A", "given": "A"}], "issued": {"date-parts": [[2020]]}, "DOI": "10.1000/a"},
-            {"type": "book", "title": "B", "author": [{"family": "B", "given": "B"}], "issued": {"date-parts": [[2021]]}, "DOI": "10.1000/b"},
-            {"type": "article-journal", "title": "C", "author": [{"family": "C", "given": "C"}], "issued": {"date-parts": [[2022]]}, "DOI": "10.1000/c"}
-        ]"#;
-        let entries = parse_csl_json_inner(json).unwrap();
-        let results = append_entries_to_file(
-            &entries,
-            &bib_path,
-            dir.path(),
-            &cache,
-        )
-        .unwrap();
-        assert_eq!(results.len(), 3);
-        assert!(bib_path.exists());
-        let content = fs::read_to_string(&bib_path).unwrap();
-        let parsed = crate::bib::parser::parse_bibtex(&content);
-        assert_eq!(parsed.len(), 3);
-    }
-
-    #[test]
-    fn save_bib_entries_mixed_outcomes() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(
-            &bib_path,
-            "@article{old,\n  author = {Old},\n  title = {Old},\n  year = {2019},\n  doi = {10.1000/dup}\n}",
-        )
-        .unwrap();
-        let cache = BibCache::new();
-        let json = r#"[
-            {"title": "Dup", "DOI": "10.1000/dup"},
-            {"title": "New", "DOI": "10.1000/new"}
-        ]"#;
-        let entries = parse_csl_json_inner(json).unwrap();
-        let results = append_entries_to_file(
-            &entries,
-            &bib_path,
-            dir.path(),
-            &cache,
-        )
-        .unwrap();
-        assert_eq!(results.len(), 2);
-        assert!(matches!(&results[0], SaveOutcome::DuplicateDoi { .. }));
-        assert!(matches!(&results[1], SaveOutcome::Saved { .. }));
-    }
-
-    #[test]
-    fn save_bib_entries_invalid_json() {
-        let result = parse_csl_json_inner("not valid json");
-        assert!(result.is_err());
     }
 
     // ── Group 6: lookup_doi (validation only, no network) ───────────

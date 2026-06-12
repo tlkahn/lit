@@ -15,7 +15,7 @@ const mockPaneState = vi.hoisted(() => {
       type: "leaf" as const,
       id: "src-pane",
       pagePath: "paper.md" as string | null,
-    },
+    } as PaneNode,
     focusedPaneId: "src-pane",
     splitPane: vi.fn((_paneId: string, _direction: string): string | null => {
       // splitPane returns the new leaf ID and mutates focusedPaneId.
@@ -140,7 +140,8 @@ describe("initCompanionCommands", () => {
         { type: "leaf", id: "src-pane", pagePath: "paper.md" },
         { type: "leaf", id: "vacant-pane", pagePath: null },
       ],
-    } as PaneNode;
+      sizes: [0.5, 0.5],
+    };
     initCompanionCommands();
     executeCommand("companion.open");
 
@@ -161,7 +162,8 @@ describe("initCompanionCommands", () => {
         { type: "leaf", id: "src-pane", pagePath: "paper.md" },
         { type: "leaf", id: "other-pane", pagePath: "other.md" },
       ],
-    } as PaneNode;
+      sizes: [0.5, 0.5],
+    };
     initCompanionCommands();
     executeCommand("companion.open");
 

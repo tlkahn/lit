@@ -43,7 +43,6 @@ beforeEach(() => {
 
   mockInvoke((cmd, args) => {
     invokedCommands.push({ cmd, args: args ?? {} });
-    if (cmd === "list_bib_files") return ["/workspace/refs.bib", "/workspace/other.bib"];
     if (cmd === "lookup_doi") return sampleEntry;
     if (cmd === "save_bib_entry") return [{ Saved: { key: "smith2020" } }];
     if (cmd === "parse_csl_json") return [sampleEntry, sampleEntry2];
@@ -169,7 +168,6 @@ describe("AddReferenceDialog", () => {
     });
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return [];
       if (cmd === "lookup_doi") return deferred;
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -221,7 +219,6 @@ describe("AddReferenceDialog", () => {
   it("displays error on lookup failure", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return [];
       if (cmd === "lookup_doi") throw new Error("DOI not found");
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -244,7 +241,7 @@ describe("AddReferenceDialog", () => {
     expect(error!.textContent).toContain("DOI not found");
   });
 
-  it("save button calls saveBibEntry with correct args", async () => {
+  it("save button calls saveBibEntry without bibPath", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
@@ -258,17 +255,7 @@ describe("AddReferenceDialog", () => {
       fireEvent.click(lookupBtn);
     });
 
-    // Wait for bib files to load and select one
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-      expect(select).toBeTruthy();
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-
-    const bibSelect = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-    fireEvent.change(bibSelect, { target: { value: "/workspace/refs.bib" } });
-
-    // Click save
+    // Click save (no bib file selection needed)
     const saveBtn = container.querySelector("[data-testid='add-reference-save-btn']") as HTMLButtonElement;
     await act(async () => {
       fireEvent.click(saveBtn);
@@ -277,9 +264,9 @@ describe("AddReferenceDialog", () => {
     const call = invokedCommands.find((c) => c.cmd === "save_bib_entry");
     expect(call).toBeTruthy();
     expect(call!.args).toMatchObject({
-      bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
+    expect(call!.args).not.toHaveProperty("bibPath");
   });
 
   it("save success shows toast and calls onSaved", async () => {
@@ -296,15 +283,7 @@ describe("AddReferenceDialog", () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-lookup-btn']")!);
     });
 
-    // Select bib file
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-    const bibSelect = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-    fireEvent.change(bibSelect, { target: { value: "/workspace/refs.bib" } });
-
-    // Save
+    // Save (no bib file selection needed)
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-save-btn']")!);
     });
@@ -317,7 +296,6 @@ describe("AddReferenceDialog", () => {
   it("save duplicate DOI shows error toast", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "lookup_doi") return sampleEntry;
       if (cmd === "save_bib_entry")
         return [{ DuplicateDoi: { doi: "10.1000/xyz", existing_key: "old2019" } }];
@@ -336,14 +314,7 @@ describe("AddReferenceDialog", () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-lookup-btn']")!);
     });
 
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-    fireEvent.change(container.querySelector("[data-testid='add-reference-bib-select']")!, {
-      target: { value: "/workspace/refs.bib" },
-    });
-
+    // Save (no bib file selection needed)
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-save-btn']")!);
     });
@@ -351,6 +322,8 @@ describe("AddReferenceDialog", () => {
     expect(onSaved).not.toHaveBeenCalled();
     const state = useStatusMessageStore.getState();
     expect(state.message).toContain("old2019");
+    expect(state.message).toContain("Already in your library");
+    expect(state.message).not.toContain("DOI");
     expect(state.variant).toBe("error");
   });
 
@@ -377,7 +350,6 @@ describe("AddReferenceDialog", () => {
     });
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return [];
       if (cmd === "lookup_doi") return deferred;
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -476,7 +448,7 @@ describe("AddReferenceDialog", () => {
     expect(parseCall).toBeTruthy();
   });
 
-  it("import button calls saveBibEntries", async () => {
+  it("import button calls saveBibEntries without bibPath", async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
     (open as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/workspace/export.json");
 
@@ -497,17 +469,7 @@ describe("AddReferenceDialog", () => {
       expect(container.querySelector("[data-testid='add-reference-import-preview']")).toBeTruthy();
     });
 
-    // Select bib file
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-      expect(select).toBeTruthy();
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-    fireEvent.change(container.querySelector("[data-testid='add-reference-bib-select']")!, {
-      target: { value: "/workspace/refs.bib" },
-    });
-
-    // Import
+    // Import (no bib file selection needed)
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-save-btn']")!);
     });
@@ -515,9 +477,9 @@ describe("AddReferenceDialog", () => {
     const call = invokedCommands.find((c) => c.cmd === "save_bib_entries");
     expect(call).toBeTruthy();
     expect(call!.args).toMatchObject({
-      bibPath: "/workspace/refs.bib",
       workspacePath: "/workspace",
     });
+    expect(call!.args).not.toHaveProperty("bibPath");
     expect((call!.args as { entries: unknown[] }).entries).toHaveLength(2);
   });
 
@@ -527,7 +489,6 @@ describe("AddReferenceDialog", () => {
 
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "parse_csl_json") return [sampleEntry, sampleEntry2];
       if (cmd === "save_bib_entries")
         return [
@@ -551,14 +512,7 @@ describe("AddReferenceDialog", () => {
       expect(container.querySelector("[data-testid='add-reference-import-preview']")).toBeTruthy();
     });
 
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-      expect(select.options.length).toBeGreaterThan(0);
-    });
-    fireEvent.change(container.querySelector("[data-testid='add-reference-bib-select']")!, {
-      target: { value: "/workspace/refs.bib" },
-    });
-
+    // Import (no bib file selection needed)
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-save-btn']")!);
     });
@@ -575,7 +529,6 @@ describe("AddReferenceDialog", () => {
 
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return ["/workspace/refs.bib"];
       if (cmd === "parse_csl_json") throw new Error("Invalid JSON");
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -597,90 +550,38 @@ describe("AddReferenceDialog", () => {
     });
   });
 
-  // Group 4: Shared bib file picker
+  // Group 4: No BibFilePicker rendered
 
-  it("loads existing bib files on open", async () => {
+  it("no BibFilePicker rendered in the dialog", () => {
     const { container } = render(
       <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
     );
 
-    await waitFor(() => {
-      const select = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-      expect(select).toBeTruthy();
-      // Should have the two mock files plus a "new file" option
-      const options = Array.from(select.options).map((o) => o.value);
-      expect(options).toContain("/workspace/refs.bib");
-      expect(options).toContain("/workspace/other.bib");
-    });
+    expect(container.querySelector("[data-testid='add-reference-bib-select']")).toBeNull();
+    expect(container.querySelector("[data-testid='add-reference-bib-new-input']")).toBeNull();
   });
 
-  it("allows typing a new bib file path", async () => {
+  it("save button is enabled once lookup succeeds (no bib file required)", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
     );
 
-    await waitFor(() => {
-      expect(container.querySelector("[data-testid='add-reference-bib-select']")).toBeTruthy();
-    });
-
-    // Select "new file" option
-    const bibSelect = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-    fireEvent.change(bibSelect, { target: { value: "__new__" } });
-
-    const newInput = container.querySelector("[data-testid='add-reference-bib-new-input']") as HTMLInputElement;
-    expect(newInput).toBeTruthy();
-    await user.clear(newInput);
-    await user.type(newInput, "custom.bib");
-    expect(newInput.value).toBe("custom.bib");
-  });
-
-  it("defaults to refs.bib when no bib files exist", async () => {
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args: args ?? {} });
-      if (cmd === "list_bib_files") return [];
-      if (cmd === "lookup_doi") return sampleEntry;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    const { container } = render(
-      <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
-    );
-
-    await waitFor(() => {
-      const newInput = container.querySelector("[data-testid='add-reference-bib-new-input']") as HTMLInputElement;
-      expect(newInput).toBeTruthy();
-      expect(newInput.value).toBe("refs.bib");
-    });
-  });
-
-  // Group 5: Disabled states
-
-  it("save disabled when no bib file selected", async () => {
-    const user = userEvent.setup();
-    const { container } = render(
-      <AddReferenceDialog open={true} onClose={vi.fn()} onSaved={vi.fn()} />,
-    );
-
-    // Lookup DOI to get a preview
     const input = container.querySelector("[data-testid='add-reference-doi-input']") as HTMLInputElement;
     await user.type(input, "10.1000/xyz");
     await act(async () => {
       fireEvent.click(container.querySelector("[data-testid='add-reference-lookup-btn']")!);
     });
 
-    // Wait for preview
     await waitFor(() => {
       expect(container.querySelector("[data-testid='add-reference-preview']")).toBeTruthy();
     });
 
-    // Clear bib selection to empty
-    const bibSelect = container.querySelector("[data-testid='add-reference-bib-select']") as HTMLSelectElement;
-    fireEvent.change(bibSelect, { target: { value: "" } });
-
     const saveBtn = container.querySelector("[data-testid='add-reference-save-btn']") as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
+    expect(saveBtn.disabled).toBe(false);
   });
+
+  // Group 5: Disabled states
 
   it("save disabled when no lookup result in DOI mode", () => {
     const { container } = render(

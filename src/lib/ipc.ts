@@ -393,6 +393,7 @@ export interface BibEntry {
   publisher?: string;
   issn?: string;
   isbn?: string;
+  arxiv_id?: string;
   tags?: string[];
 }
 
@@ -474,10 +475,9 @@ export async function lookupDoi(doi: string): Promise<BibEntry> {
 
 export async function saveBibEntry(
   entry: BibEntry,
-  bibPath: string,
   workspacePath: string,
 ): Promise<SaveOutcome[]> {
-  return invoke<SaveOutcome[]>("save_bib_entry", { entry, bibPath, workspacePath });
+  return invoke<SaveOutcome[]>("save_bib_entry", { entry, workspacePath });
 }
 
 export async function parseCslJson(jsonPath: string): Promise<BibEntry[]> {
@@ -486,14 +486,9 @@ export async function parseCslJson(jsonPath: string): Promise<BibEntry[]> {
 
 export async function saveBibEntries(
   entries: BibEntry[],
-  bibPath: string,
   workspacePath: string,
 ): Promise<SaveOutcome[]> {
-  return invoke<SaveOutcome[]>("save_bib_entries", { entries, bibPath, workspacePath });
-}
-
-export async function listBibFiles(workspacePath: string): Promise<string[]> {
-  return invoke<string[]>("list_bib_files", { workspacePath });
+  return invoke<SaveOutcome[]>("save_bib_entries", { entries, workspacePath });
 }
 
 export async function materializeCitation(bibKey: string): Promise<PageMeta> {
@@ -550,18 +545,62 @@ export type RecognizeResult =
 
 export async function recognizePdf(
   pdfPath: string,
-  bibPath: string,
   workspacePath: string,
 ): Promise<RecognizeResult> {
-  return invoke<RecognizeResult>("recognize_pdf", { pdfPath, bibPath, workspacePath });
+  return invoke<RecognizeResult>("recognize_pdf", { pdfPath, workspacePath });
 }
 
 export async function importRecognizedEntry(
   entry: BibEntry,
-  bibPath: string,
   workspacePath: string,
 ): Promise<SaveOutcome[]> {
-  return invoke<SaveOutcome[]>("import_recognized_entry", { entry, bibPath, workspacePath });
+  return invoke<SaveOutcome[]>("import_recognized_entry", { entry, workspacePath });
+}
+
+export async function bibSearch(
+  query: string,
+  limit: number,
+  workspacePath: string,
+): Promise<BibEntry[]> {
+  return invoke<BibEntry[]>("bib_search", { query, limit, workspacePath });
+}
+
+export async function bibGet(
+  citeKey: string,
+  workspacePath: string,
+): Promise<BibEntry | null> {
+  return invoke<BibEntry | null>("bib_get", { citeKey, workspacePath });
+}
+
+export async function bibUpdateFields(
+  citeKey: string,
+  fields: Record<string, string>,
+  workspacePath: string,
+): Promise<boolean> {
+  return invoke<boolean>("bib_update_fields", { citeKey, fields, workspacePath });
+}
+
+export async function bibDelete(
+  citeKey: string,
+  workspacePath: string,
+): Promise<boolean> {
+  return invoke<boolean>("bib_delete", { citeKey, workspacePath });
+}
+
+export interface EnsureCompanionBibResult {
+  bib_path: string;
+  bibliography_value: string | null;
+}
+
+export async function ensureInCompanionBib(
+  citeKey: string,
+  notePath: string,
+  workspacePath: string,
+  skipNoteRewrite: boolean = false,
+): Promise<EnsureCompanionBibResult> {
+  return invoke<EnsureCompanionBibResult>("ensure_in_companion_bib", {
+    citeKey, notePath, workspacePath, skipNoteRewrite,
+  });
 }
 
 // Graph

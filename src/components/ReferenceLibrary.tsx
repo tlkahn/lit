@@ -15,6 +15,8 @@ import {
   getCitingPages,
   getBibKeyStates,
   enrichBibEntry,
+  bibDelete,
+  bibUpdateFields,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
@@ -210,12 +212,25 @@ export function ReferenceLibrary() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
+      loadEntries();
       loadBibKeyStates();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
-  }, [loadBibKeyStates]);
+  }, [loadEntries, loadBibKeyStates]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:bib-items-changed", () => {
+      loadEntries();
+      loadBibKeyStates();
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [loadEntries, loadBibKeyStates]);
 
   useEffect(() => {
     if (!workspacePath) return;
@@ -317,8 +332,6 @@ export function ReferenceLibrary() {
       setEnrichingKey(entry.key);
       try {
         const result = await enrichBibEntry(entry.key, workspacePath);
-        loadEntries();
-        loadBibKeyStates();
         const parts: string[] = [];
         if (result.fields_added.length > 0)
           parts.push(`added ${result.fields_added.join(", ")}`);
@@ -345,8 +358,87 @@ export function ReferenceLibrary() {
         setEnrichingKey(null);
       }
     },
-    [workspacePath, show, loadEntries, loadBibKeyStates],
+    [workspacePath, show],
   );
+
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editFields, setEditFields] = useState<Record<string, string>>({});
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const handleDelete = useCallback(async (key: string) => {
+    if (!workspacePath) return;
+    if (!window.confirm(`Delete @${key} from the library? The .bib file on disk will not be modified.`)) return;
+    setDeletingKey(key);
+    try {
+      const deleted = await bibDelete(key, workspacePath);
+      if (deleted) {
+        show(`Deleted @${key}`);
+      } else {
+        show(`@${key} not found`, "error");
+      }
+    } catch (err) {
+      show(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setDeletingKey(null);
+    }
+  }, [workspacePath, show]);
+
+  const startEdit = useCallback((entry: BibEntry) => {
+    setEditingKey(entry.key);
+    setEditFields({
+      title: entry.title,
+      authors: entry.authors.join("; "),
+      year: entry.year,
+      journal: entry.journal ?? "",
+    });
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingKey(null);
+    setEditFields({});
+  }, []);
+
+  const saveEdit = useCallback(async (key: string) => {
+    if (!workspacePath) return;
+    setSavingEdit(true);
+    try {
+      const entry = filtered.find((e) => e.key === key);
+      if (!entry) return;
+
+      const fields: Record<string, string> = {};
+      const original: Record<string, string> = {
+        title: entry.title,
+        authors: entry.authors.join("; "),
+        year: entry.year,
+        journal: entry.journal ?? "",
+      };
+      for (const [k, v] of Object.entries(editFields)) {
+        if (v !== original[k]) {
+          fields[k] = v;
+        }
+      }
+      if (Object.keys(fields).length === 0) {
+        setSavingEdit(false);
+        setEditingKey(null);
+        setEditFields({});
+        return;
+      }
+
+      const updated = await bibUpdateFields(key, fields, workspacePath);
+      if (updated) {
+        show(`Updated @${key}`);
+      } else {
+        show(`@${key} not found`, "error");
+      }
+    } catch (err) {
+      show(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setSavingEdit(false);
+      setEditingKey(null);
+      setEditFields({});
+    }
+  }, [workspacePath, editFields, filtered, show]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
@@ -408,7 +500,6 @@ export function ReferenceLibrary() {
       open={addDialogOpen}
       onClose={() => setAddDialogOpen(false)}
       onSaved={() => {
-        loadEntries();
         setAddDialogOpen(false);
       }}
     />
@@ -422,8 +513,6 @@ export function ReferenceLibrary() {
         setDropPdfPath(null);
       }}
       onImported={() => {
-        loadEntries();
-        loadBibKeyStates();
         setImportPdfDialogOpen(false);
         setDropPdfPath(null);
       }}
@@ -514,18 +603,60 @@ export function ReferenceLibrary() {
                     </button>
                     {isExpanded ? (
                       <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
-                        <div className="font-semibold text-text-normal">{entry.title}</div>
-                        {entry.authors.length > 0 ? (
-                          <div className="mt-1 text-text-muted">
-                            {entry.authors.join("; ")}
+                        {editingKey === entry.key ? (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-xs text-text-muted">Title</label>
+                              <input data-testid="edit-field-title" type="text" value={editFields.title ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, title: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">Authors (semicolon-separated)</label>
+                              <input data-testid="edit-field-authors" type="text" value={editFields.authors ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, authors: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">Year</label>
+                              <input data-testid="edit-field-year" type="text" value={editFields.year ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, year: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">Journal</label>
+                              <input data-testid="edit-field-journal" type="text" value={editFields.journal ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, journal: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
+                            <div className="flex gap-2">
+                              <button data-testid="edit-save-btn" disabled={savingEdit}
+                                onClick={() => saveEdit(entry.key)}
+                                className="rounded bg-interactive-accent px-2 py-0.5 text-xs text-white hover:opacity-90 disabled:opacity-50">
+                                {savingEdit ? "Saving..." : "Save"}
+                              </button>
+                              <button data-testid="edit-cancel-btn" onClick={cancelEdit}
+                                className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover">
+                                Cancel
+                              </button>
+                            </div>
                           </div>
-                        ) : null}
-                        {entry.year ? (
-                          <div className="text-text-muted">{entry.year}</div>
-                        ) : null}
-                        {entry.journal ? (
-                          <div className="text-text-muted">{entry.journal}</div>
-                        ) : null}
+                        ) : (
+                          <>
+                            <div className="font-semibold text-text-normal">{entry.title}</div>
+                            {entry.authors.length > 0 ? (
+                              <div className="mt-1 text-text-muted">
+                                {entry.authors.join("; ")}
+                              </div>
+                            ) : null}
+                            {entry.year ? (
+                              <div className="text-text-muted">{entry.year}</div>
+                            ) : null}
+                            {entry.journal ? (
+                              <div className="text-text-muted">{entry.journal}</div>
+                            ) : null}
+                          </>
+                        )}
                         {entry.doi ? (
                           <div className="mt-1">
                             <a
@@ -614,12 +745,24 @@ export function ReferenceLibrary() {
                             </button>
                           </div>
                         ) : null}
-                        <div className="mt-2">
+                        <div className="mt-2 flex gap-2">
                           <button
                             onClick={() => copyCitation(entry.key)}
                             className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
                           >
                             Copy citation
+                          </button>
+                          <button data-testid="edit-entry-btn" onClick={() => startEdit(entry)}
+                            className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover">
+                            Edit
+                          </button>
+                          <button
+                            data-testid="delete-entry-btn"
+                            disabled={deletingKey === entry.key}
+                            onClick={() => handleDelete(entry.key)}
+                            className="rounded border border-border px-2 py-0.5 text-xs text-text-error hover:bg-bg-hover disabled:opacity-50"
+                          >
+                            {deletingKey === entry.key ? "Deleting..." : "Delete"}
                           </button>
                         </div>
                         <CitedBySection bibKey={entry.key} />

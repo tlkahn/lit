@@ -40,6 +40,7 @@ function makeConfig(overrides?: { onChange?: (content: string) => void; onSelect
     foldCompartment: new Compartment(),
     crossrefCompartment: new Compartment(),
     noteDirCompartment: new Compartment(),
+    notePathCompartment: new Compartment(),
     annotationCompartment: new Compartment(),
     mediaThumbnailsCompartment: new Compartment(),
     focusModeCompartment: new Compartment(),

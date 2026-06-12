@@ -22,6 +22,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     foldCompartment: new Compartment(),
     crossrefCompartment: new Compartment(),
     noteDirCompartment: new Compartment(),
+    notePathCompartment: new Compartment(),
     annotationCompartment: new Compartment(),
     mediaThumbnailsCompartment: new Compartment(),
     focusModeCompartment: new Compartment(),

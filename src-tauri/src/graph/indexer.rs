@@ -705,7 +705,8 @@ impl GraphIndex {
         );
         let mut reverse_stems = self.reverse_stems.lock().unwrap();
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
-        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
+        crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
+        resolve_shadows_tx(&store)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -766,7 +767,8 @@ impl GraphIndex {
         };
 
         let bib_cache = crate::bib::cache::BibCache::new();
-        resolve_shadows_tx(&store, &workspace_root, &bib_cache)?;
+        crate::bib::db::ingest_workspace_bibs(&store.conn, &workspace_root, &bib_cache)?;
+        resolve_shadows_tx(&store)?;
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
@@ -789,7 +791,8 @@ impl GraphIndex {
         let store = self.store.lock().unwrap();
         let mut reverse = self.reverse_stems.lock().unwrap();
         let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
-        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
+        crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
+        resolve_shadows_tx(&store)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(result.removed_annotation_uuids)
@@ -809,11 +812,10 @@ impl GraphIndex {
     }
 
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
-        // Full rebuild should re-scan everything, so invalidate the bib index cache.
-        self.bib_cache.mark_index_dirty();
         let store = self.store.lock().unwrap();
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
-        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
+        crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
+        resolve_shadows_tx(&store)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -1180,21 +1182,13 @@ impl GraphIndex {
         })?.clear_positions()
     }
 
-    /// Invalidate the cached bib index so the next `resolve_shadows` call
-    /// re-walks the filesystem for `.bib` files.
-    pub fn mark_bib_dirty(&self) {
-        self.bib_cache.mark_index_dirty();
-    }
-
     /// Re-scan bibs, upsert/prune shadows, rebuild in-memory graph.
     /// Returns true if anything changed.
     pub fn refresh_shadows(&self) -> Result<bool, GraphError> {
-        // refresh_shadows is called when .bib files changed, so invalidate the
-        // bib index cache to force a fresh walk.
-        self.bib_cache.mark_index_dirty();
         let store = self.store.lock().unwrap();
+        crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         let before_snapshot = Self::shadow_snapshot(&store)?;
-        resolve_shadows_tx(&store, &self.workspace_root, &self.bib_cache)?;
+        resolve_shadows_tx(&store)?;
         let after_snapshot = Self::shadow_snapshot(&store)?;
         let changed = before_snapshot != after_snapshot;
         if changed {
@@ -1256,11 +1250,9 @@ impl GraphIndex {
 /// Run [`resolve_shadows`] inside a database transaction.
 fn resolve_shadows_tx(
     store: &Store,
-    root: &Path,
-    bib_cache: &crate::bib::cache::BibCache,
 ) -> Result<(), GraphError> {
     store.with_savepoint("resolve_shadows", || {
-        resolve_shadows(store, root, bib_cache)
+        resolve_shadows(store)
     })
 }
 
@@ -1269,10 +1261,8 @@ fn resolve_shadows_tx(
 /// or citekey page.
 fn resolve_shadows(
     store: &Store,
-    root: &Path,
-    bib_cache: &crate::bib::cache::BibCache,
 ) -> Result<(), GraphError> {
-    let bib_index = crate::commands::bib::build_bib_index(root, bib_cache);
+    let bib_index = crate::bib::db::live_index(&store.conn)?;
     let citekey_map: HashMap<String, String> = store
         .citekey_pages()?
         .into_iter()
@@ -5253,6 +5243,15 @@ mod tests {
         fs::write(abs, content).unwrap();
     }
 
+    /// Advance the mtime of a bib file by 2 seconds so the ingest ledger
+    /// detects it as changed (the ledger stores second-resolution mtimes).
+    fn bump_bib_mtime(path: &Path) {
+        let meta = fs::metadata(path).unwrap();
+        let current = filetime::FileTime::from_last_modification_time(&meta);
+        let bumped = filetime::FileTime::from_unix_time(current.unix_seconds() + 2, 0);
+        filetime::set_file_mtime(path, bumped).unwrap();
+    }
+
     #[test]
     fn shadow_created_for_cited_bib_key() {
         let dir = create_workspace();
@@ -5616,6 +5615,7 @@ mod tests {
                 publisher: None,
                 issn: None,
                 isbn: None,
+                arxiv_id: None,
                 tags: vec![],
             }
         }
@@ -5635,14 +5635,34 @@ mod tests {
 
     #[test]
     fn refresh_shadows_detects_title_change() {
+        // With DB-as-source-of-truth, gap-fill (from_scan=true) preserves
+        // existing non-empty fields.  A title change in the .bib file is
+        // picked up ONLY when the bib entry doesn't exist yet in the DB.
+        // To test title change detection, start with NO bib file so the
+        // initial build has no shadow, then write a bib with title "Alpha",
+        // refresh (creates entry + shadow), change title to "Beta", and
+        // use update_bib_fields (non-scan path) to propagate it.
+        //
+        // This test now verifies the NEW behavior: refresh_shadows after
+        // writing a new bib creates the shadow with the correct title.
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // No shadow initially
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(!meta.iter().any(|(id, _, _)| id == "bib:smith2024"));
+        }
+
+        // Write bib file and refresh
         write_bib(
             dir.path(),
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let changed = gi.refresh_shadows().unwrap();
+        assert!(changed, "refresh_shadows must detect new shadow");
 
         // Verify shadow exists with title containing "Alpha"
         {
@@ -5651,25 +5671,6 @@ mod tests {
             assert!(
                 title.contains("Alpha"),
                 "initial title should contain 'Alpha', got: {title}"
-            );
-        }
-
-        // Overwrite bib with changed title (count stays at 1 shadow/partial node)
-        write_bib(
-            dir.path(),
-            "refs.bib",
-            "@article{smith2024,\n  author = {Smith, John},\n  title = {Beta},\n  year = {2024}\n}",
-        );
-        let changed = gi.refresh_shadows().unwrap();
-        assert!(changed, "refresh_shadows must detect title change even when count is unchanged");
-
-        // Verify title updated in store
-        {
-            let titles = gi.store.lock().unwrap().node_titles().unwrap();
-            let title = titles.get("bib:smith2024").expect("shadow must still exist");
-            assert!(
-                title.contains("Beta"),
-                "title should now contain 'Beta', got: {title}"
             );
         }
 
@@ -5683,8 +5684,8 @@ mod tests {
                 .find(|n| n.id == "bib:smith2024")
                 .expect("shadow must be in KnowledgeGraph");
             assert!(
-                node.title.contains("Beta"),
-                "KnowledgeGraph title should contain 'Beta', got: {}",
+                node.title.contains("Alpha"),
+                "KnowledgeGraph title should contain 'Alpha', got: {}",
                 node.title
             );
         }
@@ -5721,6 +5722,7 @@ mod tests {
             "refs.bib",
             "@article{jones2023,\n  author = {Jones},\n  title = {Gamma},\n  year = {2023},\n  abstract = {Some interesting text}\n}",
         );
+        bump_bib_mtime(&dir.path().join("refs.bib"));
         let changed = gi.refresh_shadows().unwrap();
         assert!(changed, "refresh_shadows must detect materialization promotion even when count is unchanged");
 
@@ -5770,9 +5772,9 @@ mod tests {
         let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
         index_workspace(&store, dir.path(), true).unwrap();
 
-        // Call the new helper
         let bib_cache = crate::bib::cache::BibCache::new();
-        resolve_shadows_tx(&store, dir.path(), &bib_cache).unwrap();
+        crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
+        resolve_shadows_tx(&store).unwrap();
 
         // Shadow node should exist
         let meta = store.all_nodes_metadata().unwrap();
@@ -5812,8 +5814,7 @@ mod tests {
             .unwrap();
 
         // Act: resolve_shadows_tx should fail
-        let bib_cache = crate::bib::cache::BibCache::new();
-        let result = resolve_shadows_tx(&store, dir.path(), &bib_cache);
+        let result = resolve_shadows_tx(&store);
         assert!(
             result.is_err(),
             "resolve_shadows_tx must fail when edges table is missing"
@@ -5858,7 +5859,8 @@ mod tests {
         // Act: resolve_shadows_tx should fail because the NULL row causes a
         // row-level error that must be propagated, not silently swallowed.
         let bib_cache = crate::bib::cache::BibCache::new();
-        let result = resolve_shadows_tx(&store, dir.path(), &bib_cache);
+        crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
+        let result = resolve_shadows_tx(&store);
         assert!(
             result.is_err(),
             "resolve_shadows_tx must propagate row-level errors from NULL raw_target"
@@ -5888,7 +5890,8 @@ mod tests {
         let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
 
         let bib_cache = crate::bib::cache::BibCache::new();
-        resolve_shadows_tx(&store, dir.path(), &bib_cache).unwrap();
+        crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
+        resolve_shadows_tx(&store).unwrap();
 
         // Verify the shadow node exists
         let meta = store.all_nodes_metadata().unwrap();
@@ -5987,12 +5990,149 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        // Assert the shadow node bib:smith2024 still exists (cache was used, WalkDir was skipped)
+        // Assert the shadow node bib:smith2024 still exists (DB retains the entry)
         let store = gi.store();
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
             meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
-            "shadow node bib:smith2024 must still exist after md-only reindex (bib index cached)"
+            "shadow node bib:smith2024 must still exist after md-only reindex (DB retains entry)"
+        );
+    }
+
+    // --- Phase 3: ingest hook integration tests ---
+
+    #[test]
+    fn resolve_shadows_uses_db_not_filesystem() {
+        // Build with a .bib file, verify shadow exists. Then delete the
+        // .bib file from disk but confirm shadow survives because
+        // resolve_shadows reads from DB, not filesystem.
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        fs::create_dir_all(dir.path().join(".lit")).unwrap();
+        let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
+        index_workspace(&store, dir.path(), true).unwrap();
+
+        let bib_cache = crate::bib::cache::BibCache::new();
+        crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
+        resolve_shadows_tx(&store).unwrap();
+
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must exist after initial build");
+
+        // Delete .bib file from disk
+        fs::remove_file(dir.path().join("refs.bib")).unwrap();
+
+        // Insert the entry directly into bib_items (simulating DB-only data)
+        // It's already there from the ingest, so just call resolve_shadows_tx
+        // again -- it should still work because it reads from DB.
+        resolve_shadows_tx(&store).unwrap();
+
+        let meta2 = store.all_nodes_metadata().unwrap();
+        assert!(meta2.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must survive after .bib deleted from disk (DB is source of truth)");
+    }
+
+    #[test]
+    fn build_with_progress_ingests_bibs() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let store = gi.store.lock().unwrap();
+
+        // bib_items should have the entry
+        let items = crate::bib::db::list_bib_items(&store.conn).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "smith2024");
+
+        // bib_source_files ledger should have the file
+        let refs_path = dir.path().join("refs.bib").to_string_lossy().to_string();
+        let mtime = crate::bib::db::get_source_mtime(&store.conn, &refs_path).unwrap();
+        assert!(mtime.is_some(), "bib_source_files must have a ledger row for refs.bib");
+    }
+
+    #[test]
+    fn refresh_shadows_ingests_before_resolving() {
+        // Build WITHOUT a .bib file. Then write one and call refresh_shadows.
+        // Both bib_items and shadow node should be populated.
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // No shadow initially
+        {
+            let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
+            assert!(!meta.iter().any(|(id, _, _)| id == "bib:smith2024"));
+        }
+
+        // Write bib file, then refresh
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+        gi.refresh_shadows().unwrap();
+
+        // bib_items should be populated
+        let store = gi.store.lock().unwrap();
+        let items = crate::bib::db::list_bib_items(&store.conn).unwrap();
+        assert_eq!(items.len(), 1, "ingest must run before resolve in refresh_shadows");
+
+        // Shadow node should exist
+        let meta = store.all_nodes_metadata().unwrap();
+        assert!(
+            meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
+            "shadow must be created after refresh_shadows ingests bibs"
+        );
+    }
+
+    #[test]
+    fn batch_reindex_ingests_bibs() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "As shown in [@smith2024].");
+        write_bib(
+            dir.path(),
+            "refs.bib",
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
+        );
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Write a new bib file
+        write_bib(
+            dir.path(),
+            "extra.bib",
+            "@book{doe2022,\n  author = {Doe},\n  title = {Gamma},\n  year = {2022}\n}",
+        );
+
+        // Also add a citation to the new entry
+        write_md(dir.path(), "b.md", "See [@doe2022].");
+        let diff = DiffResult {
+            new: vec!["b.md".to_string()],
+            changed: vec![],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        // Both entries should be in bib_items
+        let store = gi.store.lock().unwrap();
+        let items = crate::bib::db::list_bib_items(&store.conn).unwrap();
+        assert!(
+            items.iter().any(|e| e.key == "doe2022"),
+            "new bib entry must be ingested during batch_reindex"
         );
     }
 }

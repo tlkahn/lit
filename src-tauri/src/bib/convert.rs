@@ -97,6 +97,15 @@ fn map_entry_type(csl_type: &str) -> String {
     .to_string()
 }
 
+/// Strip the trailing version suffix (e.g. "v2") from an arXiv ID.
+/// Both new-style ("2301.07041v2" -> "2301.07041") and old-style
+/// ("hep-ph/0703105v1" -> "hep-ph/0703105") are handled.
+pub fn normalize_arxiv_id(raw: &str) -> String {
+    let s = raw.trim();
+    static VER_SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"v\d+$").unwrap());
+    VER_SUFFIX.replace(s, "").into_owned()
+}
+
 /// Normalize a DOI to its bare form by stripping known URL prefixes and trimming.
 pub fn normalize_doi(raw: &str) -> String {
     let s = raw.trim();
@@ -180,6 +189,7 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         publisher: item.publisher.clone(),
         issn: item.issn.clone().and_then(|i| i.into_first()),
         isbn: item.isbn.clone(),
+        arxiv_id: None,
         tags: item.subject.clone().unwrap_or_default(),
     }
 }
@@ -229,7 +239,39 @@ mod tests {
         assert_eq!(strip_jats("  <jats:p>  spaced  </jats:p>  "), "spaced");
     }
 
-    // ── Group 2: normalize_doi ───────────────────────────────────────
+    // ── Group 2a: normalize_arxiv_id ──────────────────────────────────
+
+    #[test]
+    fn test_normalize_arxiv_id_strips_version() {
+        assert_eq!(normalize_arxiv_id("2301.07041v2"), "2301.07041");
+    }
+
+    #[test]
+    fn test_normalize_arxiv_id_no_version() {
+        assert_eq!(normalize_arxiv_id("2301.07041"), "2301.07041");
+    }
+
+    #[test]
+    fn test_normalize_arxiv_id_old_style_strips_version() {
+        assert_eq!(normalize_arxiv_id("hep-ph/0703105v1"), "hep-ph/0703105");
+    }
+
+    #[test]
+    fn test_normalize_arxiv_id_old_style_no_version() {
+        assert_eq!(normalize_arxiv_id("hep-ph/0703105"), "hep-ph/0703105");
+    }
+
+    #[test]
+    fn test_normalize_arxiv_id_high_version() {
+        assert_eq!(normalize_arxiv_id("2301.07041v15"), "2301.07041");
+    }
+
+    #[test]
+    fn test_normalize_arxiv_id_trims_whitespace() {
+        assert_eq!(normalize_arxiv_id("  2301.07041v2  "), "2301.07041");
+    }
+
+    // ── Group 2b: normalize_doi ──────────────────────────────────────
 
     #[test]
     fn normalize_doi_bare() {

@@ -96,7 +96,7 @@ pub fn parse_s2_search(body: &str) -> Result<Vec<S2Paper>, String> {
     Ok(resp.data.unwrap_or_default())
 }
 
-pub fn s2_paper_to_bib_entry(paper: &S2Paper) -> BibEntry {
+pub fn s2_paper_to_bib_entry(paper: &S2Paper, existing_keys: &HashSet<String>) -> BibEntry {
     let authors: Vec<String> = paper
         .authors
         .as_ref()
@@ -151,7 +151,7 @@ pub fn s2_paper_to_bib_entry(paper: &S2Paper) -> BibEntry {
         "misc".to_string()
     };
 
-    let key = generate_key(&authors, &year, &HashSet::new());
+    let key = generate_key(&authors, &year, existing_keys);
 
     BibEntry {
         key,
@@ -172,11 +172,12 @@ pub fn s2_paper_to_bib_entry(paper: &S2Paper) -> BibEntry {
         publisher: None,
         issn: None,
         isbn: None,
+        arxiv_id: None,
         tags: vec![],
     }
 }
 
-pub fn s2_ref_to_bib_entry(reference: &S2Reference) -> BibEntry {
+pub fn s2_ref_to_bib_entry(reference: &S2Reference, existing_keys: &HashSet<String>) -> BibEntry {
     let authors: Vec<String> = reference
         .authors
         .as_ref()
@@ -200,7 +201,7 @@ pub fn s2_ref_to_bib_entry(reference: &S2Reference) -> BibEntry {
         .and_then(|ids| ids.doi.as_deref())
         .map(normalize_doi);
 
-    let key = generate_key(&authors, &year, &HashSet::new());
+    let key = generate_key(&authors, &year, existing_keys);
 
     BibEntry {
         key,
@@ -221,6 +222,7 @@ pub fn s2_ref_to_bib_entry(reference: &S2Reference) -> BibEntry {
         publisher: None,
         issn: None,
         isbn: None,
+        arxiv_id: None,
         tags: vec![],
     }
 }
@@ -521,7 +523,7 @@ mod tests {
             references: None,
         };
 
-        let entry = s2_paper_to_bib_entry(&paper);
+        let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
         assert_eq!(entry.entry_type, "article");
         assert_eq!(entry.key, "kucsko2013");
         assert_eq!(entry.authors, vec!["G. Kucsko", "P. Maurer"]);
@@ -553,7 +555,7 @@ mod tests {
             references: None,
         };
 
-        let entry = s2_paper_to_bib_entry(&paper);
+        let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
         assert_eq!(entry.entry_type, "misc");
         assert_eq!(entry.year, "");
         assert!(entry.authors.is_empty());
@@ -586,7 +588,7 @@ mod tests {
             references: None,
         };
 
-        let entry = s2_paper_to_bib_entry(&paper);
+        let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
         assert_eq!(entry.abstract_text, Some("This is the TLDR summary.".to_string()));
     }
 
@@ -615,7 +617,7 @@ mod tests {
             references: None,
         };
 
-        let entry = s2_paper_to_bib_entry(&paper);
+        let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
         assert_eq!(entry.doi, Some("10.1038/xxx".to_string()));
     }
 
@@ -813,7 +815,7 @@ mod tests {
             ]),
         };
 
-        let entry = s2_ref_to_bib_entry(&reference);
+        let entry = s2_ref_to_bib_entry(&reference, &HashSet::new());
         assert_eq!(entry.entry_type, "misc");
         assert_eq!(entry.title, "A Reference Paper");
         assert_eq!(entry.year, "2010");
@@ -832,7 +834,7 @@ mod tests {
             authors: None,
         };
 
-        let entry = s2_ref_to_bib_entry(&reference);
+        let entry = s2_ref_to_bib_entry(&reference, &HashSet::new());
         assert_eq!(entry.entry_type, "misc");
         assert!(entry.title.is_empty());
         assert!(entry.year.is_empty());
@@ -853,7 +855,7 @@ mod tests {
             authors: None,
         };
 
-        let entry = s2_ref_to_bib_entry(&reference);
+        let entry = s2_ref_to_bib_entry(&reference, &HashSet::new());
         assert!(entry.authors.is_empty());
         assert_eq!(entry.title, "Paper Without Authors");
         assert_eq!(entry.year, "2015");
@@ -876,7 +878,65 @@ mod tests {
             authors: None,
         };
 
-        let entry = s2_ref_to_bib_entry(&reference);
+        let entry = s2_ref_to_bib_entry(&reference, &HashSet::new());
         assert_eq!(entry.doi, Some("10.1038/xyz".to_string()));
+    }
+
+    #[test]
+    fn s2_ref_key_collision_avoided_with_live_keys() {
+        let mut existing_keys = HashSet::new();
+        existing_keys.insert("smith2024".to_string());
+
+        let reference = S2Reference {
+            paper_id: Some("ref789".to_string()),
+            external_ids: None,
+            title: Some("Some Other Paper".to_string()),
+            year: Some(2024),
+            authors: Some(vec![
+                S2Author { author_id: Some("s1".to_string()), name: Some("J. Smith".to_string()) },
+            ]),
+        };
+
+        let entry = s2_ref_to_bib_entry(&reference, &existing_keys);
+        assert_eq!(
+            entry.key, "smith2024a",
+            "key should be suffixed to avoid collision with existing 'smith2024'"
+        );
+    }
+
+    #[test]
+    fn s2_ref_batch_intra_collision_avoided() {
+        let mut used_keys = HashSet::new();
+
+        // First reference: Smith 2024
+        let ref_a = S2Reference {
+            paper_id: Some("a1".to_string()),
+            external_ids: None,
+            title: Some("Paper A".to_string()),
+            year: Some(2024),
+            authors: Some(vec![
+                S2Author { author_id: Some("s1".to_string()), name: Some("J. Smith".to_string()) },
+            ]),
+        };
+        let entry_a = s2_ref_to_bib_entry(&ref_a, &used_keys);
+        assert_eq!(entry_a.key, "smith2024");
+        used_keys.insert(entry_a.key.clone());
+
+        // Second reference: also Smith 2024
+        let ref_b = S2Reference {
+            paper_id: Some("b1".to_string()),
+            external_ids: None,
+            title: Some("Paper B".to_string()),
+            year: Some(2024),
+            authors: Some(vec![
+                S2Author { author_id: Some("s2".to_string()), name: Some("J. Smith".to_string()) },
+            ]),
+        };
+        let entry_b = s2_ref_to_bib_entry(&ref_b, &used_keys);
+        assert_eq!(
+            entry_b.key, "smith2024a",
+            "second Smith 2024 ref should get suffixed key"
+        );
+        assert_ne!(entry_a.key, entry_b.key, "keys must be distinct");
     }
 }

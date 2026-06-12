@@ -16,7 +16,7 @@ import { citeprocExtension } from "./citeproc";
 import { citationClickExtension } from "./citationClickHandler";
 import { createAnnotationInputHandler } from "./annotationInputHandler";
 import { autocompletion } from "@codemirror/autocomplete";
-import { crossrefCompletionSource } from "./crossrefCompletion";
+import { crossrefCompletionSource, bibReconciliationPlugin } from "./crossrefCompletion";
 import { wikilinkCompletionSource } from "./wikilinkCompletion";
 import { annotationCompletionSource } from "./annotationCompletion";
 import { footnoteTooltipExtension } from "./footnoteTooltip";
@@ -24,7 +24,7 @@ import { citeprocTooltipExtension } from "./citeprocTooltip";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
 export { frontmatterFacet } from "./crossref";
-export { noteDirFacet } from "./citeproc";
+export { noteDirFacet, notePathFacet } from "./citeproc";
 export { mediaThumbnailsFacet } from "./mediaThumbnails";
 export { navigateToPageFacet } from "./navigateToPageFacet";
 
@@ -54,6 +54,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     citationClickExtension(),
     createAnnotationInputHandler(),
     autocompletion({ override: [crossrefCompletionSource, wikilinkCompletionSource, annotationCompletionSource] }),
+    bibReconciliationPlugin,
     footnoteTooltipExtension(),
     citeprocTooltipExtension(),
   ];
