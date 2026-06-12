@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap, type KeyBinding } from "@codemirror/view";
-import { EditorState, EditorSelection, Compartment, Transaction, Annotation } from "@codemirror/state";
+import { EditorState, EditorSelection, Compartment, Transaction, Annotation, type Extension } from "@codemirror/state";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import {
   closeBracketsKeymap,
@@ -22,12 +22,13 @@ export interface UseCodeMirrorCodeProps {
   onSelectionChange?: (line: number, col: number) => void;
   keymapBindings?: KeyBinding[];
   onDocReplaced?: () => void;
+  extraExtensions?: Extension[];
 }
 
 export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, language, onChange, onSelectionChange, keymapBindings, onDocReplaced } = props;
+  const { containerRef, doc, language, onChange, onSelectionChange, keymapBindings, onDocReplaced, extraExtensions } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
@@ -66,6 +67,7 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
       },
       onSelectionChange: (line, col) => onSelectionChangeRef.current?.(line, col),
     });
+    if (extraExtensions) extensions.push(...extraExtensions);
 
     const state = EditorState.create({ doc, extensions });
     const v = new EditorView({ state, parent: container });
