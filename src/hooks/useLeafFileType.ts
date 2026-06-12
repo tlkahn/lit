@@ -37,6 +37,16 @@ export const CODE_EXTENSIONS = new Set([
 ]);
 
 /**
+ * All file extensions indexed by scan_pages and openable by the pane layer.
+ * Superset of CODE_EXTENSIONS plus "md" and "pdf".
+ *
+ * MUST stay in sync with the Rust scanner:
+ *   - src-tauri/src/workspace/scan.rs (extension match arm)
+ *   - src-tauri/src/workspace/watcher.rs::is_code_extension
+ */
+export const INDEXED_EXTENSIONS = new Set([...CODE_EXTENSIONS, "md", "pdf"]);
+
+/**
  * Derive a leaf's file type from the workspace pages list by matching its
  * `pagePath` against `relative_path`.
  *

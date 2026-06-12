@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap, type KeyBinding } from "@codemirror/view";
-import { EditorState, EditorSelection, Compartment, Transaction, Annotation } from "@codemirror/state";
+import { EditorState, EditorSelection, Compartment, Transaction, Annotation, type Extension } from "@codemirror/state";
 import { defaultKeymap, historyKeymap } from "@codemirror/commands";
 import {
   closeBracketsKeymap,
@@ -22,18 +22,20 @@ export interface UseCodeMirrorCodeProps {
   onSelectionChange?: (line: number, col: number) => void;
   keymapBindings?: KeyBinding[];
   onDocReplaced?: () => void;
+  extraExtensions?: Extension[];
 }
 
 export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
   view: EditorView | null;
 } {
-  const { containerRef, doc, language, onChange, onSelectionChange, keymapBindings, onDocReplaced } = props;
+  const { containerRef, doc, language, onChange, onSelectionChange, keymapBindings, onDocReplaced, extraExtensions } = props;
   const [view, setView] = useState<EditorView | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
   const languageCompartment = useRef(new Compartment());
   const keymapCompartment = useRef(new Compartment());
   const editableCompartment = useRef(new Compartment());
+  const extraExtensionsCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -66,6 +68,7 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
       },
       onSelectionChange: (line, col) => onSelectionChangeRef.current?.(line, col),
     });
+    extensions.push(extraExtensionsCompartment.current.of(extraExtensions ?? []));
 
     const state = EditorState.create({ doc, extensions });
     const v = new EditorView({ state, parent: container });
@@ -141,6 +144,15 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
       ),
     });
   }, [keymapBindings]);
+
+  // Extra extensions compartment.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: extraExtensionsCompartment.current.reconfigure(extraExtensions ?? []),
+    });
+  }, [extraExtensions]);
 
   // Editable state driven by the modal-lock store.
   useEffect(() => {

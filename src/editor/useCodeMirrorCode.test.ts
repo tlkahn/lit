@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
+import { Facet } from "@codemirror/state";
 import { useCodeMirrorCode } from "./useCodeMirrorCode";
 import { useModalLockStore } from "../stores/modalLock";
 import { bibtex } from "./bibtex";
@@ -84,5 +85,61 @@ describe("useCodeMirrorCode", () => {
       useModalLockStore.getState().increment();
     });
     expect(view.state.facet(EditorView.editable)).toBe(false);
+  });
+
+  it("installs extraExtensions into the editor state", () => {
+    const testFacet = Facet.define<string, string>({
+      combine: (values) => values[values.length - 1] ?? "",
+    });
+    const { result } = renderHook(() =>
+      useCodeMirrorCode({
+        containerRef: container.ref,
+        doc: "x",
+        language: null,
+        extraExtensions: [testFacet.of("marker")],
+      }),
+    );
+    const view = result.current.view!;
+    expect(view.state.facet(testFacet)).toBe("marker");
+  });
+
+  it("reconfigures extraExtensions when the prop changes from undefined to a value", () => {
+    const testFacet = Facet.define<string, string>({
+      combine: (values) => values[values.length - 1] ?? "",
+    });
+    const { result, rerender } = renderHook(
+      ({ extra }) =>
+        useCodeMirrorCode({
+          containerRef: container.ref,
+          doc: "x",
+          language: null,
+          extraExtensions: extra,
+        }),
+      { initialProps: { extra: undefined as ReturnType<typeof testFacet.of>[] | undefined } },
+    );
+    const view = result.current.view!;
+    expect(view.state.facet(testFacet)).toBe("");
+    rerender({ extra: [testFacet.of("installed")] });
+    expect(view.state.facet(testFacet)).toBe("installed");
+  });
+
+  it("removes extraExtensions when prop changes to undefined", () => {
+    const testFacet = Facet.define<string, string>({
+      combine: (values) => values[values.length - 1] ?? "",
+    });
+    const { result, rerender } = renderHook(
+      ({ extra }) =>
+        useCodeMirrorCode({
+          containerRef: container.ref,
+          doc: "x",
+          language: null,
+          extraExtensions: extra,
+        }),
+      { initialProps: { extra: [testFacet.of("present")] as ReturnType<typeof testFacet.of>[] | undefined } },
+    );
+    const view = result.current.view!;
+    expect(view.state.facet(testFacet)).toBe("present");
+    rerender({ extra: undefined });
+    expect(view.state.facet(testFacet)).toBe("");
   });
 });
