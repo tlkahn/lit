@@ -10,6 +10,7 @@ import {
   unregisterPdfZoomHandlers,
   getPdfZoomHandlers,
   getActivePdfPaneId,
+  getFocusedPdfPaneId,
   markForwardSync,
   consumeForwardSync,
   clearForwardSync,
@@ -186,6 +187,60 @@ describe("pdfPaneRef", () => {
       } as never);
 
       expect(getActivePdfPaneId()).toBeNull();
+    });
+  });
+
+  describe("getFocusedPdfPaneId", () => {
+    it("returns focused pane when it is a PDF", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        focusedPaneId: "pdf1",
+      });
+      useWorkspaceStore.setState({
+        pages: [{ relative_path: "doc.pdf", file_type: "pdf", title: "doc" }],
+      } as never);
+
+      expect(getFocusedPdfPaneId()).toBe("pdf1");
+    });
+
+    it("returns null when focused pane is an editor even with a linked PDF", () => {
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "ed1", pagePath: "note.md" },
+            { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "ed1",
+      });
+      useWorkspaceStore.setState({
+        pages: [
+          { relative_path: "note.md", file_type: "markdown", title: "note" },
+          { relative_path: "doc.pdf", file_type: "pdf", title: "doc" },
+        ],
+      } as never);
+      usePanePdfLinkStore.getState().linkPanes("pdf1", "ed1");
+
+      // Even though a linked PDF exists, getFocusedPdfPaneId must return null
+      // because the focused pane is an editor — prevents Mod-- collision with
+      // editor.navigateBack.
+      expect(getFocusedPdfPaneId()).toBeNull();
+    });
+
+    it("returns null when no pane is focused", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        focusedPaneId: "",
+      });
+      useWorkspaceStore.setState({
+        pages: [{ relative_path: "doc.pdf", file_type: "pdf", title: "doc" }],
+      } as never);
+
+      expect(getFocusedPdfPaneId()).toBeNull();
     });
   });
 });

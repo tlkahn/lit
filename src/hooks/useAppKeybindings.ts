@@ -49,9 +49,11 @@ export function useAppKeybindings(): void {
         if (normalizeBindingForPlatform(binding.key) === pressed) {
           if (binding.when === "editorFocus" && getCurrentEditorView() == null) continue;
           if (binding.when === "!editorFocus" && getCurrentEditorView() != null) continue;
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          executeCommand(binding.command);
+          const handled = executeCommand(binding.command);
+          if (handled) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
           return;
         }
       }

@@ -82,6 +82,10 @@ pub fn cleanup_pdf_temp_dir(dir: &std::path::Path) {
 
 /// Maximum entries in the per-document render cache.  Evicted entries
 /// have their temp PNG deleted from disk so the temp dir stays bounded.
+///
+/// Must be comfortably larger than `MAX_CACHE` (5, in
+/// `src/components/PdfViewer.tsx`) so the frontend never holds a reference
+/// to a PNG that this LRU has already evicted and deleted.
 const MAX_BACKEND_CACHE: usize = 24;
 
 struct LruPngCache {

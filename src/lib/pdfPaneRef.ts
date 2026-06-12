@@ -101,6 +101,20 @@ export function getPdfZoomHandlers(paneId: string): PdfZoomHandlers | null {
 }
 
 /**
+ * Resolve the focused PDF pane: returns the focused pane ID only if it is
+ * itself a PDF. Returns null when focus is in an editor or any non-PDF pane.
+ * Used by zoom keyboard shortcuts to avoid colliding with editor bindings
+ * that share the same chord (e.g. Ctrl-- for editor.navigateBack on Linux).
+ */
+export function getFocusedPdfPaneId(): string | null {
+  const { focusedPaneId, root } = usePaneStore.getState();
+  const pages = useWorkspaceStore.getState().pages;
+  const leaf = findLeaf(root, focusedPaneId);
+  if (leaf && getFileType(leaf.pagePath, pages) === "pdf") return focusedPaneId;
+  return null;
+}
+
+/**
  * Resolve the active PDF pane: the focused pane if it's a PDF, otherwise the
  * linked pane (via panePdfLink) if it's a PDF. Returns null when no PDF pane
  * is reachable. Used by global commands (pdf.zoomIn etc.) to find their target.

@@ -11,7 +11,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
 import { getCurrentEditorView, getPaneView, setFocusedPane, isFocusInsideContentPane } from "../lib/editorViewRef";
-import { getActivePdfPaneId, getPdfZoomHandlers } from "../lib/pdfPaneRef";
+import { getFocusedPdfPaneId, getPdfZoomHandlers } from "../lib/pdfPaneRef";
 import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
@@ -273,7 +273,7 @@ export function ensureCommandsRegistered() {
     label: "PDF: Zoom In",
     keywords: ["pdf", "zoom", "in", "magnify"],
     action: () => {
-      const paneId = getActivePdfPaneId();
+      const paneId = getFocusedPdfPaneId();
       if (!paneId) return false;
       getPdfZoomHandlers(paneId)?.zoomIn();
     },
@@ -283,7 +283,7 @@ export function ensureCommandsRegistered() {
     label: "PDF: Zoom Out",
     keywords: ["pdf", "zoom", "out", "shrink"],
     action: () => {
-      const paneId = getActivePdfPaneId();
+      const paneId = getFocusedPdfPaneId();
       if (!paneId) return false;
       getPdfZoomHandlers(paneId)?.zoomOut();
     },
@@ -293,7 +293,7 @@ export function ensureCommandsRegistered() {
     label: "PDF: Reset Zoom",
     keywords: ["pdf", "zoom", "reset", "default"],
     action: () => {
-      const paneId = getActivePdfPaneId();
+      const paneId = getFocusedPdfPaneId();
       if (!paneId) return false;
       getPdfZoomHandlers(paneId)?.zoomReset();
     },
