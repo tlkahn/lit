@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRelativePath, getFileDir, frontmatterLineCount } from "./pathUtils";
+import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath } from "./pathUtils";
 
 describe("resolveRelativePath", () => {
   it("resolves simple relative path", () => {
@@ -46,6 +46,48 @@ describe("getFileDir", () => {
 
   it("handles deeply nested path", () => {
     expect(getFileDir("a/b/c/file.md")).toBe("a/b/c");
+  });
+});
+
+describe("isAbsolutePath", () => {
+  it("detects Unix absolute path", () => {
+    expect(isAbsolutePath("/Users/x/foo.pdf")).toBe(true);
+  });
+
+  it("detects Unix root-level path", () => {
+    expect(isAbsolutePath("/foo.pdf")).toBe(true);
+  });
+
+  it("detects tilde-expanded path", () => {
+    expect(isAbsolutePath("~/Documents/foo.pdf")).toBe(true);
+  });
+
+  it("detects lone tilde", () => {
+    expect(isAbsolutePath("~")).toBe(true);
+  });
+
+  it("detects Windows backslash drive path", () => {
+    expect(isAbsolutePath("C:\\foo.pdf")).toBe(true);
+  });
+
+  it("detects Windows forward-slash drive path", () => {
+    expect(isAbsolutePath("D:/bar/baz.pdf")).toBe(true);
+  });
+
+  it("rejects relative path", () => {
+    expect(isAbsolutePath("papers/foo.pdf")).toBe(false);
+  });
+
+  it("rejects bare filename", () => {
+    expect(isAbsolutePath("foo.pdf")).toBe(false);
+  });
+
+  it("rejects parent-relative path", () => {
+    expect(isAbsolutePath("../foo.pdf")).toBe(false);
+  });
+
+  it("rejects dot-relative path", () => {
+    expect(isAbsolutePath("./foo.pdf")).toBe(false);
   });
 });
 

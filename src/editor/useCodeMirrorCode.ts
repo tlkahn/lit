@@ -35,6 +35,7 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
   const languageCompartment = useRef(new Compartment());
   const keymapCompartment = useRef(new Compartment());
   const editableCompartment = useRef(new Compartment());
+  const extraExtensionsCompartment = useRef(new Compartment());
   const suppressOnChange = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -67,7 +68,7 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
       },
       onSelectionChange: (line, col) => onSelectionChangeRef.current?.(line, col),
     });
-    if (extraExtensions) extensions.push(...extraExtensions);
+    extensions.push(extraExtensionsCompartment.current.of(extraExtensions ?? []));
 
     const state = EditorState.create({ doc, extensions });
     const v = new EditorView({ state, parent: container });
@@ -143,6 +144,15 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
       ),
     });
   }, [keymapBindings]);
+
+  // Extra extensions compartment.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: extraExtensionsCompartment.current.reconfigure(extraExtensions ?? []),
+    });
+  }, [extraExtensions]);
 
   // Editable state driven by the modal-lock store.
   useEffect(() => {

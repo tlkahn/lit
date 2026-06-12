@@ -334,12 +334,6 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     textDecoration: "underline wavy",
     cursor: "default",
   },
-  "&.cm-mod-held .cm-citation-raw-link": {
-    textDecoration: "underline",
-    cursor: "pointer",
-    color: "var(--text-accent)",
-  },
-
   // Horizontal rules
   ".cm-preview-hr": {
     border: "none",

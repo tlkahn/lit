@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LanguageSupport } from "@codemirror/language";
-import { Compartment } from "@codemirror/state";
+import type { Extension } from "@codemirror/state";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useCodeFileContent } from "../hooks/useCodeFileContent";
@@ -13,7 +13,7 @@ import {
   unregisterPaneView,
   setFocusedPane,
 } from "../lib/editorViewRef";
-import { bibFileLinkExtension, bibPagePathFacet } from "../editor/bibFileLink";
+import { bibFileLinkExtension } from "../editor/bibFileLink";
 
 function basename(path: string): string {
   return path.split("/").pop() ?? path;
@@ -27,7 +27,6 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
   const { editorBindings } = useKeymaps();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const bibPathCompartment = useRef(new Compartment());
   const currentPathRef = useRef<string | null>(pagePath);
   useEffect(() => {
     currentPathRef.current = pagePath;
@@ -58,10 +57,10 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     useCursorInfoStore.getState().setCursorInfo(line, col);
   }, []);
 
-  const extraExtensions = useMemo(() => {
+  const extraExtensions = useMemo((): Extension[] | undefined => {
     if (!pagePath?.endsWith(".bib")) return undefined;
-    return [bibFileLinkExtension(bibPathCompartment.current, pagePath)];
-  }, [pagePath?.endsWith(".bib") ? "bib" : "other"]);
+    return [bibFileLinkExtension(pagePath)];
+  }, [pagePath]);
 
   const { view } = useCodeMirrorCode({
     containerRef,
@@ -72,15 +71,6 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     keymapBindings: editorBindings,
     extraExtensions,
   });
-
-  useEffect(() => {
-    if (!view || !pagePath?.endsWith(".bib")) return;
-    view.dispatch({
-      effects: bibPathCompartment.current.reconfigure(
-        bibPagePathFacet.of(pagePath),
-      ),
-    });
-  }, [view, pagePath]);
 
   // Register the view so the status bar / external reload can find it.
   useEffect(() => {

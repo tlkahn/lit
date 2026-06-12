@@ -6,8 +6,10 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
-import { getFileDir, resolveRelativePath } from "../lib/pathUtils";
+import { getFileDir, isAbsolutePath, resolveRelativePath } from "../lib/pathUtils";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
+import { modKeyTracker, modHeldLinkStyle } from "./modKeyTracker";
 
 export const bibPagePathFacet: Facet<string, string> = Facet.define<
   string,
@@ -16,33 +18,41 @@ export const bibPagePathFacet: Facet<string, string> = Facet.define<
   combine: (values) => values[values.length - 1] ?? "",
 });
 
-export const BIB_FILE_FIELD_RE = /file\s*=\s*\{([^}]+)\}/g;
+/**
+ * Matches BibTeX `file` field values in both brace and quote-delimited forms.
+ * Known limitations vs the Rust parser (src-tauri/src/bib/parser.rs):
+ * - Nested braces (e.g. `file = {dir/a{b}.pdf}`) truncate at the first `}`.
+ * - Multi-line values are not matched (CM6 viewport scanning is line-by-line).
+ */
+export const BIB_FILE_FIELD_RE =
+  /(?:^|[\s,{])file\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/g;
 
 const bibFileLinkMark = Decoration.mark({ class: "cm-bib-file-link" });
 
 function buildDecorations(view: EditorView): DecorationSet {
   const ranges: { from: number; to: number }[] = [];
   const { from, to } = view.viewport;
+  const re = new RegExp(BIB_FILE_FIELD_RE.source, "g");
 
   for (let pos = from; pos <= to; ) {
     const line = view.state.doc.lineAt(pos);
-    const re = new RegExp(BIB_FILE_FIELD_RE.source, "g");
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(line.text)) !== null) {
-      const pathStart = line.from + m.index + m[0].indexOf(m[1]!);
-      const pathEnd = pathStart + m[1]!.length;
+      const path = m[1] ?? m[2]!;
+      const pathStart = line.from + m.index + m[0].indexOf(path);
+      const pathEnd = pathStart + path.length;
       ranges.push({ from: pathStart, to: pathEnd });
     }
     pos = line.to + 1;
   }
 
-  ranges.sort((a, b) => a.from - b.from);
   return Decoration.set(
     ranges.map((r) => bibFileLinkMark.range(r.from, r.to)),
   );
 }
 
-const bibFileLinkPlugin = ViewPlugin.fromClass(
+export const bibFileLinkPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     constructor(view: EditorView) {
@@ -57,43 +67,6 @@ const bibFileLinkPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-const modKeyTracker = ViewPlugin.fromClass(
-  class {
-    private onKeyDown: (e: KeyboardEvent) => void;
-    private onKeyUp: (e: KeyboardEvent) => void;
-    private onBlur: () => void;
-
-    constructor(private view: EditorView) {
-      this.onKeyDown = (e) => {
-        if (e.key === "Meta" || e.key === "Control") {
-          this.view.dom.classList.add("cm-mod-held");
-        }
-      };
-      this.onKeyUp = (e) => {
-        if (e.key === "Meta" || e.key === "Control") {
-          this.view.dom.classList.remove("cm-mod-held");
-        }
-      };
-      this.onBlur = () => {
-        this.view.dom.classList.remove("cm-mod-held");
-      };
-
-      document.addEventListener("keydown", this.onKeyDown);
-      document.addEventListener("keyup", this.onKeyUp);
-      window.addEventListener("blur", this.onBlur);
-    }
-
-    update(_update: ViewUpdate) {}
-
-    destroy() {
-      document.removeEventListener("keydown", this.onKeyDown);
-      document.removeEventListener("keyup", this.onKeyUp);
-      window.removeEventListener("blur", this.onBlur);
-      this.view.dom.classList.remove("cm-mod-held");
-    }
-  },
-);
-
 function createBibFileClickHandler(): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
@@ -103,46 +76,49 @@ function createBibFileClickHandler(): Extension {
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return false;
 
-      const line = view.state.doc.lineAt(pos);
-      const re = new RegExp(BIB_FILE_FIELD_RE.source, "g");
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(line.text)) !== null) {
-        const pathStart = line.from + m.index + m[0].indexOf(m[1]!);
-        const pathEnd = pathStart + m[1]!.length;
-        if (pos < pathStart || pos > pathEnd) continue;
+      const pluginInstance = view.plugin(bibFileLinkPlugin);
+      if (!pluginInstance) return false;
 
-        event.preventDefault();
-        const filePath = m[1]!;
-        const pagePath = view.state.facet(bibPagePathFacet);
-        const dir = getFileDir(pagePath);
-        const resolved =
-          dir != null ? resolveRelativePath(dir, filePath) : filePath;
-        useWorkspaceStore.getState().selectPage(resolved);
-        return true;
+      let hitFrom: number | undefined;
+      let hitTo: number | undefined;
+      pluginInstance.decorations.between(pos, pos, (from, to) => {
+        if (pos >= to) return; // enforce half-open [from, to) — pos at `to` is outside
+        hitFrom = from;
+        hitTo = to;
+        return false; // stop after first hit
+      });
+      if (hitFrom === undefined || hitTo === undefined) return false;
+
+      event.preventDefault();
+      const filePath = view.state.doc.sliceString(hitFrom, hitTo);
+      const pagePath = view.state.facet(bibPagePathFacet);
+      const dir = getFileDir(pagePath);
+      const resolved =
+        dir != null && !isAbsolutePath(filePath)
+          ? resolveRelativePath(dir, filePath)
+          : filePath;
+      if (!isAbsolutePath(filePath)) {
+        const pages = useWorkspaceStore.getState().pages;
+        const pageExists = pages.some((p) => p.relative_path === resolved);
+        if (!pageExists) {
+          useStatusMessageStore
+            .getState()
+            .show(`File not found: ${filePath}`, "error");
+          return true;
+        }
       }
-
-      return false;
+      useWorkspaceStore.getState().selectPage(resolved);
+      return true;
     },
   });
 }
 
-const bibFileLinkTheme = EditorView.baseTheme({
-  "&.cm-mod-held .cm-bib-file-link": {
-    textDecoration: "underline",
-    cursor: "pointer",
-    color: "var(--text-accent)",
-  },
-});
-
-export function bibFileLinkExtension(
-  compartment: { of: (ext: Extension) => Extension },
-  initialPagePath: string,
-): Extension {
+export function bibFileLinkExtension(pagePath: string): Extension {
   return [
-    compartment.of(bibPagePathFacet.of(initialPagePath)),
+    bibPagePathFacet.of(pagePath),
     modKeyTracker,
     bibFileLinkPlugin,
     createBibFileClickHandler(),
-    bibFileLinkTheme,
+    modHeldLinkStyle("cm-bib-file-link"),
   ];
 }

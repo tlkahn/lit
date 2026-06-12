@@ -14,6 +14,14 @@ export function getFileDir(pagePath: string | null): string | null {
   return lastSlash >= 0 ? pagePath.substring(0, lastSlash) : "";
 }
 
+/**
+ * Detect paths that should NOT be resolved relative to a base directory.
+ * Covers Unix absolute (/...), home-relative (~/...), and Windows drive letters (C:\...).
+ */
+export function isAbsolutePath(path: string): boolean {
+  return /^\/|^~\/|^~$|^[A-Za-z]:[\\/]/.test(path);
+}
+
 export function frontmatterLineCount(rawYaml: string): number {
   if (!rawYaml) return 0;
   return rawYaml.trimEnd().split("\n").length + 2;

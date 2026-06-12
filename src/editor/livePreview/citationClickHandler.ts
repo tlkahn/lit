@@ -1,10 +1,6 @@
 import type { Extension } from "@codemirror/state";
-import {
-  Decoration,
-  EditorView,
-  ViewPlugin,
-  type ViewUpdate,
-} from "@codemirror/view";
+import { Decoration, EditorView } from "@codemirror/view";
+import { modKeyTracker, modHeldLinkStyle } from "../modKeyTracker";
 import { crossrefField, isInEditableRange } from "./crossref";
 import {
   citeprocMatchesField,
@@ -151,43 +147,6 @@ const rawCitationMarks = EditorView.decorations.compute(
   },
 );
 
-const modKeyTracker = ViewPlugin.fromClass(
-  class {
-    private onKeyDown: (e: KeyboardEvent) => void;
-    private onKeyUp: (e: KeyboardEvent) => void;
-    private onBlur: () => void;
-
-    constructor(private view: EditorView) {
-      this.onKeyDown = (e) => {
-        if (e.key === "Meta" || e.key === "Control") {
-          this.view.dom.classList.add("cm-mod-held");
-        }
-      };
-      this.onKeyUp = (e) => {
-        if (e.key === "Meta" || e.key === "Control") {
-          this.view.dom.classList.remove("cm-mod-held");
-        }
-      };
-      this.onBlur = () => {
-        this.view.dom.classList.remove("cm-mod-held");
-      };
-
-      document.addEventListener("keydown", this.onKeyDown);
-      document.addEventListener("keyup", this.onKeyUp);
-      window.addEventListener("blur", this.onBlur);
-    }
-
-    update(_update: ViewUpdate) {}
-
-    destroy() {
-      document.removeEventListener("keydown", this.onKeyDown);
-      document.removeEventListener("keyup", this.onKeyUp);
-      window.removeEventListener("blur", this.onBlur);
-      this.view.dom.classList.remove("cm-mod-held");
-    }
-  },
-);
-
 export function citationClickExtension(): Extension {
-  return [createCitationClickHandler(), modKeyTracker, rawCitationMarks];
+  return [createCitationClickHandler(), modKeyTracker, rawCitationMarks, modHeldLinkStyle("cm-citation-raw-link")];
 }
