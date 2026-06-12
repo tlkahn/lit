@@ -63,6 +63,8 @@ pub struct CslItem {
     pub publisher: Option<String>,
     #[serde(rename = "ISSN")]
     pub issn: Option<StringOrSeq>,
+    #[serde(rename = "ISBN")]
+    pub isbn: Option<String>,
 }
 
 static TAG_RE: LazyLock<Regex> =
@@ -177,7 +179,7 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         pages: item.page.clone(),
         publisher: item.publisher.clone(),
         issn: item.issn.clone().and_then(|i| i.into_first()),
-        isbn: None,
+        isbn: item.isbn.clone(),
         tags: item.subject.clone().unwrap_or_default(),
     }
 }
@@ -778,5 +780,37 @@ mod tests {
         let item: CslItem = serde_json::from_str(json).unwrap();
         let entry = csl_to_bib_entry(&item);
         assert_eq!(entry.issn, Some("1111-2222".to_string()));
+    }
+
+    // ── Group 9: CslItem ISBN field ────────────────────────────────────
+
+    #[test]
+    fn deserialize_csl_isbn() {
+        let json = r#"{"ISBN": "9780306406157"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn csl_to_bib_entry_maps_isbn() {
+        let json = r#"{
+            "type": "book",
+            "title": "A Book With ISBN",
+            "ISBN": "9780306406157"
+        }"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        let entry = csl_to_bib_entry(&item);
+        assert_eq!(entry.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[test]
+    fn csl_to_bib_entry_isbn_none_when_absent() {
+        let json = r#"{
+            "type": "journal-article",
+            "title": "A Paper Without ISBN"
+        }"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        let entry = csl_to_bib_entry(&item);
+        assert_eq!(entry.isbn, None);
     }
 }

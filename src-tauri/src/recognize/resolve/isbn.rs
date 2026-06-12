@@ -1,12 +1,18 @@
-use std::collections::HashSet;
+use std::time::Duration;
 
 use serde::Deserialize;
 
+use crate::bib::convert::{csl_to_bib_entry, CslDate, CslItem, CslName, StringOrSeq};
 use crate::bib::types::BibEntry;
-use crate::bib::writer::generate_key;
 use crate::recognize::identifiers::normalize_to_isbn13;
 
+use super::arxiv::split_flat_name;
 use super::ResolveError;
+
+/// Per-provider timeout for ISBN resolution. The shared HTTP client has a
+/// 10 s client-level timeout; this tighter bound ensures the entire ISBN
+/// stage (OL + GB sequentially) completes within ~10 s worst case.
+const ISBN_PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IsbnPath {
@@ -20,16 +26,60 @@ pub async fn resolve_isbn_with_base(
     open_library_base_url: &str,
     google_books_base_url: &str,
 ) -> Result<(BibEntry, IsbnPath), ResolveError> {
+    resolve_isbn_impl(
+        client,
+        isbn,
+        open_library_base_url,
+        google_books_base_url,
+        ISBN_PROVIDER_TIMEOUT,
+    )
+    .await
+}
+
+async fn resolve_isbn_impl(
+    client: &reqwest::Client,
+    isbn: &str,
+    open_library_base_url: &str,
+    google_books_base_url: &str,
+    provider_timeout: Duration,
+) -> Result<(BibEntry, IsbnPath), ResolveError> {
     let isbn13 = normalize_to_isbn13(isbn)
         .ok_or_else(|| ResolveError::Parse(format!("Invalid ISBN: {}", isbn)))?;
 
-    if let Some(result) = try_open_library(client, &isbn13, open_library_base_url).await? {
-        return Ok((result, IsbnPath::OpenLibrary));
+    match tokio::time::timeout(
+        provider_timeout,
+        try_open_library(client, &isbn13, open_library_base_url),
+    )
+    .await
+    {
+        Ok(Ok(Some(result))) => return Ok((result, IsbnPath::OpenLibrary)),
+        Ok(Ok(None)) => {}
+        Ok(Err(e)) => return Err(e),
+        Err(_elapsed) => {
+            tracing::warn!(
+                "Open Library request timed out after {:?}, trying Google Books",
+                provider_timeout
+            );
+        }
     }
 
-    try_google_books(client, &isbn13, google_books_base_url)
-        .await
-        .map(|entry| (entry, IsbnPath::GoogleBooks))
+    match tokio::time::timeout(
+        provider_timeout,
+        try_google_books(client, &isbn13, google_books_base_url),
+    )
+    .await
+    {
+        Ok(result) => result.map(|entry| (entry, IsbnPath::GoogleBooks)),
+        Err(_elapsed) => {
+            tracing::warn!(
+                "Google Books request timed out after {:?}",
+                provider_timeout
+            );
+            Err(ResolveError::Http(
+                "ISBN resolution timed out (both providers)".into(),
+            ))
+        }
+    }
 }
 
 // ── Open Library ─────────────────────────────────────────────────────
@@ -72,13 +122,18 @@ async fn try_open_library(
 
     let resp = match client.get(&url).send().await {
         Ok(resp) => resp,
-        Err(_) => return Ok(None),
+        Err(e) => {
+            tracing::warn!(error = %e, "Open Library request failed, skipping");
+            return Ok(None);
+        }
     };
 
     let resp = match super::check_status(resp, "Open Library") {
         Ok(resp) => resp,
-        Err(ResolveError::RateLimited) => return Ok(None),
-        Err(_) => return Ok(None),
+        Err(e) => {
+            tracing::warn!(error = %e, "Open Library returned error, skipping");
+            return Ok(None);
+        }
     };
 
     let body = resp
@@ -88,7 +143,10 @@ async fn try_open_library(
 
     let map: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(&body) {
         Ok(m) => m,
-        Err(_) => return Ok(None),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to parse Open Library JSON, skipping");
+            return Ok(None);
+        }
     };
 
     let key = format!("ISBN:{}", isbn13);
@@ -99,33 +157,16 @@ async fn try_open_library(
 
     let book: OlBookData = match serde_json::from_value(book_value.clone()) {
         Ok(b) => b,
-        Err(_) => return Ok(None),
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to deserialize Open Library book data, skipping");
+            return Ok(None);
+        }
     };
 
     let title = match &book.title {
         Some(t) if !t.trim().is_empty() => t.clone(),
         _ => return Ok(None),
     };
-
-    let authors: Vec<String> = book
-        .authors
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|a| a.name)
-        .map(|n| format_author_name(&n))
-        .collect();
-
-    let year = book
-        .publish_date
-        .as_deref()
-        .and_then(extract_year)
-        .unwrap_or_default();
-
-    let publisher = book
-        .publishers
-        .as_ref()
-        .and_then(|p| p.first())
-        .and_then(|p| p.name.clone());
 
     let returned_isbn = book
         .identifiers
@@ -145,29 +186,48 @@ async fn try_open_library(
         }
     }
 
-    let entry_key = generate_key(&authors, &year, &HashSet::new());
+    let authors: Vec<CslName> = book
+        .authors
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| a.name)
+        .map(|n| name_to_csl(&n))
+        .collect();
 
-    Ok(Some(BibEntry {
-        key: entry_key,
-        authors,
-        title,
-        year,
-        entry_type: "book".to_string(),
-        line_number: 0,
-        bib_file: None,
-        abstract_text: None,
+    let year_i64 = book
+        .publish_date
+        .as_deref()
+        .and_then(extract_year)
+        .and_then(|s| s.parse::<i64>().ok());
+
+    let publisher = book
+        .publishers
+        .as_ref()
+        .and_then(|p| p.first())
+        .and_then(|p| p.name.clone());
+
+    let csl_item = CslItem {
+        item_type: Some("book".to_string()),
+        title: Some(StringOrSeq::Single(title)),
+        author: if authors.is_empty() { None } else { Some(authors) },
+        container_title: None,
+        issued: year_i64.map(|y| CslDate {
+            date_parts: vec![vec![y]],
+        }),
         doi: None,
-        journal: None,
         url: book.url,
-        file: None,
+        abstract_text: None,
+        subject: None,
         volume: None,
-        number: None,
-        pages: None,
+        issue: None,
+        page: None,
         publisher,
         issn: None,
         isbn: Some(isbn13.to_string()),
-        tags: vec![],
-    }))
+    };
+
+    let entry = csl_to_bib_entry(&csl_item);
+    Ok(Some(entry))
 }
 
 // ── Google Books ─────────────────────────────────────────────────────
@@ -175,7 +235,6 @@ async fn try_open_library(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GBResponse {
-    total_items: Option<u32>,
     items: Option<Vec<GBItem>>,
 }
 
@@ -220,12 +279,6 @@ async fn try_google_books(
     let gb_resp: GBResponse = serde_json::from_str(&body)
         .map_err(|e| ResolveError::Parse(format!("Failed to parse Google Books response: {}", e)))?;
 
-    if gb_resp.total_items.unwrap_or(0) == 0 {
-        return Err(ResolveError::Http(
-            "ISBN not found on Google Books (Open Library also missed)".into(),
-        ));
-    }
-
     let items = gb_resp.items.unwrap_or_default();
 
     let matching_item = items.iter().find(|item| {
@@ -244,9 +297,24 @@ async fn try_google_books(
             .unwrap_or(false)
     });
 
-    let item = matching_item.or(items.first()).ok_or_else(|| {
-        ResolveError::Http("ISBN not found on Google Books (no items)".into())
-    })?;
+    let item = matching_item
+        .or_else(|| {
+            // Only fall back to the first item if it has NO industryIdentifiers.
+            // When identifiers are present but none match, the book is wrong --
+            // reject it, mirroring the Open Library guard (lines 140-146).
+            items.first().filter(|it| {
+                let has_identifiers = it
+                    .volume_info
+                    .as_ref()
+                    .and_then(|vi| vi.industry_identifiers.as_ref())
+                    .map(|ids| !ids.is_empty())
+                    .unwrap_or(false);
+                !has_identifiers
+            })
+        })
+        .ok_or_else(|| {
+            ResolveError::Http("ISBN not found on Google Books (no matching volume)".into())
+        })?;
 
     let vi = item.volume_info.as_ref().ok_or_else(|| {
         ResolveError::Parse("Google Books item missing volumeInfo".into())
@@ -259,53 +327,58 @@ async fn try_google_books(
         .cloned()
         .ok_or_else(|| ResolveError::Parse("Google Books item has no title".into()))?;
 
-    let authors: Vec<String> = vi
+    let authors: Vec<CslName> = vi
         .authors
         .as_ref()
-        .map(|a| a.iter().map(|n| format_author_name(n)).collect())
+        .map(|a| a.iter().map(|n| name_to_csl(n)).collect())
         .unwrap_or_default();
 
-    let year = vi
+    let year_i64 = vi
         .published_date
         .as_deref()
         .and_then(extract_year)
-        .unwrap_or_default();
+        .and_then(|s| s.parse::<i64>().ok());
 
-    let entry_key = generate_key(&authors, &year, &HashSet::new());
-
-    Ok(BibEntry {
-        key: entry_key,
-        authors,
-        title,
-        year,
-        entry_type: "book".to_string(),
-        line_number: 0,
-        bib_file: None,
-        abstract_text: None,
+    let csl_item = CslItem {
+        item_type: Some("book".to_string()),
+        title: Some(StringOrSeq::Single(title)),
+        author: if authors.is_empty() { None } else { Some(authors) },
+        container_title: None,
+        issued: year_i64.map(|y| CslDate {
+            date_parts: vec![vec![y]],
+        }),
         doi: None,
-        journal: None,
         url: None,
-        file: None,
+        abstract_text: None,
+        subject: None,
         volume: None,
-        number: None,
-        pages: None,
+        issue: None,
+        page: None,
         publisher: vi.publisher.clone(),
         issn: None,
         isbn: Some(isbn13.to_string()),
-        tags: vec![],
-    })
+    };
+
+    Ok(csl_to_bib_entry(&csl_item))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-fn format_author_name(name: &str) -> String {
-    let name = name.trim();
+/// Convert a flat author name string into a [`CslName`].
+///
+/// Names containing a comma are treated as already-formatted and passed
+/// through as a literal (preserving the old `format_author_name` behavior
+/// for "Last, First" inputs). Names without a comma are split via
+/// [`split_flat_name`].
+fn name_to_csl(name: &str) -> CslName {
     if name.contains(',') {
-        return name.to_string();
-    }
-    match name.rfind(' ') {
-        Some(pos) => format!("{}, {}", &name[pos + 1..], &name[..pos]),
-        None => name.to_string(),
+        CslName {
+            family: None,
+            given: None,
+            literal: Some(name.trim().to_string()),
+        }
+    } else {
+        split_flat_name(name)
     }
 }
 
@@ -331,26 +404,42 @@ mod tests {
     }
 
     #[test]
-    fn format_author_name_first_last() {
-        assert_eq!(format_author_name("John Smith"), "Smith, John");
+    fn name_to_csl_first_last() {
+        let n = name_to_csl("John Smith");
+        assert_eq!(n.family, Some("Smith".to_string()));
+        assert_eq!(n.given, Some("John".to_string()));
+        assert!(n.literal.is_none());
     }
 
     #[test]
-    fn format_author_name_already_inverted() {
-        assert_eq!(format_author_name("Smith, John"), "Smith, John");
+    fn name_to_csl_already_inverted_uses_literal() {
+        let n = name_to_csl("Smith, John");
+        assert_eq!(n.literal, Some("Smith, John".to_string()));
+        assert!(n.family.is_none());
+        assert!(n.given.is_none());
     }
 
     #[test]
-    fn format_author_name_single_name() {
-        assert_eq!(format_author_name("WHO"), "WHO");
+    fn name_to_csl_single_name() {
+        let n = name_to_csl("WHO");
+        assert_eq!(n.family, Some("WHO".to_string()));
+        assert!(n.given.is_none());
+        assert!(n.literal.is_none());
     }
 
     #[test]
-    fn format_author_name_three_parts() {
-        assert_eq!(
-            format_author_name("Martin Luther King"),
-            "King, Martin Luther"
-        );
+    fn name_to_csl_three_parts() {
+        let n = name_to_csl("Martin Luther King");
+        assert_eq!(n.family, Some("King".to_string()));
+        assert_eq!(n.given, Some("Martin Luther".to_string()));
+        assert!(n.literal.is_none());
+    }
+
+    #[test]
+    fn split_flat_name_accessible_from_isbn() {
+        let n = super::super::arxiv::split_flat_name("John Smith");
+        assert_eq!(n.family, Some("Smith".to_string()));
+        assert_eq!(n.given, Some("John".to_string()));
     }
 
     #[test]
@@ -648,6 +737,173 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn google_books_rejects_when_identifiers_present_but_mismatch() {
+        let server = MockServer::start().await;
+        let client = test_client();
+
+        let gb_json = r#"{
+            "totalItems": 1,
+            "items": [{
+                "volumeInfo": {
+                    "title": "Wrong Book Entirely",
+                    "authors": ["Wrong Author"],
+                    "publishedDate": "2015",
+                    "industryIdentifiers": [
+                        {"type": "ISBN_13", "identifier": "9780000000000"}
+                    ]
+                }
+            }]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&server)
+            .await;
+
+        let result =
+            try_google_books(&client, "9780306406157", &server.uri()).await;
+
+        assert!(result.is_err(), "should reject when identifiers are present but mismatch");
+    }
+
+    #[tokio::test]
+    async fn google_books_accepts_fallback_when_no_identifiers() {
+        let server = MockServer::start().await;
+        let client = test_client();
+
+        let gb_json = r#"{
+            "totalItems": 1,
+            "items": [{
+                "volumeInfo": {
+                    "title": "Book Without Identifiers",
+                    "authors": ["Some Author"],
+                    "publishedDate": "2018"
+                }
+            }]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&server)
+            .await;
+
+        let result =
+            try_google_books(&client, "9780306406157", &server.uri()).await;
+
+        let entry = result.expect("should accept fallback when no identifiers");
+        assert_eq!(entry.title, "Book Without Identifiers");
+        assert_eq!(entry.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[tokio::test]
+    async fn google_books_accepts_fallback_when_identifiers_empty() {
+        let server = MockServer::start().await;
+        let client = test_client();
+
+        let gb_json = r#"{
+            "totalItems": 1,
+            "items": [{
+                "volumeInfo": {
+                    "title": "Book With Empty Identifiers",
+                    "authors": ["Another Author"],
+                    "publishedDate": "2017",
+                    "industryIdentifiers": []
+                }
+            }]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&server)
+            .await;
+
+        let result =
+            try_google_books(&client, "9780306406157", &server.uri()).await;
+
+        let entry = result.expect("should accept fallback when identifiers are empty");
+        assert_eq!(entry.title, "Book With Empty Identifiers");
+        assert_eq!(entry.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[tokio::test]
+    async fn google_books_missing_total_items_but_has_items() {
+        let server = MockServer::start().await;
+        let client = test_client();
+
+        // totalItems field is completely absent, but items array is populated.
+        // Previously this would fail because unwrap_or(0) treated absent as 0.
+        let gb_json = r#"{
+            "items": [{
+                "volumeInfo": {
+                    "title": "Surprise Book",
+                    "authors": ["Test Author"],
+                    "publishedDate": "2022",
+                    "industryIdentifiers": [
+                        {"type": "ISBN_13", "identifier": "9780306406157"}
+                    ]
+                }
+            }]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .and(query_param("q", "isbn:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&server)
+            .await;
+
+        let result =
+            try_google_books(&client, "9780306406157", &server.uri()).await;
+
+        let entry = result.expect("should resolve when totalItems is absent but items exist");
+        assert_eq!(entry.title, "Surprise Book");
+        assert_eq!(entry.authors, vec!["Author, Test"]);
+        assert_eq!(entry.year, "2022");
+        assert_eq!(entry.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[tokio::test]
+    async fn google_books_zero_total_items_with_items_still_resolves() {
+        let server = MockServer::start().await;
+        let client = test_client();
+
+        // totalItems says 0 but items array has an entry -- contradictory but
+        // possible from the API.  We should trust the actual items.
+        let gb_json = r#"{
+            "totalItems": 0,
+            "items": [{
+                "volumeInfo": {
+                    "title": "Contradictory Book",
+                    "authors": ["Test Author"],
+                    "publishedDate": "2021",
+                    "industryIdentifiers": [
+                        {"type": "ISBN_13", "identifier": "9780306406157"}
+                    ]
+                }
+            }]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .and(query_param("q", "isbn:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&server)
+            .await;
+
+        let result =
+            try_google_books(&client, "9780306406157", &server.uri()).await;
+
+        let entry = result.expect("should resolve when totalItems is 0 but items exist");
+        assert_eq!(entry.title, "Contradictory Book");
+        assert_eq!(entry.authors, vec!["Author, Test"]);
+        assert_eq!(entry.year, "2021");
+        assert_eq!(entry.isbn, Some("9780306406157".to_string()));
+    }
+
+    #[tokio::test]
     async fn malformed_response_handled_gracefully() {
         let ol_server = MockServer::start().await;
         let gb_server = MockServer::start().await;
@@ -676,5 +932,112 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+    }
+
+    /// Short timeout used only by tests that exercise the per-provider timeout.
+    const TEST_PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// Delay applied to wiremock responses that should exceed the test timeout.
+    const TEST_SLOW_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+    #[tokio::test]
+    async fn open_library_timeout_falls_through_to_google() {
+        let ol_server = MockServer::start().await;
+        let gb_server = MockServer::start().await;
+        let client = test_client();
+
+        // OL responds with a delay longer than TEST_PROVIDER_TIMEOUT
+        let ol_json = r#"{
+            "ISBN:9780306406157": {
+                "title": "Slow Book",
+                "publish_date": "2000"
+            }
+        }"#;
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(ol_json)
+                    .set_delay(TEST_SLOW_DELAY),
+            )
+            .mount(&ol_server)
+            .await;
+
+        let gb_json = r#"{
+            "totalItems": 1,
+            "items": [{
+                "volumeInfo": {
+                    "title": "Fast Google Book",
+                    "authors": ["Jane Doe"],
+                    "publishedDate": "2020",
+                    "industryIdentifiers": [
+                        {"type": "ISBN_13", "identifier": "9780306406157"}
+                    ]
+                }
+            }]
+        }"#;
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&gb_server)
+            .await;
+
+        let result = resolve_isbn_impl(
+            &client,
+            "9780306406157",
+            &ol_server.uri(),
+            &gb_server.uri(),
+            TEST_PROVIDER_TIMEOUT,
+        )
+        .await;
+
+        let (entry, isbn_path) = result.expect("should resolve via Google Books after OL timeout");
+        assert_eq!(isbn_path, IsbnPath::GoogleBooks);
+        assert_eq!(entry.title, "Fast Google Book");
+    }
+
+    #[tokio::test]
+    async fn both_providers_timeout_returns_error() {
+        let ol_server = MockServer::start().await;
+        let gb_server = MockServer::start().await;
+        let client = test_client();
+
+        // Both providers delay beyond TEST_PROVIDER_TIMEOUT
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("{}")
+                    .set_delay(TEST_SLOW_DELAY),
+            )
+            .mount(&ol_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"totalItems": 0}"#)
+                    .set_delay(TEST_SLOW_DELAY),
+            )
+            .mount(&gb_server)
+            .await;
+
+        let result = resolve_isbn_impl(
+            &client,
+            "9780306406157",
+            &ol_server.uri(),
+            &gb_server.uri(),
+            TEST_PROVIDER_TIMEOUT,
+        )
+        .await;
+
+        let err = result.expect_err("should fail when both providers time out");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("timed out"),
+            "error message should mention timeout, got: {}",
+            msg
+        );
     }
 }

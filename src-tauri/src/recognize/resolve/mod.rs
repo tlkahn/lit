@@ -57,6 +57,30 @@ pub struct ResolvedMetadata {
     pub validation: Validation,
 }
 
+/// Base URLs for external metadata APIs.
+///
+/// Using a struct with named fields prevents accidental transposition of
+/// the 5 same-typed `&str` base-URL parameters.
+pub struct BaseUrls<'a> {
+    pub doi: &'a str,
+    pub crossref: &'a str,
+    pub arxiv: &'a str,
+    pub open_library: &'a str,
+    pub google_books: &'a str,
+}
+
+impl BaseUrls<'static> {
+    pub fn production() -> Self {
+        Self {
+            doi: "https://doi.org",
+            crossref: "https://api.crossref.org",
+            arxiv: "https://export.arxiv.org",
+            open_library: "https://openlibrary.org",
+            google_books: "https://www.googleapis.com",
+        }
+    }
+}
+
 /// Resolve identifiers and/or a title to a [`ResolvedMetadata`] using
 /// the caller-provided HTTP client.
 ///
@@ -81,11 +105,7 @@ pub async fn resolve_to_bib_entry(
         identifiers,
         extracted_title,
         trusted,
-        "https://doi.org",
-        "https://api.crossref.org",
-        "https://export.arxiv.org",
-        "https://openlibrary.org",
-        "https://www.googleapis.com",
+        &BaseUrls::production(),
     )
     .await
 }
@@ -189,15 +209,11 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
     identifiers: &ExtractedIdentifiers,
     extracted_title: Option<&str>,
     trusted: bool,
-    doi_base_url: &str,
-    crossref_base_url: &str,
-    arxiv_base_url: &str,
-    open_library_base_url: &str,
-    google_books_base_url: &str,
+    base_urls: &BaseUrls<'_>,
 ) -> Result<Option<ResolvedMetadata>, ResolveError> {
     // Step 1: DOI resolution
     if let Some(ref doi_str) = identifiers.doi {
-        match doi::resolve_doi_with_base(client, doi_str, doi_base_url, crossref_base_url).await {
+        match doi::resolve_doi_with_base(client, doi_str, base_urls.doi, base_urls.crossref).await {
             Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
             Ok((entry, doi_path)) => {
                 let source = match doi_path {
@@ -220,7 +236,7 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
 
     // Step 2: arXiv resolution
     if let Some(ref arxiv_id) = identifiers.arxiv {
-        match arxiv::resolve_arxiv_with_base(client, arxiv_id, arxiv_base_url).await {
+        match arxiv::resolve_arxiv_with_base(client, arxiv_id, base_urls.arxiv).await {
             Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
             Ok(entry) => {
                 if let Some(meta) = accept_candidate(
@@ -239,14 +255,14 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
 
     // Step 3: ISBN resolution (Open Library → Google Books)
     if let Some(ref isbn_str) = identifiers.isbn {
-        match isbn::resolve_isbn_with_base(client, isbn_str, open_library_base_url, google_books_base_url).await {
+        match isbn::resolve_isbn_with_base(client, isbn_str, base_urls.open_library, base_urls.google_books).await {
             Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
             Ok((entry, path)) => {
                 let source = match path {
                     isbn::IsbnPath::OpenLibrary => ResolutionSource::OpenLibraryApi,
                     isbn::IsbnPath::GoogleBooks => ResolutionSource::GoogleBooksApi,
                 };
-                if let Some(meta) = accept_candidate(entry, source, extracted_title, true, &[]) {
+                if let Some(meta) = accept_candidate(entry, source, extracted_title, trusted, &[]) {
                     return Ok(Some(meta));
                 }
             }
@@ -266,7 +282,7 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
             client,
             title,
             &authors,
-            crossref_base_url,
+            base_urls.crossref,
         )
         .await
         {
@@ -294,7 +310,7 @@ pub(crate) async fn resolve_to_bib_entry_with_base(
         }
     }
 
-    // Step 4: All paths exhausted
+    // Step 5: All paths exhausted
     Ok(None)
 }
 
@@ -347,16 +363,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -415,16 +434,20 @@ mod tests {
             ..Default::default()
         };
 
+        let doi_uri = doi_server.uri();
+        let arxiv_uri = arxiv_server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            &doi_server.uri(),
-            &doi_server.uri(),
-            &arxiv_server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &doi_uri,
+                crossref: &doi_uri,
+                arxiv: &arxiv_uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -464,16 +487,19 @@ mod tests {
 
         let identifiers = ExtractedIdentifiers::default();
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             Some("Attention Is All You Need"),
             false,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -494,11 +520,13 @@ mod tests {
             &identifiers,
             None,
             true,
-            "http://localhost:1", // unreachable, but won't be called
-            "http://localhost:1",
-            "http://localhost:1",
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: "http://localhost:1", // unreachable, but won't be called
+                crossref: "http://localhost:1",
+                arxiv: "http://localhost:1",
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -555,16 +583,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             Some("Correct Paper Title"),
             false,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -598,16 +629,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -643,16 +677,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             Some("Completely Different Title"),
             true,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -695,16 +732,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             Some("Some Paper"),
             false,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -748,16 +788,19 @@ mod tests {
             ..Default::default()
         };
 
+        let uri = server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            &server.uri(),
-            &server.uri(),
-            &server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &uri,
+                crossref: &uri,
+                arxiv: &uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -1175,16 +1218,20 @@ mod tests {
             ..Default::default()
         };
 
+        let doi_uri = doi_server.uri();
+        let arxiv_uri = arxiv_server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            &doi_server.uri(),
-            &doi_server.uri(),
-            &arxiv_server.uri(),
-            "http://localhost:1",
-            "http://localhost:1",
+            &BaseUrls {
+                doi: &doi_uri,
+                crossref: &doi_uri,
+                arxiv: &arxiv_uri,
+                open_library: "http://localhost:1",
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -1242,6 +1289,18 @@ mod tests {
         assert!(json.get("cross_validated").is_none());
     }
 
+    // --- BaseUrls struct tests ---
+
+    #[test]
+    fn base_urls_production_has_correct_defaults() {
+        let urls = BaseUrls::production();
+        assert_eq!(urls.doi, "https://doi.org");
+        assert_eq!(urls.crossref, "https://api.crossref.org");
+        assert_eq!(urls.arxiv, "https://export.arxiv.org");
+        assert_eq!(urls.open_library, "https://openlibrary.org");
+        assert_eq!(urls.google_books, "https://www.googleapis.com");
+    }
+
     // --- ISBN cascade tests ---
 
     #[tokio::test]
@@ -1263,16 +1322,19 @@ mod tests {
             ..Default::default()
         };
 
+        let ol_uri = ol_server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            "http://localhost:1",
-            "http://localhost:1",
-            "http://localhost:1",
-            &ol_server.uri(),
-            "http://localhost:1",
+            &BaseUrls {
+                doi: "http://localhost:1",
+                crossref: "http://localhost:1",
+                arxiv: "http://localhost:1",
+                open_library: &ol_uri,
+                google_books: "http://localhost:1",
+            },
         )
         .await;
 
@@ -1317,16 +1379,20 @@ mod tests {
             ..Default::default()
         };
 
+        let doi_uri = doi_server.uri();
+        let isbn_uri = isbn_server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             None,
             true,
-            &doi_server.uri(),
-            &doi_server.uri(),
-            "http://localhost:1",
-            &isbn_server.uri(),
-            &isbn_server.uri(),
+            &BaseUrls {
+                doi: &doi_uri,
+                crossref: &doi_uri,
+                arxiv: "http://localhost:1",
+                open_library: &isbn_uri,
+                google_books: &isbn_uri,
+            },
         )
         .await;
 
@@ -1385,20 +1451,232 @@ mod tests {
             ..Default::default()
         };
 
+        let crossref_uri = crossref_server.uri();
+        let ol_uri = ol_server.uri();
         let result = resolve_to_bib_entry_with_base(
             &client,
             &identifiers,
             Some("Fundamentals of Wavelets"),
             false,
-            "http://localhost:1",
-            &crossref_server.uri(),
-            "http://localhost:1",
-            &ol_server.uri(),
-            &ol_server.uri(),
+            &BaseUrls {
+                doi: "http://localhost:1",
+                crossref: &crossref_uri,
+                arxiv: "http://localhost:1",
+                open_library: &ol_uri,
+                google_books: &ol_uri,
+            },
         )
         .await;
 
         let meta = result.expect("should succeed").expect("should have metadata");
         assert_eq!(meta.source, ResolutionSource::CrossrefTitleSearch);
+    }
+
+    #[tokio::test]
+    async fn isbn_untrusted_with_mismatching_title_falls_through() {
+        let ol_server = MockServer::start().await;
+        let crossref_server = MockServer::start().await;
+        let client = test_client();
+
+        // Open Library returns a real book — but it's not the paper we extracted
+        let ol_response = r#"{"ISBN:9780306406157":{"title":"Fundamentals of Wavelets","authors":[{"name":"Jaideva Goswami"}],"publishers":[{"name":"Wiley"}],"publish_date":"1999","identifiers":{"isbn_13":["9780306406157"]}}}"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_response))
+            .mount(&ol_server)
+            .await;
+
+        // CrossRef title search returns the paper matching the extracted title
+        let crossref_response = r#"{
+            "status": "ok",
+            "message": {
+                "items": [{
+                    "title": ["Completely Different Paper"],
+                    "author": [{"family": "Smith", "given": "Jane"}],
+                    "container-title": ["Some Journal"],
+                    "issued": {"date-parts": [[2023]]},
+                    "type": "journal-article",
+                    "DOI": "10.1000/different456"
+                }]
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/works"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(crossref_response))
+            .mount(&crossref_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let crossref_uri = crossref_server.uri();
+        let ol_uri = ol_server.uri();
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            Some("Completely Different Paper"),
+            false,
+            &BaseUrls {
+                doi: "http://localhost:1",
+                crossref: &crossref_uri,
+                arxiv: "http://localhost:1",
+                open_library: &ol_uri,
+                google_books: "http://localhost:1",
+            },
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(
+            meta.source,
+            ResolutionSource::CrossrefTitleSearch,
+            "ISBN with mismatching title should be rejected when untrusted"
+        );
+        assert_eq!(meta.validation, Validation::Validated);
+    }
+
+    #[tokio::test]
+    async fn isbn_untrusted_with_matching_title_accepts() {
+        let ol_server = MockServer::start().await;
+        let client = test_client();
+
+        let ol_response = r#"{"ISBN:9780306406157":{"title":"Fundamentals of Wavelets","authors":[{"name":"Jaideva Goswami"}],"publishers":[{"name":"Wiley"}],"publish_date":"1999","identifiers":{"isbn_13":["9780306406157"]}}}"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_response))
+            .mount(&ol_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let ol_uri = ol_server.uri();
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            Some("Fundamentals of Wavelets"),
+            false,
+            &BaseUrls {
+                doi: "http://localhost:1",
+                crossref: "http://localhost:1",
+                arxiv: "http://localhost:1",
+                open_library: &ol_uri,
+                google_books: "http://localhost:1",
+            },
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(
+            meta.source,
+            ResolutionSource::OpenLibraryApi,
+            "ISBN with matching title should be accepted even when untrusted"
+        );
+        assert_eq!(meta.validation, Validation::Validated);
+    }
+
+    #[tokio::test]
+    async fn isbn_untrusted_with_no_extracted_title_accepts() {
+        let ol_server = MockServer::start().await;
+        let client = test_client();
+
+        let ol_response = r#"{"ISBN:9780306406157":{"title":"Fundamentals of Wavelets","authors":[{"name":"Jaideva Goswami"}],"publishers":[{"name":"Wiley"}],"publish_date":"1999","identifiers":{"isbn_13":["9780306406157"]}}}"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_response))
+            .mount(&ol_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let ol_uri = ol_server.uri();
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            None,
+            false,
+            &BaseUrls {
+                doi: "http://localhost:1",
+                crossref: "http://localhost:1",
+                arxiv: "http://localhost:1",
+                open_library: &ol_uri,
+                google_books: "http://localhost:1",
+            },
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(
+            meta.source,
+            ResolutionSource::OpenLibraryApi,
+            "ISBN with no extracted title should be accepted even when untrusted"
+        );
+        assert_eq!(
+            meta.validation,
+            Validation::Skipped,
+            "no extracted title means validation is skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn isbn_trusted_skips_validation() {
+        let ol_server = MockServer::start().await;
+        let client = test_client();
+
+        let ol_response = r#"{"ISBN:9780306406157":{"title":"Fundamentals of Wavelets","authors":[{"name":"Jaideva Goswami"}],"publishers":[{"name":"Wiley"}],"publish_date":"1999","identifiers":{"isbn_13":["9780306406157"]}}}"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780306406157"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_response))
+            .mount(&ol_server)
+            .await;
+
+        let identifiers = ExtractedIdentifiers {
+            isbn: Some("9780306406157".to_string()),
+            ..Default::default()
+        };
+
+        let ol_uri = ol_server.uri();
+        let result = resolve_to_bib_entry_with_base(
+            &client,
+            &identifiers,
+            Some("Totally Different Title"),
+            true,
+            &BaseUrls {
+                doi: "http://localhost:1",
+                crossref: "http://localhost:1",
+                arxiv: "http://localhost:1",
+                open_library: &ol_uri,
+                google_books: "http://localhost:1",
+            },
+        )
+        .await;
+
+        let meta = result.expect("should succeed").expect("should have metadata");
+        assert_eq!(
+            meta.source,
+            ResolutionSource::OpenLibraryApi,
+            "trusted ISBN should be accepted regardless of title mismatch"
+        );
+        assert_eq!(
+            meta.validation,
+            Validation::Skipped,
+            "trusted source skips validation"
+        );
     }
 }

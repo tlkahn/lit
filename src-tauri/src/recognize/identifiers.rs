@@ -185,15 +185,7 @@ pub fn isbn10_to_isbn13(isbn10: &str) -> Option<String> {
 pub fn normalize_to_isbn13(isbn: &str) -> Option<String> {
     let cleaned = strip_isbn_separators(isbn);
     match cleaned.len() {
-        13 => {
-            if validate_isbn_13(&cleaned.bytes().map(|b| {
-                if b == b'X' || b == b'x' { 10 } else { b - b'0' }
-            }).collect::<Vec<_>>()) {
-                Some(cleaned)
-            } else {
-                None
-            }
-        }
+        13 => clean_isbn(&cleaned),
         10 => isbn10_to_isbn13(&cleaned),
         _ => None,
     }
@@ -2218,5 +2210,29 @@ mod tests {
             normalize_to_isbn13("978-0-306-40615-7"),
             Some("9780306406157".to_string())
         );
+    }
+
+    #[test]
+    fn normalize_to_isbn13_rejects_x_in_isbn13() {
+        // ISBN-13 never contains X; this must be rejected
+        assert_eq!(normalize_to_isbn13("97803064X6157"), None);
+    }
+
+    #[test]
+    fn normalize_to_isbn13_rejects_non_digit_bytes() {
+        // Google Books OTHER identifiers like "AAAA.BBBB.CCC" must not panic
+        assert_eq!(normalize_to_isbn13("AAAA.BBBB.CCC"), None);
+    }
+
+    #[test]
+    fn normalize_to_isbn13_rejects_special_chars() {
+        // 13 chars after stripping; contains + and , which are not separators
+        assert_eq!(normalize_to_isbn13("97803+640,157"), None);
+    }
+
+    #[test]
+    fn normalize_to_isbn13_rejects_parens_in_isbn13() {
+        // 13 chars containing parentheses must not panic or pass
+        assert_eq!(normalize_to_isbn13("9780(06406157"), None);
     }
 }
