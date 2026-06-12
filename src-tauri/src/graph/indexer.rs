@@ -812,8 +812,6 @@ impl GraphIndex {
     }
 
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
-        // Full rebuild should re-scan everything, so invalidate the bib index cache.
-        self.bib_cache.mark_index_dirty();
         let store = self.store.lock().unwrap();
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
@@ -1184,18 +1182,9 @@ impl GraphIndex {
         })?.clear_positions()
     }
 
-    /// Invalidate the cached bib index so the next `resolve_shadows` call
-    /// re-walks the filesystem for `.bib` files.
-    pub fn mark_bib_dirty(&self) {
-        self.bib_cache.mark_index_dirty();
-    }
-
     /// Re-scan bibs, upsert/prune shadows, rebuild in-memory graph.
     /// Returns true if anything changed.
     pub fn refresh_shadows(&self) -> Result<bool, GraphError> {
-        // refresh_shadows is called when .bib files changed, so invalidate the
-        // bib index cache to force a fresh walk.
-        self.bib_cache.mark_index_dirty();
         let store = self.store.lock().unwrap();
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         let before_snapshot = Self::shadow_snapshot(&store)?;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { EditorState } from "@codemirror/state";
+import { EditorState, type StateEffect } from "@codemirror/state";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import {
   parseTrigger,
@@ -9,7 +9,7 @@ import {
   type TriggerInfo,
 } from "./crossrefCompletion";
 import { frontmatterFacet } from "./crossref";
-import { bibEntriesField, setBibData, notePathFacet, citeprocMatchesField, type BibData } from "./citeproc";
+import { bibEntriesField, setBibData, notePathFacet, citeprocMatchesField, refetchBib, type BibData } from "./citeproc";
 import { mockInvoke, mockListen, emitMockEvent } from "../../test/tauri-mock";
 import { useWorkspaceStore } from "../../stores/workspace";
 import type { BibEntry } from "../../lib/ipc";
@@ -748,4 +748,183 @@ describe("bibReconciliationPlugin -- manual-typing reconciliation", () => {
     expect(ensureCalls).toHaveLength(0);
     view.destroy();
   });
+
+  it("dispatches refetchBib after reconciling unresolved keys", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const view = createEditorView("see [@jones2021]", bibData, "notes/Test.md");
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(dispatchedRefetchBib(dispatchSpy)).toBe(true);
+
+    dispatchSpy.mockRestore();
+    view.destroy();
+  });
+
+  it("logs console.warn on ensureInCompanionBib failure", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") throw new Error("disk full");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const view = createEditorView("see [@jones2021]", bibData, "notes/Test.md");
+    await vi.advanceTimersByTimeAsync(1100);
+
+    expect(warnSpy).toHaveBeenCalled();
+    const msg = warnSpy.mock.calls.find((c) =>
+      typeof c[0] === "string" && c[0].includes("jones2021"),
+    );
+    expect(msg).toBeTruthy();
+
+    warnSpy.mockRestore();
+    view.destroy();
+  });
 });
+
+describe("crossrefCompletionSource — refetchBib dispatch", () => {
+  const noteScopedBibData: BibData = {
+    entries: [
+      { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 },
+    ],
+    renderedCitations: { smith2020: "Smith (2020)" },
+    byKey: new Map([["smith2020", { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 }]]),
+  };
+
+  const workspaceEntries: BibEntry[] = [
+    { key: "smith2020", authors: ["Smith"], title: "Cats", year: "2020", entry_type: "article", line_number: 1 },
+    { key: "jones2021", authors: ["Jones, J."], title: "Dogs", year: "2021", entry_type: "article", line_number: 5 },
+  ];
+
+  beforeEach(() => {
+    _resetBibCacheForTesting();
+    useWorkspaceStore.setState({ workspacePath: "/workspace" });
+  });
+
+  async function getCompletions(doc: string, bibData?: BibData, notePath?: string) {
+    const exts = [bibEntriesField, frontmatterFacet.of({})];
+    if (notePath) exts.push(notePathFacet.of(notePath));
+    let state = EditorState.create({ doc, extensions: exts });
+    if (bibData) {
+      state = state.update({ effects: setBibData.of(bibData) }).state;
+    }
+    const ctx = {
+      state,
+      pos: doc.length,
+      explicit: true,
+    } as unknown as CompletionContext;
+    return crossrefCompletionSource(ctx);
+  }
+
+  it("apply dispatches refetchBib effect when bibliography_value is null (render gap fix)", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        return { bib_path: "refs.bib", bibliography_value: null };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const result = await getCompletions("[@bib:", noteScopedBibData, "notes/MyNote.md");
+    const opt = result!.options.find((o) => o.label === "jones2021");
+    const mockDispatch = vi.fn();
+    const fakeView = {
+      dispatch: mockDispatch,
+      state: {
+        facet: (f: unknown) => {
+          if (f === notePathFacet) return "notes/MyNote.md";
+          return "";
+        },
+      },
+    } as unknown as EditorView;
+    (opt!.apply as (view: EditorView, completion: import("@codemirror/autocomplete").Completion, from: number, to: number) => void)(fakeView, opt!, 6, 6);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(dispatchedRefetchBib(mockDispatch)).toBe(true);
+  });
+
+  it("apply dispatches refetchBib effect even when bibliography_value is non-null", async () => {
+    const emitSpy = vi.spyOn(frontmatterBus, "emitFrontmatterPatch");
+
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") {
+        return { bib_path: "assets/bib/MyNote.bib", bibliography_value: "assets/bib/MyNote.bib" };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const result = await getCompletions("[@bib:", noteScopedBibData, "notes/MyNote.md");
+    const opt = result!.options.find((o) => o.label === "jones2021");
+    const mockDispatch = vi.fn();
+    const fakeView = {
+      dispatch: mockDispatch,
+      state: {
+        facet: (f: unknown) => {
+          if (f === notePathFacet) return "notes/MyNote.md";
+          return "";
+        },
+      },
+    } as unknown as EditorView;
+    (opt!.apply as (view: EditorView, completion: import("@codemirror/autocomplete").Completion, from: number, to: number) => void)(fakeView, opt!, 6, 6);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(emitSpy).toHaveBeenCalledOnce();
+    expect(dispatchedRefetchBib(mockDispatch)).toBe(true);
+
+    emitSpy.mockRestore();
+  });
+
+  it("apply logs console.warn on ensureInCompanionBib failure", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    mockInvoke((cmd) => {
+      if (cmd === "list_bib_entries") return workspaceEntries;
+      if (cmd === "ensure_in_companion_bib") throw new Error("disk full");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const result = await getCompletions("[@bib:", noteScopedBibData, "notes/MyNote.md");
+    const opt = result!.options.find((o) => o.label === "jones2021");
+    const mockDispatch = vi.fn();
+    const fakeView = {
+      dispatch: mockDispatch,
+      state: {
+        facet: (f: unknown) => {
+          if (f === notePathFacet) return "notes/MyNote.md";
+          return "";
+        },
+      },
+    } as unknown as EditorView;
+    (opt!.apply as (view: EditorView, completion: import("@codemirror/autocomplete").Completion, from: number, to: number) => void)(fakeView, opt!, 6, 6);
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(warnSpy).toHaveBeenCalled();
+    const msg = warnSpy.mock.calls.find((c) =>
+      typeof c[0] === "string" && c[0].includes("jones2021"),
+    );
+    expect(msg).toBeTruthy();
+
+    warnSpy.mockRestore();
+  });
+});
+
+/** Helper: check whether any dispatch call includes a refetchBib effect */
+function dispatchedRefetchBib(dispatchSpy: { mock: { calls: unknown[][] } }): boolean {
+  return dispatchSpy.mock.calls.some((call) => {
+    const spec = call[0] as { effects?: StateEffect<unknown> | StateEffect<unknown>[] } | undefined;
+    if (!spec?.effects) return false;
+    const effects = Array.isArray(spec.effects) ? spec.effects : [spec.effects];
+    return effects.some((e) => e.is(refetchBib));
+  });
+}

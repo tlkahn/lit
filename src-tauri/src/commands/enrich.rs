@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -119,7 +119,7 @@ async fn fetch_s2_with_base(
             .ok_or_else(|| "No results found on Semantic Scholar".to_string())?
     };
 
-    let entry = s2_paper_to_bib_entry(&paper);
+    let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
     Ok((paper, entry))
 }
 
@@ -177,21 +177,22 @@ pub async fn enrich_bib_entry(
         references_found = refs.len();
 
         if !refs.is_empty() {
-            let ref_entries: Vec<BibEntry> = refs
-                .iter()
-                .take(MAX_REFERENCES)
-                .map(s2_ref_to_bib_entry)
-                .collect();
-            references_appended = ref_entries.len();
-
             let store = gi.store();
-            for ref_entry in &ref_entries {
-                let outcome = db::upsert_bib_item(&store.conn, ref_entry, None, None, false)
+            let mut used_keys = db::all_live_keys(&store.conn)
+                .map_err(|e| e.to_string())?;
+
+            let mut references_appended_count = 0usize;
+            for r in refs.iter().take(MAX_REFERENCES) {
+                let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+                used_keys.insert(ref_entry.key.clone());
+                let outcome = db::upsert_bib_item(&store.conn, &ref_entry, None, None, true)
                     .map_err(|e| e.to_string())?;
+                references_appended_count += 1;
                 if matches!(outcome, UpsertOutcome::Inserted { .. } | UpsertOutcome::Updated { .. }) {
                     shadow_nodes_created += 1;
                 }
             }
+            references_appended = references_appended_count;
         }
     } else {
         references_found = 0;
@@ -763,7 +764,7 @@ mod tests {
         use crate::graph::store::Store;
 
         let store = Store::open_memory().unwrap();
-        let mut existing = make_entry(|e| {
+        let existing = make_entry(|e| {
             e.key = "smith2024".to_string();
             e.doi = Some("10.1/existing".to_string());
         });
@@ -811,7 +812,7 @@ mod tests {
 
         let mut shadow_count = 0usize;
         for ref_entry in &ref_entries {
-            let outcome = db::upsert_bib_item(&store.conn, ref_entry, None, None, false).unwrap();
+            let outcome = db::upsert_bib_item(&store.conn, ref_entry, None, None, true).unwrap();
             if matches!(outcome, db::UpsertOutcome::Inserted { .. } | db::UpsertOutcome::Updated { .. }) {
                 shadow_count += 1;
             }
@@ -845,5 +846,156 @@ mod tests {
         // The .bib file content should remain unchanged
         let file_content = fs::read_to_string(&bib_path).unwrap();
         assert_eq!(file_content, original_content, ".bib file should be untouched by DB enrichment");
+    }
+
+    // ── C1 regression: S2 ref stubs must not clobber existing full entries ──
+
+    #[test]
+    fn s2_ref_stub_does_not_clobber_existing_full_entry() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert a rich, fully-populated entry under key "smith2024"
+        let full_entry = make_entry(|e| {
+            e.key = "smith2024".to_string();
+            e.title = "Rich Paper on ML".to_string();
+            e.abstract_text = Some("Detailed abstract".to_string());
+            e.journal = Some("Nature".to_string());
+            e.volume = Some("500".to_string());
+            e.doi = Some("10.1/rich".to_string());
+            e.file = Some("/path/to/paper.pdf".to_string());
+        });
+        db::upsert_bib_item(&store.conn, &full_entry, None, None, false).unwrap();
+
+        // Create a minimal stub with the SAME key (simulating key collision)
+        let stub = make_entry(|e| {
+            e.key = "smith2024".to_string();
+            e.title = "Stub Title".to_string();
+            e.abstract_text = None;
+            e.journal = None;
+            e.volume = None;
+            e.doi = None;
+            e.file = None;
+        });
+
+        // Upsert with from_scan=true (new production behavior for ref stubs)
+        db::upsert_bib_item(&store.conn, &stub, None, None, true).unwrap();
+
+        // Verify existing entry is NOT clobbered
+        let fetched = db::get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.title, "Rich Paper on ML", "title must not be clobbered");
+        assert_eq!(fetched.abstract_text, Some("Detailed abstract".to_string()), "abstract must not be clobbered");
+        assert_eq!(fetched.journal, Some("Nature".to_string()), "journal must not be clobbered");
+        assert_eq!(fetched.volume, Some("500".to_string()), "volume must not be clobbered");
+        assert_eq!(fetched.doi, Some("10.1/rich".to_string()), "doi must not be clobbered");
+        assert_eq!(fetched.file, Some("/path/to/paper.pdf".to_string()), "file must not be clobbered");
+    }
+
+    #[test]
+    fn s2_ref_stub_gap_fills_not_overwrites() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert a partial entry with title and doi but missing abstract and journal
+        let partial_entry = make_entry(|e| {
+            e.key = "jones2023".to_string();
+            e.title = "Original Title".to_string();
+            e.doi = Some("10.1/jones".to_string());
+            e.abstract_text = None;
+            e.journal = None;
+        });
+        db::upsert_bib_item(&store.conn, &partial_entry, None, None, false).unwrap();
+
+        // Create a stub carrying abstract and journal but also a different title
+        let stub = make_entry(|e| {
+            e.key = "jones2023".to_string();
+            e.title = "Stub Title".to_string();
+            e.doi = Some("10.1/stub-doi".to_string());
+            e.abstract_text = Some("Filled abstract".to_string());
+            e.journal = Some("Science".to_string());
+        });
+
+        // Upsert with from_scan=true (gap-fill semantics)
+        db::upsert_bib_item(&store.conn, &stub, None, None, true).unwrap();
+
+        let fetched = db::get_bib_item(&store.conn, "jones2023").unwrap().unwrap();
+        // Existing fields preserved
+        assert_eq!(fetched.title, "Original Title", "existing title must be preserved");
+        assert_eq!(fetched.doi, Some("10.1/jones".to_string()), "existing doi must be preserved");
+        // Missing fields filled
+        assert_eq!(fetched.abstract_text, Some("Filled abstract".to_string()), "abstract should be gap-filled");
+        assert_eq!(fetched.journal, Some("Science".to_string()), "journal should be gap-filled");
+    }
+
+    #[test]
+    fn enrich_refs_do_not_clobber_existing_entry_regression() {
+        use crate::bib::db;
+        use crate::bib::semantic_scholar::{s2_ref_to_bib_entry, S2Author, S2Reference};
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // 1. Insert a rich entry under key "smith2024"
+        let full_entry = make_entry(|e| {
+            e.key = "smith2024".to_string();
+            e.title = "Comprehensive ML Survey".to_string();
+            e.doi = Some("10.1/ml-survey".to_string());
+            e.abstract_text = Some("A detailed survey...".to_string());
+            e.journal = Some("Nature ML".to_string());
+            e.volume = Some("10".to_string());
+            e.pages = Some("1-50".to_string());
+            e.file = Some("/papers/survey.pdf".to_string());
+        });
+        db::upsert_bib_item(&store.conn, &full_entry, None, None, false).unwrap();
+
+        // 2. Simulate enriching another paper whose S2 references include
+        //    a paper by author "Smith" from year 2024
+        let s2_refs = vec![
+            S2Reference {
+                paper_id: Some("ref999".to_string()),
+                external_ids: None,
+                title: Some("Some Other ML Paper".to_string()),
+                year: Some(2024),
+                authors: Some(vec![
+                    S2Author { author_id: Some("s1".to_string()), name: Some("J. Smith".to_string()) },
+                ]),
+            },
+        ];
+
+        // 3. Build batch with live keys (matching new production code)
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        assert!(used_keys.contains("smith2024"), "smith2024 should be in live keys");
+
+        for r in &s2_refs {
+            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+
+            // Upsert with from_scan=true (new production behavior)
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+        }
+
+        // 4. Assert the original smith2024 entry is completely untouched
+        let original = db::get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(original.title, "Comprehensive ML Survey");
+        assert_eq!(original.doi, Some("10.1/ml-survey".to_string()));
+        assert_eq!(original.abstract_text, Some("A detailed survey...".to_string()));
+        assert_eq!(original.journal, Some("Nature ML".to_string()));
+        assert_eq!(original.volume, Some("10".to_string()));
+        assert_eq!(original.pages, Some("1-50".to_string()));
+        assert_eq!(original.file, Some("/papers/survey.pdf".to_string()));
+
+        // 5. Assert the reference stub got inserted under a different key
+        let ref_entry = db::get_bib_item(&store.conn, "smith2024a").unwrap();
+        assert!(ref_entry.is_some(), "reference stub should be inserted as smith2024a");
+        let ref_entry = ref_entry.unwrap();
+        assert_eq!(ref_entry.title, "Some Other ML Paper");
+
+        // 6. Assert both entries exist
+        let all = db::list_bib_items(&store.conn).unwrap();
+        assert_eq!(all.len(), 2, "should have both the original and the reference stub");
     }
 }

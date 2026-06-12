@@ -106,7 +106,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
   function handleSaveOutcome(outcome: SaveOutcome) {
     if (isDuplicateDoi(outcome)) {
       show(
-        `DOI already exists as @${outcome.DuplicateDoi.existing_key}`,
+        `Already in your library as @${outcome.DuplicateDoi.existing_key}`,
         "error",
       );
       onClose();

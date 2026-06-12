@@ -37,6 +37,7 @@ export const notePathFacet = Facet.define<string, string>({
 });
 
 export const setBibData = StateEffect.define<BibData>();
+export const refetchBib = StateEffect.define<null>();
 
 export const bibEntriesField = StateField.define<BibData>({
   create: () => EMPTY_BIB,
@@ -141,9 +142,21 @@ const citeprocPlugin = ViewPlugin.fromClass(
         this.lastBibPaths = bibPaths;
         this.lastNoteDir = noteDir;
         this.fetchBib();
-      } else if (noteDir !== this.lastNoteDir && bibPaths) {
+        return;
+      }
+      if (noteDir !== this.lastNoteDir && bibPaths) {
         this.lastNoteDir = noteDir;
         this.fetchBib();
+        return;
+      }
+      // Explicit refetch signal (e.g. after companion bib append)
+      for (const tr of update.transactions) {
+        for (const e of tr.effects) {
+          if (e.is(refetchBib)) {
+            this.fetchBib();
+            return;
+          }
+        }
       }
     }
 

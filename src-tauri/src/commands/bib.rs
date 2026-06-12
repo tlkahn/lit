@@ -72,57 +72,6 @@ pub fn scan_workspace_bibs(root: &Path, cache: &BibCache) -> Vec<BibEntry> {
     all
 }
 
-/// Build a key -> BibEntry index from all `.bib` files in the workspace.
-/// Used by the graph indexer to create shadow nodes for cited bib keys.
-///
-/// Returns a cached result when the index cache is warm (populated by a
-/// previous call and not yet invalidated via [`BibCache::mark_index_dirty`]).
-/// This avoids the O(filesystem) `WalkDir` on the hot path (pure `.md` saves).
-pub fn build_bib_index(root: &Path, cache: &BibCache) -> HashMap<String, BibEntry> {
-    if let Some(cached) = cache.get_cached_index() {
-        return cached;
-    }
-    let index: HashMap<String, BibEntry> = scan_workspace_bibs(root, cache)
-        .into_iter()
-        .map(|e| (e.key.clone(), e))
-        .collect();
-    cache.set_cached_index(index.clone());
-    index
-}
-
-/// Look up a single bib entry by key, preferring a targeted cache lookup
-/// that clones only the matched entry.  Falls back to `build_bib_index`
-/// (full walk + full clone) when the index cache is cold.
-pub fn lookup_bib_entry(root: &Path, cache: &BibCache, key: &str) -> Option<BibEntry> {
-    // Fast path: index cache is warm, clone only the one entry.
-    if let Some(entry) = cache.get_entry(key) {
-        return Some(entry);
-    }
-    // Cold cache: build the full index (populates the cache for later),
-    // then extract the single entry.
-    build_bib_index(root, cache).remove(key)
-}
-
-pub fn scan_workspace_bib_paths(root: &Path) -> Vec<String> {
-    let mut paths = Vec::new();
-    for entry in walkdir::WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| !is_hidden(e))
-    {
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("bib") {
-            continue;
-        }
-        paths.push(path.to_string_lossy().to_string());
-    }
-    paths.sort();
-    paths
-}
-
 #[tauri::command]
 pub fn list_bib_entries(
     workspace_path: String,
@@ -596,8 +545,8 @@ fn ensure_in_companion_bib_inner(
         write!(file, "{}", bib_str).map_err(|e| e.to_string())?;
         writeln!(file).map_err(|e| e.to_string())?;
 
-        // Invalidate cache for this bib file
-        cache.mark_index_dirty();
+        // Invalidate per-file parse cache for the modified bib file
+        cache.invalidate(&abs_bib.to_path_buf());
     }
 
     Ok(EnsureCompanionBibResult { bib_path: companion_bib_rel, bibliography_value })
@@ -1319,30 +1268,6 @@ mod tests {
         assert_eq!(entries[0].tags, vec!["ml", "nlp"]);
     }
 
-    // --- build_bib_index caching tests ---
-
-    #[test]
-    fn build_bib_index_caches_result() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(&bib_path, sample_bib()).unwrap();
-
-        let cache = BibCache::new();
-
-        // First call populates the index cache
-        let index1 = build_bib_index(dir.path(), &cache);
-        assert_eq!(index1.len(), 1);
-        assert!(index1.contains_key("smith2020"));
-
-        // Delete the .bib file from disk but do NOT mark dirty
-        fs::remove_file(&bib_path).unwrap();
-
-        // Second call should return cached result (proves no re-walk)
-        let index2 = build_bib_index(dir.path(), &cache);
-        assert_eq!(index2.len(), 1, "cached result should be returned even though .bib file is gone");
-        assert!(index2.contains_key("smith2020"));
-    }
-
     // --- build_citation_frontmatter ---
 
     fn sample_citation_entry() -> BibEntry {
@@ -1729,50 +1654,6 @@ mod tests {
         );
     }
 
-    // --- lookup_bib_entry tests ---
-
-    #[test]
-    fn lookup_bib_entry_cold_cache_fallback() {
-        let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("refs.bib"), sample_bib()).unwrap();
-        let cache = BibCache::new();
-
-        // Cache is cold -- lookup should fall back to build_bib_index
-        let result = lookup_bib_entry(dir.path(), &cache, "smith2020");
-        assert!(result.is_some(), "cold-cache fallback must find the entry");
-        assert_eq!(result.unwrap().key, "smith2020");
-
-        // After the fallback, the index cache should now be warm
-        assert!(cache.get_cached_index().is_some(), "fallback should populate index cache");
-    }
-
-    #[test]
-    fn lookup_bib_entry_warm_cache_fast_path() {
-        let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("refs.bib"), sample_bib()).unwrap();
-        let cache = BibCache::new();
-
-        // Warm the cache
-        build_bib_index(dir.path(), &cache);
-
-        // Delete the .bib file -- warm cache should still return the entry
-        fs::remove_file(dir.path().join("refs.bib")).unwrap();
-
-        let result = lookup_bib_entry(dir.path(), &cache, "smith2020");
-        assert!(result.is_some(), "warm cache fast path must return the entry");
-        assert_eq!(result.unwrap().key, "smith2020");
-    }
-
-    #[test]
-    fn lookup_bib_entry_missing_key() {
-        let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("refs.bib"), sample_bib()).unwrap();
-        let cache = BibCache::new();
-
-        let result = lookup_bib_entry(dir.path(), &cache, "nonexistent");
-        assert!(result.is_none(), "missing key should return None");
-    }
-
     #[test]
     fn test_ensure_declared_bib_file_missing_on_disk() {
         // Regression: when frontmatter declares bibliography: refs.bib but the
@@ -1838,27 +1719,6 @@ mod tests {
         assert!(abs_bib.exists(), "assets/bib/Deep.bib should be created on disk");
         let content = fs::read_to_string(&abs_bib).unwrap();
         assert!(content.contains("smith2024"), "bib file should contain the entry key");
-    }
-
-    #[test]
-    fn build_bib_index_re_walks_after_dirty() {
-        let dir = TempDir::new().unwrap();
-        let bib_path = dir.path().join("refs.bib");
-        fs::write(&bib_path, sample_bib()).unwrap();
-
-        let cache = BibCache::new();
-
-        // First call populates the index cache
-        let index1 = build_bib_index(dir.path(), &cache);
-        assert_eq!(index1.len(), 1);
-
-        // Delete the .bib file from disk, then mark dirty
-        fs::remove_file(&bib_path).unwrap();
-        cache.mark_index_dirty();
-
-        // Now build_bib_index should re-walk and find nothing
-        let index2 = build_bib_index(dir.path(), &cache);
-        assert!(index2.is_empty(), "after mark_index_dirty and file deletion, index should be empty");
     }
 
     /// Regression test for F10: bib_update_fields must trigger refresh_shadows

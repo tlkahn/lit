@@ -427,26 +427,57 @@ pub fn update_bib_fields(
         return Ok(false);
     };
 
-    // Apply field updates
+    // Apply field updates.
+    // Empty strings clear optional fields to None and vec fields to [].
     for (field, value) in fields {
         match field.as_str() {
             "title" => entry.title = value.clone(),
             "authors" => {
-                entry.authors = serde_json::from_str(value).unwrap_or_else(|_| vec![value.clone()]);
+                if value.is_empty() {
+                    entry.authors = vec![];
+                } else {
+                    entry.authors =
+                        serde_json::from_str(value).unwrap_or_else(|_| vec![value.clone()]);
+                }
             }
             "year" => entry.year = value.clone(),
-            "doi" => entry.doi = Some(value.clone()),
-            "isbn" => entry.isbn = Some(value.clone()),
-            "arxiv_id" => entry.arxiv_id = Some(normalize_arxiv_id(value)),
-            "url" => entry.url = Some(value.clone()),
-            "journal" => entry.journal = Some(value.clone()),
-            "publisher" => entry.publisher = Some(value.clone()),
-            "abstract" => entry.abstract_text = Some(value.clone()),
-            "issn" => entry.issn = Some(value.clone()),
-            "volume" => entry.volume = Some(value.clone()),
-            "number" => entry.number = Some(value.clone()),
-            "pages" => entry.pages = Some(value.clone()),
-            "file" => entry.file = Some(value.clone()),
+            "doi" => entry.doi = if value.is_empty() { None } else { Some(value.clone()) },
+            "isbn" => entry.isbn = if value.is_empty() { None } else { Some(value.clone()) },
+            "arxiv_id" => {
+                entry.arxiv_id = if value.is_empty() {
+                    None
+                } else {
+                    Some(normalize_arxiv_id(value))
+                }
+            }
+            "url" => entry.url = if value.is_empty() { None } else { Some(value.clone()) },
+            "journal" => {
+                entry.journal = if value.is_empty() { None } else { Some(value.clone()) }
+            }
+            "publisher" => {
+                entry.publisher = if value.is_empty() { None } else { Some(value.clone()) }
+            }
+            "abstract" => {
+                entry.abstract_text = if value.is_empty() { None } else { Some(value.clone()) }
+            }
+            "issn" => entry.issn = if value.is_empty() { None } else { Some(value.clone()) },
+            "volume" => entry.volume = if value.is_empty() { None } else { Some(value.clone()) },
+            "number" => entry.number = if value.is_empty() { None } else { Some(value.clone()) },
+            "pages" => entry.pages = if value.is_empty() { None } else { Some(value.clone()) },
+            "file" => entry.file = if value.is_empty() { None } else { Some(value.clone()) },
+            "tags" => {
+                if value.is_empty() {
+                    entry.tags = vec![];
+                } else {
+                    entry.tags = serde_json::from_str(value).unwrap_or_else(|_| {
+                        value
+                            .split(';')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    });
+                }
+            }
             _ => {} // unknown fields silently ignored
         }
     }
@@ -499,6 +530,20 @@ pub fn tombstone_bib_item(
         params![cite_key],
     )?;
     Ok(rows > 0)
+}
+
+/// Return the set of live cite_keys whose source_file matches the given path.
+pub fn live_keys_for_source_file(
+    conn: &Connection,
+    source_file: &str,
+) -> Result<HashSet<String>, GraphError> {
+    let mut stmt = conn.prepare(
+        "SELECT cite_key FROM bib_items WHERE source_file = ?1 AND deleted_at IS NULL",
+    )?;
+    let keys = stmt
+        .query_map(params![source_file], |row| row.get(0))?
+        .collect::<Result<HashSet<String>, _>>()?;
+    Ok(keys)
 }
 
 pub fn all_live_keys(conn: &Connection) -> Result<HashSet<String>, GraphError> {
@@ -561,6 +606,7 @@ pub struct IngestStats {
     pub entries_inserted: usize,
     pub entries_updated: usize,
     pub entries_dedup_skipped: usize,
+    pub entries_tombstoned: usize,
     pub ledger_pruned: usize,
 }
 
@@ -617,6 +663,9 @@ pub fn ingest_workspace_bibs(
             std::fs::read_to_string(path).ok()
         });
 
+        // Collect the cite_keys present in this file after parsing
+        let current_keys: HashSet<String> = entries.iter().map(|e| e.key.clone()).collect();
+
         for entry in &entries {
             let outcome = upsert_bib_item(
                 conn,
@@ -632,12 +681,52 @@ pub fn ingest_workspace_bibs(
             }
         }
 
+        // Tombstone entries that WERE sourced from this file but are no longer
+        // present in it (hand-deleted by the user). Only for CHANGED files
+        // (new files have no prior keys). We query current DB state, so if a
+        // key was moved to another file earlier in this walk its source_file
+        // will already point elsewhere and won't appear here.
+        let prior_keys = live_keys_for_source_file(conn, &path_str)?;
+        for stale_key in prior_keys.difference(&current_keys) {
+            if tombstone_bib_item(conn, stale_key)? {
+                stats.entries_tombstoned += 1;
+            }
+        }
+
         update_source_ledger(conn, &path_str, mtime_i64)?;
         stats.files_scanned += 1;
     }
 
     stats.ledger_pruned = prune_source_ledger(conn, &seen_paths)?;
     Ok(stats)
+}
+
+/// Generate a collision-free cite_key for `entry` (mutating `entry.key`),
+/// upsert into `bib_items`, and map the `UpsertOutcome` to a `SaveOutcome`.
+pub fn save_entry_with_generated_key(
+    conn: &Connection,
+    entry: &mut BibEntry,
+) -> Result<crate::bib::writer::SaveOutcome, GraphError> {
+    use crate::bib::writer::{generate_key, SaveOutcome};
+
+    let live_keys = all_live_keys(conn)?;
+    let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
+    entry.key = generated_key;
+    let upsert_result = upsert_bib_item(conn, entry, None, None, false)?;
+    let outcome = match upsert_result {
+        UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
+            if entry.doi.is_some() {
+                SaveOutcome::Saved { key: cite_key }
+            } else {
+                SaveOutcome::SavedNoDoi { key: cite_key }
+            }
+        }
+        UpsertOutcome::DedupSkipped { existing_key } => {
+            let doi = entry.doi.clone().unwrap_or_default();
+            SaveOutcome::DuplicateDoi { doi, existing_key }
+        }
+    };
+    Ok(outcome)
 }
 
 pub fn live_index(conn: &Connection) -> Result<HashMap<String, BibEntry>, GraphError> {
@@ -1191,6 +1280,138 @@ mod tests {
         assert_eq!(fetched.doi, Some("10.1/new".to_string()));
     }
 
+    #[test]
+    fn test_update_bib_fields_clear_optional_field() {
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.journal = Some("Nature".to_string());
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("journal".to_string(), "".to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.journal, None);
+
+        // raw_bibtex should NOT contain "journal"
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT raw_bibtex FROM bib_items WHERE cite_key = 'smith2024'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !raw.contains("journal"),
+            "raw_bibtex should not contain journal after clearing, got: {}",
+            raw
+        );
+    }
+
+    #[test]
+    fn test_update_bib_fields_clear_title_to_empty() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("title".to_string(), "".to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.title, "");
+
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT raw_bibtex FROM bib_items WHERE cite_key = 'smith2024'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(raw.contains("title = {}"));
+    }
+
+    #[test]
+    fn test_update_bib_fields_clear_authors_to_empty() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("authors".to_string(), "".to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.authors, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_update_bib_fields_tags_json_array() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("tags".to_string(), r#"["ml","nlp"]"#.to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.tags, vec!["ml", "nlp"]);
+    }
+
+    #[test]
+    fn test_update_bib_fields_tags_semicolon_string() {
+        let store = Store::open_memory().unwrap();
+        let e = test_entry("smith2024");
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("tags".to_string(), "ml; nlp".to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.tags, vec!["ml", "nlp"]);
+    }
+
+    #[test]
+    fn test_update_bib_fields_tags_clear() {
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.tags = vec!["old".to_string()];
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("tags".to_string(), "".to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.tags, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_update_bib_fields_clear_multiple_optional_fields() {
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("smith2024");
+        e.doi = Some("10.1/old".to_string());
+        e.journal = Some("Nature".to_string());
+        e.url = Some("https://example.com".to_string());
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let mut fields = HashMap::new();
+        fields.insert("doi".to_string(), "".to_string());
+        fields.insert("journal".to_string(), "".to_string());
+        fields.insert("url".to_string(), "".to_string());
+        assert!(update_bib_fields(&store.conn, "smith2024", &fields).unwrap());
+
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap().unwrap();
+        assert_eq!(fetched.doi, None);
+        assert_eq!(fetched.journal, None);
+        assert_eq!(fetched.url, None);
+    }
+
     // ── Tombstone tests ───────────────────────────────────────────
 
     #[test]
@@ -1460,6 +1681,8 @@ mod tests {
 
         let stats2 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
         assert_eq!(stats2.ledger_pruned, 1);
+        assert_eq!(stats2.entries_tombstoned, 0,
+            "deleting a .bib file must NOT tombstone its entries");
         // bib_items rows from deleted file remain (stale but acceptable)
         assert_eq!(list_bib_items(&store.conn).unwrap().len(), 2);
     }
@@ -1888,5 +2111,314 @@ mod tests {
             UpsertOutcome::Inserted { cite_key: "entryB".to_string() },
             "tombstoned rows must not trigger title+year dedup"
         );
+    }
+
+    // ── C4: tombstone entries removed from changed .bib files ────
+
+    #[test]
+    fn test_ingest_tombstones_entry_removed_from_changed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        let cache = crate::bib::cache::BibCache::new();
+
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n\
+             @article{jones2023,\n  author = {Jones},\n  title = {Beta},\n  year = {2023}\n}");
+
+        let stats1 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert_eq!(stats1.entries_inserted, 2);
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 2);
+
+        // Rewrite refs.bib with jones2023 removed
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}");
+        bump_mtime(&dir.path().join("refs.bib"));
+
+        let stats2 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert_eq!(stats2.entries_tombstoned, 1,
+            "jones2023 must be tombstoned when removed from refs.bib");
+        assert!(get_bib_item(&store.conn, "jones2023").unwrap().is_none(),
+            "jones2023 must not be visible after removal");
+        assert!(get_bib_item(&store.conn, "smith2024").unwrap().is_some(),
+            "smith2024 must remain live");
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_ingest_no_tombstone_for_deleted_bib_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        let cache = crate::bib::cache::BibCache::new();
+
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}");
+
+        ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+
+        std::fs::remove_file(dir.path().join("refs.bib")).unwrap();
+
+        let stats2 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert_eq!(stats2.entries_tombstoned, 0,
+            "deleting a .bib file must NOT tombstone its entries");
+        assert!(get_bib_item(&store.conn, "smith2024").unwrap().is_some(),
+            "smith2024 must remain live after file deletion");
+    }
+
+    #[test]
+    fn test_ingest_entry_moved_between_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        let cache = crate::bib::cache::BibCache::new();
+
+        write_bib_file(dir.path(), "a.bib",
+            "@article{alpha,\n  author = {A},\n  title = {Alpha},\n  year = {2024}\n}");
+        write_bib_file(dir.path(), "b.bib",
+            "@article{beta,\n  author = {B},\n  title = {Beta},\n  year = {2024}\n}");
+
+        ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 2);
+
+        // Move alpha from a.bib to b.bib
+        write_bib_file(dir.path(), "a.bib", "");
+        write_bib_file(dir.path(), "b.bib",
+            "@article{beta,\n  author = {B},\n  title = {Beta},\n  year = {2024}\n}\n\
+             @article{alpha,\n  author = {A},\n  title = {Alpha},\n  year = {2024}\n}");
+        bump_mtime(&dir.path().join("a.bib"));
+        bump_mtime(&dir.path().join("b.bib"));
+
+        let _stats2 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert!(get_bib_item(&store.conn, "alpha").unwrap().is_some(),
+            "alpha must remain live after being moved between files");
+        assert!(get_bib_item(&store.conn, "beta").unwrap().is_some(),
+            "beta must remain live");
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 2);
+        // entries_tombstoned may be >0 depending on walk order (if a.bib is
+        // processed before b.bib, alpha is tombstoned then revived by b.bib's
+        // gap-fill). The important invariant is functional: both entries live.
+        // Verify alpha's source_file is now b.bib
+        let alpha = get_bib_item(&store.conn, "alpha").unwrap().unwrap();
+        assert_eq!(alpha.bib_file, Some(dir.path().join("b.bib").to_string_lossy().to_string()),
+            "alpha's source_file must be updated to b.bib");
+    }
+
+    #[test]
+    fn test_ingest_already_tombstoned_entry_removed_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        let cache = crate::bib::cache::BibCache::new();
+
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n\
+             @article{jones2023,\n  author = {Jones},\n  title = {Beta},\n  year = {2023}\n}");
+
+        ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        // Manually tombstone jones2023 before re-ingesting
+        tombstone_bib_item(&store.conn, "jones2023").unwrap();
+        assert!(get_bib_item(&store.conn, "jones2023").unwrap().is_none());
+
+        // Remove jones2023 from the file
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}");
+        bump_mtime(&dir.path().join("refs.bib"));
+
+        let stats2 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert!(get_bib_item(&store.conn, "jones2023").unwrap().is_none(),
+            "jones2023 must remain tombstoned");
+        assert_eq!(stats2.entries_tombstoned, 0,
+            "already-tombstoned entry must not increment entries_tombstoned counter");
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_ingest_pdf_imported_rows_untouched_by_file_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        let cache = crate::bib::cache::BibCache::new();
+
+        // Insert PDF-imported entry (source_file = NULL)
+        let pdf_entry = test_entry("pdf2024");
+        upsert_bib_item(&store.conn, &pdf_entry, None, None, false).unwrap();
+
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}");
+
+        ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 2);
+
+        // Rewrite refs.bib as empty
+        write_bib_file(dir.path(), "refs.bib", "");
+        bump_mtime(&dir.path().join("refs.bib"));
+
+        let stats2 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert!(get_bib_item(&store.conn, "pdf2024").unwrap().is_some(),
+            "PDF-imported entry must remain live");
+        assert!(get_bib_item(&store.conn, "smith2024").unwrap().is_none(),
+            "smith2024 must be tombstoned after removal from file");
+        assert_eq!(stats2.entries_tombstoned, 1);
+    }
+
+    #[test]
+    fn test_ingest_companion_append_then_manual_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_memory().unwrap();
+        let cache = crate::bib::cache::BibCache::new();
+
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}");
+        ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+
+        // Simulate companion-append: add jones2023
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n\
+             @article{jones2023,\n  author = {Jones},\n  title = {Beta},\n  year = {2023}\n}");
+        bump_mtime(&dir.path().join("refs.bib"));
+        ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert_eq!(list_bib_items(&store.conn).unwrap().len(), 2);
+
+        // Manual removal of jones2023
+        // Double-bump to guarantee mtime differs from ledger even when
+        // writes happen within the same second.
+        write_bib_file(dir.path(), "refs.bib",
+            "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}");
+        bump_mtime(&dir.path().join("refs.bib"));
+        bump_mtime(&dir.path().join("refs.bib"));
+
+        let stats3 = ingest_workspace_bibs(&store.conn, dir.path(), &cache).unwrap();
+        assert!(get_bib_item(&store.conn, "jones2023").unwrap().is_none(),
+            "jones2023 must be tombstoned after manual removal");
+        assert!(get_bib_item(&store.conn, "smith2024").unwrap().is_some(),
+            "smith2024 must remain live");
+        assert_eq!(stats3.entries_tombstoned, 1);
+    }
+
+    #[test]
+    fn test_live_keys_for_source_file() {
+        let store = Store::open_memory().unwrap();
+        let e1 = test_entry("a2024");
+        upsert_bib_item(&store.conn, &e1, Some("refs.bib"), None, false).unwrap();
+        let e2 = test_entry("b2024");
+        upsert_bib_item(&store.conn, &e2, Some("refs.bib"), None, false).unwrap();
+        let e3 = test_entry("c2024");
+        upsert_bib_item(&store.conn, &e3, Some("other.bib"), None, false).unwrap();
+        let e4 = test_entry("d2024");
+        upsert_bib_item(&store.conn, &e4, None, None, false).unwrap(); // NULL source
+
+        tombstone_bib_item(&store.conn, "b2024").unwrap();
+
+        let keys = live_keys_for_source_file(&store.conn, "refs.bib").unwrap();
+        assert_eq!(keys.len(), 1, "only live keys for refs.bib");
+        assert!(keys.contains("a2024"));
+        assert!(!keys.contains("b2024"), "tombstoned entry must be excluded");
+
+        let keys2 = live_keys_for_source_file(&store.conn, "other.bib").unwrap();
+        assert_eq!(keys2.len(), 1);
+        assert!(keys2.contains("c2024"));
+
+        let keys3 = live_keys_for_source_file(&store.conn, "nonexistent.bib").unwrap();
+        assert!(keys3.is_empty());
+    }
+
+    // ── save_entry_with_generated_key tests ──────────────────────────
+
+    #[test]
+    fn test_save_entry_with_generated_key_inserts() {
+        use crate::bib::writer::SaveOutcome;
+
+        let store = Store::open_memory().unwrap();
+        let mut entry = test_entry_with_doi("placeholder", "10.1000/abc");
+        entry.authors = vec!["Smith, John".to_string()];
+        entry.year = "2024".to_string();
+
+        let outcome = save_entry_with_generated_key(&store.conn, &mut entry).unwrap();
+        assert!(
+            matches!(outcome, SaveOutcome::Saved { ref key } if key == "smith2024"),
+            "should return Saved with generated key, got: {:?}",
+            outcome
+        );
+
+        // Verify entry exists in DB
+        let fetched = get_bib_item(&store.conn, "smith2024").unwrap();
+        assert!(fetched.is_some(), "entry should be in DB after save");
+        assert_eq!(fetched.unwrap().title, "Title for placeholder");
+    }
+
+    #[test]
+    fn test_save_entry_with_generated_key_generates_unique_key() {
+        use crate::bib::writer::SaveOutcome;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert first entry
+        let mut e1 = test_entry_with_doi("placeholder1", "10.1000/first");
+        e1.authors = vec!["Smith, John".to_string()];
+        e1.year = "2024".to_string();
+        let o1 = save_entry_with_generated_key(&store.conn, &mut e1).unwrap();
+        assert!(matches!(o1, SaveOutcome::Saved { ref key } if key == "smith2024"));
+
+        // Insert second entry with same author/year but different DOI
+        let mut e2 = test_entry_with_doi("placeholder2", "10.1000/second");
+        e2.authors = vec!["Smith, Alice".to_string()];
+        e2.year = "2024".to_string();
+        let o2 = save_entry_with_generated_key(&store.conn, &mut e2).unwrap();
+        assert!(
+            matches!(o2, SaveOutcome::Saved { ref key } if key == "smith2024a"),
+            "second entry should get suffixed key, got: {:?}",
+            o2
+        );
+    }
+
+    #[test]
+    fn test_save_entry_with_generated_key_dedup_skipped() {
+        use crate::bib::writer::SaveOutcome;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert first entry with DOI
+        let mut e1 = test_entry_with_doi("placeholder1", "10.1000/dup");
+        e1.authors = vec!["Smith, John".to_string()];
+        e1.year = "2024".to_string();
+        save_entry_with_generated_key(&store.conn, &mut e1).unwrap();
+
+        // Try to insert second entry with same DOI
+        let mut e2 = test_entry_with_doi("placeholder2", "10.1000/dup");
+        e2.authors = vec!["Jones, Alice".to_string()];
+        e2.year = "2023".to_string();
+        let outcome = save_entry_with_generated_key(&store.conn, &mut e2).unwrap();
+        assert!(
+            matches!(outcome, SaveOutcome::DuplicateDoi { ref doi, ref existing_key }
+                if doi == "10.1000/dup" && existing_key == "smith2024"),
+            "should return DuplicateDoi, got: {:?}",
+            outcome
+        );
+    }
+
+    #[test]
+    fn test_save_entry_with_generated_key_no_doi_returns_saved_no_doi() {
+        use crate::bib::writer::SaveOutcome;
+
+        let store = Store::open_memory().unwrap();
+        let mut entry = test_entry("placeholder");
+        entry.authors = vec!["Smith, John".to_string()];
+        entry.year = "2024".to_string();
+        // No DOI set
+
+        let outcome = save_entry_with_generated_key(&store.conn, &mut entry).unwrap();
+        assert!(
+            matches!(outcome, SaveOutcome::SavedNoDoi { ref key } if key == "smith2024"),
+            "should return SavedNoDoi, got: {:?}",
+            outcome
+        );
+    }
+
+    #[test]
+    fn test_save_entry_with_generated_key_sets_entry_key() {
+        let store = Store::open_memory().unwrap();
+        let mut entry = test_entry_with_doi("placeholder", "10.1000/abc");
+        entry.authors = vec!["Smith, John".to_string()];
+        entry.year = "2024".to_string();
+        assert_eq!(entry.key, "placeholder", "key should be placeholder before save");
+
+        save_entry_with_generated_key(&store.conn, &mut entry).unwrap();
+        assert_eq!(entry.key, "smith2024", "key should be mutated to generated key after save");
     }
 }

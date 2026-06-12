@@ -9,7 +9,7 @@ import { getDefinitions, listBibEntries, ensureInCompanionBib, type BibEntry } f
 import { emitFrontmatterPatch } from "../../lib/frontmatterBus";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { frontmatterFacet } from "./crossref";
-import { bibEntriesField, notePathFacet, citeprocMatchesField } from "./citeproc";
+import { bibEntriesField, notePathFacet, citeprocMatchesField, refetchBib } from "./citeproc";
 import { listen } from "@tauri-apps/api/event";
 
 // --- Workspace bib cache: one IPC fetch, refreshed on lit:bib-items-changed ---
@@ -206,8 +206,12 @@ export async function crossrefCompletionSource(
                   bibliography: result.bibliography_value,
                 });
               }
+              // Trigger citeproc to re-read the (possibly updated) .bib file
+              view.dispatch({ effects: refetchBib.of(null) });
             })
-            .catch(() => {});
+            .catch((err) => {
+              console.warn(`[crossrefCompletion] ensureInCompanionBib failed for key "${entry.key}":`, err);
+            });
         }
       },
     }));
@@ -292,6 +296,7 @@ export const bibReconciliationPlugin = ViewPlugin.fromClass(
       const wsEntries = await getWorkspaceBibEntries(workspacePath);
       const wsKeySet = new Set(wsEntries.map((e) => e.key));
 
+      let needsRefetch = false;
       for (const key of unresolvedKeys) {
         if (!wsKeySet.has(key)) continue;
         this.reconciledKeys.add(key);
@@ -302,9 +307,13 @@ export const bibReconciliationPlugin = ViewPlugin.fromClass(
               bibliography: result.bibliography_value,
             });
           }
-        } catch {
-          // Best-effort; key stays unresolved until a page reload
+          needsRefetch = true;
+        } catch (err) {
+          console.warn(`[bibReconciliation] ensureInCompanionBib failed for key "${key}":`, err);
         }
+      }
+      if (needsRefetch) {
+        this.view.dispatch({ effects: refetchBib.of(null) });
       }
     }
 

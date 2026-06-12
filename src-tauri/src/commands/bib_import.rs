@@ -3,9 +3,9 @@ use std::sync::{Arc, LazyLock};
 
 use serde::Deserialize;
 use crate::bib::convert::{csl_to_bib_entry, is_valid_doi, normalize_doi, CslItem};
-use crate::bib::db::{all_live_keys, upsert_bib_item, UpsertOutcome};
+use crate::bib::db::save_entry_with_generated_key;
 use crate::bib::types::BibEntry;
-use crate::bib::writer::{generate_key, SaveOutcome};
+use crate::bib::writer::SaveOutcome;
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
 
@@ -105,24 +105,8 @@ pub fn save_bib_entry(
         .ok_or_else(|| "Graph index not ready".to_string())?;
     let outcome = {
         let store = gi.store();
-        let live_keys = all_live_keys(&store.conn).map_err(|e| e.to_string())?;
-        let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
-        entry.key = generated_key;
-        let upsert_result = upsert_bib_item(&store.conn, &entry, None, None, false)
-            .map_err(|e| e.to_string())?;
-        match upsert_result {
-            UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
-                if entry.doi.is_some() {
-                    SaveOutcome::Saved { key: cite_key }
-                } else {
-                    SaveOutcome::SavedNoDoi { key: cite_key }
-                }
-            }
-            UpsertOutcome::DedupSkipped { existing_key } => {
-                let doi = entry.doi.clone().unwrap_or_default();
-                SaveOutcome::DuplicateDoi { doi, existing_key }
-            }
-        }
+        save_entry_with_generated_key(&store.conn, &mut entry)
+            .map_err(|e| e.to_string())?
     };
 
     crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
@@ -154,24 +138,8 @@ pub fn save_bib_entries(
         let store = gi.store();
         let mut results = Vec::with_capacity(entries.len());
         for mut entry in entries {
-            let live_keys = all_live_keys(&store.conn).map_err(|e| e.to_string())?;
-            let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
-            entry.key = generated_key;
-            let upsert_result = upsert_bib_item(&store.conn, &entry, None, None, false)
+            let outcome = save_entry_with_generated_key(&store.conn, &mut entry)
                 .map_err(|e| e.to_string())?;
-            let outcome = match upsert_result {
-                UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
-                    if entry.doi.is_some() {
-                        SaveOutcome::Saved { key: cite_key }
-                    } else {
-                        SaveOutcome::SavedNoDoi { key: cite_key }
-                    }
-                }
-                UpsertOutcome::DedupSkipped { existing_key } => {
-                    let doi = entry.doi.clone().unwrap_or_default();
-                    SaveOutcome::DuplicateDoi { doi, existing_key }
-                }
-            };
             results.push(outcome);
         }
         results

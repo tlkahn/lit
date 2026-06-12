@@ -576,7 +576,11 @@ describe("ReferenceLibrary", () => {
         line_number: 0,
         doi: "10.1000/new",
       };
-      if (cmd === "save_bib_entry") return [{ Saved: { key: "new2025" } }];
+      if (cmd === "save_bib_entry") {
+        // Simulate backend emitting the event (as save_bib_entry does in production)
+        emitMockEvent("lit:bib-items-changed", {});
+        return [{ Saved: { key: "new2025" } }];
+      }
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -1267,7 +1271,11 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "recognize_pdf") return resolvedResult;
+        if (cmd === "recognize_pdf") {
+          // Simulate backend emitting the event (as recognize_pdf does in production)
+          emitMockEvent("lit:bib-items-changed", {});
+          return resolvedResult;
+        }
         throw new Error(`Unknown command: ${cmd}`);
       });
 
@@ -1437,7 +1445,11 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "enrich_bib_entry") return enrichResult;
+        if (cmd === "enrich_bib_entry") {
+          // Simulate backend emitting the event (as enrich_bib_entry does in production)
+          emitMockEvent("lit:bib-items-changed", {});
+          return enrichResult;
+        }
         throw new Error(`Unknown command: ${cmd}`);
       });
       render(<ReferenceLibrary />);
@@ -1801,7 +1813,11 @@ describe("ReferenceLibrary", () => {
       if (cmd === "list_bib_entries") return fixture;
       if (cmd === "get_citing_pages") return citingFixture;
       if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_update_fields") return true;
+      if (cmd === "bib_update_fields") {
+        // Simulate backend emitting the event (as bib_update_fields does in production)
+        emitMockEvent("lit:bib-items-changed", {});
+        return true;
+      }
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -1851,11 +1867,111 @@ describe("ReferenceLibrary", () => {
 
     await user.click(screen.getByText("The Saiva Age"));
     await user.click(screen.getByTestId("edit-entry-btn"));
+
+    // Change a field so the diff-based save actually sends a request
+    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
+    await user.clear(titleInput);
+    await user.type(titleInput, "Trigger Error");
+
     await user.click(screen.getByTestId("edit-save-btn"));
 
     await waitFor(() => {
       expect(useStatusMessageStore.getState().message).toMatch(/Update failed/);
       expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+  });
+
+  it("Edit Save sends empty string when field is cleared", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_update_fields") return true;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+
+    const journalInput = screen.getByTestId("edit-field-journal") as HTMLInputElement;
+    await user.clear(journalInput);
+
+    await user.click(screen.getByTestId("edit-save-btn"));
+
+    await waitFor(() => {
+      const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+      expect(call).toBeTruthy();
+      expect(call!.args).toMatchObject({
+        citeKey: "sanderson2009",
+        fields: { journal: "" },
+      });
+    });
+  });
+
+  it("Edit Save does not send unchanged fields", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_update_fields") return true;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+    // Don't change any fields, just click save
+    await user.click(screen.getByTestId("edit-save-btn"));
+
+    // bib_update_fields should NOT be called since nothing changed
+    await waitFor(() => {
+      expect(screen.queryByTestId("edit-field-title")).not.toBeInTheDocument();
+    });
+    const updateCall = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+    expect(updateCall).toBeUndefined();
+  });
+
+  it("Edit Save sends only changed fields", async () => {
+    const user = userEvent.setup();
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "bib_update_fields") return true;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("edit-entry-btn"));
+
+    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
+    await user.clear(titleInput);
+    await user.type(titleInput, "New Title Only");
+
+    await user.click(screen.getByTestId("edit-save-btn"));
+
+    await waitFor(() => {
+      const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+      expect(call).toBeTruthy();
+      const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
+      expect(fields.title).toBe("New Title Only");
+      // authors, year, journal should NOT be in the fields
+      expect(fields).not.toHaveProperty("authors");
+      expect(fields).not.toHaveProperty("year");
+      expect(fields).not.toHaveProperty("journal");
     });
   });
 

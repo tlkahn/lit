@@ -141,8 +141,7 @@ pub async fn recognize_pdf(
 ) -> Result<RecognizeResult, String> {
     use std::path::PathBuf;
 
-    use crate::bib::db::{all_live_keys, upsert_bib_item, UpsertOutcome};
-    use crate::bib::writer::generate_key;
+    use crate::bib::db::save_entry_with_generated_key;
     use crate::commands::page::lookup_graph_index;
     use crate::pdf::PdfRenderThread;
     use crate::recognize::attach::ensure_pdf_in_workspace;
@@ -196,27 +195,13 @@ pub async fn recognize_pdf(
                 .ok_or_else(|| "Graph index not ready".to_string())?;
             let outcome = {
                 let store = gi.store();
-                let live_keys = all_live_keys(&store.conn).map_err(|e| e.to_string())?;
-                let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
-                entry.key = generated_key;
-                let upsert_result = upsert_bib_item(&store.conn, &entry, None, None, false)
+                let result = save_entry_with_generated_key(&store.conn, &mut entry)
                     .map_err(|e| e.to_string())?;
-                // Map UpsertOutcome to SaveOutcome
-                match upsert_result {
-                    UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
-                        entry.key = cite_key.clone();
-                        if entry.doi.is_some() {
-                            SaveOutcome::Saved { key: cite_key }
-                        } else {
-                            SaveOutcome::SavedNoDoi { key: cite_key }
-                        }
-                    }
-                    UpsertOutcome::DedupSkipped { existing_key } => {
-                        let doi = entry.doi.clone().unwrap_or_default();
-                        entry.key = existing_key.clone();
-                        SaveOutcome::DuplicateDoi { doi, existing_key }
-                    }
+                // For DedupSkipped, update entry.key to the existing key
+                if let SaveOutcome::DuplicateDoi { ref existing_key, .. } = result {
+                    entry.key = existing_key.clone();
                 }
+                result
             };
 
             // Clean up the copied file if this was a duplicate
@@ -263,8 +248,7 @@ pub async fn import_recognized_entry(
 ) -> Result<Vec<SaveOutcome>, String> {
     use std::path::PathBuf;
 
-    use crate::bib::db::{all_live_keys, upsert_bib_item, UpsertOutcome};
-    use crate::bib::writer::generate_key;
+    use crate::bib::db::save_entry_with_generated_key;
     use crate::commands::page::lookup_graph_index;
 
     let workspace_root = PathBuf::from(&workspace_path);
@@ -273,24 +257,8 @@ pub async fn import_recognized_entry(
         .ok_or_else(|| "Graph index not ready".to_string())?;
     let outcome = {
         let store = gi.store();
-        let live_keys = all_live_keys(&store.conn).map_err(|e| e.to_string())?;
-        let generated_key = generate_key(&entry.authors, &entry.year, &live_keys);
-        entry.key = generated_key;
-        let upsert_result = upsert_bib_item(&store.conn, &entry, None, None, false)
-            .map_err(|e| e.to_string())?;
-        match upsert_result {
-            UpsertOutcome::Inserted { cite_key } | UpsertOutcome::Updated { cite_key } => {
-                if entry.doi.is_some() {
-                    SaveOutcome::Saved { key: cite_key }
-                } else {
-                    SaveOutcome::SavedNoDoi { key: cite_key }
-                }
-            }
-            UpsertOutcome::DedupSkipped { existing_key } => {
-                let doi = entry.doi.clone().unwrap_or_default();
-                SaveOutcome::DuplicateDoi { doi, existing_key }
-            }
-        }
+        save_entry_with_generated_key(&store.conn, &mut entry)
+            .map_err(|e| e.to_string())?
     };
 
     crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);

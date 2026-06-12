@@ -99,7 +99,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
       const first = outcomes[0];
       if (first && isDuplicateDoi(first)) {
         show(
-          `DOI already exists as @${first.DuplicateDoi.existing_key}`,
+          `Already in your library as @${first.DuplicateDoi.existing_key}`,
           "error",
         );
       } else if (first && isSaved(first)) {

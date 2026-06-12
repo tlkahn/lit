@@ -280,6 +280,8 @@ describe("ImportPdfDialog", () => {
     await waitFor(() => {
       const state = useStatusMessageStore.getState();
       expect(state.message).toContain("old2019");
+      expect(state.message).toContain("Already in your library");
+      expect(state.message).not.toContain("DOI");
       expect(state.variant).toBe("error");
     });
     expect(onImported).not.toHaveBeenCalled();
@@ -722,6 +724,8 @@ describe("ImportPdfDialog", () => {
     await waitFor(() => {
       const state = useStatusMessageStore.getState();
       expect(state.message).toContain("old2019");
+      expect(state.message).toContain("Already in your library");
+      expect(state.message).not.toContain("DOI");
       expect(state.variant).toBe("error");
     });
     expect(onImported).not.toHaveBeenCalled();

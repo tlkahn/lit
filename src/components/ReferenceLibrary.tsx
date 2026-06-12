@@ -332,8 +332,6 @@ export function ReferenceLibrary() {
       setEnrichingKey(entry.key);
       try {
         const result = await enrichBibEntry(entry.key, workspacePath);
-        loadEntries();
-        loadBibKeyStates();
         const parts: string[] = [];
         if (result.fields_added.length > 0)
           parts.push(`added ${result.fields_added.join(", ")}`);
@@ -360,7 +358,7 @@ export function ReferenceLibrary() {
         setEnrichingKey(null);
       }
     },
-    [workspacePath, show, loadEntries, loadBibKeyStates],
+    [workspacePath, show],
   );
 
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -376,8 +374,6 @@ export function ReferenceLibrary() {
       const deleted = await bibDelete(key, workspacePath);
       if (deleted) {
         show(`Deleted @${key}`);
-        loadEntries();
-        loadBibKeyStates();
       } else {
         show(`@${key} not found`, "error");
       }
@@ -386,7 +382,7 @@ export function ReferenceLibrary() {
     } finally {
       setDeletingKey(null);
     }
-  }, [workspacePath, show, loadEntries, loadBibKeyStates]);
+  }, [workspacePath, show]);
 
   const startEdit = useCallback((entry: BibEntry) => {
     setEditingKey(entry.key);
@@ -407,15 +403,31 @@ export function ReferenceLibrary() {
     if (!workspacePath) return;
     setSavingEdit(true);
     try {
+      const entry = filtered.find((e) => e.key === key);
+      if (!entry) return;
+
       const fields: Record<string, string> = {};
-      if (editFields.title) fields.title = editFields.title;
-      if (editFields.authors) fields.authors = editFields.authors;
-      if (editFields.year) fields.year = editFields.year;
-      if (editFields.journal) fields.journal = editFields.journal;
+      const original: Record<string, string> = {
+        title: entry.title,
+        authors: entry.authors.join("; "),
+        year: entry.year,
+        journal: entry.journal ?? "",
+      };
+      for (const [k, v] of Object.entries(editFields)) {
+        if (v !== original[k]) {
+          fields[k] = v;
+        }
+      }
+      if (Object.keys(fields).length === 0) {
+        setSavingEdit(false);
+        setEditingKey(null);
+        setEditFields({});
+        return;
+      }
+
       const updated = await bibUpdateFields(key, fields, workspacePath);
       if (updated) {
         show(`Updated @${key}`);
-        loadEntries();
       } else {
         show(`@${key} not found`, "error");
       }
@@ -426,7 +438,7 @@ export function ReferenceLibrary() {
       setEditingKey(null);
       setEditFields({});
     }
-  }, [workspacePath, editFields, show, loadEntries]);
+  }, [workspacePath, editFields, filtered, show]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
@@ -488,7 +500,6 @@ export function ReferenceLibrary() {
       open={addDialogOpen}
       onClose={() => setAddDialogOpen(false)}
       onSaved={() => {
-        loadEntries();
         setAddDialogOpen(false);
       }}
     />
@@ -502,8 +513,6 @@ export function ReferenceLibrary() {
         setDropPdfPath(null);
       }}
       onImported={() => {
-        loadEntries();
-        loadBibKeyStates();
         setImportPdfDialogOpen(false);
         setDropPdfPath(null);
       }}

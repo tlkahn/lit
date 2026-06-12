@@ -322,6 +322,8 @@ describe("AddReferenceDialog", () => {
     expect(onSaved).not.toHaveBeenCalled();
     const state = useStatusMessageStore.getState();
     expect(state.message).toContain("old2019");
+    expect(state.message).toContain("Already in your library");
+    expect(state.message).not.toContain("DOI");
     expect(state.variant).toBe("error");
   });
 
