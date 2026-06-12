@@ -1,6 +1,6 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
-import { parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
+import { applyQuotePrefixes, parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
@@ -369,6 +369,8 @@ export class EditableTableWidget extends WidgetType {
   constructor(
     readonly tableText: string,
     readonly from: number,
+    readonly rawLength: number,
+    readonly prefixes: string[],
   ) {
     super();
   }
@@ -428,9 +430,9 @@ export class EditableTableWidget extends WidgetType {
       } else {
         updated.rows[row - 1]![col] = nextValue;
       }
-      const newMarkdown = serializeTable(updated);
+      const newMarkdown = applyQuotePrefixes(serializeTable(updated), this.prefixes);
       view.dispatch({
-        changes: { from: this.from, to: this.from + this.tableText.length, insert: newMarkdown },
+        changes: { from: this.from, to: this.from + this.rawLength, insert: newMarkdown },
       });
     };
 
@@ -465,7 +467,13 @@ export class EditableTableWidget extends WidgetType {
   }
 
   eq(other: EditableTableWidget): boolean {
-    return this.tableText === other.tableText && this.from === other.from;
+    return (
+      this.tableText === other.tableText &&
+      this.from === other.from &&
+      this.rawLength === other.rawLength &&
+      this.prefixes.length === other.prefixes.length &&
+      this.prefixes.every((p, i) => p === other.prefixes[i])
+    );
   }
 
   ignoreEvent(): boolean {

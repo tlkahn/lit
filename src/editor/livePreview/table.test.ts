@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition, serializeTable } from "./table";
+import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition, serializeTable, stripQuotePrefixes, applyQuotePrefixes } from "./table";
 import { getKatexSync } from "./katexLoader";
 
 const mockKatex = {
@@ -311,6 +311,58 @@ describe("serializeTable", () => {
     expect(reparsed!.headers).toEqual(original.headers);
     expect(reparsed!.alignments).toEqual(original.alignments);
     expect(reparsed!.rows).toEqual(original.rows);
+  });
+});
+
+describe("stripQuotePrefixes / applyQuotePrefixes", () => {
+  it("plain table is an identity (empty prefixes)", () => {
+    const raw = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+    const { text, prefixes } = stripQuotePrefixes(raw);
+    expect(text).toBe(raw);
+    expect(prefixes).toEqual(["", "", ""]);
+    expect(applyQuotePrefixes(text, prefixes)).toBe(raw);
+  });
+
+  it("strips single-level '> ' prefixes so parseTable succeeds", () => {
+    const raw = "| a | b |\n> | --- | --- |\n> | 1 | 2 |";
+    const { text, prefixes } = stripQuotePrefixes(raw);
+    expect(text).toBe("| a | b |\n| --- | --- |\n| 1 | 2 |");
+    expect(prefixes).toEqual(["", "> ", "> "]);
+    expect(parseTable(text)).not.toBeNull();
+  });
+
+  it("captures bare '>' prefixes", () => {
+    const raw = "| a |\n>| --- |\n>| 1 |";
+    const { text, prefixes } = stripQuotePrefixes(raw);
+    expect(text).toBe("| a |\n| --- |\n| 1 |");
+    expect(prefixes).toEqual(["", ">", ">"]);
+  });
+
+  it("captures nested '> > ' prefixes", () => {
+    const raw = "| a |\n> > | --- |\n> > | 1 |";
+    const { text, prefixes } = stripQuotePrefixes(raw);
+    expect(text).toBe("| a |\n| --- |\n| 1 |");
+    expect(prefixes).toEqual(["", "> > ", "> > "]);
+  });
+
+  it("leaves unmarked lazy continuation lines unprefixed", () => {
+    const raw = "| a |\n> | --- |\n| 1 |";
+    const { text, prefixes } = stripQuotePrefixes(raw);
+    expect(text).toBe("| a |\n| --- |\n| 1 |");
+    expect(prefixes).toEqual(["", "> ", ""]);
+    expect(applyQuotePrefixes(text, prefixes)).toBe(raw);
+  });
+
+  it("round-trips strip → parse → serialize → apply", () => {
+    const raw = "| a | b |\n> | --- | --- |\n> | 1 | 2 |";
+    const { text, prefixes } = stripQuotePrefixes(raw);
+    const parsed = parseTable(text);
+    expect(parsed).not.toBeNull();
+    expect(applyQuotePrefixes(serializeTable(parsed!), prefixes)).toBe(raw);
+  });
+
+  it("reuses the last prefix when serialized has more lines than prefixes", () => {
+    expect(applyQuotePrefixes("a\nb\nc", ["", "> "])).toBe("a\n> b\n> c");
   });
 });
 

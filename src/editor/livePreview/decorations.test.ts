@@ -886,6 +886,34 @@ describe("buildBlockReplacements — tables", () => {
     expect(widgets).toHaveLength(2);
     view.destroy();
   });
+
+  it("replaces table inside a blockquote with widget", () => {
+    const doc = "> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget);
+    expect(tableWidget).toBeDefined();
+    // Table node starts at the first "|", after the "> " prefix
+    expect(tableWidget!.from).toBe(2);
+    view.destroy();
+  });
+
+  it("replaces table inside a callout with widget", () => {
+    const doc = "> [!note]\n>\n> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    const tableWidget = decos.find((d) => d.widget && d.from === 14);
+    expect(tableWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("degrades a malformed quoted table to visible source (no widget)", () => {
+    const doc = "> | a |\n> | -x- |\n> | 1 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectBlockDecos(view);
+    expect(decos.find((d) => d.widget)).toBeUndefined();
+    view.destroy();
+  });
 });
 
 describe("buildBlockReplacements — mermaid", () => {
