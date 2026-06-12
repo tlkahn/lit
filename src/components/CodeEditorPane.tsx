@@ -82,6 +82,13 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
         });
         useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
       }
+      const focusedPaneId = usePaneStore.getState().focusedPaneId;
+      if (focusedPaneId === paneId) {
+        const active = document.activeElement;
+        if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
+          view.focus();
+        }
+      }
     });
   }, [paneId]);
 
