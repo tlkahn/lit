@@ -9,10 +9,17 @@ use crate::recognize::identifiers::normalize_to_isbn13;
 use super::arxiv::split_flat_name;
 use super::ResolveError;
 
-/// Per-provider timeout for ISBN resolution. The shared HTTP client has a
-/// 10 s client-level timeout; this tighter bound ensures the entire ISBN
-/// stage (OL + GB sequentially) completes within ~10 s worst case.
-const ISBN_PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
+/// Per-provider timeout for ISBN resolution.
+///
+/// The shared HTTP client has a
+/// [`HTTP_CLIENT_TIMEOUT`](crate::commands::bib_import::HTTP_CLIENT_TIMEOUT)
+/// client-level timeout; this tighter bound ensures the entire ISBN
+/// stage (OL + GB sequentially) completes within that budget.
+///
+/// Invariant: `2 * ISBN_PROVIDER_TIMEOUT <= HTTP_CLIENT_TIMEOUT` (two
+/// sequential providers must fit inside the client timeout).  A unit
+/// test in this module enforces this.
+pub(crate) const ISBN_PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IsbnPath {
@@ -299,9 +306,15 @@ async fn try_google_books(
 
     let item = matching_item
         .or_else(|| {
-            // Only fall back to the first item if it has NO industryIdentifiers.
-            // When identifiers are present but none match, the book is wrong --
-            // reject it, mirroring the Open Library guard (lines 140-146).
+            // No item matched the queried ISBN by identifier.  Fall back to
+            // the top-ranked result (`items[0]`) ONLY if it carries no
+            // industryIdentifiers at all -- some GB records simply omit them.
+            //
+            // We intentionally inspect only items[0], not later items:
+            // Google Books returns results in relevance order, so if the
+            // top-ranked volume carries identifiers that don't match, the
+            // entire response is untrustworthy and must be rejected -- even
+            // if a lower-ranked item happens to lack identifiers.
             items.first().filter(|it| {
                 let has_identifiers = it
                     .volume_info
@@ -935,10 +948,10 @@ mod tests {
     }
 
     /// Short timeout used only by tests that exercise the per-provider timeout.
-    const TEST_PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+    const TEST_PROVIDER_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 
     /// Delay applied to wiremock responses that should exceed the test timeout.
-    const TEST_SLOW_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+    const TEST_SLOW_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
     #[tokio::test]
     async fn open_library_timeout_falls_through_to_google() {
@@ -994,6 +1007,70 @@ mod tests {
         let (entry, isbn_path) = result.expect("should resolve via Google Books after OL timeout");
         assert_eq!(isbn_path, IsbnPath::GoogleBooks);
         assert_eq!(entry.title, "Fast Google Book");
+    }
+
+    #[test]
+    fn isbn_provider_timeout_fits_within_http_client_timeout() {
+        use crate::commands::bib_import::HTTP_CLIENT_TIMEOUT;
+        assert!(
+            2 * ISBN_PROVIDER_TIMEOUT <= HTTP_CLIENT_TIMEOUT,
+            "Two sequential ISBN providers ({:?} each = {:?} total) must fit within \
+             the HTTP client timeout ({:?}). If you lowered HTTP_CLIENT_TIMEOUT, \
+             you must also lower ISBN_PROVIDER_TIMEOUT.",
+            ISBN_PROVIDER_TIMEOUT,
+            2 * ISBN_PROVIDER_TIMEOUT,
+            HTTP_CLIENT_TIMEOUT,
+        );
+    }
+
+    /// Policy lock: when the top-ranked Google Books result carries
+    /// mismatching identifiers, the response must be rejected even if a
+    /// lower-ranked item has no identifiers at all.
+    #[tokio::test]
+    async fn google_books_rejects_when_top_item_mismatches_despite_later_identifier_less_item() {
+        let server = MockServer::start().await;
+        let client = test_client();
+
+        // items[0]: wrong ISBN identifiers  →  mismatch
+        // items[1]: no identifiers at all   →  would pass the no-identifier filter,
+        //           but must NOT be used because only items[0] is eligible.
+        let gb_json = r#"{
+            "totalItems": 2,
+            "items": [
+                {
+                    "volumeInfo": {
+                        "title": "Wrong Book",
+                        "authors": ["Wrong Author"],
+                        "publishedDate": "2015",
+                        "industryIdentifiers": [
+                            {"type": "ISBN_13", "identifier": "9780000000000"}
+                        ]
+                    }
+                },
+                {
+                    "volumeInfo": {
+                        "title": "Identifier-less Book",
+                        "authors": ["Some Author"],
+                        "publishedDate": "2020"
+                    }
+                }
+            ]
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/books/v1/volumes"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(gb_json))
+            .mount(&server)
+            .await;
+
+        let result =
+            try_google_books(&client, "9780306406157", &server.uri()).await;
+
+        assert!(
+            result.is_err(),
+            "must reject: top-ranked item has mismatching identifiers, \
+             so the identifier-less second item must not be used as fallback"
+        );
     }
 
     #[tokio::test]

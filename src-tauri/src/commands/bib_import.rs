@@ -42,9 +42,19 @@ fn list_bib_files_inner(workspace_path: &Path) -> Vec<String> {
 
 // ── Tauri commands ──────────────────────────────────────────────────
 
+/// Client-level timeout for all outbound HTTP requests (Crossref, Open
+/// Library, Google Books, Semantic Scholar, etc.).
+///
+/// Individual resolve stages may impose tighter per-provider budgets
+/// (see [`crate::recognize::resolve::isbn::ISBN_PROVIDER_TIMEOUT`]).
+/// The contract is: the sum of all sequential per-provider timeouts in
+/// any single resolve stage must not exceed this value.
+pub(crate) const HTTP_CLIENT_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(10);
+
 pub(crate) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(HTTP_CLIENT_TIMEOUT)
         .user_agent(format!(
             "lit/{} (https://github.com/tlkahn/lit)",
             env!("LIT_GIT_VERSION")
