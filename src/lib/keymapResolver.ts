@@ -7,6 +7,11 @@ export const platform = {
   isMac: /Mac|iPhone|iPad|iPod/.test(navigator.platform),
 };
 
+// NOTE: Binding resolution is e.key-based (not e.code), so it is
+// keyboard-layout-dependent. On US QWERTY, Cmd+Shift+= fires key "+",
+// resolved as "Mod-Shift-+". On other layouts the shifted character may
+// differ. This is a pre-existing app-wide limitation; do not attempt to
+// rewrite to e.code without a full audit of all bindings.
 export function keyStringFromEvent(e: KeyboardEvent): string {
   const parts: string[] = [];
   if (platform.isMac) {

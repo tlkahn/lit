@@ -32,5 +32,9 @@
   { "key": "Mod-Shift-o", "command": "companion.open" },
   { "key": "Mod-Shift-y", "command": "companion.toggleSync" },
   { "key": "Mod-Enter", "command": "app.fireAnnotation", "when": "editorFocus" },
-  { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" }
+  { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" },
+  { "key": "Mod-=", "command": "pdf.zoomIn" },
+  { "key": "Mod-Shift-+", "command": "pdf.zoomIn" },
+  { "key": "Mod--", "command": "pdf.zoomOut" },
+  { "key": "Mod-0", "command": "pdf.zoomReset" }
 ]

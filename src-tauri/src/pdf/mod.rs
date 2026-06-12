@@ -8,6 +8,14 @@ use std::thread;
 
 use serde::Serialize;
 
+/// Maximum DPI the renderer will accept. Values above this are silently clamped
+/// to prevent enormous bitmap allocations (e.g. 864 DPI on a Letter page = ~280 MB).
+const MAX_DPI: u32 = 600;
+
+fn clamp_dpi(dpi: u32) -> u32 {
+    dpi.min(MAX_DPI)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PdfInfo {
@@ -72,6 +80,87 @@ pub fn cleanup_pdf_temp_dir(dir: &std::path::Path) {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// Maximum entries in the per-document render cache.  Evicted entries
+/// have their temp PNG deleted from disk so the temp dir stays bounded.
+///
+/// Must be comfortably larger than `MAX_CACHE` (5, in
+/// `src/components/PdfViewer.tsx`) so the frontend never holds a reference
+/// to a PNG that this LRU has already evicted and deleted.
+const MAX_BACKEND_CACHE: usize = 24;
+
+struct LruPngCache {
+    map: HashMap<(usize, u32), RenderedPage>,
+    order: Vec<(usize, u32)>,
+    cap: usize,
+}
+
+impl LruPngCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: Vec::new(),
+            cap,
+        }
+    }
+
+    /// Look up a cached entry, promoting it to most-recently-used.
+    fn get(&mut self, key: &(usize, u32)) -> Option<&RenderedPage> {
+        if !self.map.contains_key(key) {
+            return None;
+        }
+        // Move to back (most recent)
+        if let Some(pos) = self.order.iter().position(|k| k == key) {
+            self.order.remove(pos);
+        }
+        self.order.push(*key);
+        self.map.get(key)
+    }
+
+    /// Insert an entry, evicting the oldest if at capacity.
+    /// The evicted entry's PNG file is deleted from disk.
+    fn insert(&mut self, key: (usize, u32), value: RenderedPage) {
+        if self.map.contains_key(&key) {
+            // Update existing: replace value, move to back
+            self.map.insert(key, value);
+            if let Some(pos) = self.order.iter().position(|k| k == &key) {
+                self.order.remove(pos);
+            }
+            self.order.push(key);
+            return;
+        }
+        // Evict oldest if at capacity
+        if self.map.len() >= self.cap && self.cap > 0 {
+            if let Some(oldest_key) = self.order.first().copied() {
+                self.order.remove(0);
+                if let Some(evicted) = self.map.remove(&oldest_key) {
+                    if let Err(e) = fs::remove_file(&evicted.png_path) {
+                        tracing::warn!(
+                            "[pdf] failed to remove evicted PNG {}: {e}",
+                            evicted.png_path
+                        );
+                    }
+                }
+            }
+        }
+        self.order.push(key);
+        self.map.insert(key, value);
+    }
+
+    fn contains_key(&self, key: &(usize, u32)) -> bool {
+        self.map.contains_key(key)
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
 pub struct PdfRenderThread {
     cmd_tx: mpsc::Sender<PdfCommand>,
     handle: Option<thread::JoinHandle<()>>,
@@ -99,13 +188,14 @@ impl PdfRenderThread {
             };
 
             let mut document: Option<lmpdf::Document> = None;
-            let mut cache: HashMap<(usize, u32), RenderedPage> = HashMap::new();
+            let mut cache = LruPngCache::new(MAX_BACKEND_CACHE);
 
             let render_page = |doc: &lmpdf::Document,
                                page_index: usize,
                                dpi: u32,
                                temp_dir: &std::path::Path|
              -> Result<RenderedPage, String> {
+                let dpi = clamp_dpi(dpi);
                 let page_ref = doc
                     .page(page_index)
                     .map_err(|e| format!("Failed to get page: {e}"))?;
@@ -260,6 +350,7 @@ impl PdfRenderThread {
     }
 
     pub fn render_page(&self, page_index: usize, dpi: u32) -> Result<RenderedPage, String> {
+        let dpi = clamp_dpi(dpi);
         self.request(|tx| PdfCommand::RenderPage {
             page_index,
             dpi,
@@ -272,6 +363,7 @@ impl PdfRenderThread {
     }
 
     pub fn prefetch(&self, page_index: usize, dpi: u32) -> Result<(), String> {
+        let dpi = clamp_dpi(dpi);
         self.cmd_tx
             .send(PdfCommand::PreRender { page_index, dpi })
             .map_err(|_| "Render thread died".to_string())
@@ -794,5 +886,164 @@ mod tests {
 
         assert_eq!(data.pages.len(), 2, "should extract exactly max_pages pages");
         assert_eq!(data.total_pages, 7, "total_pages should reflect full document");
+    }
+
+    #[test]
+    fn test_clamp_dpi_caps_at_max() {
+        assert_eq!(clamp_dpi(864), MAX_DPI);
+        assert_eq!(clamp_dpi(1000), MAX_DPI);
+        assert_eq!(clamp_dpi(u32::MAX), MAX_DPI);
+    }
+
+    #[test]
+    fn test_clamp_dpi_passes_through_below_max() {
+        assert_eq!(clamp_dpi(144), 144);
+        assert_eq!(clamp_dpi(288), 288);
+        assert_eq!(clamp_dpi(MAX_DPI), MAX_DPI);
+        assert_eq!(clamp_dpi(0), 0);
+    }
+
+    // --- LruPngCache tests (no pdfium needed) ---
+
+    fn make_rendered(page_index: usize, png_path: &str) -> RenderedPage {
+        RenderedPage {
+            page_index,
+            png_path: png_path.to_string(),
+            width: 100,
+            height: 100,
+        }
+    }
+
+    fn write_temp_png(dir: &std::path::Path, name: &str) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, b"fakepng").unwrap();
+        p
+    }
+
+    #[test]
+    fn test_lru_cache_evicts_oldest_entry() {
+        let dir = create_pdf_temp_dir().unwrap();
+        let mut cache = LruPngCache::new(3);
+
+        let p0 = write_temp_png(&dir, "p0.png");
+        let p1 = write_temp_png(&dir, "p1.png");
+        let p2 = write_temp_png(&dir, "p2.png");
+        let p3 = write_temp_png(&dir, "p3.png");
+
+        cache.insert((0, 72), make_rendered(0, p0.to_str().unwrap()));
+        cache.insert((1, 72), make_rendered(1, p1.to_str().unwrap()));
+        cache.insert((2, 72), make_rendered(2, p2.to_str().unwrap()));
+        // This insert should evict (0, 72) and delete p0
+        cache.insert((3, 72), make_rendered(3, p3.to_str().unwrap()));
+
+        assert_eq!(cache.len(), 3);
+        assert!(!cache.contains_key(&(0, 72)), "oldest entry should be evicted");
+        assert!(!p0.exists(), "evicted entry's PNG should be deleted from disk");
+        assert!(p1.exists());
+        assert!(p2.exists());
+        assert!(p3.exists());
+
+        cleanup_pdf_temp_dir(&dir);
+    }
+
+    #[test]
+    fn test_lru_cache_get_refreshes_order() {
+        let dir = create_pdf_temp_dir().unwrap();
+        let mut cache = LruPngCache::new(3);
+
+        let pa = write_temp_png(&dir, "a.png");
+        let pb = write_temp_png(&dir, "b.png");
+        let pc = write_temp_png(&dir, "c.png");
+        let pd = write_temp_png(&dir, "d.png");
+
+        cache.insert((0, 72), make_rendered(0, pa.to_str().unwrap()));
+        cache.insert((1, 72), make_rendered(1, pb.to_str().unwrap()));
+        cache.insert((2, 72), make_rendered(2, pc.to_str().unwrap()));
+
+        // Access A to refresh it — B is now oldest
+        let got = cache.get(&(0, 72));
+        assert!(got.is_some(), "get should find existing entry");
+
+        // Insert D — should evict B (oldest), not A
+        cache.insert((3, 72), make_rendered(3, pd.to_str().unwrap()));
+
+        assert!(!cache.contains_key(&(1, 72)), "B should be evicted");
+        assert!(!pb.exists(), "B's PNG should be deleted");
+        assert!(pa.exists(), "A should still exist (refreshed)");
+        assert!(pc.exists());
+        assert!(pd.exists());
+
+        cleanup_pdf_temp_dir(&dir);
+    }
+
+    #[test]
+    fn test_lru_cache_insert_existing_key_updates_and_refreshes() {
+        let dir = create_pdf_temp_dir().unwrap();
+        let mut cache = LruPngCache::new(3);
+
+        let pa = write_temp_png(&dir, "a.png");
+        let pb = write_temp_png(&dir, "b.png");
+        let pc = write_temp_png(&dir, "c.png");
+        let pd = write_temp_png(&dir, "d.png");
+
+        cache.insert((0, 72), make_rendered(0, pa.to_str().unwrap()));
+        cache.insert((1, 72), make_rendered(1, pb.to_str().unwrap()));
+        cache.insert((2, 72), make_rendered(2, pc.to_str().unwrap()));
+
+        // Re-insert A with a new path — refreshes A, B is now oldest
+        let pa2 = write_temp_png(&dir, "a2.png");
+        cache.insert((0, 72), make_rendered(0, pa2.to_str().unwrap()));
+
+        // Insert D — should evict B (oldest after A was refreshed)
+        cache.insert((3, 72), make_rendered(3, pd.to_str().unwrap()));
+
+        assert_eq!(cache.len(), 3);
+        assert!(!cache.contains_key(&(1, 72)), "B should be evicted");
+        assert!(cache.contains_key(&(0, 72)), "A should still exist");
+        assert!(cache.contains_key(&(2, 72)), "C should still exist");
+        assert!(cache.contains_key(&(3, 72)), "D should still exist");
+
+        cleanup_pdf_temp_dir(&dir);
+    }
+
+    #[test]
+    fn test_lru_cache_clear_does_not_delete_files() {
+        let dir = create_pdf_temp_dir().unwrap();
+        let mut cache = LruPngCache::new(3);
+
+        let pa = write_temp_png(&dir, "a.png");
+        let pb = write_temp_png(&dir, "b.png");
+
+        cache.insert((0, 72), make_rendered(0, pa.to_str().unwrap()));
+        cache.insert((1, 72), make_rendered(1, pb.to_str().unwrap()));
+
+        cache.clear();
+
+        assert_eq!(cache.len(), 0);
+        assert!(pa.exists(), "clear should NOT delete files — caller handles cleanup");
+        assert!(pb.exists(), "clear should NOT delete files — caller handles cleanup");
+
+        cleanup_pdf_temp_dir(&dir);
+    }
+
+    #[test]
+    fn test_lru_cache_eviction_tolerates_missing_file() {
+        let mut cache = LruPngCache::new(1);
+
+        // Insert with a non-existent path
+        cache.insert(
+            (0, 72),
+            make_rendered(0, "/tmp/lit_nonexistent_xyz_42.png"),
+        );
+        // This insert triggers eviction of the previous entry whose file doesn't exist
+        let dir = create_pdf_temp_dir().unwrap();
+        let p1 = write_temp_png(&dir, "real.png");
+        cache.insert((1, 72), make_rendered(1, p1.to_str().unwrap()));
+
+        assert_eq!(cache.len(), 1);
+        assert!(!cache.contains_key(&(0, 72)));
+        assert!(cache.contains_key(&(1, 72)));
+
+        cleanup_pdf_temp_dir(&dir);
     }
 }

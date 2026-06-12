@@ -12,6 +12,9 @@ import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
 import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
+import { useWorkspaceStore } from "../stores/workspace";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
+import { registerPdfZoomHandlers, _resetForTesting as resetPdfPaneRef } from "../lib/pdfPaneRef";
 import type { EditorView } from "@codemirror/view";
 
 function makeTwoLeafState(): { root: PaneNode; focusedPaneId: string } {
@@ -924,6 +927,32 @@ describe("useKeymaps", () => {
     expect(mockView.focus).toHaveBeenCalled();
   });
 
+  // --- PDF zoom commands ---
+
+  it("pdf.zoomIn is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pdf.zoomIn")).toBe(true);
+  });
+
+  it("pdf.zoomOut is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pdf.zoomOut")).toBe(true);
+  });
+
+  it("pdf.zoomReset is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pdf.zoomReset")).toBe(true);
+  });
+
+  it("pdf.zoomIn/zoomOut/zoomReset appear in getVisibleCommands", async () => {
+    await loadHook();
+    const visible = getVisibleCommands("zoom");
+    const ids = visible.map((c) => c.id);
+    expect(ids).toContain("pdf.zoomIn");
+    expect(ids).toContain("pdf.zoomOut");
+    expect(ids).toContain("pdf.zoomReset");
+  });
+
   it("pane.focusContentNext appears in command palette even with single pane", async () => {
     await loadHook();
     usePaneStore.setState(createInitialState());
@@ -1091,5 +1120,107 @@ describe("useKeymaps", () => {
 
     hook1.unmount();
     hook2.unmount();
+  });
+
+  // --- Concern 2 regression: zoom commands only fire when focused pane is PDF ---
+
+  it("pdf.zoomOut returns false when editor is focused with linked PDF (no collision with editor.navigateBack)", async () => {
+    await loadHook();
+    resetPdfPaneRef();
+
+    // Set up editor+PDF split with editor focused and panes linked
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "ed1", pagePath: "note.md" },
+          { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "ed1",
+    });
+    useWorkspaceStore.setState({
+      pages: [
+        { relative_path: "note.md", file_type: "markdown", title: "note" },
+        { relative_path: "doc.pdf", file_type: "pdf", title: "doc" },
+      ],
+    } as never);
+    usePanePdfLinkStore.getState().linkPanes("pdf1", "ed1");
+
+    const zoomOut = vi.fn();
+    registerPdfZoomHandlers("pdf1", { zoomIn: vi.fn(), zoomOut, zoomReset: vi.fn() });
+
+    const result = executeCommand("pdf.zoomOut");
+    expect(result).toBe(false);
+    expect(zoomOut).not.toHaveBeenCalled();
+  });
+
+  it("pdf.zoomIn returns false when editor is focused with linked PDF", async () => {
+    await loadHook();
+    resetPdfPaneRef();
+
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "ed1", pagePath: "note.md" },
+          { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "ed1",
+    });
+    useWorkspaceStore.setState({
+      pages: [
+        { relative_path: "note.md", file_type: "markdown", title: "note" },
+        { relative_path: "doc.pdf", file_type: "pdf", title: "doc" },
+      ],
+    } as never);
+    usePanePdfLinkStore.getState().linkPanes("pdf1", "ed1");
+
+    const zoomIn = vi.fn();
+    registerPdfZoomHandlers("pdf1", { zoomIn, zoomOut: vi.fn(), zoomReset: vi.fn() });
+
+    const result = executeCommand("pdf.zoomIn");
+    expect(result).toBe(false);
+    expect(zoomIn).not.toHaveBeenCalled();
+  });
+
+  it("pdf.zoomReset returns false when editor is focused with linked PDF", async () => {
+    await loadHook();
+    resetPdfPaneRef();
+
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "ed1", pagePath: "note.md" },
+          { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "ed1",
+    });
+    useWorkspaceStore.setState({
+      pages: [
+        { relative_path: "note.md", file_type: "markdown", title: "note" },
+        { relative_path: "doc.pdf", file_type: "pdf", title: "doc" },
+      ],
+    } as never);
+    usePanePdfLinkStore.getState().linkPanes("pdf1", "ed1");
+
+    const zoomReset = vi.fn();
+    registerPdfZoomHandlers("pdf1", { zoomIn: vi.fn(), zoomOut: vi.fn(), zoomReset });
+
+    const result = executeCommand("pdf.zoomReset");
+    expect(result).toBe(false);
+    expect(zoomReset).not.toHaveBeenCalled();
   });
 });

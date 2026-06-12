@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { registerHandler, _clear } from "./commandRegistry";
-import { resolveKeymaps } from "./keymapResolver";
+import { keyStringFromEvent, platform, resolveKeymaps } from "./keymapResolver";
 import defaultKeymaps from "../../keymaps/default.json";
 
 describe("resolveKeymaps", () => {
@@ -120,5 +120,73 @@ describe("keymaps/default.json", () => {
     expect(find("pane.focusPrev")).toEqual(expect.objectContaining({ key: "Mod-Alt-ArrowLeft" }));
     expect(find("pane.focusContentNext")).toEqual(expect.objectContaining({ key: "Mod-]" }));
     expect(find("pane.focusContentPrev")).toEqual(expect.objectContaining({ key: "Mod-[" }));
+  });
+
+  it("contains Mod-Shift-+ alias binding for pdf.zoomIn", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-Shift-+" && b.command === "pdf.zoomIn",
+    );
+    expect(entry).toBeDefined();
+  });
+});
+
+describe("keyStringFromEvent", () => {
+  let originalIsMac: boolean;
+
+  beforeEach(() => {
+    originalIsMac = platform.isMac;
+  });
+
+  afterEach(() => {
+    platform.isMac = originalIsMac;
+  });
+
+  it("resolves Cmd+Shift+= (metaKey+shiftKey, key='+') to 'Mod-Shift-+' on Mac", () => {
+    platform.isMac = true;
+
+    // On macOS, pressing Cmd+Shift+= produces key="+" and keyCode=187
+    const event = new KeyboardEvent("keydown", {
+      key: "+",
+      keyCode: 187,
+      metaKey: true,
+      shiftKey: true,
+    });
+
+    expect(keyStringFromEvent(event)).toBe("Mod-Shift-+");
+  });
+
+  it("resolves Cmd+= (metaKey, key='=') to 'Mod-=' on Mac", () => {
+    platform.isMac = true;
+
+    const event = new KeyboardEvent("keydown", {
+      key: "=",
+      keyCode: 187,
+      metaKey: true,
+    });
+
+    expect(keyStringFromEvent(event)).toBe("Mod-=");
+  });
+});
+
+describe("resolveKeymaps — pdf.zoomIn alias", () => {
+  beforeEach(() => {
+    _clear();
+  });
+
+  it("Mod-Shift-+ alias triggers pdf.zoomIn via app keybindings", () => {
+    registerHandler("pdf.zoomIn", () => true);
+
+    const result = resolveKeymaps([
+      { key: "Mod-=", command: "pdf.zoomIn" },
+      { key: "Mod-Shift-+", command: "pdf.zoomIn" },
+    ]);
+
+    const zoomInBindings = result.appBindings.filter(
+      (b) => b.command === "pdf.zoomIn",
+    );
+    expect(zoomInBindings).toHaveLength(2);
+    expect(zoomInBindings.map((b) => b.key)).toContain("Mod-=");
+    expect(zoomInBindings.map((b) => b.key)).toContain("Mod-Shift-+");
   });
 });

@@ -2,7 +2,8 @@ import React, { useCallback, useEffect } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
+import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, registerPdfZoomHandlers, unregisterPdfZoomHandlers, consumeForwardSync, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
+import type { PdfZoomHandlers } from "../lib/pdfPaneRef";
 import { getPaneView, setFocusedPane } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
@@ -47,6 +48,11 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     [paneId],
   );
 
+  const handleRegisterZoomHandlers = useCallback(
+    (handlers: PdfZoomHandlers) => registerPdfZoomHandlers(paneId, handlers),
+    [paneId],
+  );
+
   // Reverse sync (PDF -> md): when this PDF pane changes page, scroll the LINKED
   // editor to the matching page marker. Symmetric to EditorPane forward sync,
   // which reads its OWN view+markers; here we read the linked editor's view and
@@ -80,6 +86,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     return () => {
       unregisterPdfGoToPage(paneId);
       unregisterPdfCurrentPage(paneId);
+      unregisterPdfZoomHandlers(paneId);
     };
   }, [paneId]);
 
@@ -126,6 +133,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         paneId={paneId}
         registerGoToPage={handleRegisterGoToPage}
         registerGetCurrentPage={handleRegisterGetCurrentPage}
+        registerZoomHandlers={handleRegisterZoomHandlers}
         onPageChange={handlePageChange}
         onPageCount={handlePageCount}
       />

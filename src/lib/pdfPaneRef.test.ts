@@ -6,11 +6,19 @@ import {
   registerPdfCurrentPage,
   getPdfCurrentPage,
   unregisterPdfCurrentPage,
+  registerPdfZoomHandlers,
+  unregisterPdfZoomHandlers,
+  getPdfZoomHandlers,
+  getActivePdfPaneId,
+  getFocusedPdfPaneId,
   markForwardSync,
   consumeForwardSync,
   clearForwardSync,
   _resetForTesting,
 } from "./pdfPaneRef";
+import { usePaneStore } from "../stores/panes";
+import { useWorkspaceStore } from "../stores/workspace";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
 
 describe("pdfPaneRef", () => {
   beforeEach(() => {
@@ -96,6 +104,143 @@ describe("pdfPaneRef", () => {
       _resetForTesting();
       expect(consumeForwardSync("p1")).toBe(false);
       expect(consumeForwardSync("p2")).toBe(false);
+    });
+  });
+
+  describe("zoom handler registry", () => {
+    it("registerPdfZoomHandlers stores handlers retrievable by getPdfZoomHandlers", () => {
+      const handlers = { zoomIn: () => {}, zoomOut: () => {}, zoomReset: () => {} };
+      registerPdfZoomHandlers("p1", handlers);
+      expect(getPdfZoomHandlers("p1")).toBe(handlers);
+      expect(getPdfZoomHandlers("unknown")).toBeNull();
+    });
+
+    it("unregisterPdfZoomHandlers removes the handlers", () => {
+      const handlers = { zoomIn: () => {}, zoomOut: () => {}, zoomReset: () => {} };
+      registerPdfZoomHandlers("p1", handlers);
+      unregisterPdfZoomHandlers("p1");
+      expect(getPdfZoomHandlers("p1")).toBeNull();
+    });
+
+    it("_resetForTesting clears zoom handler map", () => {
+      registerPdfZoomHandlers("p1", { zoomIn: () => {}, zoomOut: () => {}, zoomReset: () => {} });
+      registerPdfZoomHandlers("p2", { zoomIn: () => {}, zoomOut: () => {}, zoomReset: () => {} });
+      _resetForTesting();
+      expect(getPdfZoomHandlers("p1")).toBeNull();
+      expect(getPdfZoomHandlers("p2")).toBeNull();
+    });
+  });
+
+  describe("getActivePdfPaneId", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        focusedPaneId: "pdf1",
+      });
+      useWorkspaceStore.setState({
+        pages: [{ relative_path: "doc.pdf", file_type: "pdf", title: "doc" }],
+      } as never);
+      usePanePdfLinkStore.setState({
+        links: new Map(),
+        lastSyncedPage: null,
+        pendingPdfSync: new Map(),
+        pendingEditorSync: new Map(),
+      });
+    });
+
+    it("returns focused pane when it is a PDF", () => {
+      expect(getActivePdfPaneId()).toBe("pdf1");
+    });
+
+    it("returns linked pane when focused is not PDF", () => {
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "ed1", pagePath: "note.md" },
+            { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "ed1",
+      });
+      useWorkspaceStore.setState({
+        pages: [
+          { relative_path: "note.md", file_type: "markdown", title: "note" },
+          { relative_path: "doc.pdf", file_type: "pdf", title: "doc" },
+        ],
+      } as never);
+      usePanePdfLinkStore.getState().linkPanes("pdf1", "ed1");
+
+      expect(getActivePdfPaneId()).toBe("pdf1");
+    });
+
+    it("returns null when no PDF pane is active or linked", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "ed1", pagePath: "note.md" },
+        focusedPaneId: "ed1",
+      });
+      useWorkspaceStore.setState({
+        pages: [{ relative_path: "note.md", file_type: "markdown", title: "note" }],
+      } as never);
+
+      expect(getActivePdfPaneId()).toBeNull();
+    });
+  });
+
+  describe("getFocusedPdfPaneId", () => {
+    it("returns focused pane when it is a PDF", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        focusedPaneId: "pdf1",
+      });
+      useWorkspaceStore.setState({
+        pages: [{ relative_path: "doc.pdf", file_type: "pdf", title: "doc" }],
+      } as never);
+
+      expect(getFocusedPdfPaneId()).toBe("pdf1");
+    });
+
+    it("returns null when focused pane is an editor even with a linked PDF", () => {
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "ed1", pagePath: "note.md" },
+            { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "ed1",
+      });
+      useWorkspaceStore.setState({
+        pages: [
+          { relative_path: "note.md", file_type: "markdown", title: "note" },
+          { relative_path: "doc.pdf", file_type: "pdf", title: "doc" },
+        ],
+      } as never);
+      usePanePdfLinkStore.getState().linkPanes("pdf1", "ed1");
+
+      // Even though a linked PDF exists, getFocusedPdfPaneId must return null
+      // because the focused pane is an editor — prevents Mod-- collision with
+      // editor.navigateBack.
+      expect(getFocusedPdfPaneId()).toBeNull();
+    });
+
+    it("returns null when no pane is focused", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pdf1", pagePath: "doc.pdf" },
+        focusedPaneId: "",
+      });
+      useWorkspaceStore.setState({
+        pages: [{ relative_path: "doc.pdf", file_type: "pdf", title: "doc" }],
+      } as never);
+
+      expect(getFocusedPdfPaneId()).toBeNull();
     });
   });
 });
