@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
+use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, Manager};
@@ -48,6 +50,8 @@ pub struct ExportFrontmatter {
     pub reference_doc: Option<String>,
     pub pdf_engine: Option<String>,
     pub cjk_mainfont: Option<String>,
+    pub indic_font: Option<String>,
+    pub indic_fonts: HashMap<String, String>,
 }
 
 /// Returns true if `text` contains any CJK characters (Chinese, Japanese, Korean).
@@ -107,6 +111,400 @@ pub fn resolve_cjk_font(
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndicScript {
+    Devanagari,
+    Bengali,
+    Gurmukhi,
+    Gujarati,
+    Oriya,
+    Tamil,
+    Telugu,
+    Kannada,
+    Malayalam,
+    Sinhala,
+    Thai,
+    Lao,
+    Tibetan,
+    Myanmar,
+    Khmer,
+    Sharada,
+}
+
+impl IndicScript {
+    pub fn fontspec_script(&self) -> &'static str {
+        match self {
+            Self::Devanagari => "Devanagari",
+            Self::Bengali => "Bengali",
+            Self::Gurmukhi => "Gurmukhi",
+            Self::Gujarati => "Gujarati",
+            Self::Oriya => "Oriya",
+            Self::Tamil => "Tamil",
+            Self::Telugu => "Telugu",
+            Self::Kannada => "Kannada",
+            Self::Malayalam => "Malayalam",
+            Self::Sinhala => "Sinhala",
+            Self::Thai => "Thai",
+            Self::Lao => "Lao",
+            Self::Tibetan => "Tibetan",
+            Self::Myanmar => "Myanmar",
+            Self::Khmer => "Khmer",
+            Self::Sharada => "Sharada",
+        }
+    }
+
+    pub fn default_font(&self) -> &'static str {
+        if cfg!(target_os = "macos") {
+            match self {
+                Self::Devanagari => "Kohinoor Devanagari",
+                Self::Bengali => "Noto Sans Bengali",
+                Self::Gurmukhi => "Noto Sans Gurmukhi",
+                Self::Gujarati => "Noto Sans Gujarati",
+                Self::Oriya => "Noto Sans Oriya",
+                Self::Tamil => "InaiMathi",
+                Self::Telugu => "Noto Sans Telugu",
+                Self::Kannada => "Noto Sans Kannada",
+                Self::Malayalam => "Noto Sans Malayalam",
+                Self::Sinhala => "Noto Sans Sinhala",
+                Self::Thai => "Thonburi",
+                Self::Lao => "Noto Sans Lao",
+                Self::Tibetan => "Kailasa",
+                Self::Myanmar => "Noto Sans Myanmar",
+                Self::Khmer => "Noto Sans Khmer",
+                Self::Sharada => "Noto Sans Sharada",
+            }
+        } else {
+            match self {
+                Self::Devanagari => "Noto Sans Devanagari",
+                Self::Bengali => "Noto Sans Bengali",
+                Self::Gurmukhi => "Noto Sans Gurmukhi",
+                Self::Gujarati => "Noto Sans Gujarati",
+                Self::Oriya => "Noto Sans Oriya",
+                Self::Tamil => "Noto Sans Tamil",
+                Self::Telugu => "Noto Sans Telugu",
+                Self::Kannada => "Noto Sans Kannada",
+                Self::Malayalam => "Noto Sans Malayalam",
+                Self::Sinhala => "Noto Sans Sinhala",
+                Self::Thai => "Noto Sans Thai",
+                Self::Lao => "Noto Sans Lao",
+                Self::Tibetan => "Noto Sans Tibetan",
+                Self::Myanmar => "Noto Sans Myanmar",
+                Self::Khmer => "Noto Sans Khmer",
+                Self::Sharada => "Noto Sans Sharada",
+            }
+        }
+    }
+
+    pub fn unicode_ranges(&self) -> &'static [(u32, u32)] {
+        match self {
+            Self::Devanagari => &[(0x0900, 0x097F), (0xA8E0, 0xA8FF), (0x11B00, 0x11B5F)],
+            Self::Bengali => &[(0x0980, 0x09FF)],
+            Self::Gurmukhi => &[(0x0A00, 0x0A7F)],
+            Self::Gujarati => &[(0x0A80, 0x0AFF)],
+            Self::Oriya => &[(0x0B00, 0x0B7F)],
+            Self::Tamil => &[(0x0B80, 0x0BFF), (0x11FC0, 0x11FFF)],
+            Self::Telugu => &[(0x0C00, 0x0C7F)],
+            Self::Kannada => &[(0x0C80, 0x0CFF)],
+            Self::Malayalam => &[(0x0D00, 0x0D7F)],
+            Self::Sinhala => &[(0x0D80, 0x0DFF)],
+            Self::Thai => &[(0x0E00, 0x0E7F)],
+            Self::Lao => &[(0x0E80, 0x0EFF)],
+            Self::Tibetan => &[(0x0F00, 0x0FFF)],
+            Self::Myanmar => &[(0x1000, 0x109F), (0xA9E0, 0xA9FF), (0xAA60, 0xAA7F)],
+            Self::Khmer => &[(0x1780, 0x17FF)],
+            Self::Sharada => &[(0x11180, 0x111DF)],
+        }
+    }
+
+    pub fn pref_key(&self) -> &'static str {
+        match self {
+            Self::Devanagari => "devanagari",
+            Self::Bengali => "bengali",
+            Self::Gurmukhi => "gurmukhi",
+            Self::Gujarati => "gujarati",
+            Self::Oriya => "oriya",
+            Self::Tamil => "tamil",
+            Self::Telugu => "telugu",
+            Self::Kannada => "kannada",
+            Self::Malayalam => "malayalam",
+            Self::Sinhala => "sinhala",
+            Self::Thai => "thai",
+            Self::Lao => "lao",
+            Self::Tibetan => "tibetan",
+            Self::Myanmar => "myanmar",
+            Self::Khmer => "khmer",
+            Self::Sharada => "sharada",
+        }
+    }
+
+    fn latex_cmd_name(&self) -> &'static str {
+        match self {
+            Self::Devanagari => "devanagarifont",
+            Self::Bengali => "bengalifont",
+            Self::Gurmukhi => "gurmukhifont",
+            Self::Gujarati => "gujaratifont",
+            Self::Oriya => "oriyafont",
+            Self::Tamil => "tamilfont",
+            Self::Telugu => "telugufont",
+            Self::Kannada => "kannadafont",
+            Self::Malayalam => "malayalamfont",
+            Self::Sinhala => "sinhalafont",
+            Self::Thai => "thaifont",
+            Self::Lao => "laofont",
+            Self::Tibetan => "tibetanfont",
+            Self::Myanmar => "myanmarfont",
+            Self::Khmer => "khmerfont",
+            Self::Sharada => "sharadafont",
+        }
+    }
+}
+
+const ALL_INDIC_SCRIPTS: [IndicScript; 16] = [
+    IndicScript::Devanagari,
+    IndicScript::Bengali,
+    IndicScript::Gurmukhi,
+    IndicScript::Gujarati,
+    IndicScript::Oriya,
+    IndicScript::Tamil,
+    IndicScript::Telugu,
+    IndicScript::Kannada,
+    IndicScript::Malayalam,
+    IndicScript::Sinhala,
+    IndicScript::Thai,
+    IndicScript::Lao,
+    IndicScript::Tibetan,
+    IndicScript::Myanmar,
+    IndicScript::Khmer,
+    IndicScript::Sharada,
+];
+
+pub fn detect_indic_scripts(text: &str) -> HashSet<IndicScript> {
+    let mut found = HashSet::new();
+    for c in text.chars() {
+        let cp = c as u32;
+        for &script in &ALL_INDIC_SCRIPTS {
+            if found.contains(&script) {
+                continue;
+            }
+            for &(lo, hi) in script.unicode_ranges() {
+                if cp >= lo && cp <= hi {
+                    found.insert(script);
+                    if found.len() == ALL_INDIC_SCRIPTS.len() {
+                        return found;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    found
+}
+
+pub fn resolve_indic_fonts(
+    detected: &HashSet<IndicScript>,
+    frontmatter_indic_font: Option<&str>,
+    frontmatter_indic_fonts: &HashMap<String, String>,
+    prefs: &preferences::Preferences,
+) -> HashMap<IndicScript, String> {
+    let mut result = HashMap::new();
+    for &script in detected {
+        // 1. Frontmatter per-script
+        if let Some(font) = frontmatter_indic_fonts.get(script.pref_key()) {
+            if !font.is_empty() {
+                result.insert(script, font.clone());
+                continue;
+            }
+        }
+        // 2. Frontmatter catch-all
+        if let Some(font) = frontmatter_indic_font {
+            if !font.is_empty() {
+                result.insert(script, font.to_string());
+                continue;
+            }
+        }
+        // 3. User pref per-script
+        let per_script_key = format!("academic.indicFont.{}", script.pref_key());
+        if let Some(val) = prefs.extra.get(&per_script_key) {
+            if let Some(s) = val.as_str() {
+                if !s.is_empty() {
+                    result.insert(script, s.to_string());
+                    continue;
+                }
+            }
+        }
+        // 4. User pref catch-all
+        if let Some(val) = prefs.extra.get("academic.indicFont") {
+            if let Some(s) = val.as_str() {
+                if !s.is_empty() {
+                    result.insert(script, s.to_string());
+                    continue;
+                }
+            }
+        }
+        // 5. Platform default
+        result.insert(script, script.default_font().to_string());
+    }
+    result
+}
+
+pub fn build_indic_preamble(
+    fonts: &HashMap<IndicScript, String>,
+    pdf_engine: Option<&Path>,
+) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::Builder::new()
+        .prefix("lit-indic-")
+        .suffix(".tex")
+        .tempfile()?;
+
+    let engine_name = pdf_engine
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("xelatex");
+
+    let is_xelatex = engine_name.contains("xelatex");
+    let is_lualatex = engine_name.contains("lualatex");
+
+    if !is_xelatex && !is_lualatex {
+        writeln!(file, "% Indic scripts require XeLaTeX or LuaLaTeX — skipped for {engine_name}")?;
+        return Ok(file);
+    }
+
+    writeln!(file, "% Auto-generated Indic script support")?;
+    writeln!(file, "\\usepackage{{fontspec}}")?;
+
+    let mut scripts: Vec<_> = fonts.iter().collect();
+    scripts.sort_by_key(|(s, _)| s.pref_key());
+
+    let renderer_opt = if is_xelatex { ",Renderer=HarfBuzz" } else { "" };
+
+    for (script, font) in &scripts {
+        writeln!(
+            file,
+            "\\newfontfamily\\{}[Script={}{}]{{{}}}",
+            script.latex_cmd_name(),
+            script.fontspec_script(),
+            renderer_opt,
+            font,
+        )?;
+    }
+
+    writeln!(file)?;
+    writeln!(file, "% Font switching is handled by the Indic Lua filter")?;
+
+    Ok(file)
+}
+
+const LUA_FILTER_LOGIC: &str = r#"
+local function classify(cp)
+  for _, s in ipairs(scripts) do
+    for _, r in ipairs(s.ranges) do
+      if cp >= r[1] and cp <= r[2] then return s end
+    end
+  end
+  return nil
+end
+
+local function latex_escape(s)
+  return (s:gsub('[\\#$%%&_{}~^]', function(c)
+    if c == '\\' then return '\\textbackslash{}'
+    elseif c == '~' then return '\\textasciitilde{}'
+    elseif c == '^' then return '\\textasciicircum{}'
+    else return '\\' .. c
+    end
+  end))
+end
+
+local function segment(str)
+  local segs = {}
+  local cur = {}
+  local cur_s = nil
+  local spaces = {}
+
+  for _, cp in utf8.codes(str) do
+    if cp == 0x20 then
+      table.insert(spaces, ' ')
+    else
+      local s = classify(cp)
+      if #cur == 0 then
+        if #spaces > 0 then
+          table.insert(segs, { script = nil, text = table.concat(spaces) })
+          spaces = {}
+        end
+        cur_s = s
+      elseif s ~= cur_s then
+        table.insert(segs, { script = cur_s, text = table.concat(cur) })
+        cur = {}
+        if #spaces > 0 then
+          table.insert(segs, { script = nil, text = table.concat(spaces) })
+          spaces = {}
+        end
+        cur_s = s
+      else
+        for i = 1, #spaces do table.insert(cur, ' ') end
+        spaces = {}
+      end
+      table.insert(cur, utf8.char(cp))
+    end
+  end
+  for i = 1, #spaces do table.insert(cur, ' ') end
+  if #cur > 0 then
+    table.insert(segs, { script = cur_s, text = table.concat(cur) })
+  end
+  return segs
+end
+
+function Str(el)
+  local segs = segment(el.text)
+  if #segs == 0 then return nil end
+  if #segs == 1 and segs[1].script == nil then return nil end
+  local result = pandoc.List()
+  for _, seg in ipairs(segs) do
+    if seg.script then
+      result:insert(pandoc.RawInline('latex',
+        '{\\' .. seg.script.cmd .. ' ' .. latex_escape(seg.text) .. '}'))
+    else
+      result:insert(pandoc.Str(seg.text))
+    end
+  end
+  return result
+end
+"#;
+
+pub fn build_indic_lua_filter(
+    fonts: &HashMap<IndicScript, String>,
+) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::Builder::new()
+        .prefix("lit-indic-")
+        .suffix(".lua")
+        .tempfile()?;
+
+    let mut scripts: Vec<_> = fonts.keys().collect();
+    scripts.sort_by_key(|s| s.pref_key());
+
+    writeln!(file, "-- Auto-generated Indic script font-switching filter")?;
+    writeln!(file, "if not FORMAT:match 'latex' then return {{}} end")?;
+    writeln!(file)?;
+    writeln!(file, "local scripts = {{")?;
+    for script in &scripts {
+        let ranges = script.unicode_ranges();
+        let ranges_lua: Vec<String> = ranges
+            .iter()
+            .map(|(lo, hi)| format!("{{0x{lo:04X}, 0x{hi:04X}}}"))
+            .collect();
+        writeln!(
+            file,
+            "  {{ cmd = \"{}\", ranges = {{ {} }} }},",
+            script.latex_cmd_name(),
+            ranges_lua.join(", "),
+        )?;
+    }
+    writeln!(file, "}}")?;
+
+    write!(file, "{LUA_FILTER_LOGIC}")?;
+
+    Ok(file)
+}
+
 pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
     let raw = match std::fs::read_to_string(file_path) {
         Ok(s) => s,
@@ -119,12 +517,31 @@ pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
             _ => None,
         })
     };
+    let indic_fonts = parsed
+        .map
+        .get("indic-fonts")
+        .and_then(|v| match v {
+            serde_yaml::Value::Mapping(m) => {
+                let mut map = HashMap::new();
+                for (k, v) in m {
+                    if let (serde_yaml::Value::String(key), serde_yaml::Value::String(val)) = (k, v) {
+                        map.insert(key.clone(), val.clone());
+                    }
+                }
+                Some(map)
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+
     ExportFrontmatter {
         csl: get_str("csl"),
         template: get_str("template"),
         reference_doc: get_str("reference-doc"),
         pdf_engine: get_str("pdf-engine"),
         cjk_mainfont: get_str("CJKmainfont"),
+        indic_font: get_str("indic-font"),
+        indic_fonts,
     }
 }
 
@@ -675,12 +1092,55 @@ pub async fn export_document(
         &prefs,
     );
 
-    // Resolve CJK font for PDF/LaTeX: frontmatter → preference → auto-detect
-    let cjk_font = if format == "pdf" || format == "latex" {
-        let content = std::fs::read_to_string(&input_path).unwrap_or_default();
-        resolve_cjk_font(frontmatter.cjk_mainfont.as_deref(), &prefs, &content)
+    // Read content once for CJK + Indic detection
+    let content = if format == "pdf" || format == "latex" {
+        std::fs::read_to_string(&input_path).unwrap_or_default()
     } else {
-        None
+        String::new()
+    };
+
+    // Resolve CJK font for PDF/LaTeX: frontmatter → preference → auto-detect
+    let cjk_font = resolve_cjk_font(frontmatter.cjk_mainfont.as_deref(), &prefs, &content);
+
+    // Resolve Indic fonts for PDF/LaTeX
+    let (indic_preamble_file, indic_lua_filter) = if format == "pdf" || format == "latex" {
+        let detected = detect_indic_scripts(&content);
+        if !detected.is_empty() {
+            let fonts = resolve_indic_fonts(
+                &detected,
+                frontmatter.indic_font.as_deref(),
+                &frontmatter.indic_fonts,
+                &prefs,
+            );
+            let preamble = match build_indic_preamble(&fonts, pdf_engine.as_deref()) {
+                Ok(f) => Some(f),
+                Err(e) => {
+                    tracing::warn!("failed to create Indic preamble: {e}");
+                    None
+                }
+            };
+            let engine_name = pdf_engine
+                .as_deref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("xelatex");
+            let lua_filter = if engine_name.contains("xelatex") || engine_name.contains("lualatex") {
+                match build_indic_lua_filter(&fonts) {
+                    Ok(f) => Some(f),
+                    Err(e) => {
+                        tracing::warn!("failed to create Indic Lua filter: {e}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            (preamble, lua_filter)
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
     };
 
     // Resolve bundled preamble for PDF/LaTeX (extra packages like dsfont)
@@ -712,6 +1172,14 @@ pub async fn export_document(
 
         if let Some(ref font) = cjk_font {
             args.push(format!("--variable=CJKmainfont={font}"));
+        }
+
+        if let Some(ref indic_file) = indic_preamble_file {
+            args.push(format!("--include-in-header={}", indic_file.path().to_string_lossy()));
+        }
+
+        if let Some(ref indic_lua) = indic_lua_filter {
+            args.push(format!("--lua-filter={}", indic_lua.path().to_string_lossy()));
         }
 
         if let Some(ref p) = preamble {
@@ -2059,5 +2527,313 @@ mod tests {
         std::fs::write(&lua_path, "-- filter\n").unwrap();
 
         assert_eq!(resolve_ampersand_filter("latex", Some(tmp.path())), Some(lua_path));
+    }
+
+    // --- Indic script detection tests ---
+
+    #[test]
+    fn test_detect_indic_scripts_empty() {
+        assert!(detect_indic_scripts("").is_empty());
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_ascii_only() {
+        assert!(detect_indic_scripts("Hello, world! Plain English.").is_empty());
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_devanagari() {
+        let detected = detect_indic_scripts("नमस्ते");
+        assert_eq!(detected.len(), 1);
+        assert!(detected.contains(&IndicScript::Devanagari));
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_thai() {
+        let detected = detect_indic_scripts("สวัสดี");
+        assert_eq!(detected.len(), 1);
+        assert!(detected.contains(&IndicScript::Thai));
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_multiple() {
+        let detected = detect_indic_scripts("नमस्ते தமிழ் สวัสดี");
+        assert!(detected.contains(&IndicScript::Devanagari));
+        assert!(detected.contains(&IndicScript::Tamil));
+        assert!(detected.contains(&IndicScript::Thai));
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_sharada() {
+        let detected = detect_indic_scripts("\u{11180}\u{11181}");
+        assert_eq!(detected.len(), 1);
+        assert!(detected.contains(&IndicScript::Sharada));
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_cjk_not_included() {
+        let detected = detect_indic_scripts("这是中文 これはテスト 한국어");
+        assert!(detected.is_empty());
+    }
+
+    // --- Indic font resolution tests ---
+
+    #[test]
+    fn test_resolve_indic_fonts_defaults() {
+        let mut detected = HashSet::new();
+        detected.insert(IndicScript::Devanagari);
+        detected.insert(IndicScript::Thai);
+        let prefs = preferences::Preferences::default();
+        let fonts = resolve_indic_fonts(&detected, None, &HashMap::new(), &prefs);
+        assert_eq!(fonts[&IndicScript::Devanagari], IndicScript::Devanagari.default_font());
+        assert_eq!(fonts[&IndicScript::Thai], IndicScript::Thai.default_font());
+    }
+
+    #[test]
+    fn test_resolve_indic_fonts_catchall_pref() {
+        let mut detected = HashSet::new();
+        detected.insert(IndicScript::Devanagari);
+        detected.insert(IndicScript::Thai);
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.indicFont".to_string(),
+            serde_json::Value::String("MyIndicFont".to_string()),
+        );
+        let fonts = resolve_indic_fonts(&detected, None, &HashMap::new(), &prefs);
+        assert_eq!(fonts[&IndicScript::Devanagari], "MyIndicFont");
+        assert_eq!(fonts[&IndicScript::Thai], "MyIndicFont");
+    }
+
+    #[test]
+    fn test_resolve_indic_fonts_per_script_pref() {
+        let mut detected = HashSet::new();
+        detected.insert(IndicScript::Thai);
+        detected.insert(IndicScript::Devanagari);
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.indicFont".to_string(),
+            serde_json::Value::String("CatchAll".to_string()),
+        );
+        prefs.extra.insert(
+            "academic.indicFont.thai".to_string(),
+            serde_json::Value::String("SpecialThai".to_string()),
+        );
+        let fonts = resolve_indic_fonts(&detected, None, &HashMap::new(), &prefs);
+        assert_eq!(fonts[&IndicScript::Thai], "SpecialThai");
+        assert_eq!(fonts[&IndicScript::Devanagari], "CatchAll");
+    }
+
+    #[test]
+    fn test_resolve_indic_fonts_frontmatter_override() {
+        let mut detected = HashSet::new();
+        detected.insert(IndicScript::Devanagari);
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.indicFont".to_string(),
+            serde_json::Value::String("PrefFont".to_string()),
+        );
+        let mut fm_fonts = HashMap::new();
+        fm_fonts.insert("devanagari".to_string(), "FrontmatterFont".to_string());
+        let fonts = resolve_indic_fonts(&detected, None, &fm_fonts, &prefs);
+        assert_eq!(fonts[&IndicScript::Devanagari], "FrontmatterFont");
+    }
+
+    #[test]
+    fn test_resolve_indic_fonts_frontmatter_catchall() {
+        let mut detected = HashSet::new();
+        detected.insert(IndicScript::Bengali);
+        let prefs = preferences::Preferences::default();
+        let fonts = resolve_indic_fonts(&detected, Some("CatchAllFM"), &HashMap::new(), &prefs);
+        assert_eq!(fonts[&IndicScript::Bengali], "CatchAllFM");
+    }
+
+    #[test]
+    fn test_resolve_indic_fonts_empty_pref_ignored() {
+        let mut detected = HashSet::new();
+        detected.insert(IndicScript::Thai);
+        let mut prefs = preferences::Preferences::default();
+        prefs.extra.insert(
+            "academic.indicFont".to_string(),
+            serde_json::Value::String("".to_string()),
+        );
+        let fonts = resolve_indic_fonts(&detected, None, &HashMap::new(), &prefs);
+        assert_eq!(fonts[&IndicScript::Thai], IndicScript::Thai.default_font());
+    }
+
+    // --- Indic preamble tests ---
+
+    #[test]
+    fn test_xelatex_preamble_contains_fontspec() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "TestFont".to_string());
+        let file = build_indic_preamble(&fonts, Some(Path::new("xelatex"))).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("\\usepackage{fontspec}"));
+    }
+
+    #[test]
+    fn test_xelatex_preamble_contains_newfontfamily() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Thai, "Thonburi".to_string());
+        let file = build_indic_preamble(&fonts, Some(Path::new("xelatex"))).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("\\newfontfamily\\thaifont[Script=Thai,Renderer=HarfBuzz]{Thonburi}"));
+    }
+
+    #[test]
+    fn test_xelatex_preamble_no_ucharclasses() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "TestFont".to_string());
+        let file = build_indic_preamble(&fonts, Some(Path::new("xelatex"))).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("\\newfontfamily\\devanagarifont"));
+        assert!(!content.contains("ucharclasses"));
+        assert!(!content.contains("\\setTransitionsFor"));
+    }
+
+    #[test]
+    fn test_lualatex_preamble_no_ucharclasses() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "TestFont".to_string());
+        let file = build_indic_preamble(&fonts, Some(Path::new("lualatex"))).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("\\newfontfamily\\devanagarifont"));
+        assert!(!content.contains("\\usepackage{ucharclasses}"));
+        assert!(!content.contains("\\setTransitionsFor"));
+        assert!(!content.contains("Renderer=HarfBuzz"));
+    }
+
+    #[test]
+    fn test_pdflatex_preamble_skips() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "TestFont".to_string());
+        let file = build_indic_preamble(&fonts, Some(Path::new("pdflatex"))).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("skipped for pdflatex"));
+        assert!(!content.contains("\\usepackage{fontspec}"));
+    }
+
+    // --- Frontmatter Indic fields tests ---
+
+    #[test]
+    fn test_extract_frontmatter_indic_font() {
+        let dir = std::env::temp_dir().join("test_fm_indic_font");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nindic-font: \"Noto Sans Devanagari\"\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert_eq!(fm.indic_font.as_deref(), Some("Noto Sans Devanagari"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_extract_frontmatter_indic_fonts_map() {
+        let dir = std::env::temp_dir().join("test_fm_indic_fonts_map");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nindic-fonts:\n  devanagari: \"Font A\"\n  thai: \"Font B\"\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert_eq!(fm.indic_fonts.get("devanagari").unwrap(), "Font A");
+        assert_eq!(fm.indic_fonts.get("thai").unwrap(), "Font B");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_extract_frontmatter_no_indic_fields() {
+        let dir = std::env::temp_dir().join("test_fm_no_indic");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\ntitle: Test\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert!(fm.indic_font.is_none());
+        assert!(fm.indic_fonts.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // --- Lua filter tests ---
+
+    #[test]
+    fn test_build_indic_lua_filter_basic() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "TestFont".to_string());
+        let file = build_indic_lua_filter(&fonts).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("FORMAT:match 'latex'"));
+        assert!(content.contains("devanagarifont"));
+        assert!(content.contains("0x0900"));
+        assert!(content.contains("0x097F"));
+        assert!(content.contains("function Str(el)"));
+    }
+
+    #[test]
+    fn test_build_indic_lua_filter_multiple_scripts() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "FontA".to_string());
+        fonts.insert(IndicScript::Thai, "FontB".to_string());
+        let file = build_indic_lua_filter(&fonts).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("devanagarifont"));
+        assert!(content.contains("thaifont"));
+    }
+
+    #[test]
+    fn test_build_indic_lua_filter_sorted_deterministic() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Thai, "FontB".to_string());
+        fonts.insert(IndicScript::Bengali, "FontA".to_string());
+        fonts.insert(IndicScript::Devanagari, "FontC".to_string());
+        let file = build_indic_lua_filter(&fonts).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        let pos_bengali = content.find("bengalifont").unwrap();
+        let pos_devanagari = content.find("devanagarifont").unwrap();
+        let pos_thai = content.find("thaifont").unwrap();
+        assert!(pos_bengali < pos_devanagari, "bengali should come before devanagari");
+        assert!(pos_devanagari < pos_thai, "devanagari should come before thai");
+    }
+
+    #[test]
+    fn test_build_indic_lua_filter_latex_escape() {
+        let mut fonts = HashMap::new();
+        fonts.insert(IndicScript::Devanagari, "TestFont".to_string());
+        let file = build_indic_lua_filter(&fonts).unwrap();
+        let content = std::fs::read_to_string(file.path()).unwrap();
+        assert!(content.contains("latex_escape"));
+        assert!(content.contains("textbackslash"));
+    }
+
+    // --- unicode_ranges tests ---
+
+    #[test]
+    fn test_unicode_ranges_devanagari() {
+        let ranges = IndicScript::Devanagari.unicode_ranges();
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(ranges[0], (0x0900, 0x097F));
+        assert_eq!(ranges[1], (0xA8E0, 0xA8FF));
+        assert_eq!(ranges[2], (0x11B00, 0x11B5F));
+    }
+
+    #[test]
+    fn test_unicode_ranges_single_range() {
+        let ranges = IndicScript::Bengali.unicode_ranges();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0], (0x0980, 0x09FF));
+    }
+
+    #[test]
+    fn test_detect_indic_scripts_matches_unicode_ranges() {
+        for &script in &ALL_INDIC_SCRIPTS {
+            for &(lo, _hi) in script.unicode_ranges() {
+                if let Some(c) = char::from_u32(lo) {
+                    let text = String::from(c);
+                    let detected = detect_indic_scripts(&text);
+                    assert!(
+                        detected.contains(&script),
+                        "detect_indic_scripts should find {:?} for U+{:04X}",
+                        script,
+                        lo,
+                    );
+                }
+            }
+        }
     }
 }
