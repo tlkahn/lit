@@ -145,7 +145,7 @@ export function parseTrigger(
       lastSemi !== -1
         ? before.lastIndexOf("@", posInLine)
         : bracketIdx + 1;
-    return { from: afterColon, phase: "id", refType, bibFrom: lineStart + atPos };
+    return { from: afterColon, phase: "id", refType, bibFrom: lineStart + atPos + 1 };
   }
 
   return { from: afterColon, phase: "id", refType };
