@@ -595,7 +595,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       )}
       <div
         ref={scrollContainerRef}
-        className={canvasReady ? `flex-1 overflow-auto px-4 pb-4${panCursor ? ` cursor-${panCursor}` : ""}` : undefined}
+        className={canvasReady ? `w-full flex-1 overflow-auto px-4 pb-4${panCursor ? ` cursor-${panCursor}` : ""}` : undefined}
         style={canvasReady ? undefined : { display: "none" }}
         onMouseDown={canvasReady ? handleMouseDown : undefined}
         onMouseMove={canvasReady ? handleMouseMove : undefined}

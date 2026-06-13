@@ -51,6 +51,11 @@
   cursor: default;
 }
 
+.cursor-grab .textLayer span,
+.cursor-grabbing .textLayer span {
+  cursor: inherit;
+}
+
 .textLayer ::selection {
   background: rgba(0, 0, 255, 0.25);
 }
