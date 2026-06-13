@@ -366,6 +366,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-academicDefaultReferenceDoc",
     nullable: true,
   },
+  {
+    category: "Academic Export",
+    label: "Indic Font",
+    storeField: "academicIndicFont",
+    jsonKey: "academic.indicFont",
+    controlType: "text",
+    testId: "settings-academicIndicFont",
+    nullable: true,
+    keywords: ["devanagari", "hindi", "sanskrit", "bengali", "tamil", "telugu",
+               "kannada", "malayalam", "gujarati", "gurmukhi", "oriya", "sinhala",
+               "thai", "khmer", "lao", "myanmar", "tibetan", "indic", "font"],
+  },
   // Experimental
   {
     category: "Experimental",

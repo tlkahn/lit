@@ -51,6 +51,7 @@ export interface PreferencesState {
   academicDefaultCsl: string;
   academicDefaultTemplate: string;
   academicDefaultReferenceDoc: string;
+  academicIndicFont: string;
   defaultViewMode: ViewMode;
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
@@ -182,6 +183,7 @@ function mapPreferences(prefs: Preferences) {
     academicDefaultCsl: (prefs["academic.defaultCsl"] as string) ?? "",
     academicDefaultTemplate: (prefs["academic.defaultTemplate"] as string) ?? "",
     academicDefaultReferenceDoc: (prefs["academic.defaultReferenceDoc"] as string) ?? "",
+    academicIndicFont: (prefs["academic.indicFont"] as string) ?? "",
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
@@ -271,6 +273,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   academicDefaultCsl: "",
   academicDefaultTemplate: "",
   academicDefaultReferenceDoc: "",
+  academicIndicFont: "",
   annotationPrefillLastUsed: false,
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
