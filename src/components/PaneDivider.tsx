@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from "react";
 import { usePaneStore, findSplitByPath } from "../stores/panes";
-import { MIN_PANE_PX } from "../lib/paneConstants";
+import { MIN_PANE_PX, DIVIDER_PX } from "../lib/paneConstants";
 
 const MIN_PANE_PCT = 10;
 
@@ -143,7 +143,7 @@ export function PaneDivider({ splitPath, direction, index }: PaneDividerProps) {
       className="flex-none relative flex items-center justify-center"
       style={{
         cursor: isHorizontal ? "ew-resize" : "ns-resize",
-        ...(isHorizontal ? { width: 4 } : { height: 4 }),
+        ...(isHorizontal ? { width: DIVIDER_PX } : { height: DIVIDER_PX }),
       }}
       onMouseDown={handleMouseDown}
       onDoubleClick={handleDoubleClick}

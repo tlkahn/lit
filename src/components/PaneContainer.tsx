@@ -5,7 +5,7 @@ import type { PaneNode } from "../stores/panes";
 import { EditorPane } from "./EditorPane";
 import { PdfViewerPane } from "./PdfViewerPane";
 import { PaneDivider } from "./PaneDivider";
-import { MIN_PANE_PX } from "../lib/paneConstants";
+import { MIN_PANE_PX, DIVIDER_PX } from "../lib/paneConstants";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 
 // CodeEditorPane is lazy-loaded so its (Phase 3) CodeMirror grammar stack is
@@ -42,6 +42,8 @@ function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
   const directionClass =
     node.direction === "horizontal" ? "flex-row" : "flex-col";
 
+  const dividerTotalPx = (node.children.length - 1) * DIVIDER_PX;
+
   const items: React.ReactNode[] = [];
   node.children.forEach((child, i) => {
     if (i > 0) {
@@ -54,11 +56,13 @@ function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
         />,
       );
     }
+    const size = node.sizes[i]!;
+    const dividerShare = dividerTotalPx * size / 100;
     items.push(
       <div
         key={child.id}
         style={{
-          flexBasis: `${node.sizes[i]}%`,
+          flexBasis: `calc(${size}% - ${dividerShare}px)`,
           ...(node.direction === "horizontal"
             ? { minWidth: MIN_PANE_PX }
             : { minHeight: MIN_PANE_PX }),
