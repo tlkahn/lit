@@ -959,6 +959,8 @@ describe("App", () => {
             return false;
           case "cancel_title_suggestion":
             return undefined;
+          case "allow_asset_scope":
+            return undefined;
           default:
             throw new Error(`Unknown command: ${cmd}`);
         }
@@ -994,7 +996,11 @@ describe("App", () => {
         expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
         expect(screen.getByTestId("editor")).toBeInTheDocument();
       });
-      expect(loadDocumentMock).toHaveBeenCalledTimes(1);
+      // allowAssetScope (invoked before loadDocument) adds an extra async
+      // step, so loadDocument may not have fired yet when the DOM appears.
+      await waitFor(() => {
+        expect(loadDocumentMock).toHaveBeenCalledTimes(1);
+      });
 
       // First Ctrl-W: closes the focused md pane, split collapses to the PDF.
       // (The PDF pane remounts at its new tree position, so loadDocument may

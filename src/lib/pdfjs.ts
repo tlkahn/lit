@@ -19,12 +19,18 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 // ---------------------------------------------------------------------------
-// CMap + standard-font paths — served as static assets from /pdfjs/…
-// (copied into dist/ at build time by vite-plugin-static-copy).
+// CMap + standard-font paths — served as static assets.
+// The subdirectory name MUST match the `dest` values in the viteStaticCopy
+// targets in vite.config.ts. See PDFJS_ASSET_DIR.
+//
+// NOTE: A packaged-build CJK smoke test (e.g., opening a CJK PDF in the
+// production Tauri app) is still needed to verify cmap loading end-to-end,
+// since vitest cannot exercise the actual HTTP serving layer.
 // ---------------------------------------------------------------------------
-export const CMAP_URL = "/pdfjs/cmaps/";
+export const PDFJS_ASSET_DIR = "pdfjs";
+export const CMAP_URL = `${import.meta.env.BASE_URL}${PDFJS_ASSET_DIR}/cmaps/`;
 export const CMAP_PACKED = true;
-export const STANDARD_FONT_DATA_URL = "/pdfjs/standard_fonts/";
+export const STANDARD_FONT_DATA_URL = `${import.meta.env.BASE_URL}${PDFJS_ASSET_DIR}/standard_fonts/`;
 
 // ---------------------------------------------------------------------------
 // Convenience loader — wraps getDocument with the standard config.

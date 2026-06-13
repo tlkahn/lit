@@ -231,6 +231,25 @@ pub fn open_workspace(
     Ok(pages)
 }
 
+/// Extend the Tauri asset protocol scope to include a single file.
+///
+/// The PDF viewer (`PdfViewer.tsx`) calls this before loading a PDF via
+/// `convertFileSrc` so that files outside the scanned workspace root
+/// (e.g. companions found via absolute search paths) are served by the
+/// asset protocol. The call is idempotent — re-allowing an already-scoped
+/// file is harmless.
+#[tauri::command]
+pub fn allow_asset_scope(
+    path: String,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let file_path = PathBuf::from(&path);
+    app_handle
+        .asset_protocol_scope()
+        .allow_file(&file_path)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn list_pages(
     window: tauri::Window,

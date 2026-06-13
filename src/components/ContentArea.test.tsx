@@ -14,9 +14,16 @@ import * as commandRegistryModule from "../lib/commandRegistry";
 vi.mock("../lib/pdfjs", () => {
   const mockRender = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
   const mockGetViewport = vi.fn(() => ({ width: 100, height: 200 }));
-  const mockGetPage = vi.fn(() => Promise.resolve({ getViewport: mockGetViewport, render: mockRender }));
+  const mockGetTextContent = vi.fn(() => Promise.resolve({ items: [], styles: {}, lang: null }));
+  const mockGetAnnotations = vi.fn(() => Promise.resolve([]));
+  const mockGetPage = vi.fn(() => Promise.resolve({ getViewport: mockGetViewport, render: mockRender, getTextContent: mockGetTextContent, getAnnotations: mockGetAnnotations }));
   const mockDoc = { numPages: 2, getPage: mockGetPage, destroy: vi.fn() };
-  return { loadDocument: vi.fn(() => Promise.resolve(mockDoc)) };
+  return {
+    loadDocument: vi.fn(() => Promise.resolve(mockDoc)),
+    TextLayer: vi.fn().mockImplementation(() => ({ render: vi.fn(() => Promise.resolve()), cancel: vi.fn() })),
+    AnnotationLayer: vi.fn().mockImplementation(() => ({ render: vi.fn(() => Promise.resolve()) })),
+    setLayerDimensions: vi.fn(),
+  };
 });
 
 vi.mock("sigma", () => ({
@@ -111,6 +118,7 @@ beforeEach(() => {
     if (cmd === "get_pagerank") return {};
     if (cmd === "get_graph_positions") return {};
     if (cmd === "acknowledge_file_hash") return null;
+    if (cmd === "allow_asset_scope") return undefined;
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -771,6 +779,7 @@ describe("ContentArea PDF rendering", () => {
 
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -804,6 +813,7 @@ describe("ContentArea PDF rendering", () => {
 
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -845,6 +855,7 @@ describe("ContentArea PDF rendering", () => {
 
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -877,6 +888,7 @@ describe("ContentArea PDF rendering", () => {
 
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 

@@ -138,4 +138,108 @@ describe("createPdfLinkService", () => {
     const svc = makeSvc();
     expect(svc.getAnchorUrl(null)).toBe("#");
   });
+
+  // ---------- goToDestination ----------
+
+  describe("goToDestination", () => {
+    function makePdfDocument(overrides: {
+      getDestination?: ReturnType<typeof vi.fn>;
+      getPageIndex?: ReturnType<typeof vi.fn>;
+    } = {}) {
+      return {
+        getDestination: overrides.getDestination ?? vi.fn(),
+        getPageIndex: overrides.getPageIndex ?? vi.fn(),
+      };
+    }
+
+    function makeSvcWithDoc(
+      pdfDocument: ReturnType<typeof makePdfDocument> | null = null,
+      pagesCount = 10,
+    ) {
+      return createPdfLinkService({
+        pagesCount,
+        getCurrentPage,
+        goToPage,
+        pdfDocument,
+      });
+    }
+
+    it("resolves a named string destination and navigates", async () => {
+      const pdfDocument = makePdfDocument({
+        getDestination: vi.fn().mockResolvedValue([{ num: 5, gen: 0 }, "/XYZ", 0, 792, null]),
+        getPageIndex: vi.fn().mockResolvedValue(4),
+      });
+      const svc = makeSvcWithDoc(pdfDocument);
+      await svc.goToDestination("chapter2");
+      expect(pdfDocument.getDestination).toHaveBeenCalledWith("chapter2");
+      expect(pdfDocument.getPageIndex).toHaveBeenCalledWith({ num: 5, gen: 0 });
+      expect(goToPage).toHaveBeenCalledWith(4);
+    });
+
+    it("navigates with an explicit array destination (object ref)", async () => {
+      const pdfDocument = makePdfDocument({
+        getPageIndex: vi.fn().mockResolvedValue(2),
+      });
+      const svc = makeSvcWithDoc(pdfDocument);
+      await svc.goToDestination([{ num: 3, gen: 0 }, "/Fit"]);
+      expect(pdfDocument.getPageIndex).toHaveBeenCalledWith({ num: 3, gen: 0 });
+      expect(goToPage).toHaveBeenCalledWith(2);
+    });
+
+    it("navigates with an explicit array destination (integer ref)", async () => {
+      const pdfDocument = makePdfDocument();
+      const svc = makeSvcWithDoc(pdfDocument);
+      await svc.goToDestination([5, "/Fit"]);
+      expect(pdfDocument.getPageIndex).not.toHaveBeenCalled();
+      expect(goToPage).toHaveBeenCalledWith(5);
+    });
+
+    it("logs error and does not navigate when named destination resolves to null", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const pdfDocument = makePdfDocument({
+        getDestination: vi.fn().mockResolvedValue(null),
+      });
+      const svc = makeSvcWithDoc(pdfDocument);
+      await svc.goToDestination("missing");
+      expect(goToPage).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it("logs error and does not navigate when getPageIndex rejects", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const pdfDocument = makePdfDocument({
+        getPageIndex: vi.fn().mockRejectedValue(new Error("bad ref")),
+      });
+      const svc = makeSvcWithDoc(pdfDocument);
+      await svc.goToDestination([{ num: 99, gen: 0 }, "/Fit"]);
+      expect(goToPage).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it("does not navigate when resolved page index is out of range", async () => {
+      const pdfDocument = makePdfDocument({
+        getPageIndex: vi.fn().mockResolvedValue(10), // pagesCount is 10, so index 10 is out of range
+      });
+      const svc = makeSvcWithDoc(pdfDocument, 10);
+      await svc.goToDestination([{ num: 99, gen: 0 }, "/Fit"]);
+      expect(goToPage).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when no pdfDocument is provided", async () => {
+      const svc = makeSvcWithDoc(null);
+      await svc.goToDestination("anything");
+      expect(goToPage).not.toHaveBeenCalled();
+    });
+
+    it("navigates to page 0 (first page) correctly", async () => {
+      const pdfDocument = makePdfDocument({
+        getPageIndex: vi.fn().mockResolvedValue(0),
+      });
+      const svc = makeSvcWithDoc(pdfDocument);
+      await svc.goToDestination([{ num: 1, gen: 0 }, "/Fit"]);
+      expect(goToPage).toHaveBeenCalledWith(0);
+    });
+  });
 });

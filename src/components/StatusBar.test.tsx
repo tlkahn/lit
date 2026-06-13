@@ -18,8 +18,10 @@ import * as pdfPaneRef from "../lib/pdfPaneRef";
 // ---------------------------------------------------------------------------
 const mockPdjsRender = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
 const mockPdjsGetViewport = vi.fn(() => ({ width: 1224, height: 1584 }));
+const mockPdjsGetTextContent = vi.fn(() => Promise.resolve({ items: [], styles: {}, lang: null }));
+const mockPdjsGetAnnotations = vi.fn(() => Promise.resolve([] as object[]));
 const mockPdjsGetPage = vi.fn(() =>
-  Promise.resolve({ getViewport: mockPdjsGetViewport, render: mockPdjsRender }),
+  Promise.resolve({ getViewport: mockPdjsGetViewport, render: mockPdjsRender, getTextContent: mockPdjsGetTextContent, getAnnotations: mockPdjsGetAnnotations }),
 );
 const mockPdjsDestroy = vi.fn();
 const mockPdjsDoc = { numPages: 3, getPage: mockPdjsGetPage, destroy: mockPdjsDestroy };
@@ -27,6 +29,9 @@ const mockLoadDocument = vi.fn(() => Promise.resolve(mockPdjsDoc));
 
 vi.mock("../lib/pdfjs", () => ({
   loadDocument: (...args: unknown[]) => (mockLoadDocument as (...a: unknown[]) => unknown)(...args),
+  TextLayer: class { render() { return Promise.resolve(); } cancel() {} },
+  AnnotationLayer: class { render() { return Promise.resolve(); } },
+  setLayerDimensions: () => {},
 }));
 
 beforeEach(() => {
@@ -35,8 +40,12 @@ beforeEach(() => {
   mockLoadDocument.mockReset();
   mockLoadDocument.mockImplementation(() => Promise.resolve(mockPdjsDoc));
   mockPdjsGetPage.mockReset();
+  mockPdjsGetTextContent.mockReset();
+  mockPdjsGetTextContent.mockReturnValue(Promise.resolve({ items: [], styles: {}, lang: null }));
+  mockPdjsGetAnnotations.mockReset();
+  mockPdjsGetAnnotations.mockReturnValue(Promise.resolve([] as object[]));
   mockPdjsGetPage.mockImplementation(() =>
-    Promise.resolve({ getViewport: mockPdjsGetViewport, render: mockPdjsRender }),
+    Promise.resolve({ getViewport: mockPdjsGetViewport, render: mockPdjsRender, getTextContent: mockPdjsGetTextContent, getAnnotations: mockPdjsGetAnnotations }),
   );
   mockPdjsRender.mockReset();
   mockPdjsRender.mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() });
@@ -787,6 +796,8 @@ describe("StatusBar", () => {
       (mockPdjsGetPage as ReturnType<typeof vi.fn>).mockImplementation((pageNum: number) => {
         const page = {
           getViewport: mockPdjsGetViewport,
+          getTextContent: mockPdjsGetTextContent,
+          getAnnotations: mockPdjsGetAnnotations,
           render: () => {
             if (pageNum === 2) {
               // page 2 (0-based index 1) render never resolves

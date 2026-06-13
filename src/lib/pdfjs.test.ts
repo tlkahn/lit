@@ -31,7 +31,7 @@ describe("pdfjs setup module", () => {
 
   it("exports CMAP_URL pointing to /pdfjs/cmaps/", async () => {
     const mod = await import("./pdfjs");
-    expect(mod.CMAP_URL).toBe("/pdfjs/cmaps/");
+    expect(mod.CMAP_URL).toBe(import.meta.env.BASE_URL + "pdfjs/cmaps/");
   });
 
   it("exports CMAP_PACKED as true", async () => {
@@ -41,7 +41,9 @@ describe("pdfjs setup module", () => {
 
   it("exports STANDARD_FONT_DATA_URL pointing to /pdfjs/standard_fonts/", async () => {
     const mod = await import("./pdfjs");
-    expect(mod.STANDARD_FONT_DATA_URL).toBe("/pdfjs/standard_fonts/");
+    expect(mod.STANDARD_FONT_DATA_URL).toBe(
+      import.meta.env.BASE_URL + "pdfjs/standard_fonts/",
+    );
   });
 
   it("loadDocument passes cMapUrl, cMapPacked, and standardFontDataUrl to getDocument", async () => {
@@ -54,9 +56,10 @@ describe("pdfjs setup module", () => {
     expect(mockGetDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "https://example.com/test.pdf",
-        cMapUrl: "/pdfjs/cmaps/",
+        cMapUrl: import.meta.env.BASE_URL + "pdfjs/cmaps/",
         cMapPacked: true,
-        standardFontDataUrl: "/pdfjs/standard_fonts/",
+        standardFontDataUrl:
+          import.meta.env.BASE_URL + "pdfjs/standard_fonts/",
       }),
     );
     expect(result).toBe(mockProxy);
@@ -73,15 +76,38 @@ describe("pdfjs setup module", () => {
     expect(mockGetDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.any(Uint8Array),
-        cMapUrl: "/pdfjs/cmaps/",
+        cMapUrl: import.meta.env.BASE_URL + "pdfjs/cmaps/",
         cMapPacked: true,
-        standardFontDataUrl: "/pdfjs/standard_fonts/",
+        standardFontDataUrl:
+          import.meta.env.BASE_URL + "pdfjs/standard_fonts/",
       }),
     );
     // url should not be set when passing ArrayBuffer
     const callArg = mockGetDocument.mock.calls[0]![0];
     expect(callArg.url).toBeUndefined();
     expect(result).toBe(mockProxy);
+  });
+
+  it("exports PDFJS_ASSET_DIR as the shared asset directory name", async () => {
+    const mod = await import("./pdfjs");
+    expect(mod.PDFJS_ASSET_DIR).toBe("pdfjs");
+  });
+
+  it("derives asset URLs from import.meta.env.BASE_URL", async () => {
+    const originalBase = import.meta.env.BASE_URL;
+    try {
+      import.meta.env.BASE_URL = "/subdir/";
+      vi.resetModules();
+      vi.doMock("pdfjs-dist", () => ({
+        GlobalWorkerOptions: mockGlobalWorkerOptions,
+        getDocument: mockGetDocument,
+      }));
+      const mod = await import("./pdfjs");
+      expect(mod.CMAP_URL).toBe("/subdir/pdfjs/cmaps/");
+      expect(mod.STANDARD_FONT_DATA_URL).toBe("/subdir/pdfjs/standard_fonts/");
+    } finally {
+      import.meta.env.BASE_URL = originalBase;
+    }
   });
 
   it("re-exports pdfjsLib for direct access", async () => {

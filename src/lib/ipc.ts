@@ -856,6 +856,17 @@ export async function ensureGraphReady(path: string): Promise<void> {
 }
 
 /**
+ * Extend the Tauri asset protocol scope to include a single file.
+ *
+ * Called by PdfViewer before loading a PDF via `convertFileSrc` so that
+ * files outside the workspace root (e.g. companions found via absolute
+ * search paths) are served by the asset protocol. Idempotent.
+ */
+export async function allowAssetScope(path: string): Promise<void> {
+  return invoke<void>("allow_asset_scope", { path });
+}
+
+/**
  * Given a workspace-relative markdown or PDF path, return the relative path of
  * its sibling with the swapped extension (md<->pdf) if it exists, else null.
  */

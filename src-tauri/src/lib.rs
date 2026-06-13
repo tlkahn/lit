@@ -301,6 +301,7 @@ pub fn run() {
             commands::workspace::list_pages,
             commands::workspace::get_workspace_path,
             commands::workspace::find_companion_file,
+            commands::workspace::allow_asset_scope,
             commands::workspace::open_workspace_window,
             commands::workspace::get_pending_workspace,
             commands::workspace::get_pending_file,

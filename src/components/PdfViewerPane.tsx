@@ -110,6 +110,11 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     );
   }
 
+  // pagePath can be an absolute path outside the workspace root (e.g. when
+  // a companion PDF is found via an absolute search path in preferences, or
+  // when restoring a saved layout that recorded such a path). PdfViewer.tsx
+  // handles extending the Tauri asset protocol scope before loading so that
+  // the asset:// URL works regardless of where the file lives on disk.
   const absolutePath = pagePath.startsWith("/") ? pagePath : `${workspacePath}/${pagePath}`;
 
   return (

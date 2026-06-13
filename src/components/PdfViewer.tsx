@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { allowAssetScope } from "../lib/ipc";
 import { loadDocument, TextLayer, AnnotationLayer, setLayerDimensions } from "../lib/pdfjs";
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from "../lib/pdfjs";
 import { createPdfLinkService } from "../lib/pdfLinkService";
@@ -64,6 +65,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const textLayerInstanceRef = useRef<InstanceType<typeof TextLayer> | null>(null);
   const goToPageRef = useRef<(index: number) => void>(() => {});
   const pageCountRef = useRef(0);
+  const currentPageProxyRef = useRef<PDFPageProxy | null>(null);
+  // Cache text content and annotations per page index to avoid re-fetching
+  // from the pdf.js worker on every zoom re-render (only the scale changes).
+  const layerCacheRef = useRef<Map<number, { textContent: Awaited<ReturnType<PDFPageProxy['getTextContent']>>; annotations: unknown[] }>>(new Map());
 
   // Keep an always-current ref to onPageChange so the mount effect can publish
   // the initial page without listing onPageChange as a dependency (which would
@@ -77,14 +82,24 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     onPageCountRef.current = onPageCount;
   }, [onPageCount]);
 
-  const renderTextLayer = useCallback(async (page: PDFPageProxy, container: HTMLDivElement, viewport: PageViewport) => {
+  const renderTextLayer = useCallback(async (
+    page: PDFPageProxy,
+    container: HTMLDivElement,
+    viewport: PageViewport,
+    navSeq: number,
+    cachedTextContent?: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  ) => {
     textLayerInstanceRef.current?.cancel();
-    container.innerHTML = "";
 
-    const textContent = await page.getTextContent();
+    const textContent = cachedTextContent ?? await page.getTextContent();
+    if (navSeqRef.current !== navSeq) return; // stale — bail
+
+    container.innerHTML = "";
     const textLayer = new TextLayer({ textContentSource: textContent, container, viewport });
     textLayerInstanceRef.current = textLayer;
     await textLayer.render();
+    if (navSeqRef.current !== navSeq) { container.innerHTML = ""; return; } // stale — clean up
+
     setLayerDimensions(container, viewport);
   }, []);
 
@@ -92,16 +107,20 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     page: PDFPageProxy,
     container: HTMLDivElement,
     viewport: PageViewport,
+    navSeq: number,
+    cachedAnnotations?: unknown[],
   ) => {
-    container.innerHTML = "";
+    const annotations = (cachedAnnotations ?? await page.getAnnotations({ intent: "display" })) as Awaited<ReturnType<PDFPageProxy['getAnnotations']>>;
+    if (navSeqRef.current !== navSeq) return; // stale — bail
 
-    const annotations = await page.getAnnotations({ intent: "display" });
+    container.innerHTML = "";
     if (annotations.length === 0) return;
 
     const linkService = createPdfLinkService({
       pagesCount: pageCountRef.current,
       getCurrentPage: () => currentPageRef.current,
       goToPage: (idx: number) => goToPageRef.current(idx),
+      pdfDocument: pdfDoc,
     });
 
     const annotationLayer = new AnnotationLayer({
@@ -123,25 +142,26 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       renderForms: false,
     });
 
+    if (navSeqRef.current !== navSeq) { container.innerHTML = ""; return; } // stale — clean up
+
     setLayerDimensions(container, viewport);
   }, []);
 
-  const renderPageToCanvas = useCallback(async (page: PDFPageProxy) => {
+  const renderPageToCanvas = useCallback(async (page: PDFPageProxy, pageIndex: number) => {
+    const navSeq = navSeqRef.current;
     renderTaskRef.current?.cancel();
 
     const dpr = window.devicePixelRatio || 1;
     const zoom = zoomLevelRef.current;
     const effectiveScale = dpr * zoom;
     const canvasScale = Math.min(effectiveScale, MAX_CANVAS_SCALE);
-    const cssScale = effectiveScale / canvasScale;
-
     const viewport = page.getViewport({ scale: canvasScale });
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
-    const cssWidth = Math.floor(viewport.width / canvasScale * cssScale);
+    const cssWidth = Math.floor(viewport.width / canvasScale * zoom);
     canvas.style.width = cssWidth + "px";
     canvas.style.height = "auto";
 
@@ -164,13 +184,33 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       throw e;
     }
 
+    // Defense-in-depth: if a newer operation bumped navSeq after the canvas
+    // render completed but before we kick off text/annotation layer setup,
+    // bail early so stale layers don't overwrite current content.
+    if (navSeqRef.current !== navSeq) return;
+
     // Render text and annotation layers using the CSS-space viewport
     const cssViewport = page.getViewport({ scale: zoom });
+
+    // Look up or populate the layer cache for this page. Text content and
+    // annotations are scale-independent, so we can reuse them across zoom
+    // re-renders of the same page without re-fetching from the worker.
+    let cached = layerCacheRef.current.get(pageIndex);
+    if (!cached) {
+      const [textContent, annotations] = await Promise.all([
+        page.getTextContent(),
+        page.getAnnotations({ intent: "display" }),
+      ]);
+      if (navSeqRef.current !== navSeq) return;
+      cached = { textContent, annotations };
+      layerCacheRef.current.set(pageIndex, cached);
+    }
+
     if (textLayerRef.current) {
-      renderTextLayer(page, textLayerRef.current, cssViewport).catch(() => {});
+      renderTextLayer(page, textLayerRef.current, cssViewport, navSeq, cached.textContent).catch(() => {});
     }
     if (annotationLayerRef.current) {
-      renderAnnotationLayer(page, annotationLayerRef.current, cssViewport).catch(() => {});
+      renderAnnotationLayer(page, annotationLayerRef.current, cssViewport, navSeq, cached.annotations).catch(() => {});
     }
   }, [renderTextLayer, renderAnnotationLayer]);
 
@@ -186,12 +226,19 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     setZoomLevel(DEFAULT_ZOOM);
     zoomLevelRef.current = DEFAULT_ZOOM;
     renderTaskRef.current?.cancel();
+    layerCacheRef.current.clear();
 
     let cancelled = false;
     let localDoc: PDFDocumentProxy | null = null;
 
     (async () => {
       try {
+        // Extend the asset protocol scope to include this file before
+        // converting it to an asset:// URL. This is necessary for PDFs
+        // outside the workspace root (e.g. companions found via absolute
+        // search paths in preferences). The call is idempotent — re-allowing
+        // an already-scoped file is harmless.
+        await allowAssetScope(filePath);
         const url = convertFileSrc(filePath);
         const doc = await loadDocument(url);
         if (cancelled) {
@@ -207,9 +254,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         const page = await doc.getPage(1); // pdf.js uses 1-based page numbers
         if (cancelled) return;
 
-        await renderPageToCanvas(page);
+        await renderPageToCanvas(page, 0);
         if (cancelled) return;
 
+        currentPageProxyRef.current = page;
         setCanvasReady(true);
         // Publish the initial page exactly once so the parent's status bar and
         // reverse sync are seeded. The goToPage same-page guard would otherwise
@@ -226,6 +274,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       renderTaskRef.current?.cancel();
       textLayerInstanceRef.current?.cancel();
       textLayerInstanceRef.current = null;
+      currentPageProxyRef.current = null;
       localDoc?.destroy();
     };
   }, [filePath, paneId, renderPageToCanvas]);
@@ -236,6 +285,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       // Monotonic navigation token: any newer navigation supersedes an
       // in-flight slow render so it cannot revert us.
       const mySeq = ++navSeqRef.current;
+      // Save the previous page so we can revert on failure.
+      const prevPage = currentPageRef.current;
       // Advance the ref synchronously to the navigation target so a rapid
       // second key-press (which reads currentPageRef before this invocation's
       // awaited render commits) derives the *next* target instead of recomputing
@@ -247,15 +298,26 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         const page = await pdfDoc!.getPage(index + 1); // 0-based to 1-based
         if (filePathRef.current !== filePath || navSeqRef.current !== mySeq) return;
 
-        await renderPageToCanvas(page);
+        await renderPageToCanvas(page, index);
         if (navSeqRef.current !== mySeq) return;
+
+        // Release decoded images / operator list / fonts from the
+        // previously-displayed page to bound memory on long reads.
+        const oldProxy = currentPageProxyRef.current;
+        currentPageProxyRef.current = page;
+        if (oldProxy && oldProxy !== page) {
+          oldProxy.cleanup();
+        }
 
         setCurrentPage(index);
         currentPageRef.current = index;
         onPageChange?.(index);
       } catch (err) {
         if (navSeqRef.current === mySeq) {
-          setError(err instanceof Error ? err.message : String(err));
+          // Per-page navigation failures are non-fatal: revert to the previous
+          // page and log a warning instead of blowing away the entire viewer.
+          currentPageRef.current = prevPage;
+          console.warn("[PdfViewer] page navigation failed:", err);
         }
       } finally {
         // Only tear down the spinner if this navigation is still current. A
@@ -298,6 +360,10 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
 
   const reRenderAtZoom = useCallback(
     async (newZoom: number) => {
+      // Bump navSeq so this zoom participates in the same coordination
+      // protocol as goToPage. Any in-flight navigation (or prior zoom)
+      // whose captured seq no longer matches will bail, and vice-versa.
+      const mySeq = ++navSeqRef.current;
       zoomLevelRef.current = newZoom;
       setZoomLevel(newZoom);
       if (!pdfDoc) return;
@@ -310,10 +376,19 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
 
       try {
         const page = await pdfDoc.getPage(currentPageRef.current + 1);
-        if (zoomLevelRef.current !== newZoom) return;
+        if (navSeqRef.current !== mySeq) return;
 
-        await renderPageToCanvas(page);
-        if (zoomLevelRef.current !== newZoom) return;
+        await renderPageToCanvas(page, currentPageRef.current);
+        if (navSeqRef.current !== mySeq) return;
+
+        // Update the proxy ref so a subsequent goToPage can clean up
+        // this page. For same-page zoom, getPage returns the same cached
+        // proxy, so oldProxy === page and no cleanup fires.
+        const oldProxy = currentPageProxyRef.current;
+        currentPageProxyRef.current = page;
+        if (oldProxy && oldProxy !== page) {
+          oldProxy.cleanup();
+        }
 
         if (container) {
           requestAnimationFrame(() => {
@@ -334,7 +409,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       // Zoom shortcuts: Cmd/Ctrl + =, +, -, 0
       if (isMod && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
-        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
         const idx = ZOOM_STEPS.findIndex(s => s > zoomLevelRef.current);
         if (idx === -1) return;
         reRenderAtZoom(ZOOM_STEPS[idx]!);
@@ -342,7 +417,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       }
       if (isMod && e.key === "-") {
         e.preventDefault();
-        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
         // Find the last step below current zoom
         let prevIdx = -1;
         for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) {
@@ -357,7 +432,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
       }
       if (isMod && e.key === "0") {
         e.preventDefault();
-        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
         reRenderAtZoom(DEFAULT_ZOOM);
         return;
       }

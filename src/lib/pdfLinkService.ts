@@ -6,14 +6,26 @@
  */
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+/**
+ * Minimal interface for resolving PDF destinations.
+ * Matches the subset of PDFDocumentProxy needed by goToDestination,
+ * keeping coupling low and testing easy.
+ */
+export interface PdfDocumentForLinkService {
+  getDestination(id: string): Promise<Array<unknown> | null>;
+  getPageIndex(ref: { num: number; gen: number }): Promise<number>;
+}
+
 export function createPdfLinkService({
   pagesCount,
   getCurrentPage,
   goToPage,
+  pdfDocument = null,
 }: {
   pagesCount: number;
   getCurrentPage: () => number;
   goToPage: (pageIndex: number) => void;
+  pdfDocument?: PdfDocumentForLinkService | null;
 }) {
   return {
     get pagesCount() {
@@ -41,8 +53,47 @@ export function createPdfLinkService({
       /* no-op */
     },
 
-    async goToDestination(_dest: string | unknown[]) {
-      // Named / explicit destinations are not supported in the minimal viewer.
+    async goToDestination(dest: string | unknown[]) {
+      if (!pdfDocument) return;
+
+      let explicitDest: unknown[] | null;
+
+      if (typeof dest === "string") {
+        explicitDest = await pdfDocument.getDestination(dest);
+      } else if (Array.isArray(dest)) {
+        explicitDest = dest;
+      } else {
+        console.error(`[pdfLinkService] goToDestination: invalid destination type`, dest);
+        return;
+      }
+
+      if (!Array.isArray(explicitDest)) {
+        console.error(`[pdfLinkService] goToDestination: destination resolved to non-array`, explicitDest);
+        return;
+      }
+
+      const destRef = explicitDest[0];
+      let pageIndex: number;
+
+      if (typeof destRef === "object" && destRef !== null) {
+        try {
+          pageIndex = await pdfDocument.getPageIndex(destRef as { num: number; gen: number });
+        } catch (err) {
+          console.error(`[pdfLinkService] goToDestination: getPageIndex failed`, err);
+          return;
+        }
+      } else if (typeof destRef === "number" && Number.isInteger(destRef)) {
+        pageIndex = destRef;
+      } else {
+        console.error(`[pdfLinkService] goToDestination: invalid destRef`, destRef);
+        return;
+      }
+
+      if (pageIndex < 0 || pageIndex >= pagesCount) {
+        return;
+      }
+
+      goToPage(pageIndex);
     },
 
     goToPage(val: number | string) {
