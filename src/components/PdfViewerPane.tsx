@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
@@ -86,8 +86,13 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   // Keep the module-level focusedPaneId in sync when this pane becomes focused
   // programmatically (e.g., closing a sibling pane causes fallback focus via the
   // store). Mirrors the same effect in CodeEditorPane and EditorPane.
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (isFocused) setFocusedPane(paneId);
+    if (isFocused) {
+      setFocusedPane(paneId);
+      containerRef.current?.focus();
+    }
   }, [isFocused, paneId]);
 
   const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
@@ -119,6 +124,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   return (
     <div
+      ref={containerRef}
       data-testid="pdf-viewer-pane"
       data-pane-id={paneId}
       className={`flex min-h-0 flex-1 flex-col border-t-2 ${borderClass}`}
