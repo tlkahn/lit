@@ -4,9 +4,12 @@ import { classHighlighter, tagHighlighter, tags } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
 const shared = EditorView.baseTheme({
-  "&": { height: "100%" },
-  ".cm-scroller": { overflow: "auto", overscrollBehavior: "contain" },
+  "&": { height: "100%", containerType: "inline-size" },
+  ".cm-scroller": { overflow: "auto", overscrollBehavior: "contain", scrollbarGutter: "stable" },
   ".cm-content": {
+    minWidth: 0,
+    maxWidth: "100%",
+    overflowX: "clip",
     padding: "1rem 1.5rem",
     fontFamily: "var(--font-text-theme, var(--font-interface-theme, -apple-system, BlinkMacSystemFont, sans-serif))",
     fontSize: "0.875rem",

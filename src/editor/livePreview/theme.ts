@@ -176,10 +176,31 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   // Math
   ".cm-preview-math-inline": {
     padding: "0 2px",
+    display: "inline-block",
+    maxWidth: "50cqi",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    verticalAlign: "bottom",
+    position: "relative",
+  },
+  ".cm-preview-math-inline.is-clipped::after": {
+    content: '"\\2026"',
+    position: "absolute",
+    right: "0",
+    top: "0",
+    bottom: "0",
+    display: "flex",
+    alignItems: "center",
+    background: "linear-gradient(to right, transparent, var(--background-primary) 30%)",
+    paddingLeft: "1.5em",
+    paddingRight: "2px",
+    color: "var(--text-faint)",
   },
   ".cm-preview-math-display": {
     textAlign: "center",
     padding: "4px 0",
+    contain: "inline-size",
+    overflowX: "auto",
   },
   ".cm-preview-math-display .katex-display": {
     margin: "0.2em 0",

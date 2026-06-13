@@ -193,8 +193,8 @@ describe("PaneContainer", () => {
     const { getByTestId } = render(<PaneContainer />);
     const parentA = getByTestId("editor-pane-pane-a").parentElement!;
     const parentB = getByTestId("editor-pane-pane-b").parentElement!;
-    expect(parentA.style.flexBasis).toBe("30%");
-    expect(parentB.style.flexBasis).toBe("70%");
+    expect(parentA.style.flexBasis).toBe("calc(30% - 1.2px)");
+    expect(parentB.style.flexBasis).toBe("calc(70% - 2.8px)");
   });
 
   it("nested splits render correct tree structure", () => {
