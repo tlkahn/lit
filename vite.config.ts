@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { viteStaticCopy } from "vite-plugin-static-copy";
 
 function reactDevtools(): Plugin {
   return {
@@ -21,7 +22,25 @@ function reactDevtools(): Plugin {
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss(), reactDevtools()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    reactDevtools(),
+    viteStaticCopy({
+      targets: [
+        {
+          src: "node_modules/pdfjs-dist/cmaps/*",
+          // IMPORTANT: this directory name must match PDFJS_ASSET_DIR in src/lib/pdfjs.ts
+          dest: "pdfjs/cmaps",
+        },
+        {
+          src: "node_modules/pdfjs-dist/standard_fonts/*",
+          // IMPORTANT: this directory name must match PDFJS_ASSET_DIR in src/lib/pdfjs.ts
+          dest: "pdfjs/standard_fonts",
+        },
+      ],
+    }),
+  ],
   clearScreen: false,
   server: {
     port: 1420,

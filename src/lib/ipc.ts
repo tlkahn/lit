@@ -855,38 +855,15 @@ export async function ensureGraphReady(path: string): Promise<void> {
   return invoke<void>("ensure_graph_ready", { path });
 }
 
-// PDF viewer
-
-export interface PdfInfo {
-  page_count: number;
-  path: string;
-}
-
-export interface RenderedPage {
-  page_index: number;
-  png_path: string;
-  width: number;
-  height: number;
-}
-
-export async function pdfOpen(path: string, paneId: string): Promise<PdfInfo> {
-  return invoke<PdfInfo>("pdf_open", { path, paneId });
-}
-
-export async function pdfRenderPage(
-  pageIndex: number,
-  dpi: number,
-  paneId: string,
-): Promise<RenderedPage> {
-  return invoke<RenderedPage>("pdf_render_page", { pageIndex, dpi, paneId });
-}
-
-export async function pdfPrefetch(pageIndex: number, dpi: number, paneId: string): Promise<void> {
-  return invoke<void>("pdf_prefetch", { pageIndex, dpi, paneId });
-}
-
-export async function pdfClose(paneId: string): Promise<void> {
-  return invoke<void>("pdf_close", { paneId });
+/**
+ * Extend the Tauri asset protocol scope to include a single file.
+ *
+ * Called by PdfViewer before loading a PDF via `convertFileSrc` so that
+ * files outside the workspace root (e.g. companions found via absolute
+ * search paths) are served by the asset protocol. Idempotent.
+ */
+export async function allowAssetScope(path: string): Promise<void> {
+  return invoke<void>("allow_asset_scope", { path });
 }
 
 /**

@@ -10,6 +10,22 @@ import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
 
+// Mock pdfjs for PdfViewer (which no longer uses pdfium IPC)
+vi.mock("../lib/pdfjs", () => {
+  const mockRender = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+  const mockGetViewport = vi.fn(() => ({ width: 100, height: 200 }));
+  const mockGetTextContent = vi.fn(() => Promise.resolve({ items: [], styles: {}, lang: null }));
+  const mockGetAnnotations = vi.fn(() => Promise.resolve([]));
+  const mockGetPage = vi.fn(() => Promise.resolve({ getViewport: mockGetViewport, render: mockRender, getTextContent: mockGetTextContent, getAnnotations: mockGetAnnotations }));
+  const mockDoc = { numPages: 2, getPage: mockGetPage, destroy: vi.fn() };
+  return {
+    loadDocument: vi.fn(() => Promise.resolve(mockDoc)),
+    TextLayer: vi.fn().mockImplementation(() => ({ render: vi.fn(() => Promise.resolve()), cancel: vi.fn() })),
+    AnnotationLayer: vi.fn().mockImplementation(() => ({ render: vi.fn(() => Promise.resolve()) })),
+    setLayerDimensions: vi.fn(),
+  };
+});
+
 vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = vi.fn();
@@ -54,6 +70,8 @@ const otherPage = {
 let writePageCalls: Array<{ path: string; body: string }> = [];
 
 beforeEach(() => {
+  // jsdom has no real canvas; stub getContext for PdfViewer's canvas rendering
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
   writePageCalls = [];
   useWorkspaceStore.setState({
     workspacePath: "/test",
@@ -100,6 +118,7 @@ beforeEach(() => {
     if (cmd === "get_pagerank") return {};
     if (cmd === "get_graph_positions") return {};
     if (cmd === "acknowledge_file_hash") return null;
+    if (cmd === "allow_asset_scope") return undefined;
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -758,15 +777,9 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -798,15 +811,9 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -846,15 +853,9 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 
@@ -885,15 +886,9 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
+      if (cmd === "allow_asset_scope") return undefined;
       throw new Error(`Unknown command: ${cmd}`);
     });
 

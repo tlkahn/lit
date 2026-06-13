@@ -18,6 +18,15 @@ import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
 import type { EditorView } from "@codemirror/view";
 
+// Mock pdfjs for PdfViewer (which no longer uses pdfium IPC)
+vi.mock("./lib/pdfjs", () => {
+  const mockRender = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+  const mockGetViewport = vi.fn(() => ({ width: 100, height: 200 }));
+  const mockGetPage = vi.fn(() => Promise.resolve({ getViewport: mockGetViewport, render: mockRender }));
+  const mockDoc = { numPages: 2, getPage: mockGetPage, destroy: vi.fn() };
+  return { loadDocument: vi.fn(() => Promise.resolve(mockDoc)) };
+});
+
 const samplePages = [
   {
     title: "Test Page",
@@ -31,6 +40,8 @@ const samplePages = [
 
 describe("App", () => {
   beforeEach(() => {
+    // jsdom has no real canvas; stub getContext for PdfViewer's canvas rendering
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
     document.documentElement.classList.remove("dark");
     useWorkspaceStore.setState({
       workspacePath: null,
@@ -916,19 +927,8 @@ describe("App", () => {
     };
 
     it("closing the md pane then the last PDF pane shows the empty state, not a blank area", async () => {
-      let pdfOpenCalls = 0;
-      mockInvoke((cmd, args) => {
+      mockInvoke((cmd) => {
         switch (cmd) {
-          case "pdf_open":
-            pdfOpenCalls++;
-            return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-          case "pdf_render_page": {
-            const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-            return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-          }
-          case "pdf_prefetch":
-          case "pdf_close":
-            return null;
           case "read_page":
             return { meta: mdPage, body: "# Notes", raw_yaml: "" };
           case "get_backlinks":
@@ -959,6 +959,8 @@ describe("App", () => {
             return false;
           case "cancel_title_suggestion":
             return undefined;
+          case "allow_asset_scope":
+            return undefined;
           default:
             throw new Error(`Unknown command: ${cmd}`);
         }
@@ -985,16 +987,23 @@ describe("App", () => {
       usePaneStore.setState({ root, focusedPaneId: "md-pane" });
       usePanePdfLinkStore.getState().linkPanes("md-pane", "pdf-pane");
 
+      const { loadDocument } = await import("./lib/pdfjs");
+      const loadDocumentMock = loadDocument as unknown as ReturnType<typeof vi.fn>;
+
       render(<App />);
 
       await waitFor(() => {
         expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
         expect(screen.getByTestId("editor")).toBeInTheDocument();
       });
-      expect(pdfOpenCalls).toBe(1);
+      // allowAssetScope (invoked before loadDocument) adds an extra async
+      // step, so loadDocument may not have fired yet when the DOM appears.
+      await waitFor(() => {
+        expect(loadDocumentMock).toHaveBeenCalledTimes(1);
+      });
 
       // First Ctrl-W: closes the focused md pane, split collapses to the PDF.
-      // (The PDF pane remounts at its new tree position, so pdf_open may
+      // (The PDF pane remounts at its new tree position, so loadDocument may
       // legitimately fire again here — snapshot the count after settling.)
       act(() => {
         executeCommand("pane.close");
@@ -1004,7 +1013,7 @@ describe("App", () => {
         expect(screen.getByTestId("pdf-viewer-pane")).toBeInTheDocument();
       });
       expect(usePaneStore.getState().focusedPaneId).toBe("pdf-pane");
-      const pdfOpensAfterCollapse = pdfOpenCalls;
+      const loadsAfterCollapse = loadDocumentMock.mock.calls.length;
 
       // Second Ctrl-W: closes the last (PDF) pane. The content area must show
       // the empty-state placeholder — not a blank region or the error fallback.
@@ -1020,7 +1029,7 @@ describe("App", () => {
       expect(useWorkspaceStore.getState().currentPagePath).toBeNull();
       // No resurrection: a stale workspace.currentPagePath must not re-open
       // the just-closed PDF on a ContentArea remount.
-      expect(pdfOpenCalls).toBe(pdfOpensAfterCollapse);
+      expect(loadDocumentMock.mock.calls.length).toBe(loadsAfterCollapse);
     });
   });
 

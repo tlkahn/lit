@@ -331,6 +331,27 @@ pub fn find_libpdfium(resource_dir: Option<&std::path::Path>) -> Option<PathBuf>
     None
 }
 
+/// Holds the path to the pdfium shared library.
+///
+/// Registered as Tauri managed state so that commands like `recognize_pdf`
+/// can create transient [`PdfRenderThread`] instances without the full
+/// viewer pipeline.
+pub struct PdfiumConfig {
+    lib_path: String,
+}
+
+impl PdfiumConfig {
+    pub fn new(lib_path: &str) -> Self {
+        Self {
+            lib_path: lib_path.to_string(),
+        }
+    }
+
+    pub fn lib_path(&self) -> &str {
+        &self.lib_path
+    }
+}
+
 pub fn find_libpdfium_or_default(resource_dir: Option<&std::path::Path>) -> String {
     find_libpdfium(resource_dir)
         .map(|p| p.to_string_lossy().to_string())
@@ -794,5 +815,17 @@ mod tests {
 
         assert_eq!(data.pages.len(), 2, "should extract exactly max_pages pages");
         assert_eq!(data.total_pages, 7, "total_pages should reflect full document");
+    }
+
+    #[test]
+    fn test_pdfium_config_stores_and_returns_lib_path() {
+        let config = PdfiumConfig::new("/usr/lib/libpdfium.dylib");
+        assert_eq!(config.lib_path(), "/usr/lib/libpdfium.dylib");
+    }
+
+    #[test]
+    fn test_pdfium_config_empty_path() {
+        let config = PdfiumConfig::new("");
+        assert_eq!(config.lib_path(), "");
     }
 }
