@@ -17,6 +17,37 @@ const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2
 const MAX_CANVAS_SCALE = 4.0;
 const DEFAULT_ZOOM = 1.0;
 
+// Maximum number of pages to keep in the text/annotation layer cache.
+// Covers the current page plus a handful of recently-visited neighbors,
+// which is sufficient for typical back-and-forth reading and zoom re-renders.
+// Older entries are evicted LRU-first to keep JS memory bounded on long reads.
+const LAYER_CACHE_CAP = 5;
+
+/** Return the cached value for `key`, promoting it to most-recently-used. */
+function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const val = map.get(key);
+  if (val !== undefined) {
+    map.delete(key);
+    map.set(key, val);
+  }
+  return val;
+}
+
+/** Insert or update `key`, evicting the least-recently-used entry when size exceeds `cap`. */
+function lruSet<K, V>(map: Map<K, V>, key: K, val: V, cap: number): void {
+  // If the key already exists, delete first so the re-set moves it to MRU position.
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, val);
+  // Evict the oldest entry (first in Map iteration order) if we exceed the cap.
+  while (map.size > cap) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+    else break;
+  }
+}
+
 interface RenderTask {
   promise: Promise<void>;
   cancel: () => void;
@@ -69,6 +100,11 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   // Cache text content and annotations per page index to avoid re-fetching
   // from the pdf.js worker on every zoom re-render (only the scale changes).
   const layerCacheRef = useRef<Map<number, { textContent: Awaited<ReturnType<PDFPageProxy['getTextContent']>>; annotations: unknown[] }>>(new Map());
+  // Deduplication map for in-flight cache fetches: if a zoom re-render fires
+  // before the initial page's async layer work has populated layerCacheRef,
+  // the zoom's IIFE awaits the same promise instead of calling
+  // getTextContent/getAnnotations a second time.
+  const pendingCacheRef = useRef<Map<number, Promise<{ textContent: Awaited<ReturnType<PDFPageProxy['getTextContent']>>; annotations: unknown[] }>>>(new Map());
 
   // Keep an always-current ref to onPageChange so the mount effect can publish
   // the initial page without listing onPageChange as a dependency (which would
@@ -189,29 +225,45 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     // bail early so stale layers don't overwrite current content.
     if (navSeqRef.current !== navSeq) return;
 
-    // Render text and annotation layers using the CSS-space viewport
+    // --- Canvas is painted. Layer work (text/annotation extraction and
+    // rendering) happens asynchronously off the critical path so that
+    // canvasReady flips and the spinner clears immediately. ---
     const cssViewport = page.getViewport({ scale: zoom });
 
-    // Look up or populate the layer cache for this page. Text content and
-    // annotations are scale-independent, so we can reuse them across zoom
-    // re-renders of the same page without re-fetching from the worker.
-    let cached = layerCacheRef.current.get(pageIndex);
-    if (!cached) {
-      const [textContent, annotations] = await Promise.all([
-        page.getTextContent(),
-        page.getAnnotations({ intent: "display" }),
-      ]);
-      if (navSeqRef.current !== navSeq) return;
-      cached = { textContent, annotations };
-      layerCacheRef.current.set(pageIndex, cached);
-    }
+    // Fire-and-forget: layer cache population + layer rendering.
+    // Captures navSeq from the outer closure for staleness checks.
+    (async () => {
+      try {
+        let cached = lruGet(layerCacheRef.current, pageIndex);
+        if (!cached) {
+          // Deduplicate in-flight fetches so a rapid zoom re-render
+          // doesn't trigger a second getTextContent/getAnnotations call
+          // for the same page while the first is still pending.
+          let pending = pendingCacheRef.current.get(pageIndex);
+          if (!pending) {
+            pending = Promise.all([
+              page.getTextContent(),
+              page.getAnnotations({ intent: "display" }),
+            ]).then(([textContent, annotations]) => ({ textContent, annotations }));
+            pendingCacheRef.current.set(pageIndex, pending);
+          }
+          const result = await pending;
+          pendingCacheRef.current.delete(pageIndex);
+          if (navSeqRef.current !== navSeq) return;
+          cached = result;
+          lruSet(layerCacheRef.current, pageIndex, cached, LAYER_CACHE_CAP);
+        }
 
-    if (textLayerRef.current) {
-      renderTextLayer(page, textLayerRef.current, cssViewport, navSeq, cached.textContent).catch(() => {});
-    }
-    if (annotationLayerRef.current) {
-      renderAnnotationLayer(page, annotationLayerRef.current, cssViewport, navSeq, cached.annotations).catch(() => {});
-    }
+        if (textLayerRef.current) {
+          renderTextLayer(page, textLayerRef.current, cssViewport, navSeq, cached.textContent).catch(() => {});
+        }
+        if (annotationLayerRef.current) {
+          renderAnnotationLayer(page, annotationLayerRef.current, cssViewport, navSeq, cached.annotations).catch(() => {});
+        }
+      } catch {
+        // Layer errors are non-fatal — swallow so the viewer stays up.
+      }
+    })();
   }, [renderTextLayer, renderAnnotationLayer]);
 
   useEffect(() => {
@@ -227,6 +279,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     zoomLevelRef.current = DEFAULT_ZOOM;
     renderTaskRef.current?.cancel();
     layerCacheRef.current.clear();
+    pendingCacheRef.current.clear();
 
     let cancelled = false;
     let localDoc: PDFDocumentProxy | null = null;

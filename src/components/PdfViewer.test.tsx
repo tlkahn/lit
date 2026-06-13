@@ -1353,6 +1353,52 @@ describe("PdfViewer", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Canvas-first paint tests (Concern A)
+  // -------------------------------------------------------------------------
+
+  it("canvasReady does NOT await getTextContent (canvas-first paint)", async () => {
+    // Make getTextContent and getAnnotations return promises that NEVER resolve
+    mockGetTextContent.mockReturnValue(new Promise(() => {}));
+    mockGetAnnotations.mockReturnValue(new Promise(() => {}));
+
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+
+    // Canvas should become ready even though getTextContent never resolved
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    // getTextContent was called (just not awaited on the critical path)
+    expect(mockGetTextContent).toHaveBeenCalled();
+  });
+
+  it("getTextContent is still called once per page and reused across zoom steps (async layer fix)", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    // Wait for the async layer work to complete (getTextContent should be called once)
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+    });
+    mockGetTextContent.mockClear();
+
+    const viewer = screen.getByTestId("pdf-viewer");
+
+    // Zoom in 3 times on the same page
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(viewer, { key: "=", metaKey: true });
+      await act(async () => {
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+      });
+    }
+
+    // getTextContent should NOT have been called again — cache is reused
+    expect(mockGetTextContent).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
   // Annotation layer tests
   // -------------------------------------------------------------------------
 
@@ -2134,5 +2180,137 @@ describe("PdfViewer", () => {
     // cleanup should NOT have been called — the code path never reached the cleanup section
     expect(pageCleanup).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  // -------------------------------------------------------------------------
+  // Layer cache LRU eviction tests (Concern C — bounded cache)
+  // -------------------------------------------------------------------------
+
+  it("evicts the oldest cached page when more than LAYER_CACHE_CAP distinct pages are visited", async () => {
+    // Use a 10-page document so we can exceed the LRU cap (5).
+    const tenPageDoc = { ...mockDoc, numPages: 10 };
+    mockLoadDocument.mockImplementation(() => Promise.resolve(tenPageDoc));
+
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/big.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    // Wait for initial page 0's layer cache to be populated
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+    });
+
+    // Visit pages 1 through 5 (6 total pages visited: 0,1,2,3,4,5 — exceeds cap of 5).
+    for (let i = 1; i <= 5; i++) {
+      mockGetTextContent.mockClear();
+      await act(async () => { goToPage!(i); });
+      await waitFor(() => {
+        expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+      });
+    }
+
+    // At this point pages 0..5 have been visited. With LRU cap=5, page 0
+    // (the oldest) should have been evicted.
+    mockGetTextContent.mockClear();
+
+    // Revisit page 0 — if evicted, getTextContent must be called again.
+    await act(async () => { goToPage!(0); });
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("revisiting a within-cap page is a cache hit (getTextContent NOT re-invoked)", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    // Wait for page 0's layer cache to populate
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+    });
+
+    // Visit page 1 (now 2 pages cached: 0, 1 — well within cap of 5)
+    mockGetTextContent.mockClear();
+    await act(async () => { goToPage!(1); });
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+    });
+
+    // Revisit page 0 — should be a cache hit (within cap, not evicted)
+    mockGetTextContent.mockClear();
+    await act(async () => { goToPage!(0); });
+
+    // Allow async layer work to complete
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    // getTextContent should NOT have been called again
+    expect(mockGetTextContent).not.toHaveBeenCalled();
+  });
+
+  it("same-page zoom after visiting multiple pages is still a cache hit", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    // Wait for page 0's layer cache to populate
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(1);
+    });
+
+    // Visit page 1 then back to page 0 (both within cap)
+    await act(async () => { goToPage!(1); });
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalledTimes(2);
+    });
+    await act(async () => { goToPage!(0); });
+
+    // Allow async layer work to settle
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    mockGetTextContent.mockClear();
+
+    // Zoom on current page (page 0) — should reuse cached data
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    // getTextContent should NOT have been called — zoom uses cache
+    expect(mockGetTextContent).not.toHaveBeenCalled();
   });
 });
