@@ -69,12 +69,12 @@ describe("parseTrigger", () => {
 
   it("[@bib: → phase id, refType bib, bibFrom after @", () => {
     const result = trigger("[@bib:");
-    expect(result).toEqual({ from: 6, phase: "id", refType: "bib", bibFrom: 1 });
+    expect(result).toEqual({ from: 6, phase: "id", refType: "bib", bibFrom: 2 });
   });
 
   it("[@bib:smi → bibFrom stays after @", () => {
     const result = trigger("[@bib:smi");
-    expect(result).toEqual({ from: 6, phase: "id", refType: "bib", bibFrom: 1 });
+    expect(result).toEqual({ from: 6, phase: "id", refType: "bib", bibFrom: 2 });
   });
 
   it("returns null for unknown ref type", () => {
@@ -88,10 +88,7 @@ describe("parseTrigger", () => {
 
   it("batch bib: [@fig:cat; @bib:", () => {
     const result = trigger("[@fig:cat; @bib:");
-    expect(result).not.toBeNull();
-    expect(result!.phase).toBe("id");
-    expect(result!.refType).toBe("bib");
-    expect(result!.bibFrom).toBeDefined();
+    expect(result).toEqual({ from: 16, phase: "id", refType: "bib", bibFrom: 12 });
   });
 });
 
