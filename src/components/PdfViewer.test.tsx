@@ -2313,4 +2313,161 @@ describe("PdfViewer", () => {
     // getTextContent should NOT have been called — zoom uses cache
     expect(mockGetTextContent).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------------
+  // Drag-to-pan tests
+  // -------------------------------------------------------------------------
+
+  describe("drag-to-pan", () => {
+    it("Space + mousedown + mousemove pans the scroll container", async () => {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      });
+
+      const canvas = screen.getByTestId("pdf-page-canvas");
+      const scrollContainer = canvas.closest(".overflow-auto")!;
+      Object.defineProperty(scrollContainer, "scrollLeft", { writable: true, value: 100 });
+      Object.defineProperty(scrollContainer, "scrollTop", { writable: true, value: 200 });
+
+      fireEvent.keyDown(window, { key: " " });
+      fireEvent.mouseDown(scrollContainer, { clientX: 300, clientY: 400 });
+      fireEvent.mouseMove(scrollContainer, { clientX: 250, clientY: 350 });
+
+      expect(scrollContainer.scrollLeft).toBe(150);
+      expect(scrollContainer.scrollTop).toBe(250);
+
+      fireEvent.keyUp(window, { key: " " });
+    });
+
+    it("mousedown without Space does NOT pan", async () => {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      });
+
+      const canvas = screen.getByTestId("pdf-page-canvas");
+      const scrollContainer = canvas.closest(".overflow-auto")!;
+      Object.defineProperty(scrollContainer, "scrollLeft", { writable: true, value: 100 });
+      Object.defineProperty(scrollContainer, "scrollTop", { writable: true, value: 200 });
+
+      fireEvent.mouseDown(scrollContainer, { clientX: 300, clientY: 400 });
+      fireEvent.mouseMove(scrollContainer, { clientX: 250, clientY: 350 });
+
+      expect(scrollContainer.scrollLeft).toBe(100);
+      expect(scrollContainer.scrollTop).toBe(200);
+    });
+
+    it("mouseup stops panning — subsequent mousemove has no effect", async () => {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      });
+
+      const canvas = screen.getByTestId("pdf-page-canvas");
+      const scrollContainer = canvas.closest(".overflow-auto")!;
+      Object.defineProperty(scrollContainer, "scrollLeft", { writable: true, value: 100 });
+      Object.defineProperty(scrollContainer, "scrollTop", { writable: true, value: 200 });
+
+      fireEvent.keyDown(window, { key: " " });
+      fireEvent.mouseDown(scrollContainer, { clientX: 300, clientY: 400 });
+      fireEvent.mouseMove(scrollContainer, { clientX: 250, clientY: 350 });
+      fireEvent.mouseUp(scrollContainer);
+
+      const leftAfterUp = scrollContainer.scrollLeft;
+      const topAfterUp = scrollContainer.scrollTop;
+
+      fireEvent.mouseMove(scrollContainer, { clientX: 200, clientY: 300 });
+
+      expect(scrollContainer.scrollLeft).toBe(leftAfterUp);
+      expect(scrollContainer.scrollTop).toBe(topAfterUp);
+
+      fireEvent.keyUp(window, { key: " " });
+    });
+
+    it("releasing Space stops panning mid-drag", async () => {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      });
+
+      const canvas = screen.getByTestId("pdf-page-canvas");
+      const scrollContainer = canvas.closest(".overflow-auto")!;
+      Object.defineProperty(scrollContainer, "scrollLeft", { writable: true, value: 100 });
+      Object.defineProperty(scrollContainer, "scrollTop", { writable: true, value: 200 });
+
+      fireEvent.keyDown(window, { key: " " });
+      fireEvent.mouseDown(scrollContainer, { clientX: 300, clientY: 400 });
+      fireEvent.mouseMove(scrollContainer, { clientX: 250, clientY: 350 });
+
+      // Release Space while dragging
+      fireEvent.keyUp(window, { key: " " });
+
+      const leftAfterRelease = scrollContainer.scrollLeft;
+      const topAfterRelease = scrollContainer.scrollTop;
+
+      fireEvent.mouseMove(scrollContainer, { clientX: 200, clientY: 300 });
+
+      expect(scrollContainer.scrollLeft).toBe(leftAfterRelease);
+      expect(scrollContainer.scrollTop).toBe(topAfterRelease);
+    });
+
+    it("cursor: none at rest, grab when Space held, grabbing while Space+dragging", async () => {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      });
+
+      const canvas = screen.getByTestId("pdf-page-canvas");
+      const scrollContainer = canvas.closest(".overflow-auto")!;
+
+      // At rest: no cursor class
+      expect(scrollContainer.className).not.toContain("cursor-grab");
+      expect(scrollContainer.className).not.toContain("cursor-grabbing");
+
+      // Hold Space: cursor-grab
+      fireEvent.keyDown(window, { key: " " });
+      expect(scrollContainer.className).toContain("cursor-grab");
+      expect(scrollContainer.className).not.toContain("cursor-grabbing");
+
+      // Space + mousedown: cursor-grabbing
+      fireEvent.mouseDown(scrollContainer, { clientX: 300, clientY: 400 });
+      expect(scrollContainer.className).toContain("cursor-grabbing");
+
+      // Release mouse: back to cursor-grab (Space still held)
+      fireEvent.mouseUp(scrollContainer);
+      expect(scrollContainer.className).toContain("cursor-grab");
+      expect(scrollContainer.className).not.toContain("cursor-grabbing");
+
+      // Release Space: no cursor class
+      fireEvent.keyUp(window, { key: " " });
+      expect(scrollContainer.className).not.toContain("cursor-grab");
+      expect(scrollContainer.className).not.toContain("cursor-grabbing");
+    });
+
+    it("Space + click on annotation layer elements does not start panning", async () => {
+      render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+      });
+
+      const annotationLayer = screen.getByTestId("pdf-annotation-layer");
+      const link = document.createElement("section");
+      annotationLayer.appendChild(link);
+
+      const canvas = screen.getByTestId("pdf-page-canvas");
+      const scrollContainer = canvas.closest(".overflow-auto")!;
+      Object.defineProperty(scrollContainer, "scrollLeft", { writable: true, value: 100 });
+      Object.defineProperty(scrollContainer, "scrollTop", { writable: true, value: 200 });
+
+      fireEvent.keyDown(window, { key: " " });
+      fireEvent.mouseDown(link, { clientX: 300, clientY: 400 });
+      fireEvent.mouseMove(scrollContainer, { clientX: 250, clientY: 350 });
+
+      expect(scrollContainer.scrollLeft).toBe(100);
+      expect(scrollContainer.scrollTop).toBe(200);
+
+      fireEvent.keyUp(window, { key: " " });
+    });
+  });
 });

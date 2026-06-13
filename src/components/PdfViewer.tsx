@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { allowAssetScope } from "../lib/ipc";
 import { loadDocument, TextLayer, AnnotationLayer, setLayerDimensions } from "../lib/pdfjs";
@@ -82,6 +82,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   // zoomLevel state mirrors zoomLevelRef for future StatusBar display.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM);
+  const [panCursor, setPanCursor] = useState<"grab" | "grabbing" | null>(null);
 
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
@@ -105,6 +106,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   // the zoom's IIFE awaits the same promise instead of calling
   // getTextContent/getAnnotations a second time.
   const pendingCacheRef = useRef<Map<number, Promise<{ textContent: Awaited<ReturnType<PDFPageProxy['getTextContent']>>; annotations: unknown[] }>>>(new Map());
+  const dragRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const spaceHeldRef = useRef(false);
 
   // Keep an always-current ref to onPageChange so the mount effect can publish
   // the initial page without listing onPageChange as a dependency (which would
@@ -455,6 +458,58 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     [pdfDoc, renderPageToCanvas],
   );
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === " " && !e.repeat && !spaceHeldRef.current) {
+        spaceHeldRef.current = true;
+        setPanCursor("grab");
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === " ") {
+        spaceHeldRef.current = false;
+        dragRef.current = null;
+        setPanCursor(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  const handleMouseDown = useCallback((e: ReactMouseEvent) => {
+    if (!spaceHeldRef.current) return;
+    if (annotationLayerRef.current?.contains(e.target as Node)) return;
+    e.preventDefault();
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      scrollLeft: container.scrollLeft,
+      scrollTop: container.scrollTop,
+    };
+    setPanCursor("grabbing");
+  }, []);
+
+  const handleMouseMove = useCallback((e: ReactMouseEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollLeft = drag.scrollLeft - (e.clientX - drag.startX);
+    container.scrollTop = drag.scrollTop - (e.clientY - drag.startY);
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setPanCursor(spaceHeldRef.current ? "grab" : null);
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent) => {
       const isMod = e.metaKey || e.ctrlKey;
@@ -538,7 +593,15 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
           <p className="text-text-faint">Loading PDF…</p>
         </>
       )}
-      <div ref={scrollContainerRef} className={canvasReady ? "flex-1 overflow-auto px-4 pb-4" : undefined} style={canvasReady ? undefined : { display: "none" }}>
+      <div
+        ref={scrollContainerRef}
+        className={canvasReady ? `w-full flex-1 overflow-auto px-4 pb-4${panCursor ? ` cursor-${panCursor}` : ""}` : undefined}
+        style={canvasReady ? undefined : { display: "none" }}
+        onMouseDown={canvasReady ? handleMouseDown : undefined}
+        onMouseMove={canvasReady ? handleMouseMove : undefined}
+        onMouseUp={canvasReady ? handleMouseUp : undefined}
+        onMouseLeave={canvasReady ? handleMouseUp : undefined}
+      >
         <div ref={pageContainerRef} className={canvasReady ? "mx-auto shadow-lg" : undefined} style={{ position: "relative", display: "inline-block" }}>
           <canvas
             ref={canvasRef}
