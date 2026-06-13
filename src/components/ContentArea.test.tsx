@@ -10,6 +10,15 @@ import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
 
+// Mock pdfjs for PdfViewer (which no longer uses pdfium IPC)
+vi.mock("../lib/pdfjs", () => {
+  const mockRender = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+  const mockGetViewport = vi.fn(() => ({ width: 100, height: 200 }));
+  const mockGetPage = vi.fn(() => Promise.resolve({ getViewport: mockGetViewport, render: mockRender }));
+  const mockDoc = { numPages: 2, getPage: mockGetPage, destroy: vi.fn() };
+  return { loadDocument: vi.fn(() => Promise.resolve(mockDoc)) };
+});
+
 vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = vi.fn();
@@ -54,6 +63,8 @@ const otherPage = {
 let writePageCalls: Array<{ path: string; body: string }> = [];
 
 beforeEach(() => {
+  // jsdom has no real canvas; stub getContext for PdfViewer's canvas rendering
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
   writePageCalls = [];
   useWorkspaceStore.setState({
     workspacePath: "/test",
@@ -758,14 +769,7 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -798,14 +802,7 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -846,14 +843,7 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });
@@ -885,14 +875,7 @@ describe("ContentArea PDF rendering", () => {
     });
     usePaneStore.getState().setPanePage("test-pane", "doc.pdf");
 
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_open") return { page_count: 2, path: (args as Record<string, unknown>)?.path ?? "" };
-      if (cmd === "pdf_render_page") {
-        const idx = (args as Record<string, unknown>)?.pageIndex ?? 0;
-        return { page_index: idx, png_path: `/tmp/lit-pdf/page_${idx}.png`, width: 100, height: 200 };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
+    mockInvoke((cmd) => {
       if (cmd === "get_keymaps") return [];
       throw new Error(`Unknown command: ${cmd}`);
     });

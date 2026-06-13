@@ -1,48 +1,135 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { PdfViewer } from "./PdfViewer";
-import { mockInvoke } from "../test/tauri-mock";
 
-const mockPdfInfo = { page_count: 3, path: "/test/doc.pdf" };
-const mockRenderedPage = {
-  page_index: 0,
-  png_path: "/tmp/lit-pdf-test/page_0.png",
-  width: 1224,
-  height: 1584,
+// ---------------------------------------------------------------------------
+// Mock pdfjs setup module (src/lib/pdfjs.ts)
+// ---------------------------------------------------------------------------
+const mockRender = vi.fn(() => ({
+  promise: Promise.resolve(),
+  cancel: vi.fn(),
+}));
+
+const mockGetViewport = vi.fn(() => ({ width: 1224, height: 1584 }));
+
+const mockGetTextContent = vi.fn(() =>
+  Promise.resolve({ items: [], styles: {}, lang: null }),
+);
+
+const mockGetAnnotations = vi.fn(() => Promise.resolve([]));
+
+const mockGetPage = vi.fn(() =>
+  Promise.resolve({
+    getViewport: mockGetViewport,
+    render: mockRender,
+    getTextContent: mockGetTextContent,
+    getAnnotations: mockGetAnnotations,
+  }),
+);
+
+const mockDestroy = vi.fn(() => Promise.resolve());
+
+const mockDoc = {
+  numPages: 3,
+  getPage: mockGetPage,
+  destroy: mockDestroy,
 };
+
+const mockLoadDocument = vi.fn(() => Promise.resolve(mockDoc));
+
+const mockTextLayerRender = vi.fn(() => Promise.resolve());
+const mockTextLayerCancel = vi.fn();
+const MockTextLayer = vi.fn().mockImplementation(() => ({
+  render: mockTextLayerRender,
+  cancel: mockTextLayerCancel,
+  textDivs: [],
+  textContentItemsStr: [],
+}));
+
+const mockAnnotationLayerRender = vi.fn(() => Promise.resolve());
+const MockAnnotationLayer = vi.fn().mockImplementation(() => ({
+  render: mockAnnotationLayerRender,
+  div: null,
+  page: null,
+  viewport: null,
+  zIndex: 0,
+}));
+
+const mockSetLayerDimensions = vi.fn();
+
+vi.mock("../lib/pdfjs", () => ({
+  loadDocument: (...args: unknown[]) => (mockLoadDocument as (...a: unknown[]) => unknown)(...args),
+  // TextLayer and AnnotationLayer are called with `new`, so we use a class
+  // wrapper that delegates to the mock constructor at call time (after init).
+  TextLayer: class {
+    _inst: unknown;
+    constructor(...args: unknown[]) {
+      this._inst = (MockTextLayer as (...a: unknown[]) => unknown)(...args);
+      return this._inst as typeof this;
+    }
+  },
+  AnnotationLayer: class {
+    _inst: unknown;
+    constructor(...args: unknown[]) {
+      this._inst = (MockAnnotationLayer as (...a: unknown[]) => unknown)(...args);
+      return this._inst as typeof this;
+    }
+  },
+  setLayerDimensions: (...args: unknown[]) => (mockSetLayerDimensions as (...a: unknown[]) => unknown)(...args),
+}));
+
+// ---------------------------------------------------------------------------
+// Canvas mock — jsdom has no real canvas
+// ---------------------------------------------------------------------------
+const mockCanvasContext = {};
 
 beforeEach(() => {
   Object.defineProperty(window, "devicePixelRatio", {
     writable: true,
     value: 1,
   });
-  mockInvoke((cmd, args) => {
-    switch (cmd) {
-      case "pdf_open":
-        return mockPdfInfo;
-      case "pdf_render_page": {
-        const a = args as Record<string, unknown>;
-        const idx = a?.pageIndex ?? 0;
-        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-      }
-      case "pdf_prefetch":
-        return null;
-      case "pdf_close":
-        return null;
-      default:
-        throw new Error(`Unknown command: ${cmd}`);
-    }
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => mockCanvasContext) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+
+  mockLoadDocument.mockReset();
+  mockLoadDocument.mockImplementation(() => Promise.resolve(mockDoc));
+  mockGetPage.mockReset();
+  mockGetPage.mockImplementation(() =>
+    Promise.resolve({
+      getViewport: mockGetViewport,
+      render: mockRender,
+      getTextContent: mockGetTextContent,
+      getAnnotations: mockGetAnnotations,
+    }),
+  );
+  mockGetViewport.mockReset();
+  mockGetViewport.mockReturnValue({ width: 1224, height: 1584 });
+  mockRender.mockReset();
+  mockRender.mockReturnValue({
+    promise: Promise.resolve(),
+    cancel: vi.fn(),
   });
+  mockDestroy.mockReset();
+  mockDestroy.mockReturnValue(Promise.resolve());
+  mockGetTextContent.mockReset();
+  mockGetTextContent.mockReturnValue(Promise.resolve({ items: [], styles: {}, lang: null }));
+  mockGetAnnotations.mockReset();
+  mockGetAnnotations.mockReturnValue(Promise.resolve([]));
+  MockTextLayer.mockClear();
+  mockTextLayerRender.mockReset();
+  mockTextLayerRender.mockReturnValue(Promise.resolve());
+  mockTextLayerCancel.mockReset();
+  MockAnnotationLayer.mockClear();
+  mockAnnotationLayerRender.mockReset();
+  mockAnnotationLayerRender.mockReturnValue(Promise.resolve());
+  mockSetLayerDimensions.mockReset();
 });
 
 describe("PdfViewer", () => {
-  it("renders an img with asset protocol src", async () => {
+  it("renders a canvas element", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
     await waitFor(() => {
-      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
-      expect(img.src).toContain("asset://localhost/");
-      expect(img.src).not.toContain("data:image/png;base64");
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
   });
 
@@ -56,19 +143,22 @@ describe("PdfViewer", () => {
     expect(onPageCount).toHaveBeenCalledTimes(1);
   });
 
-  it("calls pdfOpen on mount and pdfClose on unmount", async () => {
+  it("calls loadDocument on mount and destroy on unmount", async () => {
     const { unmount } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_open", { path: "/test/doc.pdf", paneId: "pane-1" });
+    expect(mockLoadDocument).toHaveBeenCalledWith(
+      expect.stringContaining("asset://localhost/"),
+    );
 
     unmount();
 
-    expect(invoke).toHaveBeenCalledWith("pdf_close", { paneId: "pane-1" });
+    await waitFor(() => {
+      expect(mockDestroy).toHaveBeenCalled();
+    });
   });
 
   it("shows loading state initially", () => {
@@ -77,11 +167,7 @@ describe("PdfViewer", () => {
   });
 
   it("shows error state on failure", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "pdf_open") throw new Error("Failed to open PDF");
-      if (cmd === "pdf_close") return null;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
+    mockLoadDocument.mockRejectedValue(new Error("Failed to open PDF"));
 
     render(<PdfViewer filePath="/bad/doc.pdf" paneId="pane-1" />);
 
@@ -92,33 +178,29 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("passes DPI = 144 × devicePixelRatio to pdfRenderPage", async () => {
+  it("scales canvas by devicePixelRatio and sets CSS width accordingly", async () => {
     Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+    mockGetViewport.mockReturnValue({ width: 2448, height: 3168 });
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("pdf_render_page", {
-      pageIndex: 0,
-      dpi: 288,
-      paneId: "pane-1",
+      const canvas = screen.getByTestId("pdf-page-canvas") as HTMLCanvasElement;
+      expect(canvas.width).toBe(2448);
+      expect(canvas.style.width).toBe("1224px");
     });
   });
 
-  it("sets CSS width to rendered.width / devicePixelRatio", async () => {
-    Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+  it("sets canvas width to viewport.width at devicePixelRatio=1", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
     await waitFor(() => {
-      const img = screen.getByTestId("pdf-page-image") as HTMLImageElement;
-      expect(img.style.width).toBe("612px");
+      const canvas = screen.getByTestId("pdf-page-canvas") as HTMLCanvasElement;
+      expect(canvas.width).toBe(1224);
+      expect(canvas.style.width).toBe("1224px");
     });
   });
 
-  it("serves cached page without re-invoking pdf_render_page", async () => {
+  it("navigates back without error (pdf.js handles page caching internally)", async () => {
     const onPageChange = vi.fn();
     let goToPage: ((i: number) => void) | null = null;
     render(
@@ -131,165 +213,42 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
-
-    const { invoke } = await import("@tauri-apps/api/core");
 
     goToPage!(1);
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(1);
     });
 
-    const callsBefore = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
-
     goToPage!(0);
     await waitFor(() => {
-      expect(onPageChange).toHaveBeenCalledWith(0);
+      const calls = onPageChange.mock.calls.map((c) => c[0]);
+      expect(calls.filter((c: number) => c === 0).length).toBeGreaterThanOrEqual(2);
     });
-
-    const callsAfter = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
-
-    expect(callsAfter).toBe(callsBefore);
-  });
-
-  it("clears cache when filePath changes", async () => {
-    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
-
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_open":
-          return { page_count: 2, path: "/test/other.pdf" };
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        case "pdf_close":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    rerender(<PdfViewer filePath="/test/other.pdf" paneId="pane-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-
-    expect(invoke).toHaveBeenCalledWith("pdf_render_page", expect.objectContaining({ pageIndex: 0 }));
   });
 
   it("shows loading state immediately when filePath changes (no stale page visible)", async () => {
     const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
-    // Wait for the initial load to complete.
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    // Seed loadedSrc so the old image is considered "painted".
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    // Set up a new mock where pdf_open returns a deferred (unresolved) promise
-    // so the new file's load hangs — simulating a slow backend open.
-    let resolvePdfOpen!: (v: unknown) => void;
-    const deferredOpen = new Promise((r) => { resolvePdfOpen = r; });
-    mockInvoke((cmd) => {
-      if (cmd === "pdf_open") return deferredOpen;
-      if (cmd === "pdf_close") return null;
-      throw new Error(`Unknown command: ${cmd}`);
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
 
-    // Switch to a different PDF file.
+    // Set up a deferred loadDocument so the new file hangs
+    let resolveLoad!: (v: typeof mockDoc) => void;
+    const deferredLoad = new Promise<typeof mockDoc>((r) => { resolveLoad = r; });
+    mockLoadDocument.mockReturnValue(deferredLoad);
+
     rerender(<PdfViewer filePath="/test/other.pdf" paneId="pane-1" />);
 
-    // The full "Loading PDF…" screen should appear immediately — not the old
-    // page with no spinner.
     await waitFor(() => {
       expect(screen.getByTestId("pdf-loading")).toBeInTheDocument();
     });
-    // The old page image must be gone.
-    expect(screen.queryByTestId("pdf-page-image")).not.toBeInTheDocument();
 
-    // Clean up: resolve the deferred open so the effect's async block settles.
-    resolvePdfOpen({ page_count: 2, path: "/test/other.pdf" });
-  });
-
-  it("prefetches adjacent pages after rendering current page", async () => {
-    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    const prefetchCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_prefetch");
-
-    expect(prefetchCalls).toHaveLength(1);
-    expect(prefetchCalls[0]![1]).toEqual(expect.objectContaining({ pageIndex: 1 }));
-  });
-
-  it("prefetches both neighbors on middle page", async () => {
-    const onPageChange = vi.fn();
-    let goToPage: ((i: number) => void) | null = null;
-    render(
-      <PdfViewer
-        filePath="/test/doc.pdf"
-        paneId="pane-1"
-        onPageChange={onPageChange}
-        registerGoToPage={(fn) => { goToPage = fn; }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    expect(goToPage).not.toBeNull();
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
-
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    goToPage!(1);
-    await waitFor(() => {
-      expect(onPageChange).toHaveBeenCalledWith(1);
-    });
-
-    const prefetchCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_prefetch");
-
-    const prefetchedPages = prefetchCalls.map(
-      (c: unknown[]) => (c[1] as Record<string, unknown>).pageIndex
-    );
-    expect(prefetchedPages).toContain(0);
-    expect(prefetchedPages).toContain(2);
+    // Clean up: resolve so the effect settles
+    resolveLoad(mockDoc);
   });
 
   it("shows spinner during initial loading", () => {
@@ -299,7 +258,7 @@ describe("PdfViewer", () => {
     expect(loading.textContent).toContain("Loading PDF…");
   });
 
-  it("shows spinner overlay during page navigation (cache miss)", async () => {
+  it("shows spinner overlay during page navigation", async () => {
     let goToPage: ((i: number) => void) | null = null;
     render(
       <PdfViewer
@@ -310,18 +269,16 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
-    let resolveRender!: (v: unknown) => void;
-    const deferred = new Promise((r) => {
-      resolveRender = r;
-    });
-    mockInvoke((cmd) => {
-      if (cmd === "pdf_render_page") return deferred;
-      if (cmd === "pdf_prefetch") return null;
-      throw new Error(`Unknown command: ${cmd}`);
+    // Make render deferred so pageLoading stays true
+    let resolveRender!: () => void;
+    const deferred = new Promise<void>((r) => { resolveRender = r; });
+    mockRender.mockReturnValue({
+      promise: deferred,
+      cancel: vi.fn(),
     });
 
     goToPage!(1);
@@ -329,57 +286,13 @@ describe("PdfViewer", () => {
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+    expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
 
-    resolveRender({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
-
-    await waitFor(() => {
-      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_1.png");
-    });
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
+    resolveRender();
 
     await waitFor(() => {
       expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
-  });
-
-  it("does not show spinner overlay once a cache-hit page has painted", async () => {
-    let goToPage: ((i: number) => void) | null = null;
-    const onPageChange = vi.fn();
-    render(
-      <PdfViewer
-        filePath="/test/doc.pdf"
-        paneId="pane-1"
-        onPageChange={onPageChange}
-        registerGoToPage={(fn) => { goToPage = fn; }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    expect(goToPage).not.toBeNull();
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    goToPage!(1);
-    await waitFor(() => {
-      expect(onPageChange).toHaveBeenCalledWith(1);
-    });
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    goToPage!(0);
-    await waitFor(() => {
-      const calls = onPageChange.mock.calls.map((c) => c[0]);
-      expect(calls.filter((c: number) => c === 0).length).toBeGreaterThanOrEqual(2);
-    });
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    // Outlast the spinner grace period to prove it never appears for a
-    // painted cache hit.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 250));
-    });
-    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
   });
 
   it("hides spinner overlay when page render fails", async () => {
@@ -393,14 +306,13 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
-    mockInvoke((cmd) => {
-      if (cmd === "pdf_render_page") throw new Error("render failed");
-      if (cmd === "pdf_prefetch") return null;
-      throw new Error(`Unknown command: ${cmd}`);
+    mockRender.mockReturnValue({
+      promise: Promise.reject(new Error("render failed")),
+      cancel: vi.fn(),
     });
 
     goToPage!(1);
@@ -411,83 +323,11 @@ describe("PdfViewer", () => {
     expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
   });
 
-  it("evicts oldest entry when cache exceeds MAX_CACHE", async () => {
-    const bigPdfInfo = { page_count: 8, path: "/test/big.pdf" };
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_open":
-          return bigPdfInfo;
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        case "pdf_close":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    const onPageChange = vi.fn();
-    let goToPage: ((i: number) => void) | null = null;
-    render(
-      <PdfViewer
-        filePath="/test/big.pdf"
-        paneId="pane-1"
-        onPageChange={onPageChange}
-        registerGoToPage={(fn) => { goToPage = fn; }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    expect(goToPage).not.toBeNull();
-
-    for (let i = 0; i < 6; i++) {
-      goToPage!(i + 1);
-      await waitFor(() => {
-        expect(onPageChange).toHaveBeenCalledWith(i + 1);
-      });
-    }
-
-    const { invoke } = await import("@tauri-apps/api/core");
-    (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mockClear();
-
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
-    });
-
-    for (let i = 5; i >= 0; i--) {
-      goToPage!(i);
-      await waitFor(() => {
-        expect(onPageChange).toHaveBeenCalledWith(i);
-      });
-    }
-
-    const renderCalls = (invoke as unknown as ReturnType<typeof import("vitest").vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page");
-    expect(renderCalls.length).toBeGreaterThan(0);
-  });
-
   it("J navigates to the next page", async () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
@@ -495,13 +335,15 @@ describe("PdfViewer", () => {
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(1);
     });
+    // getPage uses 1-based pages: page 0 initial = getPage(1), page 1 nav = getPage(2)
+    expect(mockGetPage).toHaveBeenCalledWith(2);
   });
 
   it("advances two pages on a rapid double key-press without dropping one", async () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
     const viewer = screen.getByTestId("pdf-viewer");
@@ -518,7 +360,7 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "ArrowRight" });
@@ -532,18 +374,16 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
-    const { invoke } = await import("@tauri-apps/api/core");
-    const before = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
+    const getPageCallsBefore = mockGetPage.mock.calls.length;
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "k" });
 
-    const after = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page").length;
-    expect(after).toBe(before);
+    // No additional getPage calls
+    await Promise.resolve();
+    expect(mockGetPage.mock.calls.length).toBe(getPageCallsBefore);
   });
 
   it("J on the last page is a no-op", async () => {
@@ -558,7 +398,7 @@ describe("PdfViewer", () => {
       />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
@@ -579,7 +419,7 @@ describe("PdfViewer", () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
     await waitFor(() => {
@@ -594,7 +434,7 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
@@ -609,17 +449,14 @@ describe("PdfViewer", () => {
       <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" {...({ page: 2 } as unknown as Record<string, never>)} />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
     await Promise.resolve();
 
-    const { invoke } = await import("@tauri-apps/api/core");
-    const renderedPage2 = (invoke as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => c[0] === "pdf_render_page")
-      .some((c: unknown[]) => (c[1] as { pageIndex?: number })?.pageIndex === 2);
-
-    expect(renderedPage2).toBe(false);
+    // getPage should only have been called with page 1 (0-based index 0 = 1-based page 1)
+    const calledWith2Based = mockGetPage.mock.calls.some((c: unknown[]) => c[0] === 3);
+    expect(calledWith2Based).toBe(false);
   });
 
   it("goToPage does not fire onPageChange for same-page navigation", async () => {
@@ -634,7 +471,7 @@ describe("PdfViewer", () => {
       />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
@@ -646,7 +483,7 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("does not revert to an earlier page when a slow render resolves after a newer cache-hit navigation", async () => {
+  it("does not revert to an earlier page when a slow render resolves after a newer navigation", async () => {
     const onPageChange = vi.fn();
     let goToPage: ((i: number) => void) | null = null;
     render(
@@ -659,39 +496,57 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
-    goToPage!(2);
+    // Navigate to page 2 first (fast)
+    await act(async () => { goToPage!(2); });
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(2);
     });
 
-    let resolveSlow!: (v: unknown) => void;
-    const slow = new Promise((r) => { resolveSlow = r; });
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_render_page") {
-        const a = args as Record<string, unknown>;
-        const idx = (a?.pageIndex ?? 0) as number;
-        if (idx === 1) return slow;
-        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
+    // Now set up renders: first call slow, second call fast
+    let resolveSlowRender!: () => void;
+    const slowRenderPromise = new Promise<void>((r) => { resolveSlowRender = r; });
+    let renderCallIdx = 0;
+    (mockGetPage as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({
+        getViewport: mockGetViewport,
+        getTextContent: mockGetTextContent,
+        getAnnotations: mockGetAnnotations,
+        render: () => {
+          renderCallIdx++;
+          if (renderCallIdx === 1) {
+            return { promise: slowRenderPromise, cancel: vi.fn() };
+          }
+          return { promise: Promise.resolve(), cancel: vi.fn() };
+        },
+      }),
+    );
 
     onPageChange.mockClear();
 
-    goToPage!(1);
-    goToPage!(0);
+    // Call goToPage(1) — its render will be slow
+    // Call goToPage(0) — its render will be fast and should win
+    await act(async () => {
+      goToPage!(1);
+      // Let microtask queue process so goToPage(1) starts its async work
+      await Promise.resolve();
+      await Promise.resolve();
+      goToPage!(0);
+      // Let goToPage(0)'s async work proceed
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(0);
     });
 
-    resolveSlow({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
-
+    await act(async () => { resolveSlowRender(); });
     await Promise.resolve();
 
     const pageChanges = onPageChange.mock.calls.map((c) => c[0]);
@@ -699,7 +554,7 @@ describe("PdfViewer", () => {
     expect(onPageChange).not.toHaveBeenCalledWith(1);
   });
 
-  it("keeps spinner while a superseding cache-miss navigation is still rendering after a stale render resolves", async () => {
+  it("keeps spinner while a superseding navigation is still rendering after a stale render resolves", async () => {
     let goToPage: ((i: number) => void) | null = null;
     const onPageChange = vi.fn();
     render(
@@ -712,87 +567,61 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
 
-    let resolveA!: (v: unknown) => void;
-    let resolveB!: (v: unknown) => void;
-    const renderA = new Promise((r) => { resolveA = r; });
-    const renderB = new Promise((r) => { resolveB = r; });
-    mockInvoke((cmd, args) => {
-      if (cmd === "pdf_render_page") {
-        const a = args as Record<string, unknown>;
-        const idx = (a?.pageIndex ?? 0) as number;
-        if (idx === 1) return renderA;
-        if (idx === 2) return renderB;
-        return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-      }
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+    const renderA = new Promise<void>((r) => { resolveA = r; });
+    const renderB = new Promise<void>((r) => { resolveB = r; });
+    let renderCallCount = 0;
+    (mockGetPage as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({
+        getViewport: mockGetViewport,
+        getTextContent: mockGetTextContent,
+        getAnnotations: mockGetAnnotations,
+        render: () => {
+          renderCallCount++;
+          if (renderCallCount === 1) {
+            return { promise: renderA, cancel: vi.fn() };
+          }
+          return { promise: renderB, cancel: vi.fn() };
+        },
+      }),
+    );
 
-    goToPage!(1);
-    goToPage!(2);
+    await act(async () => {
+      goToPage!(1);
+      await Promise.resolve();
+      await Promise.resolve();
+      goToPage!(2);
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
     });
 
+    // Resolve stale render A
     await act(async () => {
-      resolveA({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
+      resolveA();
       await renderA;
     });
 
+    // Spinner should still be visible because render B is still pending
     expect(screen.queryByTestId("pdf-page-loading")).toBeInTheDocument();
 
-    resolveB({ ...mockRenderedPage, page_index: 2, png_path: "/tmp/lit-pdf-test/page_2.png" });
-
-    await waitFor(() => {
-      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_2.png");
+    // Resolve current render B
+    await act(async () => {
+      resolveB();
+      await renderB;
     });
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
 
     await waitFor(() => {
       expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
     await waitFor(() => {
       expect(onPageChange).toHaveBeenCalledWith(2);
-    });
-  });
-
-  it("keeps the spinner after the render IPC resolves until the new image paints (#456)", async () => {
-    let goToPage: ((i: number) => void) | null = null;
-    render(
-      <PdfViewer
-        filePath="/test/doc.pdf"
-        paneId="pane-1"
-        registerGoToPage={(fn) => { goToPage = fn; }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    expect(goToPage).not.toBeNull();
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    // Default mock resolves pdf_render_page immediately — the spinner must
-    // still appear, because the swapped-in image has not painted yet.
-    goToPage!(1);
-
-    await waitFor(() => {
-      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_1.png");
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
-    });
-
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
     });
   });
 
@@ -807,18 +636,15 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
 
-    let resolveRender!: (v: unknown) => void;
-    const deferred = new Promise((r) => { resolveRender = r; });
-    mockInvoke((cmd) => {
-      if (cmd === "pdf_render_page") return deferred;
-      if (cmd === "pdf_prefetch") return null;
-      if (cmd === "pdf_close") return null;
-      throw new Error(`Unknown command: ${cmd}`);
+    let resolveRender!: () => void;
+    const deferred = new Promise<void>((r) => { resolveRender = r; });
+    mockRender.mockReturnValue({
+      promise: deferred,
+      cancel: vi.fn(),
     });
 
     await act(async () => {
@@ -832,39 +658,7 @@ describe("PdfViewer", () => {
       expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
     });
 
-    resolveRender({ ...mockRenderedPage, page_index: 1, png_path: "/tmp/lit-pdf-test/page_1.png" });
-  });
-
-  it("clears the spinner when the new image fails to load", async () => {
-    let goToPage: ((i: number) => void) | null = null;
-    render(
-      <PdfViewer
-        filePath="/test/doc.pdf"
-        paneId="pane-1"
-        registerGoToPage={(fn) => { goToPage = fn; }}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    expect(goToPage).not.toBeNull();
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    goToPage!(1);
-
-    await waitFor(() => {
-      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("page_1.png");
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-loading")).toBeInTheDocument();
-    });
-
-    fireEvent.error(screen.getByTestId("pdf-page-image"));
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
-    });
+    resolveRender();
   });
 
   it("renders the spinner overlay outside the scroll container, pinned to the pane", async () => {
@@ -878,10 +672,16 @@ describe("PdfViewer", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
     expect(goToPage).not.toBeNull();
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
+
+    let resolveRender!: () => void;
+    const deferred = new Promise<void>((r) => { resolveRender = r; });
+    mockRender.mockReturnValue({
+      promise: deferred,
+      cancel: vi.fn(),
+    });
 
     goToPage!(1);
 
@@ -892,77 +692,456 @@ describe("PdfViewer", () => {
     const overlay = screen.getByTestId("pdf-page-loading");
     expect(overlay.parentElement).toBe(screen.getByTestId("pdf-viewer"));
     expect(overlay.parentElement!.className).not.toContain("overflow-auto");
+
+    resolveRender();
   });
 
-  it("does not flash the overlay spinner after the initial Loading PDF screen disappears", async () => {
+  it("uses 1-based page numbers for pdf.js getPage (0-based index 0 = getPage(1))", async () => {
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
 
-    // Wait for the initial render to complete (exits the "Loading PDF…" screen).
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
 
-    // Do NOT fire onLoad — simulates a slow browser decode of the first PNG.
-    // Wait well past the spinner grace period (150ms) with real timers.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 250));
-    });
-
-    // The overlay spinner must NOT appear — this is the first decode after the
-    // "Loading PDF…" screen, not a page-to-page navigation.
-    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
-
-    // Now let the image paint.
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
+    // Initial page 0 should call getPage(1)
+    expect(mockGetPage).toHaveBeenCalledWith(1);
   });
 
-  it("does not flash the overlay spinner after a file-change Loading PDF screen disappears", async () => {
-    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+  it("registerGoToPage publishes (fn, false) before doc loads and (fn, true) after", async () => {
+    const registerGoToPage = vi.fn();
 
-    // Wait for the initial load, then paint.
+    // Make loadDocument deferred so we can observe the pre-load registration
+    let resolveLoad!: (v: typeof mockDoc) => void;
+    const deferredLoad = new Promise<typeof mockDoc>((r) => { resolveLoad = r; });
+    mockLoadDocument.mockReturnValue(deferredLoad);
+
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={registerGoToPage}
+      />,
+    );
+
+    // Before doc loads, should register with ready=false
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-    });
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
-
-    // Switch to a new file. The mock resolves immediately so the new file's
-    // first page will render right away.
-    mockInvoke((cmd, args) => {
-      switch (cmd) {
-        case "pdf_open":
-          return { page_count: 2, path: "/test/other.pdf" };
-        case "pdf_render_page": {
-          const a = args as Record<string, unknown>;
-          const idx = a?.pageIndex ?? 0;
-          return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/other_page_${idx}.png` };
-        }
-        case "pdf_prefetch":
-          return null;
-        case "pdf_close":
-          return null;
-        default:
-          throw new Error(`Unknown command: ${cmd}`);
-      }
+      expect(registerGoToPage).toHaveBeenCalledWith(expect.any(Function), false);
     });
 
+    resolveLoad(mockDoc);
+
+    // After doc loads, should register with ready=true
+    await waitFor(() => {
+      expect(registerGoToPage).toHaveBeenCalledWith(expect.any(Function), true);
+    });
+  });
+
+  it("registerGetCurrentPage publishes a synchronous getter", async () => {
+    let getCurrentPage: (() => number) | null = null;
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGetCurrentPage={(fn) => { getCurrentPage = fn; }}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    expect(getCurrentPage).not.toBeNull();
+    expect(getCurrentPage!()).toBe(0);
+
+    goToPage!(1);
+    // The getter reads currentPageRef which is updated synchronously
+    expect(getCurrentPage!()).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Zoom tests
+  // -------------------------------------------------------------------------
+
+  it("Cmd+= zooms in one step (1.0 -> 1.1)", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    mockGetViewport.mockClear();
+    mockGetPage.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+
+    await waitFor(() => {
+      // dpr=1, next step above 1.0 is 1.1, so scale = 1 * 1.1 = 1.1
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.1, 5) });
+    });
+    // Re-renders the current page (page 1, 1-based)
+    expect(mockGetPage).toHaveBeenCalledWith(1);
+  });
+
+  it("Cmd+- zooms out one step (1.0 -> 0.9)", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    mockGetViewport.mockClear();
+    mockGetPage.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "-", metaKey: true });
+
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(0.9, 5) });
+    });
+    expect(mockGetPage).toHaveBeenCalledWith(1);
+  });
+
+  it("Cmd+0 resets zoom to 1.0", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    // Zoom in first
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.1, 5) });
+    });
+
+    mockGetViewport.mockClear();
+    mockGetPage.mockClear();
+
+    // Reset
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "0", metaKey: true });
+
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.0, 5) });
+    });
+  });
+
+  it("zoom in at max step (3.0) is a no-op", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    // Zoom all the way to 3.0: steps are [0.5,0.67,0.75,0.8,0.9,1.0,1.1,1.25,1.5,1.75,2.0,2.5,3.0]
+    // From 1.0, need to press = 7 times: 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0
+    const viewer = screen.getByTestId("pdf-viewer");
+    for (let i = 0; i < 7; i++) {
+      fireEvent.keyDown(viewer, { key: "=", metaKey: true });
+      // Allow async re-render to complete
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    }
+
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(3.0, 5) });
+    });
+
+    mockGetPage.mockClear();
+
+    // One more zoom in should be a no-op
+    fireEvent.keyDown(viewer, { key: "=", metaKey: true });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mockGetPage).not.toHaveBeenCalled();
+  });
+
+  it("zoom out at min step (0.5) is a no-op", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    // Zoom all the way down to 0.5: from 1.0, press - 5 times: 0.9, 0.8, 0.75, 0.67, 0.5
+    const viewer = screen.getByTestId("pdf-viewer");
+    for (let i = 0; i < 5; i++) {
+      fireEvent.keyDown(viewer, { key: "-", metaKey: true });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    }
+
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(0.5, 5) });
+    });
+
+    mockGetPage.mockClear();
+
+    // One more zoom out should be a no-op
+    fireEvent.keyDown(viewer, { key: "-", metaKey: true });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mockGetPage).not.toHaveBeenCalled();
+  });
+
+  it("zoom resets to 1.0 on filePath change", async () => {
+    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    // Zoom in
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.1, 5) });
+    });
+
+    mockGetViewport.mockClear();
+
+    // Change file
     rerender(<PdfViewer filePath="/test/other.pdf" paneId="pane-1" />);
 
-    // Wait for the new file's image to appear.
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
-      expect((screen.getByTestId("pdf-page-image") as HTMLImageElement).src).toContain("other_page_0");
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
 
-    // Do NOT fire onLoad — simulates slow decode of the new file's first PNG.
-    // Wait well past the spinner grace period (150ms) with real timers.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 250));
+    // The initial render of the new file should use dpr * 1.0 = 1.0
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.0, 5) });
+    });
+    // Ensure it was NOT called with 1.1 (the zoomed scale)
+    const calls = mockGetViewport.mock.calls.map((c: unknown[]) => c[0] as { scale: number });
+    const hasZoomed = calls.some((c) => Math.abs(c.scale - 1.1) < 0.001);
+    expect(hasZoomed).toBe(false);
+  });
+
+  it("canvas resolution is capped at MAX_CANVAS_SCALE (4.0)", async () => {
+    Object.defineProperty(window, "devicePixelRatio", { value: 2 });
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
 
-    // The overlay spinner must NOT appear — this is the first decode after a
-    // file-change "Loading PDF…" screen, not a page navigation.
-    expect(screen.queryByTestId("pdf-page-loading")).not.toBeInTheDocument();
+    // Zoom to 3.0: effective = 2 * 3.0 = 6.0, but capped at 4.0
+    // From 1.0 press = 7 times: 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0
+    const viewer = screen.getByTestId("pdf-viewer");
+    for (let i = 0; i < 7; i++) {
+      fireEvent.keyDown(viewer, { key: "=", metaKey: true });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    }
 
-    fireEvent.load(screen.getByTestId("pdf-page-image"));
+    await waitFor(() => {
+      // Should be capped at 4.0, not 6.0
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: 4.0 });
+    });
+
+    // CSS width should reflect: viewport.width / canvasScale * cssScale
+    // canvasScale = 4.0, cssScale = 6.0/4.0 = 1.5
+    // viewport.width = 1224 (from mock), so CSS width = 1224 / 4.0 * 1.5 = 459
+    const canvas = screen.getByTestId("pdf-page-canvas") as HTMLCanvasElement;
+    expect(canvas.style.width).toBe("459px");
+  });
+
+  it("Ctrl+= also zooms in (non-Mac)", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    mockGetViewport.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.1, 5) });
+    });
+  });
+
+  it("plain = without modifier does not zoom", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    mockGetViewport.mockClear();
+    mockGetPage.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=" });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mockGetPage).not.toHaveBeenCalled();
+  });
+
+  it("zoom re-renders the current page without firing onPageChange", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    onPageChange.mockClear();
+    mockGetPage.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+
+    await waitFor(() => {
+      // It re-renders the current page (1-based page 1)
+      expect(mockGetPage).toHaveBeenCalledWith(1);
+    });
+    // But does NOT fire onPageChange
+    expect(onPageChange).not.toHaveBeenCalled();
+  });
+
+  it("Cmd++ also zooms in (plus key)", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    mockGetViewport.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "+", metaKey: true });
+
+    await waitFor(() => {
+      expect(mockGetViewport).toHaveBeenCalledWith({ scale: expect.closeTo(1.1, 5) });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Text layer tests
+  // -------------------------------------------------------------------------
+
+  it("renders a text layer div", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-text-layer")).toBeInTheDocument();
+    });
+  });
+
+  it("calls getTextContent and creates TextLayer on initial page render", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalled();
+    });
+    expect(MockTextLayer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textContentSource: expect.anything(),
+        container: expect.any(HTMLElement),
+        viewport: expect.anything(),
+      }),
+    );
+    expect(mockTextLayerRender).toHaveBeenCalled();
+  });
+
+  it("text layer is re-rendered on page navigation", async () => {
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    mockGetTextContent.mockClear();
+    MockTextLayer.mockClear();
+    mockTextLayerRender.mockClear();
+
+    await act(async () => { goToPage!(1); });
+
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalled();
+    });
+    expect(mockTextLayerRender).toHaveBeenCalled();
+  });
+
+  it("text layer is re-rendered on zoom", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    mockGetTextContent.mockClear();
+    MockTextLayer.mockClear();
+    mockTextLayerRender.mockClear();
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "=", metaKey: true });
+
+    await waitFor(() => {
+      expect(mockGetTextContent).toHaveBeenCalled();
+    });
+    expect(mockTextLayerRender).toHaveBeenCalled();
+  });
+
+  it("text layer div has className textLayer", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      const textLayer = screen.getByTestId("pdf-text-layer");
+      expect(textLayer.className).toContain("textLayer");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Annotation layer tests
+  // -------------------------------------------------------------------------
+
+  it("renders an annotation layer div", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-annotation-layer")).toBeInTheDocument();
+    });
+  });
+
+  it("calls getAnnotations on initial page render", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(mockGetAnnotations).toHaveBeenCalled();
+    });
+  });
+
+  it("annotation layer div has className annotationLayer", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      const annotLayer = screen.getByTestId("pdf-annotation-layer");
+      expect(annotLayer.className).toContain("annotationLayer");
+    });
+  });
+
+  it("calls setLayerDimensions for text layer after render", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(mockSetLayerDimensions).toHaveBeenCalled();
+    });
+    // Check that at least one call was for the text layer div
+    const textLayerDiv = screen.getByTestId("pdf-text-layer");
+    const calls = mockSetLayerDimensions.mock.calls;
+    const hasTextLayerCall = calls.some((c: unknown[]) => c[0] === textLayerDiv);
+    expect(hasTextLayerCall).toBe(true);
+  });
+
+  it("page container wraps canvas and layers", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    const canvas = screen.getByTestId("pdf-page-canvas");
+    const textLayer = screen.getByTestId("pdf-text-layer");
+    const annotLayer = screen.getByTestId("pdf-annotation-layer");
+
+    // All three should share the same parent (the page container)
+    expect(canvas.parentElement).toBe(textLayer.parentElement);
+    expect(canvas.parentElement).toBe(annotLayer.parentElement);
+    // Parent should have position: relative for overlay positioning
+    expect(canvas.parentElement!.style.position).toBe("relative");
   });
 });

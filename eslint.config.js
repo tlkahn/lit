@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["dist", "src-tauri", "e2e"] },
+  { ignores: ["dist", "src-tauri", "e2e", ".claude"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

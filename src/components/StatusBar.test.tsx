@@ -13,7 +13,34 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import * as pdfPaneRef from "../lib/pdfPaneRef";
 
+// ---------------------------------------------------------------------------
+// Mock pdfjs for the real PdfViewer integration test
+// ---------------------------------------------------------------------------
+const mockPdjsRender = vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() }));
+const mockPdjsGetViewport = vi.fn(() => ({ width: 1224, height: 1584 }));
+const mockPdjsGetPage = vi.fn(() =>
+  Promise.resolve({ getViewport: mockPdjsGetViewport, render: mockPdjsRender }),
+);
+const mockPdjsDestroy = vi.fn();
+const mockPdjsDoc = { numPages: 3, getPage: mockPdjsGetPage, destroy: mockPdjsDestroy };
+const mockLoadDocument = vi.fn(() => Promise.resolve(mockPdjsDoc));
+
+vi.mock("../lib/pdfjs", () => ({
+  loadDocument: (...args: unknown[]) => (mockLoadDocument as (...a: unknown[]) => unknown)(...args),
+}));
+
 beforeEach(() => {
+  // jsdom has no real canvas; stub getContext for PdfViewer's canvas rendering
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => ({})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  mockLoadDocument.mockReset();
+  mockLoadDocument.mockImplementation(() => Promise.resolve(mockPdjsDoc));
+  mockPdjsGetPage.mockReset();
+  mockPdjsGetPage.mockImplementation(() =>
+    Promise.resolve({ getViewport: mockPdjsGetViewport, render: mockPdjsRender }),
+  );
+  mockPdjsRender.mockReset();
+  mockPdjsRender.mockReturnValue({ promise: Promise.resolve(), cancel: vi.fn() });
+  mockPdjsDestroy.mockReset();
   useWorkspaceStore.setState({
     workspacePath: null,
     graphReady: false,
@@ -753,32 +780,22 @@ describe("StatusBar", () => {
       // the same pdfPaneRef registries the StatusBar reads from. It regresses
       // if PdfViewer's synchronous currentPageRef advance (goToPage) or its
       // registerGetCurrentPage publication breaks.
-      const mockRenderedPage = {
-        page_index: 0,
-        png_path: "/tmp/lit-pdf-test/page_0.png",
-        width: 1224,
-        height: 1584,
-      };
+
       // page-1 render never resolves, so the pane store currentPage stays at 0
       // (an in-flight cache-miss render) across both clicks.
       const deferred = new Promise<never>(() => {});
-      mockInvoke((cmd, args) => {
-        switch (cmd) {
-          case "pdf_open":
-            return { page_count: 3, path: "/test/hello.pdf" };
-          case "pdf_render_page": {
-            const a = args as Record<string, unknown>;
-            const idx = (a?.pageIndex ?? 0) as number;
-            if (idx === 1) return deferred;
-            return { ...mockRenderedPage, page_index: idx, png_path: `/tmp/lit-pdf-test/page_${idx}.png` };
-          }
-          case "pdf_prefetch":
-            return null;
-          case "pdf_close":
-            return null;
-          default:
-            throw new Error(`Unknown command: ${cmd}`);
-        }
+      (mockPdjsGetPage as ReturnType<typeof vi.fn>).mockImplementation((pageNum: number) => {
+        const page = {
+          getViewport: mockPdjsGetViewport,
+          render: () => {
+            if (pageNum === 2) {
+              // page 2 (0-based index 1) render never resolves
+              return { promise: deferred, cancel: vi.fn() };
+            }
+            return { promise: Promise.resolve(), cancel: vi.fn() };
+          },
+        };
+        return Promise.resolve(page);
       });
 
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
@@ -808,13 +825,11 @@ describe("StatusBar", () => {
         </>,
       );
 
-      // Wait for the page-0 image so the viewer has registered goToPage and the
-      // current-page getter before we click.
+      // Wait for the canvas viewer to be ready so the viewer has registered
+      // goToPage and the current-page getter before we click.
       await waitFor(() => {
-        expect(screen.getByTestId("pdf-page-image")).toBeInTheDocument();
+        expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
       });
-
-      const { invoke } = await import("@tauri-apps/api/core");
 
       // Two rapid clicks with NO store flush between them. The page-1 render is
       // deferred, so the store stays at 0; only the viewer's synchronous
@@ -822,8 +837,9 @@ describe("StatusBar", () => {
       await userEvent.click(screen.getByTestId("status-bar-pdf-next"));
       await userEvent.click(screen.getByTestId("status-bar-pdf-next"));
 
-      expect(invoke).toHaveBeenCalledWith("pdf_render_page", expect.objectContaining({ pageIndex: 1 }));
-      expect(invoke).toHaveBeenCalledWith("pdf_render_page", expect.objectContaining({ pageIndex: 2 }));
+      // getPage uses 1-based page numbers: page index 1 = getPage(2), page index 2 = getPage(3)
+      expect(mockPdjsGetPage).toHaveBeenCalledWith(2);
+      expect(mockPdjsGetPage).toHaveBeenCalledWith(3);
 
       unmount();
     });

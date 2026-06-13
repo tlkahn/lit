@@ -135,7 +135,7 @@ fn build_prefilled_entry(ids: &ExtractedIdentifiers, file: &str) -> BibEntry {
 pub async fn recognize_pdf(
     pdf_path: String,
     workspace_path: String,
-    pdf_state: tauri::State<'_, crate::commands::pdf_viewer::PdfViewerState>,
+    pdfium_config: tauri::State<'_, crate::pdf::PdfiumConfig>,
     graph_state: tauri::State<'_, Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<RecognizeResult, String> {
@@ -157,7 +157,7 @@ pub async fn recognize_pdf(
     let copied_to = attach.copied_to;
 
     // 2. Extract text via transient PdfRenderThread in spawn_blocking
-    let lib_path = pdf_state.lib_path().to_string();
+    let lib_path = pdfium_config.lib_path().to_string();
     let pdf_path_clone = pdf_path.clone();
     let data = tauri::async_runtime::spawn_blocking(move || {
         let thread = PdfRenderThread::new(&lib_path)?;

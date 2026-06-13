@@ -36,7 +36,7 @@ vi.mock("./PdfViewer", () => ({
     onPageCount?: (count: number) => void;
   }) => {
     // Simulate PdfViewer publishing its internal goToPage on mount, carrying a
-    // readiness flag (false before pdfOpen resolves, true once pdfInfo is set).
+    // readiness flag (false before the PDF document loads, true once loaded).
     useEffect(() => {
       registerGoToPage?.(mockGoToPage, mockReady);
     }, [registerGoToPage]);

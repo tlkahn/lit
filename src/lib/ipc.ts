@@ -855,40 +855,6 @@ export async function ensureGraphReady(path: string): Promise<void> {
   return invoke<void>("ensure_graph_ready", { path });
 }
 
-// PDF viewer
-
-export interface PdfInfo {
-  page_count: number;
-  path: string;
-}
-
-export interface RenderedPage {
-  page_index: number;
-  png_path: string;
-  width: number;
-  height: number;
-}
-
-export async function pdfOpen(path: string, paneId: string): Promise<PdfInfo> {
-  return invoke<PdfInfo>("pdf_open", { path, paneId });
-}
-
-export async function pdfRenderPage(
-  pageIndex: number,
-  dpi: number,
-  paneId: string,
-): Promise<RenderedPage> {
-  return invoke<RenderedPage>("pdf_render_page", { pageIndex, dpi, paneId });
-}
-
-export async function pdfPrefetch(pageIndex: number, dpi: number, paneId: string): Promise<void> {
-  return invoke<void>("pdf_prefetch", { pageIndex, dpi, paneId });
-}
-
-export async function pdfClose(paneId: string): Promise<void> {
-  return invoke<void>("pdf_close", { paneId });
-}
-
 /**
  * Given a workspace-relative markdown or PDF path, return the relative path of
  * its sibling with the swapped extension (md<->pdf) if it exists, else null.

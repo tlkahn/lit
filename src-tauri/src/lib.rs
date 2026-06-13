@@ -170,7 +170,7 @@ pub fn run() {
 
             let resource_dir = app.handle().path().resource_dir().ok();
             let pdfium_path = pdf::find_libpdfium_or_default(resource_dir.as_deref());
-            app.manage(commands::pdf_viewer::PdfViewerState::new(&pdfium_path));
+            app.manage(pdf::PdfiumConfig::new(&pdfium_path));
             let seed_state: Arc<seed::SeedState> =
                 app.state::<Arc<seed::SeedState>>().inner().clone();
             let seed_handle = app.handle().clone();
@@ -372,10 +372,6 @@ pub fn run() {
             commands::graph::reset_graph_layout,
             commands::graph::rewrite_links,
             commands::workspace::get_startup_context,
-            commands::pdf_viewer::pdf_open,
-            commands::pdf_viewer::pdf_render_page,
-            commands::pdf_viewer::pdf_prefetch,
-            commands::pdf_viewer::pdf_close,
             commands::annotation::parse_annotations,
             commands::annotation::resolve_annotation_scope,
             commands::annotation::resolve_annotation_scope_with_mode,
@@ -445,9 +441,6 @@ pub fn run() {
                 }
                 if let Some(pending) = window.try_state::<PendingCols>() {
                     pending.0.lock().unwrap().remove(&label);
-                }
-                if let Some(pdf_state) = window.try_state::<commands::pdf_viewer::PdfViewerState>() {
-                    pdf_state.close_all_for_window(&label);
                 }
                 if let Some(llm_state) = window.try_state::<commands::llm::LlmState>() {
                     llm_state.cancel();

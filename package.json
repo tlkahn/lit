@@ -53,6 +53,7 @@
     "katex": "^0.16.45",
     "marked": "^18.0.4",
     "mermaid": "^11.14.0",
+    "pdfjs-dist": "4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sigma": "^3.0.3",
@@ -86,6 +87,7 @@
     "typescript": "^5.7.3",
     "typescript-eslint": "^8",
     "vite": "^6",
+    "vite-plugin-static-copy": "^4.1.1",
     "vitest": "^3"
   }
 }
