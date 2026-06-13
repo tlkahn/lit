@@ -217,6 +217,13 @@ export class CalloutHeaderWidget extends WidgetType {
   }
 }
 
+function markClipped(el: HTMLElement): void {
+  requestAnimationFrame(() => {
+    if (!el.isConnected) return;
+    el.classList.toggle("is-clipped", el.scrollWidth > el.clientWidth + 1);
+  });
+}
+
 export class InlineMathWidget extends WidgetType {
   constructor(readonly latex: string) {
     super();
@@ -233,6 +240,7 @@ export class InlineMathWidget extends WidgetType {
         span.textContent = this.latex;
         span.classList.add("cm-preview-math-error");
       }
+      markClipped(span);
     } else {
       span.textContent = this.latex;
       span.classList.add("cm-preview-math-placeholder");
@@ -245,6 +253,7 @@ export class InlineMathWidget extends WidgetType {
           span.textContent = this.latex;
           span.classList.add("cm-preview-math-error");
         }
+        markClipped(span);
       });
     }
     return span;
@@ -252,7 +261,7 @@ export class InlineMathWidget extends WidgetType {
 
   updateDOM(dom: HTMLElement): boolean {
     dom.innerHTML = "";
-    dom.classList.remove("cm-preview-math-error", "cm-preview-math-placeholder");
+    dom.classList.remove("cm-preview-math-error", "cm-preview-math-placeholder", "is-clipped");
     const katex = getKatexSync();
     if (katex) {
       try {
@@ -261,6 +270,7 @@ export class InlineMathWidget extends WidgetType {
         dom.textContent = this.latex;
         dom.classList.add("cm-preview-math-error");
       }
+      markClipped(dom);
     } else {
       dom.textContent = this.latex;
       dom.classList.add("cm-preview-math-placeholder");
@@ -273,6 +283,7 @@ export class InlineMathWidget extends WidgetType {
           dom.textContent = this.latex;
           dom.classList.add("cm-preview-math-error");
         }
+        markClipped(dom);
       });
     }
     return true;
