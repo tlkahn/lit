@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { _clear, hasCommand, getVisibleCommands } from "../commandRegistry";
 import { initOcrCommands } from "./ocr";
+import { useStatusMessageStore } from "../../stores/statusMessage";
 
 describe("initOcrCommands", () => {
   beforeEach(() => {
     _clear();
+    useStatusMessageStore.setState({ message: null, variant: "success" });
   });
 
   it("registers ocr.toMarkdown", () => {
@@ -35,5 +37,13 @@ describe("initOcrCommands", () => {
     const cmds = getVisibleCommands("ocr");
     const ocrCmd = cmds.find((c) => c.id === "ocr.toMarkdown");
     expect(() => ocrCmd!.action()).not.toThrow();
+  });
+
+  it("action shows status message", () => {
+    initOcrCommands();
+    const cmds = getVisibleCommands("ocr");
+    const ocrCmd = cmds.find((c) => c.id === "ocr.toMarkdown");
+    ocrCmd!.action();
+    expect(useStatusMessageStore.getState().message).toContain("Reference Library");
   });
 });

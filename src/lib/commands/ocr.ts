@@ -1,4 +1,5 @@
 import { registerOnce } from "../commandRegistry";
+import { useStatusMessageStore } from "../../stores/statusMessage";
 
 export function initOcrCommands(): void {
   registerOnce("ocr", [
@@ -7,7 +8,11 @@ export function initOcrCommands(): void {
       label: "OCR to Markdown",
       keywords: ["ocr", "pdf", "markdown", "convert", "scan"],
       icon: "📄",
-      action: () => {},
+      action: () => {
+        useStatusMessageStore.getState().show(
+          "Select an entry with a PDF in the Reference Library to use OCR",
+        );
+      },
     },
   ]);
 }

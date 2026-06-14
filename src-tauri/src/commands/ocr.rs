@@ -125,9 +125,9 @@ fn ensure_companion_search_path(app_handle: &tauri::AppHandle) -> Result<(), Str
     Ok(())
 }
 
-/// Emit a progress event to the frontend.
-fn emit_progress(app: &tauri::AppHandle, key: &str, step: &str, detail: &str) {
-    let _ = app.emit(
+/// Emit a progress event to the originating window (not all windows).
+fn emit_progress(window: &tauri::Window, key: &str, step: &str, detail: &str) {
+    let _ = window.emit(
         "lit:ocr-progress",
         serde_json::json!({
             "key": key,
@@ -148,12 +148,13 @@ pub async fn ocr_pdf_to_markdown(
     pdfium_config: tauri::State<'_, crate::pdf::PdfiumConfig>,
     graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
     app_handle: tauri::AppHandle,
+    window: tauri::Window,
 ) -> Result<String, String> {
     validate_key(&key)?;
     let root = PathBuf::from(&workspace_path);
 
     // Step 1: Look up bib entry from graph index
-    emit_progress(&app_handle, &key, "lookup", "Looking up bibliography entry");
+    emit_progress(&window, &key, "lookup", "Looking up bibliography entry");
     let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
     let entry = {
@@ -164,7 +165,7 @@ pub async fn ocr_pdf_to_markdown(
     };
 
     // Step 2: Get PDF path from entry.file field
-    emit_progress(&app_handle, &key, "resolve_pdf", "Resolving PDF path");
+    emit_progress(&window, &key, "resolve_pdf", "Resolving PDF path");
     let relative_pdf = entry
         .file
         .as_deref()
@@ -176,13 +177,13 @@ pub async fn ocr_pdf_to_markdown(
     }
 
     // Step 3: Get Mistral API key via credential store
-    emit_progress(&app_handle, &key, "auth", "Retrieving Mistral API key");
+    emit_progress(&window, &key, "auth", "Retrieving Mistral API key");
     let api_key =
         crate::commands::credential::get_api_key_inner(credential_store.as_ref(), "mistral")
             .map_err(|_| "Mistral API key required \u{2014} configure in Settings \u{2192} LLM".to_string())?;
 
     // Step 4: Read PDF bytes from disk
-    emit_progress(&app_handle, &key, "read_pdf", "Reading PDF file");
+    emit_progress(&window, &key, "read_pdf", "Reading PDF file");
     let pdf_path_clone = pdf_path.clone();
     let pdf_bytes = tokio::task::spawn_blocking(move || {
         std::fs::read(&pdf_path_clone)
@@ -194,7 +195,7 @@ pub async fn ocr_pdf_to_markdown(
     // Step 5: Truncate if lead/trail > 0
     let ocr_bytes = if lead > 0 || trail > 0 {
         emit_progress(
-            &app_handle,
+            &window,
             &key,
             "truncate",
             &format!("Truncating PDF (lead={lead}, trail={trail})"),
@@ -221,7 +222,7 @@ pub async fn ocr_pdf_to_markdown(
     };
 
     // Step 6: Call Mistral OCR API
-    emit_progress(&app_handle, &key, "ocr", "Running Mistral OCR");
+    emit_progress(&window, &key, "ocr", "Running Mistral OCR");
     // The provider registry stores "https://api.mistral.ai/v1" but
     // ocr_pdf() builds "{base_url}/v1/ocr", so strip the /v1 suffix.
     let mistral_base = crate::provider_registry::lookup("mistral")
@@ -243,7 +244,7 @@ pub async fn ocr_pdf_to_markdown(
 
     // Step 7: Post-process (save images, fix markdown refs)
     emit_progress(
-        &app_handle,
+        &window,
         &key,
         "postprocess",
         "Post-processing OCR output",
@@ -268,7 +269,7 @@ pub async fn ocr_pdf_to_markdown(
     }
 
     // Step 9: Done
-    emit_progress(&app_handle, &key, "done", "OCR complete");
+    emit_progress(&window, &key, "done", "OCR complete");
     Ok(md_relative)
 }
 

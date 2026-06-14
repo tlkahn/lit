@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, resetListenMock, emitMockEvent } from "../test/tauri-mock";
 import { OcrDialog } from "./OcrDialog";
+import { useModalLockStore } from "../stores/modalLock";
 import type { BibEntry } from "../lib/ipc";
 
 const entry: BibEntry = {
@@ -30,6 +31,7 @@ beforeEach(() => {
   invokedCommands = [];
   resetListenMock();
   mockListen();
+  useModalLockStore.setState({ openCount: 0, locked: false, llmLocked: false });
   mockInvoke((cmd, args) => {
     invokedCommands.push({ cmd, args });
     if (cmd === "check_ocr_target_exists") return false;
@@ -177,5 +179,15 @@ describe("OcrDialog", () => {
     render(<OcrDialog {...defaultProps()} />);
     await user.click(screen.getByTestId("ocr-dialog-backdrop"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("acquires modal lock while mounted", () => {
+    const { unmount } = render(<OcrDialog {...defaultProps()} />);
+    expect(useModalLockStore.getState().locked).toBe(true);
+    expect(useModalLockStore.getState().openCount).toBe(1);
+
+    unmount();
+    expect(useModalLockStore.getState().locked).toBe(false);
+    expect(useModalLockStore.getState().openCount).toBe(0);
   });
 });

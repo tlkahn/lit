@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useModalLock } from "../hooks/useModalLock";
 import {
   type BibEntry,
   type OcrProgressPayload,
@@ -27,27 +28,29 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useFocusTrap(dialogRef, true);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !processing) onClose();
-    },
-    [onClose, processing],
-  );
+  useModalLock(true);
 
   useEffect(() => {
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !processing) {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [onClose, processing]);
+
+  const processingRef = useRef(false);
+  processingRef.current = processing;
 
   useEffect(() => {
-    if (!processing) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen<OcrProgressPayload>(
       "lit:ocr-progress",
       (event) => {
-        if (cancelled) return;
+        if (cancelled || !processingRef.current) return;
         if (event.payload.key === entry.key) {
           setProgressStep(event.payload.step);
           setProgressDetail(event.payload.detail ?? null);
@@ -60,7 +63,7 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
       cancelled = true;
       unlisten?.();
     };
-  }, [processing, entry.key]);
+  }, [entry.key]);
 
   async function handleStartOcr(overwrite = false) {
     setError(null);
