@@ -513,13 +513,21 @@ export async function enrichBibEntry(
   return invoke<EnrichResult>("enrich_bib_entry", { bibKey, workspacePath });
 }
 
-// PDF download
+// PDF download / link
 
 export async function downloadEntryPdf(
   key: string,
   workspacePath: string,
 ): Promise<string> {
   return invoke<string>("download_entry_pdf", { key, workspacePath });
+}
+
+export async function linkEntryPdf(
+  key: string,
+  filePath: string,
+  workspacePath: string,
+): Promise<string> {
+  return invoke<string>("link_entry_pdf", { key, filePath, workspacePath });
 }
 
 export type OcrProgressPayload = { key: string; step: string; detail?: string };
