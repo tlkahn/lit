@@ -44,6 +44,11 @@ pub struct S2Journal {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct S2OpenAccessPdf {
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct S2Reference {
     #[serde(rename = "paperId")]
     pub paper_id: Option<String>,
@@ -74,6 +79,8 @@ pub struct S2Paper {
     #[serde(rename = "abstract")]
     pub abstract_text: Option<String>,
     pub references: Option<Vec<S2Reference>>,
+    #[serde(rename = "openAccessPdf", default)]
+    pub open_access_pdf: Option<S2OpenAccessPdf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -204,9 +211,13 @@ pub fn s2_ref_to_bib_entry(reference: &S2Reference, existing_keys: &HashSet<Stri
     minimal_ref_bib_entry(authors, title, year, doi, existing_keys)
 }
 
+pub fn extract_oa_pdf_url(paper: &S2Paper) -> Option<String> {
+    paper.open_access_pdf.as_ref()?.url.clone()
+}
+
 // ── Async API calls ────────────────────────────────────────────────
 
-const S2_PAPER_FIELDS: &str = "paperId,title,abstract,authors,year,referenceCount,citationCount,tldr,externalIds,journal,venue,url,references.title,references.authors,references.year,references.externalIds";
+const S2_PAPER_FIELDS: &str = "paperId,title,abstract,authors,year,referenceCount,citationCount,tldr,externalIds,journal,venue,url,references.title,references.authors,references.year,references.externalIds,openAccessPdf";
 
 const S2_SEARCH_FIELDS: &str = "paperId,title,authors,year,externalIds,journal,abstract,tldr";
 
@@ -498,6 +509,7 @@ mod tests {
             ]),
             abstract_text: Some("We demonstrate nanoscale thermometry.".to_string()),
             references: None,
+            open_access_pdf: None,
         };
 
         let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
@@ -530,6 +542,7 @@ mod tests {
             authors: None,
             abstract_text: None,
             references: None,
+            open_access_pdf: None,
         };
 
         let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
@@ -563,6 +576,7 @@ mod tests {
             authors: None,
             abstract_text: None,
             references: None,
+            open_access_pdf: None,
         };
 
         let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
@@ -592,6 +606,7 @@ mod tests {
             authors: None,
             abstract_text: None,
             references: None,
+            open_access_pdf: None,
         };
 
         let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
@@ -915,5 +930,69 @@ mod tests {
             "second Smith 2024 ref should get suffixed key"
         );
         assert_ne!(entry_a.key, entry_b.key, "keys must be distinct");
+    }
+
+    // ── Group 7: openAccessPdf parsing ────────────────────────────────
+
+    #[test]
+    fn parse_s2_response_with_open_access_pdf() {
+        let body = r#"{
+            "paperId": "abc123",
+            "title": "Open Access Paper",
+            "openAccessPdf": {
+                "url": "https://arxiv.org/pdf/2301.07041.pdf"
+            }
+        }"#;
+        let paper = parse_s2_response(body).unwrap();
+        assert_eq!(
+            extract_oa_pdf_url(&paper),
+            Some("https://arxiv.org/pdf/2301.07041.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_s2_response_without_open_access_pdf() {
+        let body = r#"{"paperId": "abc123", "title": "Closed Paper"}"#;
+        let paper = parse_s2_response(body).unwrap();
+        assert_eq!(extract_oa_pdf_url(&paper), None);
+    }
+
+    #[test]
+    fn parse_s2_response_open_access_pdf_null_url() {
+        let body = r#"{
+            "paperId": "abc123",
+            "title": "Partial OA Paper",
+            "openAccessPdf": {"url": null}
+        }"#;
+        let paper = parse_s2_response(body).unwrap();
+        assert_eq!(extract_oa_pdf_url(&paper), None);
+    }
+
+    #[tokio::test]
+    async fn lookup_by_doi_includes_open_access_pdf() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = r#"{
+            "paperId": "abc",
+            "title": "OA Paper",
+            "openAccessPdf": {
+                "url": "https://example.com/paper.pdf"
+            }
+        }"#;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex(r"/graph/v1/paper/DOI:.*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let paper = lookup_by_doi_with_base(&client, "10.1038/test", &mock_server.uri())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            extract_oa_pdf_url(&paper),
+            Some("https://example.com/paper.pdf".to_string())
+        );
     }
 }

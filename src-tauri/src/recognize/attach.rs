@@ -14,6 +14,41 @@ pub struct AttachResult {
     pub copied_to: Option<PathBuf>,
 }
 
+/// Pick a collision-safe path inside `<workspace_root>/assets/pdf/` for the
+/// given `desired_filename`. Creates the directory if it does not exist.
+/// Returns the absolute path of a not-yet-existing file.
+pub fn generate_pdf_path(workspace_root: &Path, desired_filename: &str) -> Result<PathBuf, String> {
+    let dest_dir = workspace_root.join(PDF_ASSET_DIR);
+    fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("failed to create {PDF_ASSET_DIR}: {e}"))?;
+
+    let p = Path::new(desired_filename);
+    let stem = p
+        .file_stem()
+        .ok_or_else(|| "desired filename has no file stem".to_string())?
+        .to_string_lossy();
+    let ext = p.extension().map(|e| e.to_string_lossy().into_owned());
+
+    let make_name = |suffix: &str| match &ext {
+        Some(e) => format!("{stem}{suffix}.{e}"),
+        None => format!("{stem}{suffix}"),
+    };
+
+    let first = make_name("");
+    if !dest_dir.join(&first).exists() {
+        return Ok(dest_dir.join(first));
+    }
+
+    for i in 1..=1000 {
+        let candidate = make_name(&format!("-{i}"));
+        if !dest_dir.join(&candidate).exists() {
+            return Ok(dest_dir.join(candidate));
+        }
+    }
+
+    Err(format!("too many collisions for {stem} in {PDF_ASSET_DIR}"))
+}
+
 /// Ensure that the PDF at `pdf_path` lives inside `workspace_root`.
 ///
 /// - If the PDF is already under the workspace root, returns its
@@ -34,7 +69,6 @@ pub fn ensure_pdf_in_workspace(
     let canonical_root = fs::canonicalize(workspace_root)
         .map_err(|e| format!("failed to canonicalize workspace_root: {e}"))?;
 
-    // If PDF is already inside the workspace, return its relative path.
     if let Some(rel_str) = crate::util::relative_to_root(&canonical_root, &canonical_pdf) {
         return Ok(AttachResult {
             relative_path: rel_str,
@@ -42,49 +76,17 @@ pub fn ensure_pdf_in_workspace(
         });
     }
 
-    // PDF is outside workspace — copy into assets/pdf/.
-    let dest_dir = workspace_root.join(PDF_ASSET_DIR);
-    fs::create_dir_all(&dest_dir)
-        .map_err(|e| format!("failed to create {PDF_ASSET_DIR}: {e}"))?;
-
-    let stem = pdf_path
-        .file_stem()
+    let filename = pdf_path
+        .file_name()
         .ok_or_else(|| "PDF path has no file name".to_string())?
         .to_string_lossy();
-    let ext = pdf_path
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned());
 
-    // Build collision-safe filename.
-    let chosen_filename = {
-        let make_name = |suffix: &str| match &ext {
-            Some(e) => format!("{stem}{suffix}.{e}"),
-            None => format!("{stem}{suffix}"),
-        };
-
-        let first = make_name("");
-        if !dest_dir.join(&first).exists() {
-            first
-        } else {
-            let mut found = None;
-            for i in 1..=1000 {
-                let candidate = make_name(&format!("-{i}"));
-                if !dest_dir.join(&candidate).exists() {
-                    found = Some(candidate);
-                    break;
-                }
-            }
-            found.ok_or_else(|| {
-                format!("too many collisions for {stem} in {PDF_ASSET_DIR}")
-            })?
-        }
-    };
-
-    let dest_path = dest_dir.join(&chosen_filename);
+    let dest_path = generate_pdf_path(workspace_root, &filename)?;
     fs::copy(pdf_path, &dest_path)
         .map_err(|e| format!("failed to copy PDF: {e}"))?;
 
-    let relative = Path::new(PDF_ASSET_DIR).join(&chosen_filename);
+    let chosen_filename = dest_path.file_name().unwrap().to_string_lossy();
+    let relative = Path::new(PDF_ASSET_DIR).join(chosen_filename.as_ref());
     Ok(AttachResult {
         relative_path: relative
             .to_string_lossy()
@@ -228,5 +230,32 @@ mod tests {
         let fake_workspace = Path::new("/tmp/nonexistent_workspace_xyz_12345");
         let result = ensure_pdf_in_workspace(&external_pdf, fake_workspace);
         assert!(result.is_err(), "should return error for nonexistent workspace");
+    }
+
+    #[test]
+    fn test_generate_pdf_path_creates_dir() {
+        let workspace = TempDir::new().unwrap();
+        let result = generate_pdf_path(workspace.path(), "smith2024.pdf").unwrap();
+        assert!(workspace.path().join(PDF_ASSET_DIR).is_dir());
+        assert_eq!(result, workspace.path().join("assets/pdf/smith2024.pdf"));
+    }
+
+    #[test]
+    fn test_generate_pdf_path_collision_safe() {
+        let workspace = TempDir::new().unwrap();
+        let pdf_dir = workspace.path().join(PDF_ASSET_DIR);
+        fs::create_dir_all(&pdf_dir).unwrap();
+        fs::write(pdf_dir.join("smith2024.pdf"), b"v0").unwrap();
+        fs::write(pdf_dir.join("smith2024-1.pdf"), b"v1").unwrap();
+
+        let result = generate_pdf_path(workspace.path(), "smith2024.pdf").unwrap();
+        assert_eq!(result, workspace.path().join("assets/pdf/smith2024-2.pdf"));
+    }
+
+    #[test]
+    fn test_generate_pdf_path_no_extension() {
+        let workspace = TempDir::new().unwrap();
+        let result = generate_pdf_path(workspace.path(), "readme").unwrap();
+        assert_eq!(result, workspace.path().join("assets/pdf/readme"));
     }
 }

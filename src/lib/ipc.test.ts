@@ -44,6 +44,7 @@ import {
   saveBibEntries,
   materializeCitation,
   enrichBibEntry,
+  downloadEntryPdf,
   type EnrichResult,
   type SaveOutcome,
   isSaved,
@@ -702,6 +703,8 @@ describe("ipc", () => {
             shadow_nodes_created: 3,
             references_linked: 5,
           };
+        case "download_entry_pdf":
+          return "assets/pdf/smith2020.pdf";
         case "recognize_pdf": {
           return {
             kind: "resolved",
@@ -2160,6 +2163,16 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
       bibKey: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("downloadEntryPdf calls download_entry_pdf with key and workspacePath", async () => {
+    const result = await downloadEntryPdf("smith2020", "/workspace");
+    expect(result).toBe("assets/pdf/smith2020.pdf");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("download_entry_pdf", {
+      key: "smith2020",
       workspacePath: "/workspace",
     });
   });

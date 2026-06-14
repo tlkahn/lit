@@ -17,6 +17,7 @@ import {
   enrichBibEntry,
   bibDelete,
   bibUpdateFields,
+  downloadEntryPdf,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
@@ -151,6 +152,8 @@ export function ReferenceLibrary() {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [importPdfDialogOpen, setImportPdfDialogOpen] = useState(false);
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -274,6 +277,30 @@ export function ReferenceLibrary() {
     };
   }, [workspacePath, loadEntries, loadBibKeyStates]);
 
+  useEffect(() => {
+    if (!downloadingKey) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen<{ key: string; bytes_downloaded: number; bytes_total: number | null }>(
+      "lit:pdf-download-progress",
+      (event) => {
+        if (cancelled) return;
+        if (event.payload.key === downloadingKey) {
+          setDownloadProgress({
+            bytes: event.payload.bytes_downloaded,
+            total: event.payload.bytes_total,
+          });
+        }
+      },
+    ).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [downloadingKey]);
+
   const sorted = useMemo(() => {
     return [...entries].sort((a, b) => {
       const byName = lastName(a).localeCompare(lastName(b), undefined, {
@@ -356,6 +383,25 @@ export function ReferenceLibrary() {
       }
     },
     [workspacePath, show],
+  );
+
+  const handleDownload = useCallback(
+    async (entry: BibEntry) => {
+      if (!workspacePath || downloadingKey) return;
+      setDownloadingKey(entry.key);
+      setDownloadProgress(null);
+      try {
+        await downloadEntryPdf(entry.key, workspacePath);
+        show(`Downloaded PDF for @${entry.key}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        show(msg, "error");
+      } finally {
+        setDownloadingKey(null);
+        setDownloadProgress(null);
+      }
+    },
+    [workspacePath, downloadingKey, show],
   );
 
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -742,6 +788,17 @@ export function ReferenceLibrary() {
                             </button>
                           </div>
                         ) : null}
+                        {entry.file ? (
+                          <div className="mt-2">
+                            <button
+                              data-testid="open-pdf-btn"
+                              onClick={() => selectPage(entry.file!)}
+                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                            >
+                              Open PDF
+                            </button>
+                          </div>
+                        ) : null}
                         <div className="mt-2 flex gap-2">
                           <button
                             onClick={() => copyCitation(entry.key)}
@@ -749,6 +806,22 @@ export function ReferenceLibrary() {
                           >
                             Copy citation
                           </button>
+                          {!entry.file && (entry.doi || entry.arxiv_id) ? (
+                            <button
+                              data-testid="download-pdf-btn"
+                              disabled={downloadingKey === entry.key}
+                              onClick={() => handleDownload(entry)}
+                              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                            >
+                              {downloadingKey === entry.key
+                                ? downloadProgress
+                                  ? downloadProgress.total
+                                    ? `Downloading ${Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%`
+                                    : "Downloading…"
+                                  : "Resolving…"
+                                : "Download PDF"}
+                            </button>
+                          ) : null}
                           <button data-testid="edit-entry-btn" onClick={() => startEdit(entry)}
                             className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover">
                             Edit

@@ -2340,4 +2340,311 @@ describe("ReferenceLibrary", () => {
       expect((recognizeCalls[1]!.args as Record<string, unknown>).pdfPath).toBe("/same/paper.pdf");
     });
   });
+
+  describe("Download PDF button", () => {
+    const sandersonWithDoi: BibEntry = {
+      ...sanderson,
+      doi: "10.1000/xyz",
+      file: undefined,
+    };
+
+    const sandersonWithArxiv: BibEntry = {
+      ...sanderson,
+      doi: undefined,
+      arxiv_id: "2301.12345",
+      file: undefined,
+    };
+
+    const sandersonWithFile: BibEntry = {
+      ...sanderson,
+      doi: "10.1000/xyz",
+      file: "assets/pdf/sanderson2009.pdf",
+    };
+
+    const sandersonNoIds: BibEntry = {
+      ...sanderson,
+      doi: undefined,
+      arxiv_id: undefined,
+      file: undefined,
+    };
+
+    function setupMockWithDownload(
+      fixtureOverride: BibEntry[],
+      downloadHandler?: (cmd: string, args: unknown) => unknown,
+    ) {
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixtureOverride;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "download_entry_pdf") {
+          if (downloadHandler) return downloadHandler(cmd, args as unknown);
+          return "assets/pdf/sanderson2009.pdf";
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+    }
+
+    it("shows 'Download PDF' button for entry with DOI but no file", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.getByTestId("download-pdf-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Download PDF");
+    });
+
+    it("shows 'Download PDF' button for entry with arxiv_id but no file", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithArxiv];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.getByTestId("download-pdf-btn")).toBeInTheDocument();
+    });
+
+    it("shows 'Open PDF' instead of 'Download PDF' when entry has file", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.getByTestId("open-pdf-btn")).toBeInTheDocument();
+      expect(screen.queryByTestId("download-pdf-btn")).not.toBeInTheDocument();
+    });
+
+    it("shows neither button when entry has no DOI, no arxiv_id, and no file", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonNoIds];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.queryByTestId("download-pdf-btn")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("open-pdf-btn")).not.toBeInTheDocument();
+    });
+
+    it("clicking 'Download PDF' calls download_entry_pdf with correct args", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "download_entry_pdf");
+        expect(call).toBeTruthy();
+        expect(call!.args).toEqual({ key: "sanderson2009", workspacePath: "/workspace" });
+      });
+    });
+
+    it("shows 'Resolving...' while download is in flight", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      let resolveDownload!: (value: string) => void;
+      const pending = new Promise<string>((r) => { resolveDownload = r; });
+      setupMockWithDownload(fixture, () => pending);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => {
+        const btn = screen.getByTestId("download-pdf-btn");
+        expect(btn).toBeDisabled();
+        expect(btn.textContent).toBe("Resolving…");
+      });
+
+      await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
+    });
+
+    it("successful download shows success toast", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => {
+        const msg = useStatusMessageStore.getState().message;
+        expect(msg).toMatch(/Downloaded PDF for @sanderson2009/);
+      });
+    });
+
+    it("download error shows error toast", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      setupMockWithDownload(fixture, () => { throw new Error("No open-access PDF found"); });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => {
+        expect(useStatusMessageStore.getState().message).toMatch(/No open-access PDF found/);
+        expect(useStatusMessageStore.getState().variant).toBe("error");
+      });
+    });
+
+    it("button re-enables after download completes", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      let resolveDownload!: (value: string) => void;
+      const pending = new Promise<string>((r) => { resolveDownload = r; });
+      setupMockWithDownload(fixture, () => pending);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => expect(screen.getByTestId("download-pdf-btn")).toBeDisabled());
+
+      await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
+
+      await waitFor(() => {
+        const btn = screen.getByTestId("download-pdf-btn");
+        expect(btn).not.toBeDisabled();
+        expect(btn.textContent).toBe("Download PDF");
+      });
+    });
+
+    it("button re-enables after download error", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      setupMockWithDownload(fixture, () => { throw new Error("fail"); });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => {
+        const btn = screen.getByTestId("download-pdf-btn");
+        expect(btn).not.toBeDisabled();
+        expect(btn.textContent).toBe("Download PDF");
+      });
+    });
+
+    it("clicking 'Open PDF' calls selectPage with the file path", async () => {
+      const user = userEvent.setup();
+      const selectPage = vi.fn();
+      useWorkspaceStore.setState({ selectPage });
+      fixture = [sandersonWithFile];
+      setupMockWithDownload(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("open-pdf-btn"));
+
+      expect(selectPage).toHaveBeenCalledWith("assets/pdf/sanderson2009.pdf");
+    });
+
+    it("updates button text with progress percentage when progress event fires", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      let resolveDownload!: (value: string) => void;
+      const pending = new Promise<string>((r) => { resolveDownload = r; });
+      setupMockWithDownload(fixture, () => pending);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => expect(screen.getByTestId("download-pdf-btn")).toBeDisabled());
+
+      act(() => {
+        emitMockEvent("lit:pdf-download-progress", {
+          key: "sanderson2009",
+          bytes_downloaded: 50000,
+          bytes_total: 100000,
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Downloading 50%");
+      });
+
+      await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
+    });
+
+    it("shows indeterminate progress when total is null", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      let resolveDownload!: (value: string) => void;
+      const pending = new Promise<string>((r) => { resolveDownload = r; });
+      setupMockWithDownload(fixture, () => pending);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => expect(screen.getByTestId("download-pdf-btn")).toBeDisabled());
+
+      act(() => {
+        emitMockEvent("lit:pdf-download-progress", {
+          key: "sanderson2009",
+          bytes_downloaded: 50000,
+          bytes_total: null,
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Downloading…");
+      });
+
+      await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
+    });
+
+    it("ignores progress events for a different key", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithDoi];
+      let resolveDownload!: (value: string) => void;
+      const pending = new Promise<string>((r) => { resolveDownload = r; });
+      setupMockWithDownload(fixture, () => pending);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("download-pdf-btn"));
+
+      await waitFor(() => expect(screen.getByTestId("download-pdf-btn")).toBeDisabled());
+
+      act(() => {
+        emitMockEvent("lit:pdf-download-progress", {
+          key: "otherkey2020",
+          bytes_downloaded: 50000,
+          bytes_total: 100000,
+        });
+      });
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Resolving…");
+
+      await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
+    });
+  });
 });

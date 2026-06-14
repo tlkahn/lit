@@ -7,3 +7,4 @@ pub mod convert;
 pub mod writer;
 pub mod semantic_scholar;
 pub mod db;
+pub mod unpaywall;
