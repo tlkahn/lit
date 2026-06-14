@@ -24,3 +24,4 @@ pub mod enrich;
 pub mod recognize;
 pub mod reindex_queue;
 pub mod pdf_download;
+pub mod ocr;

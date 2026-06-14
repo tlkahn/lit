@@ -159,6 +159,23 @@ pub fn companion_search_paths(prefs: &Preferences) -> Vec<String> {
         .unwrap_or_else(|| vec![".".to_string()])
 }
 
+/// Return the raw (unexpanded) `companion.searchPath` entries from preferences.
+/// Unlike `companion_search_paths`, this does **not** trim, filter blanks, expand
+/// tildes, or fall back to `["."]` -- it returns exactly what is stored in the
+/// JSON array (or an empty vec when the key is absent / not an array).
+pub fn raw_companion_search_paths(prefs: &Preferences) -> Vec<String> {
+    prefs
+        .extra
+        .get("companion.searchPath")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn citation_notes_dir(prefs: &Preferences) -> String {
     prefs
         .extra
@@ -817,6 +834,32 @@ mod tests {
             super::companion_search_paths(&prefs),
             vec!["foo/~bar".to_string()]
         );
+    }
+
+    // --- raw_companion_search_paths tests ---
+
+    #[test]
+    fn raw_companion_search_paths_empty_when_absent() {
+        let prefs = Preferences::default();
+        assert!(super::raw_companion_search_paths(&prefs).is_empty());
+    }
+
+    #[test]
+    fn raw_companion_search_paths_returns_exact_strings() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": [".", " assets/pdf ", "~/pdfs"]}"#)
+                .unwrap();
+        assert_eq!(
+            super::raw_companion_search_paths(&prefs),
+            vec![".".to_string(), " assets/pdf ".to_string(), "~/pdfs".to_string()]
+        );
+    }
+
+    #[test]
+    fn raw_companion_search_paths_non_array_returns_empty() {
+        let prefs: Preferences =
+            serde_json::from_str(r#"{"companion.searchPath": "pdfs"}"#).unwrap();
+        assert!(super::raw_companion_search_paths(&prefs).is_empty());
     }
 
     #[test]

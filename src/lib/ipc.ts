@@ -522,6 +522,29 @@ export async function downloadEntryPdf(
   return invoke<string>("download_entry_pdf", { key, workspacePath });
 }
 
+export type OcrProgressPayload = { key: string; step: string; detail?: string };
+
+export async function ocrPdfToMarkdown(
+  key: string,
+  workspacePath: string,
+  options?: { lead?: number; trail?: number; overwrite?: boolean },
+): Promise<string> {
+  return invoke<string>("ocr_pdf_to_markdown", {
+    key,
+    workspacePath,
+    lead: options?.lead ?? 0,
+    trail: options?.trail ?? 0,
+    overwrite: options?.overwrite ?? false,
+  });
+}
+
+export async function checkOcrTargetExists(
+  key: string,
+  workspacePath: string,
+): Promise<boolean> {
+  return invoke<boolean>("check_ocr_target_exists", { key, workspacePath });
+}
+
 // PDF recognition
 
 export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";

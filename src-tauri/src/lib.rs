@@ -422,6 +422,8 @@ pub fn run() {
             commands::pdf_download::download_entry_pdf,
             commands::recognize::recognize_pdf,
             commands::recognize::import_recognized_entry,
+            commands::ocr::ocr_pdf_to_markdown,
+            commands::ocr::check_ocr_target_exists,
             context_menu::show_trash_context_menu,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,
