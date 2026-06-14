@@ -6,6 +6,11 @@ use tauri::Emitter;
 static OCR_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(600))
+        .user_agent(format!(
+            "lit/{} (https://github.com/tlkahn/lit)",
+            env!("LIT_GIT_VERSION")
+        ))
         .build()
         .expect("failed to build OCR client")
 });
@@ -46,6 +51,44 @@ fn ocr_image_stem(key: &str) -> String {
     format!("assets/images/{key}")
 }
 
+/// Write OCR markdown output, respecting the overwrite flag.
+///
+/// When `overwrite` is false, uses `OpenOptions::create_new(true)` for atomic
+/// "create only if absent" semantics — no TOCTOU race.
+fn write_ocr_markdown(md_path: &std::path::Path, content: &[u8], overwrite: bool) -> Result<(), String> {
+    if overwrite {
+        std::fs::write(md_path, content)
+            .map_err(|e| format!("Failed to write markdown: {e}"))
+    } else {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(md_path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    format!(
+                        "A note named '{}' already exists \u{2014} use overwrite to replace it",
+                        md_path.file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| md_path.display().to_string()),
+                    )
+                } else {
+                    format!("Failed to write markdown: {e}")
+                }
+            })?;
+        file.write_all(content)
+            .map_err(|e| format!("Failed to write markdown: {e}"))
+    }
+}
+
+/// Validate that `key` is safe to use as a path component (no slashes,
+/// no leading dots, no OS-forbidden chars).
+fn validate_key(key: &str) -> Result<(), String> {
+    crate::workspace::normalize::validate_page_name(key)
+        .map_err(|e| format!("Invalid citation key: {e}"))
+}
+
 /// Map an `ocr_cli::error::Error` to a user-facing error string.
 fn map_ocr_error(e: &ocr_cli::error::Error) -> String {
     match e {
@@ -68,16 +111,7 @@ fn map_ocr_error(e: &ocr_cli::error::Error) -> String {
 fn ensure_companion_search_path(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let prefs = crate::preferences::read_preferences(app_handle);
 
-    let raw_paths: Vec<String> = prefs
-        .extra
-        .get("companion.searchPath")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|x| x.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let raw_paths = crate::preferences::raw_companion_search_paths(&prefs);
 
     if let Some(updated) = updated_companion_search_paths(&raw_paths) {
         crate::preferences::set_preference(
@@ -109,11 +143,13 @@ pub async fn ocr_pdf_to_markdown(
     workspace_path: String,
     lead: usize,
     trail: usize,
+    overwrite: bool,
     credential_store: tauri::State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
     pdfium_config: tauri::State<'_, crate::pdf::PdfiumConfig>,
     graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
+    validate_key(&key)?;
     let root = PathBuf::from(&workspace_path);
 
     // Step 1: Look up bib entry from graph index
@@ -147,8 +183,13 @@ pub async fn ocr_pdf_to_markdown(
 
     // Step 4: Read PDF bytes from disk
     emit_progress(&app_handle, &key, "read_pdf", "Reading PDF file");
-    let pdf_bytes =
-        std::fs::read(&pdf_path).map_err(|e| format!("Failed to read PDF: {e}"))?;
+    let pdf_path_clone = pdf_path.clone();
+    let pdf_bytes = tokio::task::spawn_blocking(move || {
+        std::fs::read(&pdf_path_clone)
+    })
+    .await
+    .map_err(|e| format!("Read task failed: {e}"))?
+    .map_err(|e| format!("Failed to read PDF: {e}"))?;
 
     // Step 5: Truncate if lead/trail > 0
     let ocr_bytes = if lead > 0 || trail > 0 {
@@ -184,7 +225,7 @@ pub async fn ocr_pdf_to_markdown(
     // The provider registry stores "https://api.mistral.ai/v1" but
     // ocr_pdf() builds "{base_url}/v1/ocr", so strip the /v1 suffix.
     let mistral_base = crate::provider_registry::lookup("mistral")
-        .map(|e| e.default_base_url.trim_end_matches("/v1").to_string())
+        .map(|e| e.default_base_url.strip_suffix("/v1").unwrap_or(e.default_base_url).to_string())
         .unwrap_or_else(|| "https://api.mistral.ai".to_string());
     let ocr_response = ocr_cli::ocr::ocr_pdf(
         &OCR_CLIENT,
@@ -209,15 +250,17 @@ pub async fn ocr_pdf_to_markdown(
     );
     let image_dir = ocr_image_dir(&root, &key);
     let stem = ocr_image_stem(&key);
-    let output = ocr_cli::postproc::postprocess(&ocr_response.pages, &image_dir, &stem)
-        .map_err(|e| format!("Post-processing failed: {e}"))?;
-
-    // Step 8: Write markdown file
-    emit_progress(&app_handle, &key, "write", "Writing markdown file");
     let md_relative = format!("{key}.md");
     let md_path = ocr_markdown_path(&root, &key);
-    std::fs::write(&md_path, &output.markdown)
-        .map_err(|e| format!("Failed to write markdown: {e}"))?;
+    let pages = ocr_response.pages;
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let output = ocr_cli::postproc::postprocess(&pages, &image_dir, &stem)
+            .map_err(|e| format!("Post-processing failed: {e}"))?;
+        write_ocr_markdown(&md_path, output.markdown.as_bytes(), overwrite)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Post-process task failed: {e}"))??;
 
     // Step 8b: Ensure companion search path includes assets/pdf
     if let Err(e) = ensure_companion_search_path(&app_handle) {
@@ -234,6 +277,7 @@ pub async fn check_ocr_target_exists(
     key: String,
     workspace_path: String,
 ) -> Result<bool, String> {
+    validate_key(&key)?;
     let path = PathBuf::from(&workspace_path).join(format!("{key}.md"));
     Ok(path.exists())
 }
@@ -276,7 +320,7 @@ mod tests {
         // Verify the provider registry URL is correctly stripped.
         let entry = crate::provider_registry::lookup("mistral")
             .expect("mistral must be in the registry");
-        let stripped = entry.default_base_url.trim_end_matches("/v1");
+        let stripped = entry.default_base_url.strip_suffix("/v1").unwrap_or(entry.default_base_url);
         assert_eq!(stripped, "https://api.mistral.ai");
     }
 
@@ -336,16 +380,7 @@ mod tests {
         std::fs::write(&path, "{}").unwrap();
 
         let prefs = read_preferences_from_path(&path);
-        let raw_paths: Vec<String> = prefs
-            .extra
-            .get("companion.searchPath")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let raw_paths = crate::preferences::raw_companion_search_paths(&prefs);
 
         if let Some(updated) = updated_companion_search_paths(&raw_paths) {
             set_preference_at_path(&path, "companion.searchPath", serde_json::json!(updated))
@@ -370,16 +405,7 @@ mod tests {
 
         for _ in 0..2 {
             let prefs = read_preferences_from_path(&path);
-            let raw_paths: Vec<String> = prefs
-                .extra
-                .get("companion.searchPath")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let raw_paths = crate::preferences::raw_companion_search_paths(&prefs);
 
             if let Some(updated) = updated_companion_search_paths(&raw_paths) {
                 set_preference_at_path(
@@ -415,16 +441,7 @@ mod tests {
         .unwrap();
 
         let prefs = read_preferences_from_path(&path);
-        let raw_paths: Vec<String> = prefs
-            .extra
-            .get("companion.searchPath")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let raw_paths = crate::preferences::raw_companion_search_paths(&prefs);
 
         if let Some(updated) = updated_companion_search_paths(&raw_paths) {
             set_preference_at_path(&path, "companion.searchPath", serde_json::json!(updated))
@@ -458,16 +475,7 @@ mod tests {
         .unwrap();
 
         let prefs = read_preferences_from_path(&path);
-        let raw_paths: Vec<String> = prefs
-            .extra
-            .get("companion.searchPath")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let raw_paths = crate::preferences::raw_companion_search_paths(&prefs);
 
         // Should detect it's already present
         assert!(updated_companion_search_paths(&raw_paths).is_none());
@@ -620,5 +628,115 @@ mod tests {
         let e = ocr_cli::error::Error::Base64(base64::DecodeError::InvalidPadding);
         let msg = map_ocr_error(&e);
         assert!(msg.starts_with("OCR failed:"), "got: {msg}");
+    }
+
+    // --- validate_key tests ---
+
+    #[test]
+    fn validate_key_accepts_simple_key() {
+        validate_key("smith2024").unwrap();
+    }
+
+    #[test]
+    fn validate_key_accepts_hyphens_and_underscores() {
+        validate_key("doe-jane_2023").unwrap();
+    }
+
+    #[test]
+    fn validate_key_rejects_path_traversal() {
+        let err = validate_key("../etc/passwd").unwrap_err();
+        assert!(err.contains("Invalid citation key"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_key_rejects_forward_slash() {
+        let err = validate_key("foo/bar").unwrap_err();
+        assert!(err.contains("forbidden character"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_key_rejects_backslash() {
+        let err = validate_key("foo\\bar").unwrap_err();
+        assert!(err.contains("forbidden character"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_key_rejects_leading_dot() {
+        let err = validate_key(".hidden").unwrap_err();
+        assert!(err.contains("Invalid citation key"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_key_rejects_empty() {
+        let err = validate_key("").unwrap_err();
+        assert!(err.contains("Invalid citation key"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_key_rejects_null_byte() {
+        let err = validate_key("foo\0bar").unwrap_err();
+        assert!(err.contains("forbidden character"), "got: {err}");
+    }
+
+    #[test]
+    fn check_ocr_target_rejects_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_ocr_target_exists(
+            "../escape".to_string(),
+            dir.path().to_string_lossy().to_string(),
+        ));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid citation key"));
+    }
+
+    // --- write_ocr_markdown tests ---
+
+    #[test]
+    fn write_ocr_output_rejects_existing_when_no_overwrite() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let md_path = dir.path().join("smith2024.md");
+        std::fs::write(&md_path, "# Existing note").unwrap();
+
+        let result = write_ocr_markdown(&md_path, b"# New content", false);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("already exists"), "got: {err}");
+        assert!(err.contains("smith2024.md"), "got: {err}");
+        assert!(err.contains("overwrite"), "got: {err}");
+        // Ensure original content is untouched
+        assert_eq!(std::fs::read_to_string(&md_path).unwrap(), "# Existing note");
+    }
+
+    #[test]
+    fn write_ocr_output_creates_new_when_no_overwrite() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let md_path = dir.path().join("smith2024.md");
+
+        write_ocr_markdown(&md_path, b"# OCR output", false).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&md_path).unwrap(), "# OCR output");
+    }
+
+    #[test]
+    fn write_ocr_output_replaces_when_overwrite() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let md_path = dir.path().join("smith2024.md");
+        std::fs::write(&md_path, "# Old content").unwrap();
+
+        write_ocr_markdown(&md_path, b"# New OCR output", true).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&md_path).unwrap(), "# New OCR output");
+    }
+
+    #[test]
+    fn write_ocr_output_creates_new_when_overwrite() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let md_path = dir.path().join("brand-new.md");
+
+        write_ocr_markdown(&md_path, b"# Fresh content", true).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&md_path).unwrap(), "# Fresh content");
     }
 }

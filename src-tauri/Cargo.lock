@@ -3095,8 +3095,8 @@ dependencies = [
  "image",
  "indexmap 2.14.0",
  "llm-anthropic",
- "llm-core 0.11.0 (git+https://github.com/tlkahn/llm-rs.git?rev=665090e)",
- "llm-openai 0.11.0 (git+https://github.com/tlkahn/llm-rs.git?rev=665090e)",
+ "llm-core",
+ "llm-openai",
  "lmpdf",
  "notify-debouncer-mini",
  "ocr-cli",
@@ -3151,7 +3151,7 @@ source = "git+https://github.com/tlkahn/llm-rs.git?rev=665090e#665090eeb656a5145
 dependencies = [
  "async-trait",
  "futures",
- "llm-core 0.11.0 (git+https://github.com/tlkahn/llm-rs.git?rev=665090e)",
+ "llm-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3177,45 +3177,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "llm-core"
-version = "0.11.0"
-source = "git+https://github.com/tlkahn/llm-rs#665090eeb656a5145866523c71f7328b93551b9e"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "fastrand",
- "futures",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml 0.8.2",
-]
-
-[[package]]
 name = "llm-openai"
 version = "0.11.0"
 source = "git+https://github.com/tlkahn/llm-rs.git?rev=665090e#665090eeb656a5145866523c71f7328b93551b9e"
 dependencies = [
  "async-trait",
  "futures",
- "llm-core 0.11.0 (git+https://github.com/tlkahn/llm-rs.git?rev=665090e)",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "llm-openai"
-version = "0.11.0"
-source = "git+https://github.com/tlkahn/llm-rs#665090eeb656a5145866523c71f7328b93551b9e"
-dependencies = [
- "async-trait",
- "futures",
- "llm-core 0.11.0 (git+https://github.com/tlkahn/llm-rs)",
+ "llm-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3865,14 +3833,14 @@ dependencies = [
 [[package]]
 name = "ocr-cli"
 version = "0.1.0"
-source = "git+https://github.com/tlkahn/ocr-cli.git?rev=4347851#4347851349090a709c96e17493cecc80c3e27a8e"
+source = "git+https://github.com/tlkahn/ocr-cli.git?rev=849d32c#849d32c631cf1dd3c815bac0398050e5ff9ce3f5"
 dependencies = [
  "base64 0.22.1",
  "clap",
  "futures",
  "image",
- "llm-core 0.11.0 (git+https://github.com/tlkahn/llm-rs)",
- "llm-openai 0.11.0 (git+https://github.com/tlkahn/llm-rs)",
+ "llm-core",
+ "llm-openai",
  "lmpdf",
  "regex",
  "reqwest 0.12.28",
