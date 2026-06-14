@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::recognize::resolve::doi::percent_encode_doi_path;
 use crate::recognize::resolve::ResolveError;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -10,27 +11,18 @@ pub struct OaLocation {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UnpaywallResponse {
     pub best_oa_location: Option<OaLocation>,
-    pub is_oa: bool,
-    pub doi: String,
 }
 
-const UNPAYWALL_BASE_URL: &str = "https://api.unpaywall.org";
+pub(crate) const UNPAYWALL_BASE_URL: &str = "https://api.unpaywall.org";
 
 const UNPAYWALL_EMAIL: &str = "lit@lit.solar";
-
-pub async fn lookup_oa_pdf_url(
-    client: &reqwest::Client,
-    doi: &str,
-) -> Result<Option<String>, ResolveError> {
-    lookup_oa_pdf_url_with_base(client, doi, UNPAYWALL_BASE_URL).await
-}
 
 pub(crate) async fn lookup_oa_pdf_url_with_base(
     client: &reqwest::Client,
     doi: &str,
     base_url: &str,
 ) -> Result<Option<String>, ResolveError> {
-    let url = format!("{}/v2/{}?email={}", base_url, doi, UNPAYWALL_EMAIL);
+    let url = format!("{}/v2/{}?email={}", base_url, percent_encode_doi_path(doi), UNPAYWALL_EMAIL);
 
     let resp = client.get(&url).send().await.map_err(|e| {
         ResolveError::Http(format!("Unpaywall request failed: {}", e))
@@ -159,6 +151,75 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn sici_doi_with_special_chars_encodes_path() {
+        let server = MockServer::start().await;
+
+        let sici_doi = "10.1002/(SICI)1097-0258(19980815/30)17:15/16<1683::AID-SIM968>3.0.CO;2-S";
+        let encoded_path =
+            "/v2/10.1002/(SICI)1097-0258(19980815/30)17:15/16%3C1683::AID-SIM968%3E3.0.CO;2-S";
+
+        let body = r#"{
+            "doi": "10.1002/(SICI)1097-0258(19980815/30)17:15/16<1683::AID-SIM968>3.0.CO;2-S",
+            "is_oa": true,
+            "best_oa_location": {
+                "url_for_pdf": "https://example.com/sici.pdf"
+            }
+        }"#;
+
+        use wiremock::matchers::path;
+        Mock::given(method("GET"))
+            .and(path(encoded_path))
+            .and(query_param("email", "lit@lit.solar"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let client = test_client();
+        let result = lookup_oa_pdf_url_with_base(&client, sici_doi, &server.uri())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            Some("https://example.com/sici.pdf".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn doi_with_question_mark_encodes_path() {
+        let server = MockServer::start().await;
+
+        let doi = "10.1000/test?param";
+        let encoded_path = "/v2/10.1000/test%3Fparam";
+
+        let body = r#"{
+            "doi": "10.1000/test?param",
+            "is_oa": true,
+            "best_oa_location": {
+                "url_for_pdf": "https://example.com/qmark.pdf"
+            }
+        }"#;
+
+        use wiremock::matchers::path;
+        Mock::given(method("GET"))
+            .and(path(encoded_path))
+            .and(query_param("email", "lit@lit.solar"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let client = test_client();
+        let result = lookup_oa_pdf_url_with_base(&client, doi, &server.uri())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            Some("https://example.com/qmark.pdf".to_string())
+        );
     }
 
     #[tokio::test]

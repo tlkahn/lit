@@ -221,7 +221,7 @@ const S2_PAPER_FIELDS: &str = "paperId,title,abstract,authors,year,referenceCoun
 
 const S2_SEARCH_FIELDS: &str = "paperId,title,authors,year,externalIds,journal,abstract,tldr";
 
-const S2_BASE_URL: &str = "https://api.semanticscholar.org";
+pub(crate) const S2_BASE_URL: &str = "https://api.semanticscholar.org";
 
 pub async fn lookup_by_doi(client: &reqwest::Client, doi: &str) -> Result<S2Paper, String> {
     lookup_by_doi_with_base(client, doi, S2_BASE_URL).await

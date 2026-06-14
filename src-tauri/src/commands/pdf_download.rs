@@ -11,9 +11,6 @@ use crate::bib::unpaywall;
 use crate::recognize::attach::{generate_pdf_path, PDF_ASSET_DIR};
 use crate::recognize::resolve::ResolveError;
 
-const UNPAYWALL_BASE_URL: &str = "https://api.unpaywall.org";
-const S2_BASE_URL: &str = "https://api.semanticscholar.org";
-
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
     #[error("HTTP error: {0}")]
@@ -24,16 +21,13 @@ pub enum DownloadError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("PDF already exists at {0}")]
-    AlreadyExists(String),
 }
 
-const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub(crate) static DOWNLOAD_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
-        .timeout(DOWNLOAD_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
         .user_agent(format!(
             "lit/{} (https://github.com/tlkahn/lit)",
             env!("LIT_GIT_VERSION")
@@ -130,7 +124,9 @@ pub async fn resolve_pdf_url(
     match unpaywall::lookup_oa_pdf_url_with_base(client, doi, unpaywall_base).await {
         Ok(Some(url)) => return Ok(Some(url)),
         Ok(None) => {}
-        Err(ResolveError::RateLimited) => return Err(ResolveError::RateLimited),
+        Err(ResolveError::RateLimited) => {
+            tracing::warn!("Unpaywall rate-limited, trying Semantic Scholar");
+        }
         Err(e) => tracing::warn!(error = %e, "Unpaywall lookup failed, trying Semantic Scholar"),
     }
 
@@ -138,13 +134,6 @@ pub async fn resolve_pdf_url(
         Ok(paper) => Ok(semantic_scholar::extract_oa_pdf_url(&paper)),
         Err(_) => Ok(None),
     }
-}
-
-pub async fn resolve_pdf_url_default(
-    client: &reqwest::Client,
-    entry: &BibEntry,
-) -> Result<Option<String>, ResolveError> {
-    resolve_pdf_url(client, entry, UNPAYWALL_BASE_URL, S2_BASE_URL).await
 }
 
 #[tauri::command]
@@ -171,7 +160,12 @@ pub async fn download_entry_pdf(
         }
     }
 
-    let url = resolve_pdf_url_default(&DOWNLOAD_CLIENT, &entry)
+    let url = resolve_pdf_url(
+        &DOWNLOAD_CLIENT,
+        &entry,
+        unpaywall::UNPAYWALL_BASE_URL,
+        semantic_scholar::S2_BASE_URL,
+    )
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "No open-access PDF found".to_string())?;
@@ -403,31 +397,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unpaywall_rate_limited_propagates() {
-        let server = MockServer::start().await;
+    async fn unpaywall_rate_limited_falls_through_to_s2() {
+        let unpaywall_server = MockServer::start().await;
+        let s2_server = MockServer::start().await;
         let client = test_client();
 
         Mock::given(method("GET"))
             .and(path_regex(r"/v2/.*"))
             .respond_with(ResponseTemplate::new(429))
-            .mount(&server)
+            .mount(&unpaywall_server)
             .await;
+
+        let s2_body = r#"{
+            "paperId": "abc",
+            "title": "Test Paper",
+            "openAccessPdf": {
+                "url": "https://s2-pdf.example.com/fallback.pdf"
+            }
+        }"#;
 
         Mock::given(method("GET"))
             .and(path_regex(r"/graph/v1/paper/DOI:.*"))
-            .respond_with(ResponseTemplate::new(200))
-            .expect(0)
-            .mount(&server)
+            .respond_with(ResponseTemplate::new(200).set_body_string(s2_body))
+            .mount(&s2_server)
             .await;
 
         let entry = make_entry(Some("10.1038/nature12373"), None);
-        let result = resolve_pdf_url(&client, &entry, &server.uri(), &server.uri()).await;
+        let result = resolve_pdf_url(
+            &client,
+            &entry,
+            &unpaywall_server.uri(),
+            &s2_server.uri(),
+        )
+        .await
+        .unwrap();
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ResolveError::RateLimited => {}
-            other => panic!("expected RateLimited, got {:?}", other),
-        }
+        assert_eq!(
+            result,
+            Some("https://s2-pdf.example.com/fallback.pdf".to_string())
+        );
     }
 
     // ── download_pdf tests ─────────────────────────────────────────
@@ -583,6 +591,56 @@ mod tests {
         .await;
 
         assert_eq!(result.unwrap(), "assets/pdf/smith2024-1.pdf");
+    }
+
+    #[tokio::test]
+    async fn download_client_uses_connect_timeout_not_overall_timeout() {
+        let server = MockServer::start().await;
+
+        let body = b"%PDF-1.4 fake pdf content here";
+        Mock::given(method("GET"))
+            .and(path("/slow.pdf"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(body.as_slice())
+                    .set_delay(std::time::Duration::from_secs(3)),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        let workspace = tempfile::TempDir::new().unwrap();
+        let url = format!("{}/slow.pdf", server.uri());
+        let result = download_pdf(
+            &client,
+            &url,
+            workspace.path(),
+            "slow2024",
+            None::<fn(u64, Option<u64>)>,
+        )
+        .await;
+
+        assert!(result.is_ok(), "download should succeed with connect_timeout only (no overall timeout)");
+
+        let client_with_overall = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(1))
+            .build()
+            .unwrap();
+
+        let result2 = download_pdf(
+            &client_with_overall,
+            &url,
+            workspace.path(),
+            "slow2024b",
+            None::<fn(u64, Option<u64>)>,
+        )
+        .await;
+
+        assert!(result2.is_err(), "download should fail with a tight overall timeout");
     }
 
     #[tokio::test]
