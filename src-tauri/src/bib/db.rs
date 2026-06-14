@@ -67,7 +67,7 @@ fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
 /// Normalize a title for dedup comparison: lowercase, strip punctuation, collapse whitespace.
 /// This is a simplified version of recognize::resolve::title_match::normalize_title,
 /// duplicated here to avoid a cross-module dependency from bib -> recognize.
-fn normalize_title_for_dedup(title: &str) -> String {
+pub(crate) fn normalize_title_for_dedup(title: &str) -> String {
     title
         .to_lowercase()
         .chars()
@@ -529,6 +529,15 @@ pub fn tombstone_bib_item(
          WHERE cite_key = ?1 AND deleted_at IS NULL",
         params![cite_key],
     )?;
+    if rows > 0 {
+        // Clean up bib_references edges to/from the tombstoned item
+        // to prevent orphan rows and stale re-linking if the cite_key
+        // is later reused by a different entry.
+        conn.execute(
+            "DELETE FROM bib_references WHERE parent_key = ?1 OR child_key = ?1",
+            params![cite_key],
+        )?;
+    }
     Ok(rows > 0)
 }
 
@@ -730,17 +739,18 @@ pub fn save_entry_with_generated_key(
 }
 
 /// Insert a parent→child reference edge. Idempotent (INSERT OR IGNORE).
+/// Returns `true` if a new row was inserted, `false` if it already existed.
 pub fn insert_bib_reference(
     conn: &Connection,
     parent_key: &str,
     child_key: &str,
     position: Option<i64>,
-) -> Result<(), GraphError> {
-    conn.execute(
+) -> Result<bool, GraphError> {
+    let rows = conn.execute(
         "INSERT OR IGNORE INTO bib_references (parent_key, child_key, position) VALUES (?1, ?2, ?3)",
         params![parent_key, child_key, position],
     )?;
-    Ok(())
+    Ok(rows > 0)
 }
 
 /// Return the live BibEntry children linked from `parent_key`, ordered by position.
@@ -2496,8 +2506,10 @@ mod tests {
         upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
         upsert_bib_item(&store.conn, &child, None, None, false).unwrap();
 
-        insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
-        insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
+        let first = insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
+        assert!(first, "first insert should return true");
+        let second = insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
+        assert!(!second, "duplicate insert should return false");
 
         let refs = get_references_for(&store.conn, "parent2024").unwrap();
         assert_eq!(refs.len(), 1, "duplicate insert should be ignored");
@@ -2554,5 +2566,67 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let deleted = delete_references_for(&store.conn, "nonexistent").unwrap();
         assert_eq!(deleted, 0);
+    }
+
+    /// Regression test for F5: tombstoning a bib_item must delete all
+    /// bib_references rows where the item appears as parent or child.
+    /// Without this cleanup, orphan rows accumulate and a later reuse of
+    /// the cite_key silently re-links to stale edges.
+    #[test]
+    fn test_tombstone_bib_item_cleans_up_bib_references() {
+        let store = Store::open_memory().unwrap();
+        // Set up: parent -> child_a (to be tombstoned), parent -> child_b (to stay)
+        // Also: child_a -> grandchild (child_a as parent)
+        let parent = test_entry("parent2024");
+        let child_a = test_entry("child_a");
+        let child_b = test_entry("child_b");
+        let grandchild = test_entry("grandchild");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_a, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_b, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &grandchild, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent2024", "child_a", Some(0)).unwrap();
+        insert_bib_reference(&store.conn, "parent2024", "child_b", Some(1)).unwrap();
+        insert_bib_reference(&store.conn, "child_a", "grandchild", Some(0)).unwrap();
+
+        // Tombstone child_a — should remove both inbound and outbound edges
+        tombstone_bib_item(&store.conn, "child_a").unwrap();
+
+        // Assert: bib_references rows for child_a are gone (both as child AND as parent)
+        let ref_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM bib_references \
+                 WHERE parent_key = 'child_a' OR child_key = 'child_a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ref_count, 0,
+            "tombstoning must delete all bib_references rows involving the key"
+        );
+
+        // Assert: parent -> child_b edge is still intact
+        let refs = get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].key, "child_b");
+    }
+
+    /// Regression test for F6: `get_references_for` must return `Err` (not be
+    /// swallowed via `.unwrap_or_default()`) when the DB schema is corrupt or
+    /// the bib_references table is missing.  This proves the error path exists
+    /// and callers must propagate it with `.map_err(…)?`.
+    #[test]
+    fn test_get_references_for_returns_err_on_missing_table() {
+        // Raw in-memory connection with NO schema — simulates corruption.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let result = get_references_for(&conn, "any_key");
+        assert!(
+            result.is_err(),
+            "get_references_for should return Err when bib_references table is missing, \
+             not silently return an empty Vec"
+        );
     }
 }

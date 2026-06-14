@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::bib::convert::{normalize_doi, strip_jats};
+use crate::bib::convert::{minimal_ref_bib_entry, normalize_doi, strip_jats};
 use crate::bib::types::BibEntry;
 use crate::bib::writer::generate_key;
 use std::collections::HashSet;
@@ -201,30 +201,7 @@ pub fn s2_ref_to_bib_entry(reference: &S2Reference, existing_keys: &HashSet<Stri
         .and_then(|ids| ids.doi.as_deref())
         .map(normalize_doi);
 
-    let key = generate_key(&authors, &year, existing_keys);
-
-    BibEntry {
-        key,
-        authors,
-        title,
-        year,
-        entry_type: "misc".to_string(),
-        line_number: 0,
-        bib_file: None,
-        abstract_text: None,
-        doi,
-        journal: None,
-        url: None,
-        file: None,
-        volume: None,
-        number: None,
-        pages: None,
-        publisher: None,
-        issn: None,
-        isbn: None,
-        arxiv_id: None,
-        tags: vec![],
-    }
+    minimal_ref_bib_entry(authors, title, year, doi, existing_keys)
 }
 
 // ── Async API calls ────────────────────────────────────────────────
