@@ -464,4 +464,32 @@ mod tests {
         let rel_path = result.expect("should succeed");
         assert_eq!(rel_path, "assets/pdf/smith2024-1.pdf");
     }
+
+    #[test]
+    fn linked_pdf_resolves_for_ocr() {
+        let store = setup_db_with_entry("jones2023");
+        let workspace = tempfile::TempDir::new().unwrap();
+        let source_dir = tempfile::TempDir::new().unwrap();
+        let pdf_path = create_temp_pdf(source_dir.path(), "paper.pdf");
+
+        let rel_path = link_pdf_to_entry(
+            &store.conn,
+            "jones2023",
+            &pdf_path,
+            workspace.path(),
+        )
+        .expect("link should succeed");
+
+        // Verify the stored file field matches the returned path
+        let entry = crate::bib::db::get_bib_item(&store.conn, "jones2023")
+            .unwrap()
+            .expect("entry should exist");
+        assert_eq!(entry.file.as_deref(), Some(rel_path.as_str()));
+
+        // Verify OCR's path resolution: root.join(entry.file) points to an existing PDF
+        let resolved = workspace.path().join(&rel_path);
+        assert!(resolved.exists(), "OCR would find the PDF at {}", resolved.display());
+        let content = std::fs::read(&resolved).unwrap();
+        assert_eq!(&content[..4], b"%PDF", "resolved file should be a valid PDF");
+    }
 }
