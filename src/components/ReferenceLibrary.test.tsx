@@ -2647,4 +2647,123 @@ describe("ReferenceLibrary", () => {
       await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
     });
   });
+
+  describe("OCR to Markdown button", () => {
+    const sandersonWithFile: BibEntry = {
+      ...sanderson,
+      doi: "10.1000/xyz",
+      file: "assets/pdf/sanderson2009.pdf",
+    };
+
+    const sandersonNoFile: BibEntry = {
+      ...sanderson,
+      doi: "10.1000/xyz",
+      file: undefined,
+    };
+
+    function setupMockWithOcr(
+      fixtureOverride: BibEntry[],
+      handlers?: {
+        checkOcrTargetExists?: (cmd: string, args: unknown) => unknown;
+        ocrPdfToMarkdown?: (cmd: string, args: unknown) => unknown;
+      },
+    ) {
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixtureOverride;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "check_ocr_target_exists") {
+          if (handlers?.checkOcrTargetExists) return handlers.checkOcrTargetExists(cmd, args as unknown);
+          return false;
+        }
+        if (cmd === "ocr_pdf_to_markdown") {
+          if (handlers?.ocrPdfToMarkdown) return handlers.ocrPdfToMarkdown(cmd, args as unknown);
+          return "ocr/sanderson2009.md";
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+    }
+
+    it("shows 'OCR to Markdown' button when entry has file", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("ocr-btn").textContent).toBe("OCR to Markdown");
+    });
+
+    it("hides OCR button when entry has no file", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonNoFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+    });
+
+    it("clicking OCR button opens OcrDialog", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("ocr-btn"));
+
+      await waitFor(() => expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument());
+      expect(screen.getByTestId("ocr-start-btn")).toBeInTheDocument();
+      expect(screen.getByTestId("ocr-entry-info")).toHaveTextContent("The Saiva Age");
+    });
+
+    it("successful OCR shows success toast", async () => {
+      const user = userEvent.setup();
+      const selectPage = vi.fn();
+      useWorkspaceStore.setState({ selectPage });
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("ocr-btn"));
+      await waitFor(() => expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ocr-start-btn"));
+
+      await waitFor(() => {
+        expect(useStatusMessageStore.getState().message).toMatch(/OCR complete for @sanderson2009/);
+      });
+      expect(screen.queryByTestId("ocr-dialog")).not.toBeInTheDocument();
+      expect(selectPage).toHaveBeenCalledWith("ocr/sanderson2009.md");
+    });
+
+    it("OCR error shows error in dialog", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture, {
+        ocrPdfToMarkdown: () => { throw new Error("OCR engine not found"); },
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("ocr-btn"));
+      await waitFor(() => expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ocr-start-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-error")).toHaveTextContent("OCR engine not found");
+      });
+      expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument();
+    });
+  });
 });

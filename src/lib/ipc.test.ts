@@ -45,6 +45,9 @@ import {
   materializeCitation,
   enrichBibEntry,
   downloadEntryPdf,
+  ocrPdfToMarkdown,
+  checkOcrTargetExists,
+  type OcrProgressPayload,
   type EnrichResult,
   type SaveOutcome,
   isSaved,
@@ -705,6 +708,10 @@ describe("ipc", () => {
           };
         case "download_entry_pdf":
           return "assets/pdf/smith2020.pdf";
+        case "ocr_pdf_to_markdown":
+          return "smith2020.md";
+        case "check_ocr_target_exists":
+          return false;
         case "recognize_pdf": {
           return {
             kind: "resolved",
@@ -2172,6 +2179,48 @@ describe("ipc", () => {
     expect(result).toBe("assets/pdf/smith2020.pdf");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("download_entry_pdf", {
+      key: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("OcrProgressPayload type is usable", () => {
+    const payload: OcrProgressPayload = { key: "smith2020", step: "extracting" };
+    expect(payload.key).toBe("smith2020");
+    expect(payload.step).toBe("extracting");
+    expect(payload.detail).toBeUndefined();
+  });
+
+  it("ocrPdfToMarkdown calls ocr_pdf_to_markdown with defaults", async () => {
+    const result = await ocrPdfToMarkdown("smith2020", "/workspace");
+    expect(result).toBe("smith2020.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("ocr_pdf_to_markdown", {
+      key: "smith2020",
+      workspacePath: "/workspace",
+      lead: 0,
+      trail: 0,
+      overwrite: false,
+    });
+  });
+
+  it("ocrPdfToMarkdown forwards custom options", async () => {
+    await ocrPdfToMarkdown("smith2020", "/workspace", { lead: 2, trail: 3, overwrite: true });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("ocr_pdf_to_markdown", {
+      key: "smith2020",
+      workspacePath: "/workspace",
+      lead: 2,
+      trail: 3,
+      overwrite: true,
+    });
+  });
+
+  it("checkOcrTargetExists calls check_ocr_target_exists", async () => {
+    const result = await checkOcrTargetExists("smith2020", "/workspace");
+    expect(result).toBe(false);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("check_ocr_target_exists", {
       key: "smith2020",
       workspacePath: "/workspace",
     });

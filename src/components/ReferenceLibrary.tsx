@@ -28,6 +28,7 @@ import { useDropPdf } from "../hooks/useDropPdf";
 import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { ImportPdfDialog } from "./ImportPdfDialog";
+import { OcrDialog } from "./OcrDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { doiHref } from "../lib/urlUtils";
@@ -154,6 +155,7 @@ export function ReferenceLibrary() {
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
+  const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -789,13 +791,20 @@ export function ReferenceLibrary() {
                           </div>
                         ) : null}
                         {entry.file ? (
-                          <div className="mt-2">
+                          <div className="mt-2 flex gap-2">
                             <button
                               data-testid="open-pdf-btn"
                               onClick={() => selectPage(entry.file!)}
                               className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
                               Open PDF
+                            </button>
+                            <button
+                              data-testid="ocr-btn"
+                              onClick={() => setOcrEntry(entry)}
+                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                            >
+                              OCR to Markdown
                             </button>
                           </div>
                         ) : null}
@@ -847,6 +856,19 @@ export function ReferenceLibrary() {
       )}
       {dialog}
       {importPdfDialog}
+      {ocrEntry ? (
+        <OcrDialog
+          entry={ocrEntry}
+          workspacePath={workspacePath!}
+          onClose={() => setOcrEntry(null)}
+          onComplete={(path) => {
+            const key = ocrEntry.key;
+            setOcrEntry(null);
+            show("OCR complete for @" + key);
+            selectPage(path);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
