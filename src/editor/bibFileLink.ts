@@ -6,7 +6,9 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getFileDir, isAbsolutePath, isOpenablePath, resolveRelativePath } from "../lib/pathUtils";
+import { doiHref, isHttpUrl } from "../lib/urlUtils";
 import { INDEXED_EXTENSIONS } from "../hooks/useLeafFileType";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -20,36 +22,52 @@ export const bibPagePathFacet: Facet<string, string> = Facet.define<
 });
 
 /**
- * Matches BibTeX `file` field values in both brace and quote-delimited forms.
+ * Combined regex matching BibTeX file, url, and doi field values.
+ * Capture groups:
+ *   1 — field name (file, url, or doi)
+ *   2 — brace-delimited value
+ *   3 — quote-delimited value
+ *
+ * Uses the `i` flag since BibTeX field names are case-insensitive.
+ *
  * Known limitations vs the Rust parser (src-tauri/src/bib/parser.rs):
  * - Nested braces (e.g. `file = {dir/a{b}.pdf}`) truncate at the first `}`.
  * - Multi-line values are not matched (CM6 viewport scanning is line-by-line).
  */
-export const BIB_FILE_FIELD_RE =
-  /(?:^|[\s,{])file\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/g;
+export const BIB_FIELD_RE =
+  /(?:^|[\s,{])(file|url|doi)\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/gi;
 
-const bibFileLinkMark = Decoration.mark({ class: "cm-bib-file-link" });
+const bibFileLinkMark = Decoration.mark({ class: "cm-bib-file-link", kind: "file" });
+const bibUrlMark = Decoration.mark({ class: "cm-bib-url-link", kind: "url" });
+const bibDoiMark = Decoration.mark({ class: "cm-bib-url-link", kind: "doi" });
+
 
 function buildDecorations(view: EditorView): DecorationSet {
-  const ranges: { from: number; to: number }[] = [];
+  const ranges: { from: number; to: number; mark: Decoration }[] = [];
   const { from, to } = view.viewport;
-  const re = new RegExp(BIB_FILE_FIELD_RE.source, "g");
 
   for (let pos = from; pos <= to; ) {
     const line = view.state.doc.lineAt(pos);
-    re.lastIndex = 0;
+
+    BIB_FIELD_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(line.text)) !== null) {
-      const path = m[1] ?? m[2]!;
-      const pathStart = line.from + m.index + m[0].lastIndexOf(path);
-      const pathEnd = pathStart + path.length;
-      ranges.push({ from: pathStart, to: pathEnd });
+    while ((m = BIB_FIELD_RE.exec(line.text)) !== null) {
+      const value = m[2] ?? m[3]!;
+      const valueStart = line.from + m.index + m[0].lastIndexOf(value);
+      const valueEnd = valueStart + value.length;
+      const field = m[1]!.toLowerCase();
+      const mark =
+        field === "file" ? bibFileLinkMark :
+        field === "doi" ? bibDoiMark :
+        bibUrlMark;
+      ranges.push({ from: valueStart, to: valueEnd, mark });
     }
+
     pos = line.to + 1;
   }
 
   return Decoration.set(
-    ranges.map((r) => bibFileLinkMark.range(r.from, r.to)),
+    ranges.map((r) => r.mark.range(r.from, r.to)),
   );
 }
 
@@ -90,16 +108,37 @@ function createBibFileClickHandler(): Extension {
 
       let hitFrom: number | undefined;
       let hitTo: number | undefined;
-      pluginInstance.decorations.between(pos, pos, (from, to) => {
+      let hitDeco: Decoration | undefined;
+      pluginInstance.decorations.between(pos, pos, (from, to, value) => {
         if (pos >= to) return; // enforce half-open [from, to) — pos at `to` is outside
         hitFrom = from;
         hitTo = to;
+        hitDeco = value;
         return false; // stop after first hit
       });
-      if (hitFrom === undefined || hitTo === undefined) return false;
+      if (hitFrom === undefined || hitTo === undefined || hitDeco === undefined) return false;
 
       event.preventDefault();
-      const filePath = view.state.doc.sliceString(hitFrom, hitTo);
+      const rawValue = view.state.doc.sliceString(hitFrom, hitTo);
+
+      const kind: "file" | "url" | "doi" = hitDeco.spec.kind;
+      if (kind === "url" || kind === "doi") {
+        const resolved = kind === "doi" ? doiHref(rawValue) : rawValue.trim();
+        if (!isHttpUrl(resolved)) {
+          useStatusMessageStore
+            .getState()
+            .show(`Invalid URL: ${rawValue}`, "error");
+          return true;
+        }
+        openUrl(resolved).catch(() =>
+          useStatusMessageStore
+            .getState()
+            .show("Failed to open URL", "error"),
+        );
+        return true;
+      }
+
+      const filePath = rawValue;
       const pagePath = view.state.facet(bibPagePathFacet);
       const dir = getFileDir(pagePath);
       const resolved =
@@ -113,7 +152,6 @@ function createBibFileClickHandler(): Extension {
             .show(`Cannot open path: ${filePath}`, "error");
           return true;
         }
-        // Unix absolute — pass through, skip existence check
       } else {
         const ext = getExtension(filePath);
         if (!ext || !INDEXED_EXTENSIONS.has(ext)) {
@@ -144,5 +182,6 @@ export function bibFileLinkExtension(pagePath: string): Extension {
     bibFileLinkPlugin,
     createBibFileClickHandler(),
     modHeldLinkStyle("cm-bib-file-link"),
+    modHeldLinkStyle("cm-bib-url-link"),
   ];
 }

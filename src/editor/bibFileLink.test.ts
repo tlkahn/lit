@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { BIB_FILE_FIELD_RE, bibFileLinkExtension, bibFileLinkPlugin, bibPagePathFacet } from "./bibFileLink";
+import { BIB_FIELD_RE, bibFileLinkExtension, bibFileLinkPlugin, bibPagePathFacet } from "./bibFileLink";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getFileDir, isAbsolutePath, resolveRelativePath } from "../lib/pathUtils";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -31,16 +32,18 @@ vi.mock("../stores/statusMessage", () => ({
 }));
 
 function extractPaths(text: string): string[] {
-  const re = new RegExp(BIB_FILE_FIELD_RE.source, "g");
+  BIB_FIELD_RE.lastIndex = 0;
   const paths: string[] = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    paths.push((m[1] ?? m[2])!);
+  while ((m = BIB_FIELD_RE.exec(text)) !== null) {
+    if (m[1]!.toLowerCase() === "file") {
+      paths.push((m[2] ?? m[3])!);
+    }
   }
   return paths;
 }
 
-describe("BIB_FILE_FIELD_RE", () => {
+describe("BIB_FIELD_RE — file fields", () => {
   it("matches file = {path}", () => {
     expect(extractPaths("file = {assets/pdf/foo.pdf}")).toEqual([
       "assets/pdf/foo.pdf",
@@ -97,6 +100,14 @@ describe("BIB_FILE_FIELD_RE", () => {
   it("truncates at first closing brace (known limitation: no nested brace support)", () => {
     // The Rust parser handles this, but the regex intentionally does not.
     expect(extractPaths("file = {dir/a{b}.pdf}")).toEqual(["dir/a{b"]);
+  });
+
+  it("matches uppercase FILE field (case-insensitive)", () => {
+    expect(extractPaths("FILE = {assets/doc.pdf}")).toEqual(["assets/doc.pdf"]);
+  });
+
+  it("matches mixed-case File field (case-insensitive)", () => {
+    expect(extractPaths("File = {assets/doc.pdf}")).toEqual(["assets/doc.pdf"]);
   });
 });
 
@@ -705,6 +716,530 @@ describe("decoration offset — substring regression", () => {
     expect(decoTo).toBeDefined();
     expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("file.pdf");
     expect(decoFrom!).toBe(10);
+    view.dom.remove();
+    view.destroy();
+  });
+});
+
+// --- URL/DOI field tests ---
+
+function extractUrlFields(text: string): { field: string; value: string }[] {
+  BIB_FIELD_RE.lastIndex = 0;
+  const results: { field: string; value: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = BIB_FIELD_RE.exec(text)) !== null) {
+    const field = m[1]!;
+    if (field.toLowerCase() !== "file") {
+      results.push({ field, value: (m[2] ?? m[3])! });
+    }
+  }
+  return results;
+}
+
+describe("BIB_FIELD_RE — url/doi fields", () => {
+  it("matches url = {https://example.com}", () => {
+    expect(extractUrlFields("url = {https://example.com}")).toEqual([
+      { field: "url", value: "https://example.com" },
+    ]);
+  });
+
+  it('matches url = "https://example.com"', () => {
+    expect(extractUrlFields('url = "https://example.com"')).toEqual([
+      { field: "url", value: "https://example.com" },
+    ]);
+  });
+
+  it("matches doi = {10.1000/xyz123}", () => {
+    expect(extractUrlFields("doi = {10.1000/xyz123}")).toEqual([
+      { field: "doi", value: "10.1000/xyz123" },
+    ]);
+  });
+
+  it('matches doi = "10.1000/xyz123"', () => {
+    expect(extractUrlFields('doi = "10.1000/xyz123"')).toEqual([
+      { field: "doi", value: "10.1000/xyz123" },
+    ]);
+  });
+
+  it("matches with no spaces around =", () => {
+    expect(extractUrlFields("url={https://example.com}")).toEqual([
+      { field: "url", value: "https://example.com" },
+    ]);
+  });
+
+  it("matches with extra spaces around =", () => {
+    expect(extractUrlFields("url  =  {https://example.com}")).toEqual([
+      { field: "url", value: "https://example.com" },
+    ]);
+  });
+
+  it("matches url preceded by comma and whitespace", () => {
+    expect(extractUrlFields("  url = {https://example.com}")).toEqual([
+      { field: "url", value: "https://example.com" },
+    ]);
+  });
+
+  it("does not match other fields", () => {
+    expect(extractUrlFields("file = {foo.pdf}")).toEqual([]);
+    expect(extractUrlFields("title = {Some Title}")).toEqual([]);
+  });
+
+  it("does not match field names ending in 'url'", () => {
+    expect(extractUrlFields("someurl = {https://example.com}")).toEqual([]);
+    expect(extractUrlFields("pdfurl = {https://example.com}")).toEqual([]);
+  });
+
+  it("matches multiple url/doi fields in one block", () => {
+    const text = [
+      "  url = {https://example.com},",
+      "  title = {Hello},",
+      "  doi = {10.1000/xyz123},",
+    ].join("\n");
+    expect(extractUrlFields(text)).toEqual([
+      { field: "url", value: "https://example.com" },
+      { field: "doi", value: "10.1000/xyz123" },
+    ]);
+  });
+
+  it("matches uppercase URL field (case-insensitive)", () => {
+    expect(extractUrlFields("URL = {https://example.com}")).toEqual([
+      { field: "URL", value: "https://example.com" },
+    ]);
+  });
+
+  it("matches uppercase DOI field (case-insensitive)", () => {
+    expect(extractUrlFields("DOI = {10.1000/xyz123}")).toEqual([
+      { field: "DOI", value: "10.1000/xyz123" },
+    ]);
+  });
+
+  it("matches mixed-case Url and Doi fields (case-insensitive)", () => {
+    expect(extractUrlFields("Url = {https://example.com}")).toEqual([
+      { field: "Url", value: "https://example.com" },
+    ]);
+    expect(extractUrlFields("Doi = {10.1000/xyz123}")).toEqual([
+      { field: "Doi", value: "10.1000/xyz123" },
+    ]);
+  });
+});
+
+
+describe("URL/DOI decoration", () => {
+  it("decorates url field value with cm-bib-url-link", () => {
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    let decoClass: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decoFrom = from;
+      decoTo = to;
+      decoClass = value.spec.class;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("https://example.com");
+    expect(decoClass).toBe("cm-bib-url-link");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("decorates doi field value with cm-bib-url-link", () => {
+    const doc = "  doi = {10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    let decoClass: string | undefined;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decoFrom = from;
+      decoTo = to;
+      decoClass = value.spec.class;
+      kind = value.spec.kind;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("10.1000/xyz123");
+    expect(decoClass).toBe("cm-bib-url-link");
+    expect(kind).toBe("doi");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("mixed file+url document gets both decoration types", () => {
+    const doc = "  file = {papers/foo.pdf},\n  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    const decos: { text: string; class: string }[] = [];
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decos.push({
+        text: view.state.doc.sliceString(from, to),
+        class: value.spec.class,
+      });
+    });
+    expect(decos).toEqual([
+      { text: "papers/foo.pdf", class: "cm-bib-file-link" },
+      { text: "https://example.com", class: "cm-bib-url-link" },
+    ]);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("mixed url+file (reversed order) still produces sorted decorations", () => {
+    const doc = "  url = {https://example.com},\n  file = {papers/foo.pdf},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    const decos: { text: string; kind: string }[] = [];
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decos.push({
+        text: view.state.doc.sliceString(from, to),
+        kind: value.spec.kind,
+      });
+    });
+    expect(decos).toEqual([
+      { text: "https://example.com", kind: "url" },
+      { text: "papers/foo.pdf", kind: "file" },
+    ]);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("all three field types on separate lines produce sorted decorations", () => {
+    const doc = "  doi = {10.1000/xyz},\n  file = {foo.pdf},\n  url = {https://x.com},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    const decos: { text: string; kind: string }[] = [];
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decos.push({
+        text: view.state.doc.sliceString(from, to),
+        kind: value.spec.kind,
+      });
+    });
+    expect(decos).toEqual([
+      { text: "10.1000/xyz", kind: "doi" },
+      { text: "foo.pdf", kind: "file" },
+      { text: "https://x.com", kind: "url" },
+    ]);
+    view.dom.remove();
+    view.destroy();
+  });
+});
+
+describe("decoration spec.kind discriminator", () => {
+  it("file decoration has kind 'file'", () => {
+    const doc = "  file = {papers/foo.pdf},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (_from, _to, value) => {
+      kind = value.spec.kind;
+    });
+    expect(kind).toBe("file");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("url decoration has kind 'url'", () => {
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (_from, _to, value) => {
+      kind = value.spec.kind;
+    });
+    expect(kind).toBe("url");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("doi decoration has kind 'doi'", () => {
+    const doc = "  doi = {10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (_from, _to, value) => {
+      kind = value.spec.kind;
+    });
+    expect(kind).toBe("doi");
+    view.dom.remove();
+    view.destroy();
+  });
+});
+
+describe("click handler — URL/DOI fields", () => {
+  beforeEach(() => {
+    vi.mocked(openUrl).mockClear();
+  });
+
+  it("cmd+click on url value calls openUrl", () => {
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on url with surrounding whitespace trims before opening", () => {
+    const doc = "  url = { https://example.com },";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on doi value calls openUrl with https://doi.org/ prefix", () => {
+    const doc = "  doi = {10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(openUrl).toHaveBeenCalledWith("https://doi.org/10.1000/xyz123");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on doi with full URL passes through without double-prefixing", () => {
+    const doc = "  doi = {https://doi.org/10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(openUrl).toHaveBeenCalledWith("https://doi.org/10.1000/xyz123");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on malformed url shows error toast", () => {
+    const show = vi.fn();
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+
+    const doc = "  url = {not a valid url},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledWith("Invalid URL: not a valid url", "error");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click shows error toast when openUrl rejects", async () => {
+    const show = vi.fn();
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("no default browser"));
+
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    // Wait for the rejected promise's .catch handler to fire
+    await vi.waitFor(() => {
+      expect(show).toHaveBeenCalledWith("Failed to open URL", "error");
+    });
+
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click shows error toast when openUrl rejects for DOI", async () => {
+    const show = vi.fn();
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("OS error"));
+
+    const doc = "  doi = {10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(show).toHaveBeenCalledWith("Failed to open URL", "error");
+    });
+
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on url does not call selectPage", () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).not.toHaveBeenCalled();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click on file value still calls selectPage (regression)", () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      selectPage,
+      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const }],
+    });
+
+    const doc = "  file = {papers/foo.pdf},\n  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let fileDecoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "file") {
+        fileDecoFrom = from;
+      }
+    });
+    expect(fileDecoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(fileDecoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(selectPage).toHaveBeenCalledWith("refs/papers/foo.pdf");
+    expect(openUrl).not.toHaveBeenCalled();
     view.dom.remove();
     view.destroy();
   });
