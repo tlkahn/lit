@@ -513,6 +513,15 @@ export async function enrichBibEntry(
   return invoke<EnrichResult>("enrich_bib_entry", { bibKey, workspacePath });
 }
 
+// PDF download
+
+export async function downloadEntryPdf(
+  key: string,
+  workspacePath: string,
+): Promise<string> {
+  return invoke<string>("download_entry_pdf", { key, workspacePath });
+}
+
 // PDF recognition
 
 export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";

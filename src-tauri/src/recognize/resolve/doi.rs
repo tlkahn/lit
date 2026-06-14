@@ -18,7 +18,7 @@ use super::ResolveError;
 ///
 /// Characters like `/`, `(`, `)`, `:`, `;` are legal in URI path segments
 /// (RFC 3986 sub-delims / pchar) and left as-is.
-fn percent_encode_doi_path(doi: &str) -> String {
+pub(crate) fn percent_encode_doi_path(doi: &str) -> String {
     let mut out = String::with_capacity(doi.len() + 16);
     for ch in doi.chars() {
         match ch {
