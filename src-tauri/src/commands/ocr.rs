@@ -82,6 +82,21 @@ fn write_ocr_markdown(md_path: &std::path::Path, content: &[u8], overwrite: bool
     }
 }
 
+/// Remove an empty image directory left behind by postprocess for text-only PDFs.
+///
+/// `postprocess()` unconditionally creates the output directory via
+/// `create_dir_all`.  When a PDF has no embedded images, that directory ends up
+/// empty.  This function checks and removes it to avoid clutter.
+fn cleanup_empty_image_dir(image_dir: &std::path::Path) {
+    if image_dir.is_dir() {
+        if let Ok(mut entries) = std::fs::read_dir(image_dir) {
+            if entries.next().is_none() {
+                let _ = std::fs::remove_dir(image_dir);
+            }
+        }
+    }
+}
+
 /// Validate that `key` is safe to use as a path component (no slashes,
 /// no leading dots, no OS-forbidden chars).
 fn validate_key(key: &str) -> Result<(), String> {
@@ -262,6 +277,9 @@ pub async fn ocr_pdf_to_markdown(
     })
     .await
     .map_err(|e| format!("Post-process task failed: {e}"))??;
+
+    // Clean up empty image directory (text-only PDFs produce no images)
+    cleanup_empty_image_dir(&ocr_image_dir(&root, &key));
 
     // Step 8b: Ensure companion search path includes assets/pdf
     if let Err(e) = ensure_companion_search_path(&app_handle) {
@@ -631,6 +649,83 @@ mod tests {
         assert!(msg.starts_with("OCR failed:"), "got: {msg}");
     }
 
+    // --- page markers in postprocessed output (4.1.3) ---
+
+    #[test]
+    fn test_page_markers_present_in_postprocessed_output() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![
+            ocr_cli::ocr::OcrPage {
+                index: 0,
+                markdown: "First page content".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+            ocr_cli::ocr::OcrPage {
+                index: 1,
+                markdown: "Second page content".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+            ocr_cli::ocr::OcrPage {
+                index: 2,
+                markdown: "Third page content".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+        ];
+
+        let output = ocr_cli::postproc::postprocess(&pages, dir.path(), "test_stem")
+            .expect("postprocess should succeed");
+
+        // Verify all page comments are present
+        assert!(output.markdown.contains("<!-- Page 0"), "missing Page 0 marker");
+        assert!(output.markdown.contains("<!-- Page 1"), "missing Page 1 marker");
+        assert!(output.markdown.contains("<!-- Page 2"), "missing Page 2 marker");
+
+        // Verify each page comment matches expected format
+        let re = regex::Regex::new(r"<!-- Page \d+ - \d+ images -->").unwrap();
+        let matches: Vec<_> = re.find_iter(&output.markdown).collect();
+        assert_eq!(matches.len(), 3, "expected 3 page markers, got {}", matches.len());
+    }
+
+    // --- image path correctness (4.1.4) ---
+
+    #[test]
+    fn test_ocr_image_path_is_relative_to_markdown_location() {
+        let root = PathBuf::from("/workspace");
+        let key = "smith2024";
+
+        // The stem used inside markdown image refs
+        let stem = ocr_image_stem(key);
+        // The absolute directory where images are saved
+        let img_dir = ocr_image_dir(&root, key);
+
+        // From the workspace root, joining the stem should produce the image dir
+        assert_eq!(
+            root.join(&stem),
+            img_dir,
+            "stem '{}' from root does not resolve to image dir '{}'",
+            stem,
+            img_dir.display()
+        );
+    }
+
+    #[test]
+    fn test_ocr_image_refs_use_forward_slashes() {
+        let stem = ocr_image_stem("smith2024");
+        assert!(
+            !stem.contains('\\'),
+            "image stem contains backslash: {}",
+            stem
+        );
+        assert!(
+            stem.contains('/'),
+            "image stem should contain forward slash: {}",
+            stem
+        );
+    }
+
     // --- validate_key tests ---
 
     #[test]
@@ -739,5 +834,249 @@ mod tests {
         write_ocr_markdown(&md_path, b"# Fresh content", true).unwrap();
 
         assert_eq!(std::fs::read_to_string(&md_path).unwrap(), "# Fresh content");
+    }
+
+    // --- 4.2.1 Text-only PDFs: empty image directory cleanup ---
+
+    #[test]
+    fn test_text_only_pdf_no_empty_image_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let key = "text-only-doc";
+
+        let image_dir = ocr_image_dir(root, key);
+        let stem = ocr_image_stem(key);
+
+        // Simulate text-only PDF: all pages have zero images
+        let pages = vec![
+            ocr_cli::ocr::OcrPage {
+                index: 0,
+                markdown: "First page text".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+            ocr_cli::ocr::OcrPage {
+                index: 1,
+                markdown: "Second page text".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+        ];
+
+        // postprocess creates the image_dir unconditionally
+        let output = ocr_cli::postproc::postprocess(&pages, &image_dir, &stem)
+            .expect("postprocess should succeed");
+
+        assert!(output.saved_images.is_empty(), "text-only PDF should have no saved images");
+        // The directory was created by postprocess
+        assert!(image_dir.is_dir(), "postprocess creates the dir unconditionally");
+
+        // Apply the cleanup logic (same as in ocr_pdf_to_markdown)
+        cleanup_empty_image_dir(&image_dir);
+
+        // After cleanup, the empty directory should be gone
+        assert!(
+            !image_dir.exists(),
+            "empty image directory should be removed after cleanup"
+        );
+    }
+
+    // --- 4.2.2 Large PDFs: page markers stress test ---
+
+    #[test]
+    fn test_page_markers_large_document() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let page_count = 60;
+        let pages: Vec<ocr_cli::ocr::OcrPage> = (0..page_count)
+            .map(|i| ocr_cli::ocr::OcrPage {
+                index: i,
+                markdown: format!("Content for page {i}"),
+                images: vec![],
+                dimensions: None,
+            })
+            .collect();
+
+        let output = ocr_cli::postproc::postprocess(&pages, dir.path(), "large_doc")
+            .expect("postprocess should succeed for 60 pages");
+
+        // Verify all 60 page markers are present and correctly numbered
+        for i in 0..page_count {
+            let marker = format!("<!-- Page {i} - 0 images -->");
+            assert!(
+                output.markdown.contains(&marker),
+                "missing marker for page {i}"
+            );
+        }
+
+        // Verify correct count of markers
+        let re = regex::Regex::new(r"<!-- Page \d+ - \d+ images -->").unwrap();
+        let matches: Vec<_> = re.find_iter(&output.markdown).collect();
+        assert_eq!(
+            matches.len(),
+            page_count as usize,
+            "expected {page_count} page markers, got {}",
+            matches.len()
+        );
+    }
+
+    // --- 4.2.3 Non-ASCII cite keys ---
+
+    #[test]
+    fn validate_key_accepts_cjk() {
+        validate_key("日本語ページ").unwrap();
+    }
+
+    #[test]
+    fn validate_key_accepts_umlaut() {
+        validate_key("müller2024").unwrap();
+    }
+
+    #[test]
+    fn validate_key_accepts_accented() {
+        validate_key("café-résumé").unwrap();
+    }
+
+    #[test]
+    fn ocr_markdown_path_non_ascii_key() {
+        let root = PathBuf::from("/workspace");
+        assert_eq!(
+            ocr_markdown_path(&root, "日本語ページ"),
+            PathBuf::from("/workspace/日本語ページ.md")
+        );
+    }
+
+    #[test]
+    fn ocr_image_dir_non_ascii_key() {
+        let root = PathBuf::from("/workspace");
+        assert_eq!(
+            ocr_image_dir(&root, "müller2024"),
+            PathBuf::from("/workspace/assets/images/müller2024")
+        );
+    }
+
+    #[test]
+    fn check_ocr_target_non_ascii_key_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let key = "café-résumé";
+        // Create the file with non-ASCII name
+        std::fs::write(dir.path().join(format!("{key}.md")), b"# OCR output").unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(check_ocr_target_exists(
+            key.to_string(),
+            dir.path().to_string_lossy().to_string(),
+        ));
+        assert_eq!(result.unwrap(), true, "filesystem should handle non-ASCII key");
+    }
+
+    // --- 4.2.4 Companion search path edge cases ---
+
+    #[test]
+    fn updated_companion_search_paths_trailing_slash_is_distinct() {
+        // "assets/pdf/" (with trailing slash) is NOT the same as "assets/pdf"
+        let existing = vec![".".to_string(), "assets/pdf/".to_string()];
+        let result = updated_companion_search_paths(&existing);
+        // Should add "assets/pdf" because "assets/pdf/" != "assets/pdf"
+        assert!(result.is_some(), "trailing slash should be treated as distinct");
+        let updated = result.unwrap();
+        assert!(updated.contains(&"assets/pdf".to_string()));
+    }
+
+    #[test]
+    fn updated_companion_search_paths_case_sensitive() {
+        // "Assets/PDF" is not the same as "assets/pdf" (case-sensitive matching)
+        let existing = vec![".".to_string(), "Assets/PDF".to_string()];
+        let result = updated_companion_search_paths(&existing);
+        assert!(result.is_some(), "case-different path should be treated as distinct");
+        let updated = result.unwrap();
+        assert!(updated.contains(&"assets/pdf".to_string()));
+    }
+
+    // --- 4.2.5 Page marker re-indexing after trim ---
+
+    #[test]
+    fn test_page_markers_reindexed_after_trim() {
+        // Simulates what happens when a 5-page PDF is truncated (lead=2, trail=1)
+        // to 2 pages, then OCR returns 0-based indices for the truncated doc.
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![
+            ocr_cli::ocr::OcrPage {
+                index: 0,
+                markdown: "Content from original page 3".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+            ocr_cli::ocr::OcrPage {
+                index: 1,
+                markdown: "Content from original page 4".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+        ];
+
+        let output = ocr_cli::postproc::postprocess(&pages, dir.path(), "trimmed")
+            .expect("postprocess should succeed");
+
+        // Markers should be 0-based (reflecting the truncated document)
+        assert!(
+            output.markdown.contains("<!-- Page 0"),
+            "first page marker should be 0-based after trim"
+        );
+        assert!(
+            output.markdown.contains("<!-- Page 1"),
+            "second page marker should be 1"
+        );
+        // Should NOT contain markers for the original page numbers
+        assert!(
+            !output.markdown.contains("<!-- Page 2"),
+            "should not contain original page indices"
+        );
+    }
+
+    #[test]
+    fn test_page_markers_passthrough_nonzero_indices() {
+        // Documents that postprocess is a passthrough: whatever index the API
+        // returns is used directly in the page comment, without re-indexing.
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![
+            ocr_cli::ocr::OcrPage {
+                index: 5,
+                markdown: "Page five content".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+            ocr_cli::ocr::OcrPage {
+                index: 6,
+                markdown: "Page six content".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+            ocr_cli::ocr::OcrPage {
+                index: 7,
+                markdown: "Page seven content".to_string(),
+                images: vec![],
+                dimensions: None,
+            },
+        ];
+
+        let output = ocr_cli::postproc::postprocess(&pages, dir.path(), "passthrough")
+            .expect("postprocess should succeed");
+
+        assert!(
+            output.markdown.contains("<!-- Page 5"),
+            "should passthrough index 5"
+        );
+        assert!(
+            output.markdown.contains("<!-- Page 6"),
+            "should passthrough index 6"
+        );
+        assert!(
+            output.markdown.contains("<!-- Page 7"),
+            "should passthrough index 7"
+        );
+        // Should NOT contain 0-based indices
+        assert!(
+            !output.markdown.contains("<!-- Page 0"),
+            "should not re-index to 0"
+        );
     }
 }
