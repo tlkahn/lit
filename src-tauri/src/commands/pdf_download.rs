@@ -201,6 +201,10 @@ pub async fn download_entry_pdf(
 
     crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
 
+    // Ensure companion.searchPath includes "assets/pdf" so companion
+    // resolution works even if the user never runs OCR on this PDF.
+    crate::commands::ocr::ensure_companion_search_path(&app_handle)?;
+
     Ok(relative_path)
 }
 

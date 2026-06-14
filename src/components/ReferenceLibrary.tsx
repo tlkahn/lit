@@ -801,7 +801,7 @@ export function ReferenceLibrary() {
                             </button>
                             <button
                               data-testid="ocr-btn"
-                              onClick={() => setOcrEntry(entry)}
+                              onClick={() => { if (workspacePath) setOcrEntry(entry); }}
                               className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
                               OCR to Markdown
@@ -856,10 +856,10 @@ export function ReferenceLibrary() {
       )}
       {dialog}
       {importPdfDialog}
-      {ocrEntry ? (
+      {ocrEntry && workspacePath ? (
         <OcrDialog
           entry={ocrEntry}
-          workspacePath={workspacePath!}
+          workspacePath={workspacePath}
           onClose={() => setOcrEntry(null)}
           onComplete={(path) => {
             const key = ocrEntry.key;

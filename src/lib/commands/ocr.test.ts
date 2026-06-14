@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { _clear, hasCommand, getVisibleCommands } from "../commandRegistry";
 import { initOcrCommands } from "./ocr";
 import { useStatusMessageStore } from "../../stores/statusMessage";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 describe("initOcrCommands", () => {
   beforeEach(() => {
     _clear();
     useStatusMessageStore.setState({ message: null, variant: "success" });
+    useWorkspaceStore.setState({ workspacePath: "/tmp/test-workspace" });
   });
 
   it("registers ocr.toMarkdown", () => {
@@ -45,5 +47,13 @@ describe("initOcrCommands", () => {
     const ocrCmd = cmds.find((c) => c.id === "ocr.toMarkdown");
     ocrCmd!.action();
     expect(useStatusMessageStore.getState().message).toContain("Reference Library");
+  });
+
+  it("is hidden when no workspace is open", () => {
+    useWorkspaceStore.setState({ workspacePath: null });
+    initOcrCommands();
+    const cmds = getVisibleCommands("ocr");
+    const ocrCmd = cmds.find((c) => c.id === "ocr.toMarkdown");
+    expect(ocrCmd).toBeUndefined();
   });
 });

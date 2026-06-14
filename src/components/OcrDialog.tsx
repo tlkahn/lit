@@ -32,14 +32,14 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !processing) {
+      if (e.key === "Escape" && !processing && !overwriteConfirm) {
         e.stopPropagation();
         onClose();
       }
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
-  }, [onClose, processing]);
+  }, [onClose, processing, overwriteConfirm]);
 
   const processingRef = useRef(false);
   processingRef.current = processing;
@@ -110,7 +110,7 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       data-testid="ocr-dialog-backdrop"
-      onClick={() => { if (!processing) onClose(); }}
+      onClick={() => { if (!processing && !overwriteConfirm) onClose(); }}
     >
       <div
         ref={dialogRef}

@@ -20,7 +20,7 @@ static OCR_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 /// implicit `["."]` default), `"."` is seeded explicitly so it is not lost when
 /// the array is persisted.  Returns `None` when no update is needed (target
 /// already present).
-fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec<String>> {
+pub(crate) fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec<String>> {
     const TARGET: &str = "assets/pdf";
 
     if raw_paths.iter().any(|p| p.trim() == TARGET) {
@@ -36,9 +36,14 @@ fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec<String>> {
     Some(updated)
 }
 
+/// Return the bare filename for OCR markdown output: `"{key}.md"`.
+fn ocr_markdown_filename(key: &str) -> String {
+    format!("{key}.md")
+}
+
 /// Compute the workspace-relative path for the OCR markdown output.
 fn ocr_markdown_path(root: &std::path::Path, key: &str) -> PathBuf {
-    root.join(format!("{key}.md"))
+    root.join(ocr_markdown_filename(key))
 }
 
 /// Compute the directory where OCR-extracted images are saved.
@@ -87,6 +92,7 @@ fn write_ocr_markdown(md_path: &std::path::Path, content: &[u8], overwrite: bool
 /// `postprocess()` unconditionally creates the output directory via
 /// `create_dir_all`.  When a PDF has no embedded images, that directory ends up
 /// empty.  This function checks and removes it to avoid clutter.
+// TODO: fix upstream in ocr-cli — postprocess() should only create_dir_all when images exist.
 fn cleanup_empty_image_dir(image_dir: &std::path::Path) {
     if image_dir.is_dir() {
         if let Ok(mut entries) = std::fs::read_dir(image_dir) {
@@ -123,7 +129,7 @@ fn map_ocr_error(e: &ocr_cli::error::Error) -> String {
 /// Ensure `"assets/pdf"` is present in the user's `companion.searchPath`
 /// preference.  Called after writing the OCR markdown file so the companion
 /// resolver can find the PDF that lives under `assets/pdf/`.
-fn ensure_companion_search_path(app_handle: &tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn ensure_companion_search_path(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let prefs = crate::preferences::read_preferences(app_handle);
 
     let raw_paths = crate::preferences::raw_companion_search_paths(&prefs);
@@ -241,7 +247,12 @@ pub async fn ocr_pdf_to_markdown(
     // The provider registry stores "https://api.mistral.ai/v1" but
     // ocr_pdf() builds "{base_url}/v1/ocr", so strip the /v1 suffix.
     let mistral_base = crate::provider_registry::lookup("mistral")
-        .map(|e| e.default_base_url.strip_suffix("/v1").unwrap_or(e.default_base_url).to_string())
+        .map(|e| {
+            e.default_base_url
+                .trim_end_matches('/')
+                .trim_end_matches("/v1")
+                .to_string()
+        })
         .unwrap_or_else(|| "https://api.mistral.ai".to_string());
     let ocr_response = ocr_cli::ocr::ocr_pdf(
         &OCR_CLIENT,
@@ -265,23 +276,26 @@ pub async fn ocr_pdf_to_markdown(
         "Post-processing OCR output",
     );
     let image_dir = ocr_image_dir(&root, &key);
+    let image_dir_cleanup = image_dir.clone();
     let stem = ocr_image_stem(&key);
-    let md_relative = format!("{key}.md");
+    let md_relative = ocr_markdown_filename(&key);
     let md_path = ocr_markdown_path(&root, &key);
     let pages = ocr_response.pages;
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let output = ocr_cli::postproc::postprocess(&pages, &image_dir, &stem)
             .map_err(|e| format!("Post-processing failed: {e}"))?;
         write_ocr_markdown(&md_path, output.markdown.as_bytes(), overwrite)?;
+        // Clean up empty image directory (text-only PDFs produce no images).
+        // Done here in the blocking thread to avoid sync I/O on the async runtime.
+        cleanup_empty_image_dir(&image_dir_cleanup);
         Ok(())
     })
     .await
     .map_err(|e| format!("Post-process task failed: {e}"))??;
 
-    // Clean up empty image directory (text-only PDFs produce no images)
-    cleanup_empty_image_dir(&ocr_image_dir(&root, &key));
-
-    // Step 8b: Ensure companion search path includes assets/pdf
+    // Step 8b: Ensure companion search path includes assets/pdf.
+    // Note: this does sync I/O on a small local JSON file, but app_handle is !Send
+    // so it cannot be moved into spawn_blocking. Acceptable for tiny preferences I/O.
     if let Err(e) = ensure_companion_search_path(&app_handle) {
         eprintln!("[ocr] failed to update companion search paths: {e}");
     }
@@ -297,7 +311,7 @@ pub async fn check_ocr_target_exists(
     workspace_path: String,
 ) -> Result<bool, String> {
     validate_key(&key)?;
-    let path = PathBuf::from(&workspace_path).join(format!("{key}.md"));
+    let path = PathBuf::from(&workspace_path).join(ocr_markdown_filename(&key));
     Ok(path.exists())
 }
 
@@ -339,8 +353,21 @@ mod tests {
         // Verify the provider registry URL is correctly stripped.
         let entry = crate::provider_registry::lookup("mistral")
             .expect("mistral must be in the registry");
-        let stripped = entry.default_base_url.strip_suffix("/v1").unwrap_or(entry.default_base_url);
+        let stripped = entry
+            .default_base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/v1");
         assert_eq!(stripped, "https://api.mistral.ai");
+
+        // Also verify the logic handles trailing-slash and bare variants.
+        for (input, expected) in [
+            ("https://api.mistral.ai/v1", "https://api.mistral.ai"),
+            ("https://api.mistral.ai/v1/", "https://api.mistral.ai"),
+            ("https://api.mistral.ai", "https://api.mistral.ai"),
+        ] {
+            let result = input.trim_end_matches('/').trim_end_matches("/v1");
+            assert_eq!(result, expected, "failed for input: {input}");
+        }
     }
 
     // --- updated_companion_search_paths tests ---
