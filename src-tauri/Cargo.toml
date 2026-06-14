@@ -55,6 +55,7 @@ base64 = "0.22"
 url = "2"
 tauri-plugin-deep-link = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+ocr_cli = { git = "https://github.com/tlkahn/ocr-cli.git", package = "ocr-cli", rev = "4347851" }
 llm-core = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 llm-openai = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 llm-anthropic = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
