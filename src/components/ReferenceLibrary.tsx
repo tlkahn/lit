@@ -411,19 +411,18 @@ export function ReferenceLibrary() {
   const handleLinkPdf = useCallback(
     async (entry: BibEntry) => {
       if (!workspacePath || linkingKey || downloadingKey) return;
-
-      // Re-link confirmation: ask before overwriting an existing linked PDF
-      if (entry.file) {
-        const { ask } = await import("@tauri-apps/plugin-dialog");
-        const confirmed = await ask(
-          `This entry already has a linked PDF:\n${entry.file}\n\nReplace it?`,
-          { title: "Replace linked PDF?", kind: "warning" },
-        );
-        if (!confirmed) return;
-      }
-
       setLinkingKey(entry.key);
       try {
+        // Re-link confirmation: ask before overwriting an existing linked PDF
+        if (entry.file) {
+          const { ask } = await import("@tauri-apps/plugin-dialog");
+          const confirmed = await ask(
+            `This entry already has a linked PDF:\n${entry.file}\n\nReplace it?`,
+            { title: "Replace linked PDF?", kind: "warning" },
+          );
+          if (!confirmed) return;
+        }
+
         const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
         const selected = await openDialog({
           filters: [{ name: "PDF", extensions: ["pdf"] }],
