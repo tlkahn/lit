@@ -1083,6 +1083,7 @@ describe("ReferenceLibrary", () => {
     await user.click(btn);
 
     await waitFor(() => expect(btn).toBeDisabled());
+    expect(btn).toHaveTextContent("Creating…");
 
     // Resolve the pending call
     resolveMaterialize({
