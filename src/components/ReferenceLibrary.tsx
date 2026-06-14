@@ -29,6 +29,7 @@ import { AddReferenceDialog } from "./AddReferenceDialog";
 import { ImportPdfDialog } from "./ImportPdfDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
+import { doiHref } from "../lib/urlUtils";
 
 function lastName(entry: BibEntry): string {
   const first = entry.authors[0] ?? "";
@@ -45,10 +46,6 @@ function combinedText(entry: BibEntry): string {
     (entry.tags ?? []).join(" "),
     entry.journal ?? "",
   ].join(" ");
-}
-
-function doiHref(doi: string): string {
-  return /^https?:\/\//i.test(doi) ? doi : `https://doi.org/${doi}`;
 }
 
 function urlHref(url: string): string {

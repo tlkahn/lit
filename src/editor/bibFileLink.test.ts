@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { BIB_FILE_FIELD_RE, BIB_URL_FIELD_RE, bibFileLinkExtension, bibFileLinkPlugin, bibPagePathFacet, resolveUrlFieldValue, isValidHttpUrl } from "./bibFileLink";
+import { BIB_FIELD_RE, bibFileLinkExtension, bibFileLinkPlugin, bibPagePathFacet } from "./bibFileLink";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getFileDir, isAbsolutePath, resolveRelativePath } from "../lib/pathUtils";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -32,16 +32,18 @@ vi.mock("../stores/statusMessage", () => ({
 }));
 
 function extractPaths(text: string): string[] {
-  const re = new RegExp(BIB_FILE_FIELD_RE.source, "g");
+  BIB_FIELD_RE.lastIndex = 0;
   const paths: string[] = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    paths.push((m[1] ?? m[2])!);
+  while ((m = BIB_FIELD_RE.exec(text)) !== null) {
+    if (m[1]!.toLowerCase() === "file") {
+      paths.push((m[2] ?? m[3])!);
+    }
   }
   return paths;
 }
 
-describe("BIB_FILE_FIELD_RE", () => {
+describe("BIB_FIELD_RE — file fields", () => {
   it("matches file = {path}", () => {
     expect(extractPaths("file = {assets/pdf/foo.pdf}")).toEqual([
       "assets/pdf/foo.pdf",
@@ -98,6 +100,14 @@ describe("BIB_FILE_FIELD_RE", () => {
   it("truncates at first closing brace (known limitation: no nested brace support)", () => {
     // The Rust parser handles this, but the regex intentionally does not.
     expect(extractPaths("file = {dir/a{b}.pdf}")).toEqual(["dir/a{b"]);
+  });
+
+  it("matches uppercase FILE field (case-insensitive)", () => {
+    expect(extractPaths("FILE = {assets/doc.pdf}")).toEqual(["assets/doc.pdf"]);
+  });
+
+  it("matches mixed-case File field (case-insensitive)", () => {
+    expect(extractPaths("File = {assets/doc.pdf}")).toEqual(["assets/doc.pdf"]);
   });
 });
 
@@ -714,16 +724,19 @@ describe("decoration offset — substring regression", () => {
 // --- URL/DOI field tests ---
 
 function extractUrlFields(text: string): { field: string; value: string }[] {
-  const re = new RegExp(BIB_URL_FIELD_RE.source, "g");
+  BIB_FIELD_RE.lastIndex = 0;
   const results: { field: string; value: string }[] = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    results.push({ field: m[1]!, value: (m[2] ?? m[3])! });
+  while ((m = BIB_FIELD_RE.exec(text)) !== null) {
+    const field = m[1]!;
+    if (field.toLowerCase() !== "file") {
+      results.push({ field, value: (m[2] ?? m[3])! });
+    }
   }
   return results;
 }
 
-describe("BIB_URL_FIELD_RE", () => {
+describe("BIB_FIELD_RE — url/doi fields", () => {
   it("matches url = {https://example.com}", () => {
     expect(extractUrlFields("url = {https://example.com}")).toEqual([
       { field: "url", value: "https://example.com" },
@@ -787,55 +800,29 @@ describe("BIB_URL_FIELD_RE", () => {
       { field: "doi", value: "10.1000/xyz123" },
     ]);
   });
-});
 
-describe("resolveUrlFieldValue", () => {
-  it("prepends https://doi.org/ for bare DOI", () => {
-    expect(resolveUrlFieldValue("doi", "10.1000/xyz123")).toBe(
-      "https://doi.org/10.1000/xyz123",
-    );
+  it("matches uppercase URL field (case-insensitive)", () => {
+    expect(extractUrlFields("URL = {https://example.com}")).toEqual([
+      { field: "URL", value: "https://example.com" },
+    ]);
   });
 
-  it("passes through DOI that already has https://", () => {
-    expect(resolveUrlFieldValue("doi", "https://doi.org/10.1000/xyz123")).toBe(
-      "https://doi.org/10.1000/xyz123",
-    );
+  it("matches uppercase DOI field (case-insensitive)", () => {
+    expect(extractUrlFields("DOI = {10.1000/xyz123}")).toEqual([
+      { field: "DOI", value: "10.1000/xyz123" },
+    ]);
   });
 
-  it("passes through DOI that has http://", () => {
-    expect(resolveUrlFieldValue("doi", "http://doi.org/10.1000/xyz123")).toBe(
-      "http://doi.org/10.1000/xyz123",
-    );
-  });
-
-  it("passes through url field value as-is", () => {
-    expect(resolveUrlFieldValue("url", "https://example.com")).toBe(
-      "https://example.com",
-    );
+  it("matches mixed-case Url and Doi fields (case-insensitive)", () => {
+    expect(extractUrlFields("Url = {https://example.com}")).toEqual([
+      { field: "Url", value: "https://example.com" },
+    ]);
+    expect(extractUrlFields("Doi = {10.1000/xyz123}")).toEqual([
+      { field: "Doi", value: "10.1000/xyz123" },
+    ]);
   });
 });
 
-describe("isValidHttpUrl", () => {
-  it("accepts https URLs", () => {
-    expect(isValidHttpUrl("https://example.com")).toBe(true);
-  });
-
-  it("accepts http URLs", () => {
-    expect(isValidHttpUrl("http://example.com")).toBe(true);
-  });
-
-  it("rejects ftp URLs", () => {
-    expect(isValidHttpUrl("ftp://example.com")).toBe(false);
-  });
-
-  it("rejects non-URL strings", () => {
-    expect(isValidHttpUrl("not a url")).toBe(false);
-  });
-
-  it("rejects empty string", () => {
-    expect(isValidHttpUrl("")).toBe(false);
-  });
-});
 
 describe("URL/DOI decoration", () => {
   it("decorates url field value with cm-bib-url-link", () => {
@@ -866,17 +853,17 @@ describe("URL/DOI decoration", () => {
     let decoFrom: number | undefined;
     let decoTo: number | undefined;
     let decoClass: string | undefined;
-    let bibField: string | undefined;
+    let kind: string | undefined;
     pluginInst.decorations.between(0, doc.length, (from, to, value) => {
       decoFrom = from;
       decoTo = to;
       decoClass = value.spec.class;
-      bibField = value.spec.bibField;
+      kind = value.spec.kind;
     });
     expect(decoFrom).toBeDefined();
     expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("10.1000/xyz123");
     expect(decoClass).toBe("cm-bib-url-link");
-    expect(bibField).toBe("doi");
+    expect(kind).toBe("doi");
     view.dom.remove();
     view.destroy();
   });
@@ -897,6 +884,91 @@ describe("URL/DOI decoration", () => {
       { text: "papers/foo.pdf", class: "cm-bib-file-link" },
       { text: "https://example.com", class: "cm-bib-url-link" },
     ]);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("mixed url+file (reversed order) still produces sorted decorations", () => {
+    const doc = "  url = {https://example.com},\n  file = {papers/foo.pdf},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    const decos: { text: string; kind: string }[] = [];
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decos.push({
+        text: view.state.doc.sliceString(from, to),
+        kind: value.spec.kind,
+      });
+    });
+    expect(decos).toEqual([
+      { text: "https://example.com", kind: "url" },
+      { text: "papers/foo.pdf", kind: "file" },
+    ]);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("all three field types on separate lines produce sorted decorations", () => {
+    const doc = "  doi = {10.1000/xyz},\n  file = {foo.pdf},\n  url = {https://x.com},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    const decos: { text: string; kind: string }[] = [];
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decos.push({
+        text: view.state.doc.sliceString(from, to),
+        kind: value.spec.kind,
+      });
+    });
+    expect(decos).toEqual([
+      { text: "10.1000/xyz", kind: "doi" },
+      { text: "foo.pdf", kind: "file" },
+      { text: "https://x.com", kind: "url" },
+    ]);
+    view.dom.remove();
+    view.destroy();
+  });
+});
+
+describe("decoration spec.kind discriminator", () => {
+  it("file decoration has kind 'file'", () => {
+    const doc = "  file = {papers/foo.pdf},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (_from, _to, value) => {
+      kind = value.spec.kind;
+    });
+    expect(kind).toBe("file");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("url decoration has kind 'url'", () => {
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (_from, _to, value) => {
+      kind = value.spec.kind;
+    });
+    expect(kind).toBe("url");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("doi decoration has kind 'doi'", () => {
+    const doc = "  doi = {10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (_from, _to, value) => {
+      kind = value.spec.kind;
+    });
+    expect(kind).toBe("doi");
     view.dom.remove();
     view.destroy();
   });
@@ -1015,6 +1087,73 @@ describe("click handler — URL/DOI fields", () => {
     view.destroy();
   });
 
+  it("cmd+click shows error toast when openUrl rejects", async () => {
+    const show = vi.fn();
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("no default browser"));
+
+    const doc = "  url = {https://example.com},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    // Wait for the rejected promise's .catch handler to fire
+    await vi.waitFor(() => {
+      expect(show).toHaveBeenCalledWith("Failed to open URL", "error");
+    });
+
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("cmd+click shows error toast when openUrl rejects for DOI", async () => {
+    const show = vi.fn();
+    (useStatusMessageStore.getState as ReturnType<typeof vi.fn>).mockReturnValue({ show });
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("OS error"));
+
+    const doc = "  doi = {10.1000/xyz123},";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(show).toHaveBeenCalledWith("Failed to open URL", "error");
+    });
+
+    view.dom.remove();
+    view.destroy();
+  });
+
   it("cmd+click on url does not call selectPage", () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({ selectPage, pages: [] });
@@ -1057,7 +1196,7 @@ describe("click handler — URL/DOI fields", () => {
     const pluginInst = view.plugin(bibFileLinkPlugin)!;
     let fileDecoFrom: number | undefined;
     pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
-      if (value.spec.class === "cm-bib-file-link") {
+      if (value.spec.kind === "file") {
         fileDecoFrom = from;
       }
     });
