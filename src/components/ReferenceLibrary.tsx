@@ -413,9 +413,10 @@ export function ReferenceLibrary() {
       if (!workspacePath || linkingKey || downloadingKey) return;
       setLinkingKey(entry.key);
       try {
+        const { ask, open: openDialog } = await import("@tauri-apps/plugin-dialog");
+
         // Re-link confirmation: ask before overwriting an existing linked PDF
         if (entry.file) {
-          const { ask } = await import("@tauri-apps/plugin-dialog");
           const confirmed = await ask(
             `This entry already has a linked PDF:\n${entry.file}\n\nReplace it?`,
             { title: "Replace linked PDF?", kind: "warning" },
@@ -423,7 +424,6 @@ export function ReferenceLibrary() {
           if (!confirmed) return;
         }
 
-        const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
         const selected = await openDialog({
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });

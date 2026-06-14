@@ -134,26 +134,23 @@ pub async fn link_entry_pdf(
         let store = gi.store();
         let mut fields = HashMap::new();
         fields.insert("file".to_string(), relative_path.clone());
+        let cleanup = || {
+            let abs_dest = root.join(&relative_path);
+            if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
+                eprintln!(
+                    "[pdf_link] failed to clean up {}: {rm_err}",
+                    abs_dest.display()
+                );
+            }
+        };
         match crate::bib::db::update_bib_fields(&store.conn, &key, &fields) {
             Ok(true) => {}
             Ok(false) => {
-                let abs_dest = root.join(&relative_path);
-                if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
-                    eprintln!(
-                        "[pdf_link] failed to clean up {}: {rm_err}",
-                        abs_dest.display()
-                    );
-                }
+                cleanup();
                 return Err(format!("entry '{}' was deleted before the file field could be updated", key));
             }
             Err(e) => {
-                let abs_dest = root.join(&relative_path);
-                if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
-                    eprintln!(
-                        "[pdf_link] failed to clean up {}: {rm_err}",
-                        abs_dest.display()
-                    );
-                }
+                cleanup();
                 return Err(e.to_string());
             }
         }
