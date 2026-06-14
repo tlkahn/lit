@@ -1005,6 +1005,32 @@ describe("click handler — URL/DOI fields", () => {
     view.destroy();
   });
 
+  it("cmd+click on url with surrounding whitespace trims before opening", () => {
+    const doc = "  url = { https://example.com },";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from) => {
+      decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", {
+        button: 0,
+        metaKey: true,
+        bubbles: true,
+      }),
+    );
+
+    expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    view.dom.remove();
+    view.destroy();
+  });
+
   it("cmd+click on doi value calls openUrl with https://doi.org/ prefix", () => {
     const doc = "  doi = {10.1000/xyz123},";
     const view = makeViewWithBibExt(doc, "refs/library.bib");
