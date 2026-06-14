@@ -160,6 +160,7 @@ pub fn parse_arxiv_atom(xml: &str) -> Result<BibEntry, ResolveError> {
         publisher: None,
         issn: None,
         isbn: None,
+        reference: None,
     };
 
     let mut entry = csl_to_bib_entry(&csl_item);

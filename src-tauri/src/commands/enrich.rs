@@ -5,13 +5,19 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
+use crate::bib::convert::{
+    crossref_ref_to_bib_entry, csl_to_bib_entry, normalize_doi, strip_jats, CrossrefReference,
+    CslItem,
+};
+use rusqlite::Connection;
+
 use crate::bib::db::{self, UpsertOutcome};
 use crate::bib::semantic_scholar::{
     lookup_by_doi_with_base as s2_lookup_by_doi_with_base, s2_paper_to_bib_entry,
-    s2_ref_to_bib_entry, search_by_title_with_base, S2Paper,
+    s2_ref_to_bib_entry, search_by_title_with_base, S2Paper, S2Reference,
 };
 use crate::bib::types::BibEntry;
-use crate::commands::bib_import::{fetch_crossref_by_doi, HTTP_CLIENT};
+use crate::commands::bib_import::{fetch_crossref_csl_item, HTTP_CLIENT};
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
 
@@ -24,6 +30,49 @@ pub struct EnrichResult {
     pub references_found: usize,
     pub references_appended: usize,
     pub shadow_nodes_created: usize,
+    pub references_linked: usize,
+}
+
+/// Mutable counters passed to [`link_ref`] to track bookkeeping across calls.
+#[derive(Debug, Default)]
+struct LinkCounters {
+    references_appended: usize,
+    shadow_nodes_created: usize,
+    references_linked: usize,
+    position: usize,
+}
+
+/// Upsert `ref_entry` as a shadow bib item, then link it as a child reference
+/// of `parent_key`. Handles key dedup (`DedupSkipped`), position tracking, and
+/// counter bookkeeping. Call-site is responsible for source-specific conversion
+/// and identity-based skip logic.
+fn link_ref(
+    conn: &Connection,
+    parent_key: &str,
+    ref_entry: &BibEntry,
+    used_keys: &mut HashSet<String>,
+    counters: &mut LinkCounters,
+) -> Result<(), String> {
+    used_keys.insert(ref_entry.key.clone());
+
+    let outcome = db::upsert_bib_item(conn, ref_entry, None, None, true)
+        .map_err(|e| e.to_string())?;
+    counters.references_appended += 1;
+    if matches!(outcome, UpsertOutcome::Inserted { .. } | UpsertOutcome::Updated { .. }) {
+        counters.shadow_nodes_created += 1;
+    }
+
+    let child_key = match &outcome {
+        UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+        _ => ref_entry.key.clone(),
+    };
+    let inserted = db::insert_bib_reference(conn, parent_key, &child_key, Some(counters.position as i64))
+        .map_err(|e| e.to_string())?;
+    if inserted {
+        counters.references_linked += 1;
+        counters.position += 1;
+    }
+    Ok(())
 }
 
 /// Merge enrichment fields from CrossRef and S2 sources into an existing entry.
@@ -70,8 +119,8 @@ pub fn merge_enrichment_fields(
     result
 }
 
-async fn fetch_crossref(doi: &str) -> Result<BibEntry, String> {
-    fetch_crossref_by_doi(doi).await
+async fn fetch_crossref(doi: &str) -> Result<CslItem, String> {
+    fetch_crossref_csl_item(doi).await
 }
 
 async fn fetch_s2(
@@ -123,6 +172,197 @@ async fn fetch_s2_with_base(
     Ok((paper, entry))
 }
 
+/// Compute a normalized identity key for a reference, used to deduplicate
+/// across S2 and Crossref passes. Returns `Some("doi:<normalized>")` when a
+/// DOI is present, or `Some("ty:<normalized_title>|<year>")` when both title
+/// and year are non-empty, or `None` when neither is available.
+fn ref_identity_key(doi: Option<&str>, title: &str, year: &str) -> Option<String> {
+    if let Some(d) = doi {
+        let normalized = normalize_doi(d).to_lowercase();
+        if !normalized.is_empty() {
+            return Some(format!("doi:{}", normalized));
+        }
+    }
+    let norm_title = db::normalize_title_for_dedup(title);
+    if !norm_title.is_empty() && !year.is_empty() {
+        return Some(format!("ty:{}|{}", norm_title, year));
+    }
+    None
+}
+
+/// Count the number of distinct references across S2 and Crossref sources,
+/// using identity-key dedup (DOI or normalized title+year). References
+/// without an identity key (no DOI and no title+year) are each counted as
+/// distinct since we cannot determine overlap.
+fn count_distinct_references(
+    s2_refs: &[S2Reference],
+    crossref_refs: &[CrossrefReference],
+) -> usize {
+    let mut seen = HashSet::new();
+    let mut no_identity = 0usize;
+
+    for r in s2_refs {
+        let doi = r
+            .external_ids
+            .as_ref()
+            .and_then(|ids| ids.doi.as_deref())
+            .map(normalize_doi);
+        let title = r.title.as_deref().unwrap_or_default();
+        let year = r.year.map(|y| y.to_string()).unwrap_or_default();
+        match ref_identity_key(doi.as_deref(), title, &year) {
+            Some(key) => {
+                seen.insert(key);
+            }
+            None => {
+                no_identity += 1;
+            }
+        }
+    }
+
+    for cr in crossref_refs {
+        let doi = cr.doi.as_deref().map(normalize_doi);
+        let title = cr
+            .article_title
+            .as_deref()
+            .map(strip_jats)
+            .unwrap_or_default();
+        let year = cr.year.as_deref().unwrap_or_default();
+        match ref_identity_key(doi.as_deref(), &title, year) {
+            Some(key) => {
+                seen.insert(key);
+            }
+            None => {
+                no_identity += 1;
+            }
+        }
+    }
+
+    seen.len() + no_identity
+}
+
+/// Core enrichment logic, callable without Tauri IPC state.
+///
+/// Fetches metadata from CrossRef and Semantic Scholar, merges new fields into
+/// the DB entry, and links S2 references as child bib entries. Callers are
+/// responsible for issuing `notify_bib_changed` after a successful call.
+pub(crate) async fn enrich_entry(
+    bib_key: &str,
+    gi: &Arc<crate::graph::indexer::GraphIndex>,
+) -> Result<EnrichResult, String> {
+    let existing = {
+        let store = gi.store();
+        db::get_bib_item(&store.conn, bib_key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
+    };
+
+    // Fetch from CrossRef and S2 concurrently (both best-effort)
+    let crossref_fut = async {
+        if let Some(ref doi) = existing.doi {
+            fetch_crossref(doi).await.ok()
+        } else {
+            None
+        }
+    };
+    let s2_fut = async {
+        fetch_s2(existing.doi.as_deref(), &existing.title).await.ok()
+    };
+    let (crossref_csl, s2_result) = tokio::join!(crossref_fut, s2_fut);
+
+    let crossref_entry = crossref_csl.as_ref().map(csl_to_bib_entry);
+    let crossref_refs: &[CrossrefReference] = crossref_csl
+        .as_ref()
+        .and_then(|c| c.reference.as_deref())
+        .unwrap_or(&[]);
+    let s2_entry = s2_result.as_ref().map(|(_, e)| e);
+    let s2_paper = s2_result.as_ref().map(|(p, _)| p);
+
+    // Merge enrichment fields
+    let new_fields = merge_enrichment_fields(&existing, crossref_entry.as_ref(), s2_entry);
+    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
+
+    // Update entry fields via DB if any new fields were found
+    if !new_fields.is_empty() {
+        let store = gi.store();
+        let modified = db::update_bib_fields(&store.conn, bib_key, &new_fields)
+            .map_err(|e| e.to_string())?;
+        if !modified {
+            fields_added.clear();
+        }
+    }
+
+    // Append references from S2 and Crossref as minimal BibEntries via DB
+    let mut counters = LinkCounters::default();
+
+    let s2_refs = s2_paper
+        .and_then(|p| p.references.as_deref())
+        .unwrap_or(&[]);
+    let references_found = count_distinct_references(s2_refs, crossref_refs);
+    let has_any_refs = !s2_refs.is_empty() || !crossref_refs.is_empty();
+
+    if has_any_refs {
+        let store = gi.store();
+
+        // Clear stale reference edges so re-enrichment is idempotent
+        db::delete_references_for(&store.conn, bib_key)
+            .map_err(|e| e.to_string())?;
+
+        let mut used_keys = db::all_live_keys(&store.conn)
+            .map_err(|e| e.to_string())?;
+
+        let mut seen_identities: HashSet<String> = HashSet::new();
+
+        // S2 references first (they take priority)
+        for r in s2_refs.iter().take(MAX_REFERENCES) {
+            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+            if let Some(identity) = ref_identity_key(
+                ref_entry.doi.as_deref(),
+                &ref_entry.title,
+                &ref_entry.year,
+            ) {
+                seen_identities.insert(identity);
+            }
+            link_ref(&store.conn, bib_key, &ref_entry, &mut used_keys, &mut counters)?;
+        }
+
+        // Crossref references: fill gaps, skip duplicates by identity
+        let remaining_slots = MAX_REFERENCES.saturating_sub(counters.position);
+        for cr in crossref_refs.iter().take(remaining_slots) {
+            // Skip if this Crossref ref's identity was already seen
+            // (from S2 or an earlier Crossref ref). Check-and-insert in
+            // one call: HashSet::insert returns false if already present.
+            let cr_doi = cr.doi.as_deref().map(normalize_doi);
+            let cr_title = cr.article_title.as_deref().map(strip_jats).unwrap_or_default();
+            let cr_year = cr.year.as_deref().unwrap_or_default();
+            if let Some(identity) = ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year) {
+                if !seen_identities.insert(identity) {
+                    continue;
+                }
+            }
+
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            link_ref(&store.conn, bib_key, &ref_entry, &mut used_keys, &mut counters)?;
+        }
+    }
+
+    // Re-read the entry from DB to get the enriched version
+    let updated_entry = {
+        let store = gi.store();
+        db::get_bib_item(&store.conn, bib_key)
+            .map_err(|e| e.to_string())?
+            .unwrap_or(existing)
+    };
+
+    Ok(EnrichResult {
+        entry: updated_entry,
+        fields_added,
+        references_found,
+        references_appended: counters.references_appended,
+        shadow_nodes_created: counters.shadow_nodes_created,
+        references_linked: counters.references_linked,
+    })
+}
+
 #[tauri::command]
 pub async fn enrich_bib_entry(
     bib_key: String,
@@ -134,87 +374,11 @@ pub async fn enrich_bib_entry(
     let gi = lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
 
-    let existing = {
-        let store = gi.store();
-        db::get_bib_item(&store.conn, &bib_key)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
-    };
-
-    // Fetch from CrossRef (non-fatal on failure)
-    let crossref_entry = if let Some(ref doi) = existing.doi {
-        fetch_crossref(doi).await.ok()
-    } else {
-        None
-    };
-
-    // Fetch from S2 (non-fatal on failure)
-    let s2_result = fetch_s2(existing.doi.as_deref(), &existing.title).await.ok();
-    let s2_entry = s2_result.as_ref().map(|(_, e)| e);
-    let s2_paper = s2_result.as_ref().map(|(p, _)| p);
-
-    // Merge enrichment fields
-    let new_fields = merge_enrichment_fields(&existing, crossref_entry.as_ref(), s2_entry);
-    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
-
-    // Update entry fields via DB if any new fields were found
-    if !new_fields.is_empty() {
-        let store = gi.store();
-        let modified = db::update_bib_fields(&store.conn, &bib_key, &new_fields)
-            .map_err(|e| e.to_string())?;
-        if !modified {
-            fields_added.clear();
-        }
-    }
-
-    // Append S2 references as minimal BibEntries via DB
-    let mut shadow_nodes_created: usize = 0;
-    let mut references_appended: usize = 0;
-    let references_found;
-
-    if let Some(paper) = s2_paper {
-        let refs = paper.references.as_deref().unwrap_or(&[]);
-        references_found = refs.len();
-
-        if !refs.is_empty() {
-            let store = gi.store();
-            let mut used_keys = db::all_live_keys(&store.conn)
-                .map_err(|e| e.to_string())?;
-
-            let mut references_appended_count = 0usize;
-            for r in refs.iter().take(MAX_REFERENCES) {
-                let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
-                used_keys.insert(ref_entry.key.clone());
-                let outcome = db::upsert_bib_item(&store.conn, &ref_entry, None, None, true)
-                    .map_err(|e| e.to_string())?;
-                references_appended_count += 1;
-                if matches!(outcome, UpsertOutcome::Inserted { .. } | UpsertOutcome::Updated { .. }) {
-                    shadow_nodes_created += 1;
-                }
-            }
-            references_appended = references_appended_count;
-        }
-    } else {
-        references_found = 0;
-    }
+    let result = enrich_entry(&bib_key, &gi).await?;
 
     crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
 
-    // Re-read the entry from DB to get the enriched version
-    let updated_entry = {
-        let store = gi.store();
-        db::get_bib_item(&store.conn, &bib_key)
-            .map_err(|e| e.to_string())?
-            .unwrap_or(existing)
-    };
-
-    Ok(EnrichResult {
-        entry: updated_entry,
-        fields_added,
-        references_found,
-        references_appended,
-        shadow_nodes_created,
-    })
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -604,11 +768,13 @@ mod tests {
             references_found: 50,
             references_appended: 10,
             shadow_nodes_created: 8,
+            references_linked: 10,
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["references_appended"], 10);
         assert_eq!(json["references_found"], 50);
         assert_eq!(json["shadow_nodes_created"], 8);
+        assert_eq!(json["references_linked"], 10);
     }
 
     // ── references_appended capping contract ──────────────────────
@@ -848,6 +1014,145 @@ mod tests {
         assert_eq!(file_content, original_content, ".bib file should be untouched by DB enrichment");
     }
 
+    // ── EnrichResult references_linked field ─────────────────────────
+
+    #[test]
+    fn enrich_result_serializes_references_linked() {
+        let result = EnrichResult {
+            entry: make_entry(|_| {}),
+            fields_added: vec![],
+            references_found: 10,
+            references_appended: 5,
+            shadow_nodes_created: 3,
+            references_linked: 5,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["references_linked"], 5);
+    }
+
+    // ── Enrich references linked via DB ─────────────────────────────
+
+    #[test]
+    fn enrich_references_linked_via_db() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent entry
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Insert 3 reference entries and link them
+        let ref_keys = ["ref_a2024", "ref_b2024", "ref_c2024"];
+        for (idx, key) in ref_keys.iter().enumerate() {
+            let ref_entry = make_entry(|e| {
+                e.key = key.to_string();
+                e.title = format!("Reference {}", idx);
+            });
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            db::insert_bib_reference(&store.conn, "parent2024", key, Some(idx as i64)).unwrap();
+        }
+
+        // Assert references are linked correctly
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].key, "ref_a2024");
+        assert_eq!(refs[1].key, "ref_b2024");
+        assert_eq!(refs[2].key, "ref_c2024");
+    }
+
+    #[test]
+    fn enrich_references_replaced_on_re_enrich() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent entry
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // First round: insert 3 references
+        let round1_keys = ["ref_a2024", "ref_b2024", "ref_c2024"];
+        for (idx, key) in round1_keys.iter().enumerate() {
+            let ref_entry = make_entry(|e| {
+                e.key = key.to_string();
+                e.title = format!("Round1 Reference {}", idx);
+            });
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            db::insert_bib_reference(&store.conn, "parent2024", key, Some(idx as i64)).unwrap();
+        }
+        assert_eq!(db::get_references_for(&store.conn, "parent2024").unwrap().len(), 3);
+
+        // Second round (re-enrich): delete old, insert 2 new references
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+        let round2_keys = ["ref_x2024", "ref_y2024"];
+        for (idx, key) in round2_keys.iter().enumerate() {
+            let ref_entry = make_entry(|e| {
+                e.key = key.to_string();
+                e.title = format!("Round2 Reference {}", idx);
+            });
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            db::insert_bib_reference(&store.conn, "parent2024", key, Some(idx as i64)).unwrap();
+        }
+
+        // Assert only round 2 references remain
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 2, "should have exactly 2 references after re-enrich");
+        assert_eq!(refs[0].key, "ref_x2024");
+        assert_eq!(refs[1].key, "ref_y2024");
+    }
+
+    #[test]
+    fn enrich_references_dedup_skipped_uses_existing_key() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Insert a full entry under key "alpha2024" with DOI
+        let full_entry = make_entry(|e| {
+            e.key = "alpha2024".to_string();
+            e.doi = Some("10.1/alpha".to_string());
+            e.title = "Alpha Paper".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &full_entry, None, None, false).unwrap();
+
+        // Create a ref stub with a different key but the same DOI
+        let stub = make_entry(|e| {
+            e.key = "stub2024".to_string();
+            e.doi = Some("10.1/alpha".to_string());
+            e.title = "Stub Title".to_string();
+        });
+        let outcome = db::upsert_bib_item(&store.conn, &stub, None, None, true).unwrap();
+
+        // Should be DedupSkipped pointing to alpha2024
+        let child_key = match &outcome {
+            UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+            _ => stub.key.clone(),
+        };
+        assert_eq!(child_key, "alpha2024");
+
+        // Link using the correct key
+        db::insert_bib_reference(&store.conn, "parent2024", &child_key, Some(0)).unwrap();
+
+        // Assert reference points to alpha2024, not stub2024
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].key, "alpha2024");
+    }
+
     // ── C1 regression: S2 ref stubs must not clobber existing full entries ──
 
     #[test]
@@ -997,5 +1302,873 @@ mod tests {
         // 6. Assert both entries exist
         let all = db::list_bib_items(&store.conn).unwrap();
         assert_eq!(all.len(), 2, "should have both the original and the reference stub");
+    }
+
+    // ── Crossref reference gap-filling tests ──────────────────────────
+
+    #[test]
+    fn enrich_crossref_refs_fill_gaps_after_s2() {
+        use crate::bib::convert::{crossref_ref_to_bib_entry, normalize_doi, CrossrefReference};
+        use crate::bib::db;
+        use crate::bib::semantic_scholar::{s2_ref_to_bib_entry, S2Author, S2ExternalIds, S2Reference};
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+            e.doi = Some("10.1/parent".to_string());
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // S2 references: 2 entries, one with DOI "10.1/a", one without
+        let s2_refs = vec![
+            S2Reference {
+                paper_id: Some("s2_1".to_string()),
+                external_ids: Some(S2ExternalIds {
+                    doi: Some("10.1/a".to_string()),
+                    arxiv: None, pubmed: None, pubmed_central: None, mag: None, corpus_id: None,
+                }),
+                title: Some("S2 Ref A".to_string()),
+                year: Some(2020),
+                authors: Some(vec![S2Author { author_id: None, name: Some("A. Author".to_string()) }]),
+            },
+            S2Reference {
+                paper_id: Some("s2_2".to_string()),
+                external_ids: None,
+                title: Some("S2 Ref B".to_string()),
+                year: Some(2021),
+                authors: Some(vec![S2Author { author_id: None, name: Some("B. Author".to_string()) }]),
+            },
+        ];
+
+        // Crossref references: 3 entries
+        // - DOI "10.1/a" (duplicate with S2)
+        // - DOI "10.1/b" (new)
+        // - No DOI (new)
+        let cr_refs = vec![
+            CrossrefReference {
+                doi: Some("10.1/a".to_string()),
+                article_title: Some("CR Ref A (dup)".to_string()),
+                author: Some("A. Author".to_string()),
+                year: Some("2020".to_string()),
+                volume: None, first_page: None, journal_title: None,
+            },
+            CrossrefReference {
+                doi: Some("10.1/b".to_string()),
+                article_title: Some("CR Ref B (new)".to_string()),
+                author: Some("C. Author".to_string()),
+                year: Some("2022".to_string()),
+                volume: None, first_page: None, journal_title: None,
+            },
+            CrossrefReference {
+                doi: None,
+                article_title: Some("CR Ref C (no DOI)".to_string()),
+                author: Some("D. Author".to_string()),
+                year: Some("2023".to_string()),
+                volume: None, first_page: None, journal_title: None,
+            },
+        ];
+
+        // Clear stale edges
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut linked_dois: HashSet<String> = HashSet::new();
+        let mut position = 0usize;
+        let mut references_linked = 0usize;
+
+        // Process S2 refs
+        for r in s2_refs.iter().take(MAX_REFERENCES) {
+            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            if let Some(ref d) = ref_entry.doi {
+                linked_dois.insert(d.to_lowercase());
+            }
+            let outcome = db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => ref_entry.key.clone(),
+            };
+            db::insert_bib_reference(&store.conn, "parent2024", &child_key, Some(position as i64)).unwrap();
+            references_linked += 1;
+            position += 1;
+        }
+
+        // Process Crossref refs (fill gaps)
+        let remaining_slots = MAX_REFERENCES.saturating_sub(position);
+        for cr in cr_refs.iter().take(remaining_slots) {
+            if let Some(ref doi) = cr.doi {
+                let normalized = normalize_doi(doi).to_lowercase();
+                if linked_dois.contains(&normalized) {
+                    continue;
+                }
+            }
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            if let Some(ref d) = ref_entry.doi {
+                linked_dois.insert(d.to_lowercase());
+            }
+            let outcome = db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => ref_entry.key.clone(),
+            };
+            db::insert_bib_reference(&store.conn, "parent2024", &child_key, Some(position as i64)).unwrap();
+            references_linked += 1;
+            position += 1;
+        }
+
+        // Assertions
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 4, "2 S2 + 2 Crossref (1 CR skipped as DOI dup)");
+        assert_eq!(references_linked, 4);
+
+        // Position numbering is continuous
+        // (get_references_for returns in position order)
+        assert_eq!(refs[0].key, "author2020"); // S2 ref A
+        assert_eq!(refs[1].key, "author2021"); // S2 ref B
+        // CR ref A (DOI 10.1/a) skipped
+        assert_eq!(refs[2].key, "author2022"); // CR ref B
+        assert_eq!(refs[3].key, "author2023"); // CR ref C
+    }
+
+    #[test]
+    fn enrich_crossref_only_when_s2_has_no_refs() {
+        use crate::bib::convert::{crossref_ref_to_bib_entry, CrossrefReference};
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+            e.doi = Some("10.1/parent".to_string());
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        let cr_refs = vec![
+            CrossrefReference {
+                doi: Some("10.1/cr1".to_string()),
+                article_title: Some("CR Only Ref".to_string()),
+                author: Some("Solo, H.".to_string()),
+                year: Some("2021".to_string()),
+                volume: None, first_page: None, journal_title: None,
+            },
+        ];
+
+        // No S2 refs, only Crossref
+        let s2_refs: Vec<()> = vec![];
+        let has_any_refs = !s2_refs.is_empty() || !cr_refs.is_empty();
+        assert!(has_any_refs);
+
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut position = 0usize;
+
+        for cr in &cr_refs {
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            let outcome = db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => ref_entry.key.clone(),
+            };
+            db::insert_bib_reference(&store.conn, "parent2024", &child_key, Some(position as i64)).unwrap();
+            position += 1;
+        }
+
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 1, "Crossref ref should be linked when S2 has none");
+        assert_eq!(refs[0].doi, Some("10.1/cr1".to_string()));
+    }
+
+    #[test]
+    fn enrich_crossref_respects_max_references_cap() {
+        use crate::bib::convert::{crossref_ref_to_bib_entry, normalize_doi, CrossrefReference};
+        use crate::bib::db;
+        use crate::bib::semantic_scholar::{s2_ref_to_bib_entry, S2Author, S2Reference};
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // 25 S2 refs
+        let s2_refs: Vec<S2Reference> = (0..25).map(|i| S2Reference {
+            paper_id: Some(format!("s2_{}", i)),
+            external_ids: None,
+            title: Some(format!("S2 Paper {}", i)),
+            year: Some(2020 + (i % 5) as i64),
+            authors: Some(vec![S2Author {
+                author_id: None,
+                name: Some(format!("Author{}", i)),
+            }]),
+        }).collect();
+
+        // 20 Crossref refs
+        let cr_refs: Vec<CrossrefReference> = (0..20).map(|i| CrossrefReference {
+            doi: Some(format!("10.1/cr{}", i)),
+            article_title: Some(format!("CR Paper {}", i)),
+            author: Some(format!("CrAuthor{}", i)),
+            year: Some(format!("{}", 2020 + (i % 5))),
+            volume: None, first_page: None, journal_title: None,
+        }).collect();
+
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut linked_dois: HashSet<String> = HashSet::new();
+        let mut position = 0usize;
+
+        // S2 first
+        for r in s2_refs.iter().take(MAX_REFERENCES) {
+            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            if let Some(ref d) = ref_entry.doi {
+                linked_dois.insert(d.to_lowercase());
+            }
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            db::insert_bib_reference(&store.conn, "parent2024", &ref_entry.key, Some(position as i64)).unwrap();
+            position += 1;
+        }
+
+        // Crossref fills remaining slots
+        let remaining_slots = MAX_REFERENCES.saturating_sub(position);
+        for cr in cr_refs.iter().take(remaining_slots) {
+            if let Some(ref doi) = cr.doi {
+                let normalized = normalize_doi(doi).to_lowercase();
+                if linked_dois.contains(&normalized) {
+                    continue;
+                }
+            }
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            db::insert_bib_reference(&store.conn, "parent2024", &ref_entry.key, Some(position as i64)).unwrap();
+            position += 1;
+        }
+
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), MAX_REFERENCES, "total linked refs capped at MAX_REFERENCES=30");
+        assert_eq!(position, MAX_REFERENCES);
+    }
+
+    #[test]
+    fn enrich_duplicate_child_key_counts_link_once() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Insert a child entry that both stubs will dedup to
+        let child = make_entry(|e| {
+            e.key = "alpha2024".to_string();
+            e.doi = Some("10.1/alpha".to_string());
+            e.title = "Alpha Paper".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &child, None, None, false).unwrap();
+
+        // Two stubs with different keys but the same DOI -> both DedupSkipped to "alpha2024"
+        let stubs = vec![
+            make_entry(|e| {
+                e.key = "stub_a".to_string();
+                e.doi = Some("10.1/alpha".to_string());
+                e.title = "Stub A".to_string();
+            }),
+            make_entry(|e| {
+                e.key = "stub_b".to_string();
+                e.doi = Some("10.1/alpha".to_string());
+                e.title = "Stub B".to_string();
+            }),
+        ];
+
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        let mut references_linked = 0usize;
+        let mut position = 0usize;
+
+        for stub in &stubs {
+            let outcome = db::upsert_bib_item(&store.conn, stub, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => stub.key.clone(),
+            };
+            let inserted = db::insert_bib_reference(
+                &store.conn, "parent2024", &child_key, Some(position as i64),
+            ).unwrap();
+            if inserted {
+                references_linked += 1;
+                position += 1;
+            }
+        }
+
+        assert_eq!(references_linked, 1, "only one actual row inserted");
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 1, "only one reference edge should exist");
+        assert_eq!(refs[0].key, "alpha2024");
+
+        // Verify positions are contiguous (0-based)
+        let positions: Vec<i64> = store.conn
+            .prepare("SELECT position FROM bib_references WHERE parent_key = 'parent2024' ORDER BY position")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(positions, vec![0], "positions must be contiguous starting at 0");
+    }
+
+    // ── F4 Crossref dedup tests ─────────────────────────────────────
+
+    /// Bug (a): An S2 ref and a DOI-less Crossref ref for the same paper
+    /// (same title/year) should be deduped. Previously the Crossref loop
+    /// only skipped by DOI, so a DOI-less Crossref ref always fell through.
+    ///
+    /// This test uses the *production* `ref_identity_key` helper and the
+    /// `seen_identities` pattern that the production code must adopt.
+    #[test]
+    fn crossref_dedup_by_title_year_against_s2() {
+        use crate::bib::convert::{crossref_ref_to_bib_entry, normalize_doi, CrossrefReference};
+        use crate::bib::db;
+        use crate::bib::semantic_scholar::{s2_ref_to_bib_entry, S2Author, S2Reference};
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // S2 reference: title "Machine Learning Survey", year 2023, no DOI
+        let s2_refs = vec![S2Reference {
+            paper_id: Some("s2_ml".to_string()),
+            external_ids: None,
+            title: Some("Machine Learning Survey".to_string()),
+            year: Some(2023),
+            authors: Some(vec![S2Author {
+                author_id: None,
+                name: Some("A. Author".to_string()),
+            }]),
+        }];
+
+        // Crossref reference: same title and year, no DOI
+        let cr_refs = vec![CrossrefReference {
+            doi: None,
+            article_title: Some("Machine Learning Survey".to_string()),
+            author: Some("A. Author".to_string()),
+            year: Some("2023".to_string()),
+            volume: None,
+            first_page: None,
+            journal_title: None,
+        }];
+
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut seen_identities: HashSet<String> = HashSet::new();
+        let mut position = 0usize;
+        let mut references_linked = 0usize;
+
+        // S2 pass
+        for r in s2_refs.iter().take(MAX_REFERENCES) {
+            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            if let Some(identity) = ref_identity_key(
+                ref_entry.doi.as_deref(),
+                &ref_entry.title,
+                &ref_entry.year,
+            ) {
+                seen_identities.insert(identity);
+            }
+            let outcome =
+                db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => ref_entry.key.clone(),
+            };
+            let inserted = db::insert_bib_reference(
+                &store.conn,
+                "parent2024",
+                &child_key,
+                Some(position as i64),
+            )
+            .unwrap();
+            if inserted {
+                references_linked += 1;
+                position += 1;
+            }
+        }
+
+        // Crossref pass — use identity-based dedup
+        let remaining_slots = MAX_REFERENCES.saturating_sub(position);
+        for cr in cr_refs.iter().take(remaining_slots) {
+            let cr_title = cr
+                .article_title
+                .as_deref()
+                .map(crate::bib::convert::strip_jats)
+                .unwrap_or_default();
+            let cr_year = cr.year.as_deref().unwrap_or_default();
+            let cr_doi = cr.doi.as_deref().map(normalize_doi);
+
+            if let Some(identity) =
+                ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year)
+            {
+                if !seen_identities.insert(identity) {
+                    continue; // already seen
+                }
+            }
+
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            let outcome =
+                db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => ref_entry.key.clone(),
+            };
+            let inserted = db::insert_bib_reference(
+                &store.conn,
+                "parent2024",
+                &child_key,
+                Some(position as i64),
+            )
+            .unwrap();
+            if inserted {
+                references_linked += 1;
+                position += 1;
+            }
+        }
+
+        // The Crossref ref should have been deduped against the S2 ref
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(
+            refs.len(),
+            1,
+            "same paper (same title+year) from S2 and Crossref should be linked once, got: {:?}",
+            refs.iter().map(|r| &r.key).collect::<Vec<_>>()
+        );
+        assert_eq!(references_linked, 1);
+    }
+
+    /// Bug (b): Two Crossref refs sharing the same DOI should be deduped.
+    /// Previously `linked_dois.insert` in the Crossref loop was a dead write
+    /// because it happened after the skip check, so the second ref was never
+    /// caught.
+    #[test]
+    fn crossref_dedup_two_refs_sharing_doi() {
+        use crate::bib::convert::{crossref_ref_to_bib_entry, normalize_doi, CrossrefReference};
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Two Crossref refs with the SAME DOI but different titles
+        let cr_refs = vec![
+            CrossrefReference {
+                doi: Some("10.1234/same-paper".to_string()),
+                article_title: Some("Title Variant A".to_string()),
+                author: Some("Smith, J.".to_string()),
+                year: Some("2022".to_string()),
+                volume: None,
+                first_page: None,
+                journal_title: None,
+            },
+            CrossrefReference {
+                doi: Some("10.1234/same-paper".to_string()),
+                article_title: Some("Title Variant B".to_string()),
+                author: Some("Smith, J.".to_string()),
+                year: Some("2022".to_string()),
+                volume: None,
+                first_page: None,
+                journal_title: None,
+            },
+        ];
+
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut seen_identities: HashSet<String> = HashSet::new();
+        let mut position = 0usize;
+        let mut references_linked = 0usize;
+
+        // Crossref pass only (no S2 refs)
+        for cr in cr_refs.iter().take(MAX_REFERENCES) {
+            let cr_title = cr
+                .article_title
+                .as_deref()
+                .map(crate::bib::convert::strip_jats)
+                .unwrap_or_default();
+            let cr_year = cr.year.as_deref().unwrap_or_default();
+            let cr_doi = cr.doi.as_deref().map(normalize_doi);
+
+            if let Some(identity) =
+                ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year)
+            {
+                if !seen_identities.insert(identity) {
+                    continue; // already seen
+                }
+            }
+
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            used_keys.insert(ref_entry.key.clone());
+            let outcome =
+                db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            let child_key = match &outcome {
+                UpsertOutcome::DedupSkipped { existing_key } => existing_key.clone(),
+                _ => ref_entry.key.clone(),
+            };
+            let inserted = db::insert_bib_reference(
+                &store.conn,
+                "parent2024",
+                &child_key,
+                Some(position as i64),
+            )
+            .unwrap();
+            if inserted {
+                references_linked += 1;
+                position += 1;
+            }
+        }
+
+        // Only one of the two Crossref refs should be linked
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(
+            refs.len(),
+            1,
+            "two Crossref refs with same DOI should be deduped to one, got: {:?}",
+            refs.iter().map(|r| &r.key).collect::<Vec<_>>()
+        );
+        assert_eq!(references_linked, 1);
+    }
+
+    /// Verify ref_identity_key normalizes titles consistently so that minor
+    /// punctuation differences don't prevent dedup.
+    #[test]
+    fn ref_identity_key_title_normalization() {
+        // Same logical title with different punctuation
+        let id1 = ref_identity_key(None, "Hello, World! A Study", "2023");
+        let id2 = ref_identity_key(None, "Hello World A Study", "2023");
+        assert_eq!(id1, id2, "normalized titles should produce the same identity key");
+
+        // DOI takes priority over title+year
+        let doi_id = ref_identity_key(Some("10.1234/x"), "Hello World", "2023");
+        assert!(doi_id.unwrap().starts_with("doi:"));
+
+        // No DOI, no year -> None
+        let none_id = ref_identity_key(None, "Some Title", "");
+        assert!(none_id.is_none(), "should return None when year is empty");
+
+        // No DOI, no title -> None
+        let none_id2 = ref_identity_key(None, "", "2023");
+        assert!(none_id2.is_none(), "should return None when title is empty");
+    }
+
+    // ── F7: references_found dedup tests ────────────────────────────
+
+    #[test]
+    fn count_distinct_references_deduplicates_overlap() {
+        use crate::bib::semantic_scholar::{S2ExternalIds, S2Reference};
+
+        // 2 S2 refs: one with DOI "10.1/a", one with title+year only
+        let s2_refs = vec![
+            S2Reference {
+                paper_id: Some("s1".to_string()),
+                external_ids: Some(S2ExternalIds {
+                    doi: Some("10.1/a".to_string()),
+                    arxiv: None,
+                    pubmed: None,
+                    pubmed_central: None,
+                    mag: None,
+                    corpus_id: None,
+                }),
+                title: Some("Paper A".to_string()),
+                year: Some(2020),
+                authors: None,
+            },
+            S2Reference {
+                paper_id: Some("s2".to_string()),
+                external_ids: None,
+                title: Some("Paper B".to_string()),
+                year: Some(2021),
+                authors: None,
+            },
+        ];
+
+        // 2 Crossref refs: one sharing DOI "10.1/a" with S2 (overlap), one new
+        let cr_refs = vec![
+            CrossrefReference {
+                doi: Some("10.1/a".to_string()),
+                article_title: Some("Paper A variant".to_string()),
+                author: None,
+                year: Some("2020".to_string()),
+                volume: None,
+                first_page: None,
+                journal_title: None,
+            },
+            CrossrefReference {
+                doi: Some("10.1/c".to_string()),
+                article_title: Some("Paper C".to_string()),
+                author: None,
+                year: Some("2022".to_string()),
+                volume: None,
+                first_page: None,
+                journal_title: None,
+            },
+        ];
+
+        // Raw count would be 4, but distinct is 3 (DOI 10.1/a appears in both)
+        let count = count_distinct_references(&s2_refs, &cr_refs);
+        assert_eq!(
+            count, 3,
+            "overlapping DOI should be deduped: 2 S2 + 1 new CR = 3"
+        );
+    }
+
+    #[test]
+    fn count_distinct_references_no_identity_counted_separately() {
+        use crate::bib::semantic_scholar::S2Reference;
+
+        // 2 S2 refs with no identity (no DOI, no title or no year)
+        let s2_refs = vec![
+            S2Reference {
+                paper_id: Some("s1".to_string()),
+                external_ids: None,
+                title: None,
+                year: None,
+                authors: None,
+            },
+            S2Reference {
+                paper_id: Some("s2".to_string()),
+                external_ids: None,
+                title: Some("Some title".to_string()),
+                year: None, // no year -> identity is None
+                authors: None,
+            },
+        ];
+
+        // 1 Crossref ref with no identity
+        let cr_refs = vec![CrossrefReference {
+            doi: None,
+            article_title: None,
+            author: None,
+            year: None,
+            volume: None,
+            first_page: None,
+            journal_title: None,
+        }];
+
+        // All 3 have no identity key, so each counts as distinct
+        let count = count_distinct_references(&s2_refs, &cr_refs);
+        assert_eq!(
+            count, 3,
+            "identity-less refs should each be counted as distinct"
+        );
+    }
+
+    #[test]
+    fn count_distinct_references_empty_inputs() {
+        use crate::bib::semantic_scholar::S2Reference;
+
+        let count = count_distinct_references(
+            &[] as &[S2Reference],
+            &[] as &[CrossrefReference],
+        );
+        assert_eq!(count, 0, "empty inputs should return 0");
+    }
+
+    // ── F3: concurrent fetch pattern ───────────────────────────────
+
+    /// Validates that the concurrent-fetch pattern used in `enrich_entry`
+    /// (tokio::join! with a conditional crossref future) completes in
+    /// roughly the time of the slowest future, not the sum.
+    #[tokio::test]
+    async fn concurrent_fetches_overlap_in_time() {
+        use std::time::{Duration, Instant};
+
+        let doi: Option<String> = Some("10.1/test".to_string());
+        let title = "Test Title".to_string();
+        let delay = Duration::from_millis(100);
+
+        let start = Instant::now();
+
+        // Mirror the production pattern: crossref is conditional on DOI
+        let crossref_fut = async {
+            if let Some(ref _d) = doi {
+                tokio::time::sleep(delay).await;
+                Some("crossref-result")
+            } else {
+                None
+            }
+        };
+        let s2_fut = async {
+            let _title_ref = &title;
+            tokio::time::sleep(delay).await;
+            Some("s2-result")
+        };
+
+        let (crossref, s2) = tokio::join!(crossref_fut, s2_fut);
+
+        let elapsed = start.elapsed();
+
+        // Both futures sleep for `delay`. If run concurrently, total time
+        // should be ~delay (not 2*delay). Allow 80ms margin.
+        assert!(
+            elapsed < delay + Duration::from_millis(80),
+            "concurrent fetches should overlap; elapsed {:?} exceeds {:?}",
+            elapsed,
+            delay + Duration::from_millis(80),
+        );
+
+        assert_eq!(crossref, Some("crossref-result"));
+        assert_eq!(s2, Some("s2-result"));
+    }
+
+    /// Same pattern but with doi=None — crossref future resolves immediately.
+    #[tokio::test]
+    async fn concurrent_fetches_no_doi_crossref_immediate() {
+        use std::time::{Duration, Instant};
+
+        let doi: Option<String> = None;
+        let title = "Test Title".to_string();
+        let delay = Duration::from_millis(100);
+
+        let start = Instant::now();
+
+        let crossref_fut = async {
+            if let Some(ref _d) = doi {
+                tokio::time::sleep(delay).await;
+                Some("crossref-result")
+            } else {
+                None
+            }
+        };
+        let s2_fut = async {
+            let _title_ref = &title;
+            tokio::time::sleep(delay).await;
+            Some("s2-result")
+        };
+
+        let (crossref, s2) = tokio::join!(crossref_fut, s2_fut);
+
+        let elapsed = start.elapsed();
+
+        // crossref resolves immediately, s2 takes `delay`. Total ~delay.
+        assert!(
+            elapsed < delay + Duration::from_millis(80),
+            "with no DOI, total time should be ~s2 delay; elapsed {:?}",
+            elapsed,
+        );
+
+        assert_eq!(crossref, None);
+        assert_eq!(s2, Some("s2-result"));
+    }
+
+    // ── F9: link_ref helper tests ─────────────────────────────────────
+
+    #[test]
+    fn link_ref_basic_bookkeeping() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut counters = LinkCounters::default();
+
+        // Link two distinct refs
+        let ref_a = make_entry(|e| {
+            e.key = "ref_a2024".to_string();
+            e.title = "Reference A".to_string();
+        });
+        link_ref(&store.conn, "parent2024", &ref_a, &mut used_keys, &mut counters).unwrap();
+
+        let ref_b = make_entry(|e| {
+            e.key = "ref_b2024".to_string();
+            e.title = "Reference B".to_string();
+        });
+        link_ref(&store.conn, "parent2024", &ref_b, &mut used_keys, &mut counters).unwrap();
+
+        assert_eq!(counters.references_appended, 2);
+        assert_eq!(counters.shadow_nodes_created, 2);
+        assert_eq!(counters.references_linked, 2);
+        assert_eq!(counters.position, 2);
+
+        // used_keys should contain both refs
+        assert!(used_keys.contains("ref_a2024"));
+        assert!(used_keys.contains("ref_b2024"));
+
+        // DB should have both references in position order
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].key, "ref_a2024");
+        assert_eq!(refs[1].key, "ref_b2024");
+    }
+
+    #[test]
+    fn link_ref_dedup_skipped_counts_correctly() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Pre-insert a full entry with a DOI
+        let full_entry = make_entry(|e| {
+            e.key = "alpha2024".to_string();
+            e.doi = Some("10.1/alpha".to_string());
+            e.title = "Alpha Paper".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &full_entry, None, None, false).unwrap();
+
+        let mut used_keys = db::all_live_keys(&store.conn).unwrap();
+        let mut counters = LinkCounters::default();
+
+        // Call link_ref with a stub sharing the same DOI -> DedupSkipped
+        let stub = make_entry(|e| {
+            e.key = "stub2024".to_string();
+            e.doi = Some("10.1/alpha".to_string());
+            e.title = "Stub Title".to_string();
+        });
+        link_ref(&store.conn, "parent2024", &stub, &mut used_keys, &mut counters).unwrap();
+
+        // DedupSkipped: appended but NOT a new shadow
+        assert_eq!(counters.references_appended, 1);
+        assert_eq!(counters.shadow_nodes_created, 0, "DedupSkipped should not count as shadow");
+        assert_eq!(counters.references_linked, 1);
+        assert_eq!(counters.position, 1);
+
+        // Reference should point to alpha2024, not stub2024
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].key, "alpha2024");
     }
 }

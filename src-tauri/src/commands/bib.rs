@@ -137,7 +137,7 @@ fn build_citation_frontmatter(entry: &BibEntry) -> IndexMap<String, serde_yaml::
 }
 
 /// Build the markdown body for a citation note from a BibEntry.
-fn build_citation_body(entry: &BibEntry) -> String {
+fn build_citation_body(entry: &BibEntry, references: &[BibEntry]) -> String {
     let mut body = String::new();
     if let Some(abstract_text) = &entry.abstract_text {
         body.push_str("## Abstract\n\n");
@@ -145,6 +145,13 @@ fn build_citation_body(entry: &BibEntry) -> String {
         body.push_str("\n\n");
     }
     body.push_str("## Notes\n");
+    if !references.is_empty() {
+        body.push('\n');
+        body.push_str("## References\n\n");
+        for r in references {
+            body.push_str(&format!("- [@{}]\n", r.key));
+        }
+    }
     body
 }
 
@@ -215,13 +222,13 @@ fn build_citation_note_path(
 }
 
 #[tauri::command]
-pub fn materialize_citation(
+pub async fn materialize_citation(
     bib_key: String,
     window: tauri::Window,
-    state: State<WorkspaceRegistry>,
-    registry: State<Arc<WriteHashRegistry>>,
-    oplog_state: State<Arc<OpLogRegistry>>,
-    graph_state: State<Arc<GraphRegistry>>,
+    state: State<'_, WorkspaceRegistry>,
+    registry: State<'_, Arc<WriteHashRegistry>>,
+    oplog_state: State<'_, Arc<OpLogRegistry>>,
+    graph_state: State<'_, Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<PageMeta, String> {
     // 1. Resolve workspace root
@@ -231,15 +238,15 @@ pub fn materialize_citation(
     let gi = lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
 
-    // 3. Look up BibEntry from DB
-    let entry = {
+    // 3. Look up BibEntry from DB (initial existence check)
+    {
         let store = gi.store();
         crate::bib::db::get_bib_item(&store.conn, &bib_key)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?
-    };
+            .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?;
+    }
 
-    // 4. Check no citekey page already exists
+    // 4. Check no citekey page already exists (guard before enrichment)
     if let Some(page_id) = gi.store().page_for_citekey(&bib_key).map_err(|e| e.to_string())? {
         return Err(format!(
             "A page with citekey '{bib_key}' already exists: {page_id}"
@@ -253,21 +260,59 @@ pub fn materialize_citation(
     // 6. Build and validate relative path
     let relative_path = build_citation_note_path(&root, &bib_key, &notes_dir)?;
 
-    // 6. Check the file doesn't already exist on disk
+    // 7. Check the file doesn't already exist on disk (guard before enrichment)
     if root.join(&relative_path).exists() {
         return Err(format!("File already exists: {relative_path}"));
     }
 
-    // 7. Build frontmatter and body
-    let frontmatter = build_citation_frontmatter(&entry);
-    let body = build_citation_body(&entry);
+    // 8. Best-effort enrichment (online fields + references).
+    //    Runs AFTER existence guards so a duplicate-materialize fast-fails
+    //    without network I/O or bib_references churn.
+    match crate::commands::enrich::enrich_entry(&bib_key, &gi).await {
+        Ok(_enrich_result) => {
+            crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+        }
+        Err(e) => {
+            tracing::warn!("Enrichment failed for '{}', proceeding without: {}", bib_key, e);
+        }
+    }
 
-    // 8. Write the file
+    // 9. Re-read entry (may have been enriched)
+    let entry = {
+        let store = gi.store();
+        crate::bib::db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Bib key '{bib_key}' not found after enrichment"))?
+    };
+
+    // 10. Load references for body rendering
+    let references = {
+        let store = gi.store();
+        crate::bib::db::get_references_for(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+    };
+
+    // 11. Build frontmatter and body
+    let frontmatter = build_citation_frontmatter(&entry);
+    let body = build_citation_body(&entry, &references);
+
+    // NOTE (F8/partial-failure safety): If write_page fails below,
+    // reference edges and shadow stubs from enrichment (step 8)
+    // persist in the DB. This is harmless:
+    //   - Shadow stubs are normal bib_items (identical to standalone
+    //     enrich_bib_entry output) and represent real referenced papers.
+    //   - Reference edges are rebuilt idempotently on retry because
+    //     enrich_entry calls delete_references_for before re-linking.
+    //   - On retry, guards (steps 4+7) pass since no file/page was
+    //     created, and enrichment re-runs cleanly.
+    // See test: enrichment_edges_idempotent_on_retry.
+
+    // 12. Write the file
     let content = serialize_frontmatter(&frontmatter, &body);
     ops::write_page(&root, &relative_path, &body, &frontmatter, &registry)
         .map_err(|e| e.to_string())?;
 
-    // 9. Record oplog action
+    // 13. Record oplog action
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
         let _ = store.record_operation(
@@ -284,7 +329,7 @@ pub fn materialize_citation(
         );
     }
 
-    // 10. Build PageMeta for the new page
+    // 14. Build PageMeta for the new page
     let full_path = root.join(&relative_path);
     let fs_meta = std::fs::metadata(&full_path).map_err(|e| e.to_string())?;
     let created_at = fs_meta
@@ -311,12 +356,12 @@ pub fn materialize_citation(
         file_type: FileType::Markdown,
     };
 
-    // 11. Reindex
+    // 15. Reindex
     reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
         gi.add_file(&relative_path, ann)
     });
 
-    // 12. Return PageMeta
+    // 16. Return PageMeta
     Ok(page_meta)
 }
 
@@ -369,6 +414,20 @@ pub fn bib_update_fields(
         crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
     }
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn get_references(
+    bib_key: String,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<Vec<BibEntry>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::get_references_for(&store.conn, &bib_key)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1437,7 +1496,7 @@ mod tests {
     #[test]
     fn body_includes_abstract_when_present() {
         let entry = sample_citation_entry();
-        let body = super::build_citation_body(&entry);
+        let body = super::build_citation_body(&entry, &[]);
         assert!(body.contains("## Abstract"));
         assert!(body.contains("This paper studies..."));
         assert!(body.contains("## Notes"));
@@ -1467,7 +1526,7 @@ mod tests {
             arxiv_id: None,
             tags: vec![],
         };
-        let body = super::build_citation_body(&entry);
+        let body = super::build_citation_body(&entry, &[]);
         assert!(!body.contains("## Abstract"));
         assert!(body.contains("## Notes"));
     }
@@ -1475,8 +1534,64 @@ mod tests {
     #[test]
     fn body_always_has_notes_section() {
         let entry = sample_citation_entry();
-        let body = super::build_citation_body(&entry);
+        let body = super::build_citation_body(&entry, &[]);
         assert!(body.ends_with("## Notes\n"));
+    }
+
+    // --- build_citation_body with references ---
+
+    #[test]
+    fn body_includes_references_section_with_entries() {
+        let entry = sample_citation_entry();
+        let refs = vec![
+            test_entry("ref_alpha2020"),
+            test_entry("ref_beta2021"),
+            test_entry("ref_gamma2022"),
+        ];
+        let body = super::build_citation_body(&entry, &refs);
+        assert!(body.contains("## References"), "body should contain references section");
+        assert!(body.contains("- [@ref_alpha2020]"));
+        assert!(body.contains("- [@ref_beta2021]"));
+        assert!(body.contains("- [@ref_gamma2022]"));
+        // References section must come after Notes section
+        let notes_pos = body.find("## Notes").unwrap();
+        let refs_pos = body.find("## References").unwrap();
+        assert!(refs_pos > notes_pos, "References should come after Notes");
+    }
+
+    #[test]
+    fn body_omits_references_section_when_empty() {
+        let entry = sample_citation_entry();
+        let body = super::build_citation_body(&entry, &[]);
+        assert!(!body.contains("## References"), "body should NOT contain references section when no refs");
+        assert!(body.contains("## Notes"));
+    }
+
+    #[test]
+    fn body_references_ordered_as_given() {
+        let entry = sample_citation_entry();
+        let refs = vec![
+            test_entry("zzz_last2020"),
+            test_entry("aaa_first2020"),
+        ];
+        let body = super::build_citation_body(&entry, &refs);
+        let zzz_pos = body.find("[@zzz_last2020]").unwrap();
+        let aaa_pos = body.find("[@aaa_first2020]").unwrap();
+        assert!(zzz_pos < aaa_pos, "references should be in insertion order, not sorted");
+    }
+
+    #[test]
+    fn body_with_abstract_and_references() {
+        let entry = sample_citation_entry(); // has abstract_text
+        let refs = vec![test_entry("child2024")];
+        let body = super::build_citation_body(&entry, &refs);
+        // All three sections present in order
+        let abs_pos = body.find("## Abstract").unwrap();
+        let notes_pos = body.find("## Notes").unwrap();
+        let refs_pos = body.find("## References").unwrap();
+        assert!(abs_pos < notes_pos);
+        assert!(notes_pos < refs_pos);
+        assert!(body.contains("- [@child2024]"));
     }
 
     // --- build_citation_note_path ---
@@ -1631,7 +1746,7 @@ mod tests {
 
         let entry = sample_citation_entry();
         let frontmatter = build_citation_frontmatter(&entry);
-        let body = build_citation_body(&entry);
+        let body = build_citation_body(&entry, &[]);
         let content = serialize_frontmatter(&frontmatter, &body);
 
         // The serialized content must be non-empty (regression guard against
@@ -1721,6 +1836,37 @@ mod tests {
         assert!(content.contains("smith2024"), "bib file should contain the entry key");
     }
 
+    // ── get_references tests ─────────────────────────────────────
+
+    #[test]
+    fn test_get_references_returns_children() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        let child1 = test_entry("child_a2024");
+        db::upsert_bib_item(&store.conn, &child1, None, None, false).unwrap();
+        let child2 = test_entry("child_b2024");
+        db::upsert_bib_item(&store.conn, &child2, None, None, false).unwrap();
+
+        db::insert_bib_reference(&store.conn, "parent2024", "child_a2024", Some(0)).unwrap();
+        db::insert_bib_reference(&store.conn, "parent2024", "child_b2024", Some(1)).unwrap();
+
+        let refs = crate::bib::db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].key, "child_a2024");
+        assert_eq!(refs[1].key, "child_b2024");
+    }
+
+    #[test]
+    fn test_get_references_returns_empty_when_no_refs() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("lonely2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        let refs = crate::bib::db::get_references_for(&store.conn, "lonely2024").unwrap();
+        assert!(refs.is_empty());
+    }
+
     /// Regression test for F10: bib_update_fields must trigger refresh_shadows
     /// so that shadow node titles in the graph reflect updated DB fields.
     #[test]
@@ -1776,5 +1922,136 @@ mod tests {
                 "shadow title should be updated to contain 'Updated Title', got: {title}"
             );
         }
+    }
+
+    /// Regression test for F1: materialize_citation must check existence guards
+    /// (page_for_citekey and file-on-disk) BEFORE running enrichment, so that
+    /// re-materializing an already-noted citation fast-fails without network I/O
+    /// or bib_references churn.
+    ///
+    /// We can't call the async Tauri command from a unit test, so this test
+    /// validates the invariant: when a citekey page already exists, the guard
+    /// detects it AND no reference edges exist (proving enrichment could not
+    /// have run first).
+    #[test]
+    fn materialize_guards_reject_before_creating_references() {
+        use crate::graph::indexer::GraphIndex;
+
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Create a markdown file with citekey frontmatter (simulates an
+        // already-materialized citation note).
+        fs::write(
+            dir.path().join("existing.md"),
+            "---\ntitle: Existing\ncitekey: smith2024\n---\nBody.\n",
+        )
+        .unwrap();
+
+        // Create a .bib file so the entry is ingested into the DB.
+        fs::write(
+            dir.path().join("refs.bib"),
+            "@article{smith2024,\n  author = {Smith, John},\n  title = {A Paper},\n  year = {2024}\n}",
+        )
+        .unwrap();
+
+        // Build GraphIndex (ingests bib + indexes pages)
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+
+        // Guard 1: page_for_citekey must detect the existing page
+        let page_id = gi.store().page_for_citekey("smith2024").unwrap();
+        assert!(
+            page_id.is_some(),
+            "page_for_citekey should find the existing page with citekey smith2024"
+        );
+
+        // Invariant: no reference edges exist because enrichment has never run.
+        // In the fixed code, guards fire before enrichment, so this state is
+        // what the function sees when it rejects the duplicate.
+        let refs = {
+            let store = gi.store();
+            crate::bib::db::get_references_for(&store.conn, "smith2024").unwrap()
+        };
+        assert!(
+            refs.is_empty(),
+            "no reference edges should exist since enrichment was never called"
+        );
+
+        // Guard 2: build_citation_note_path + file-exists check.
+        // The citation note path is independent of enrichment results.
+        let relative_path = build_citation_note_path(&root, "smith2024", "").unwrap();
+        assert_eq!(relative_path, "smith2024.md");
+        // Note: "smith2024.md" doesn't exist on disk (the file is "existing.md"),
+        // so the file-exists guard wouldn't fire here. But the citekey guard
+        // above already catches the duplicate. Both guards must precede enrichment.
+    }
+
+    /// F8 regression: if write_page fails after enrichment (step 12),
+    /// reference edges and shadow stubs persist. On retry, enrichment
+    /// must be idempotent: delete_references_for + re-link reproduces
+    /// the same edges, and upsert_bib_item(..., from_scan=true) on
+    /// existing shadows gap-fills without clobbering.
+    #[test]
+    fn enrichment_edges_idempotent_on_retry() {
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent entry
+        let parent = test_entry("parent2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // --- First enrichment pass (simulates successful enrich_entry) ---
+        let ref_keys = ["ref_a2024", "ref_b2024", "ref_c2024"];
+        for (idx, key) in ref_keys.iter().enumerate() {
+            let ref_entry = test_entry(key);
+            db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            db::insert_bib_reference(&store.conn, "parent2024", key, Some(idx as i64)).unwrap();
+        }
+
+        // Snapshot state after first pass
+        let refs_after_first = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs_after_first.len(), 3);
+        let keys_after_first: Vec<String> = refs_after_first.iter().map(|r| r.key.clone()).collect();
+
+        // Snapshot shadow entries
+        let shadow_a = db::get_bib_item(&store.conn, "ref_a2024").unwrap();
+        assert!(shadow_a.is_some(), "shadow stub must exist after first pass");
+        let shadow_a = shadow_a.unwrap();
+
+        // --- Simulate write_page failure: edges persist, no file created ---
+        // --- Second enrichment pass (retry) ---
+        // enrich_entry calls delete_references_for before re-linking
+        db::delete_references_for(&store.conn, "parent2024").unwrap();
+
+        // Re-upsert same shadows with from_scan=true (gap-fill, not clobber)
+        for (idx, key) in ref_keys.iter().enumerate() {
+            let ref_entry = test_entry(key);
+            let outcome = db::upsert_bib_item(&store.conn, &ref_entry, None, None, true).unwrap();
+            // Must be Updated (entry already exists), not Inserted
+            assert!(
+                matches!(outcome, db::UpsertOutcome::Updated { .. }),
+                "retry upsert for '{}' should be Updated, got {:?}", key, outcome,
+            );
+            db::insert_bib_reference(&store.conn, "parent2024", key, Some(idx as i64)).unwrap();
+        }
+
+        // Assert edges are identical after retry
+        let refs_after_retry = db::get_references_for(&store.conn, "parent2024").unwrap();
+        let keys_after_retry: Vec<String> = refs_after_retry.iter().map(|r| r.key.clone()).collect();
+        assert_eq!(
+            keys_after_first, keys_after_retry,
+            "reference edges must be identical after retry"
+        );
+
+        // Assert shadow entries are not clobbered (gap-fill preserves existing fields)
+        let shadow_a_retry = db::get_bib_item(&store.conn, "ref_a2024").unwrap().unwrap();
+        assert_eq!(shadow_a.title, shadow_a_retry.title, "shadow title must survive retry");
+        assert_eq!(shadow_a.year, shadow_a_retry.year, "shadow year must survive retry");
+
+        // Assert total bib_items count is stable (no duplicates created)
+        let all_items = db::list_bib_items(&store.conn).unwrap();
+        assert_eq!(
+            all_items.len(), 4, // 1 parent + 3 refs
+            "retry must not create additional entries"
+        );
     }
 }

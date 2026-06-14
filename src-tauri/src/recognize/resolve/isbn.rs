@@ -231,6 +231,7 @@ async fn try_open_library(
         publisher,
         issn: None,
         isbn: Some(isbn13.to_string()),
+        reference: None,
     };
 
     let entry = csl_to_bib_entry(&csl_item);
@@ -370,6 +371,7 @@ async fn try_google_books(
         publisher: vi.publisher.clone(),
         issn: None,
         isbn: Some(isbn13.to_string()),
+        reference: None,
     };
 
     Ok(csl_to_bib_entry(&csl_item))

@@ -65,6 +65,24 @@ pub struct CslItem {
     pub issn: Option<StringOrSeq>,
     #[serde(rename = "ISBN")]
     pub isbn: Option<String>,
+    pub reference: Option<Vec<CrossrefReference>>,
+}
+
+/// A single entry from the Crossref `reference` array. These are sparse
+/// bibliography stubs — all fields are optional.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CrossrefReference {
+    #[serde(rename = "DOI")]
+    pub doi: Option<String>,
+    #[serde(rename = "article-title")]
+    pub article_title: Option<String>,
+    pub author: Option<String>,
+    pub year: Option<String>,
+    pub volume: Option<String>,
+    #[serde(rename = "first-page")]
+    pub first_page: Option<String>,
+    #[serde(rename = "journal-title")]
+    pub journal_title: Option<String>,
 }
 
 static TAG_RE: LazyLock<Regex> =
@@ -191,6 +209,74 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         isbn: item.isbn.clone(),
         arxiv_id: None,
         tags: item.subject.clone().unwrap_or_default(),
+    }
+}
+
+/// Convert a Crossref reference entry into a minimal `BibEntry`.
+/// Mirrors `s2_ref_to_bib_entry` from the S2 pipeline.
+pub fn crossref_ref_to_bib_entry(
+    cr_ref: &CrossrefReference,
+    existing_keys: &HashSet<String>,
+) -> BibEntry {
+    let authors: Vec<String> = cr_ref
+        .author
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default();
+
+    let title = cr_ref
+        .article_title
+        .as_deref()
+        .map(strip_jats)
+        .unwrap_or_default();
+
+    let year = cr_ref.year.clone().unwrap_or_default();
+
+    let doi = cr_ref.doi.as_deref().map(normalize_doi);
+
+    let mut entry = minimal_ref_bib_entry(authors, title, year, doi, existing_keys);
+    entry.journal = cr_ref.journal_title.clone();
+    entry.volume = cr_ref.volume.clone();
+    entry.pages = cr_ref.first_page.clone();
+    entry
+}
+
+/// Build a minimal reference `BibEntry` stub from pre-extracted fields.
+///
+/// Both `crossref_ref_to_bib_entry` and `s2_ref_to_bib_entry` derive the same
+/// skeleton: entry_type "misc", line_number 0, all optional fields None, tags
+/// empty. This builder centralises that contract; callers override extra
+/// fields on the returned value.
+pub fn minimal_ref_bib_entry(
+    authors: Vec<String>,
+    title: String,
+    year: String,
+    doi: Option<String>,
+    existing_keys: &HashSet<String>,
+) -> BibEntry {
+    let key = generate_key(&authors, &year, existing_keys);
+    BibEntry {
+        key,
+        authors,
+        title,
+        year,
+        entry_type: "misc".to_string(),
+        line_number: 0,
+        bib_file: None,
+        abstract_text: None,
+        doi,
+        journal: None,
+        url: None,
+        file: None,
+        volume: None,
+        number: None,
+        pages: None,
+        publisher: None,
+        issn: None,
+        isbn: None,
+        arxiv_id: None,
+        tags: vec![],
     }
 }
 
@@ -854,5 +940,221 @@ mod tests {
         let item: CslItem = serde_json::from_str(json).unwrap();
         let entry = csl_to_bib_entry(&item);
         assert_eq!(entry.isbn, None);
+    }
+
+    // ── Group 10: CrossrefReference deserialization ─────────────────
+
+    #[test]
+    fn deserialize_crossref_reference_full() {
+        let json = r#"{
+            "DOI": "10.1038/nature12373",
+            "article-title": "A Referenced Paper",
+            "author": "Smith, J.",
+            "year": "2020",
+            "volume": "42",
+            "first-page": "100",
+            "journal-title": "Nature"
+        }"#;
+        let cr: CrossrefReference = serde_json::from_str(json).unwrap();
+        assert_eq!(cr.doi, Some("10.1038/nature12373".to_string()));
+        assert_eq!(cr.article_title, Some("A Referenced Paper".to_string()));
+        assert_eq!(cr.author, Some("Smith, J.".to_string()));
+        assert_eq!(cr.year, Some("2020".to_string()));
+        assert_eq!(cr.volume, Some("42".to_string()));
+        assert_eq!(cr.first_page, Some("100".to_string()));
+        assert_eq!(cr.journal_title, Some("Nature".to_string()));
+    }
+
+    #[test]
+    fn deserialize_crossref_reference_minimal() {
+        let json = r#"{}"#;
+        let cr: CrossrefReference = serde_json::from_str(json).unwrap();
+        assert!(cr.doi.is_none());
+        assert!(cr.article_title.is_none());
+        assert!(cr.author.is_none());
+        assert!(cr.year.is_none());
+        assert!(cr.volume.is_none());
+        assert!(cr.first_page.is_none());
+        assert!(cr.journal_title.is_none());
+    }
+
+    #[test]
+    fn deserialize_crossref_reference_doi_only() {
+        let json = r#"{"DOI": "10.1234/ref"}"#;
+        let cr: CrossrefReference = serde_json::from_str(json).unwrap();
+        assert_eq!(cr.doi, Some("10.1234/ref".to_string()));
+        assert!(cr.article_title.is_none());
+    }
+
+    // ── Group 11: crossref_ref_to_bib_entry ────────────────────────
+
+    #[test]
+    fn crossref_ref_to_bib_entry_full() {
+        let cr = CrossrefReference {
+            doi: Some("10.1038/nature12373".to_string()),
+            article_title: Some("A Referenced Paper".to_string()),
+            author: Some("Smith, J.".to_string()),
+            year: Some("2020".to_string()),
+            volume: Some("42".to_string()),
+            first_page: Some("100".to_string()),
+            journal_title: Some("Nature".to_string()),
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
+        assert_eq!(entry.entry_type, "misc");
+        assert_eq!(entry.title, "A Referenced Paper");
+        assert_eq!(entry.year, "2020");
+        assert_eq!(entry.authors, vec!["Smith, J."]);
+        assert_eq!(entry.doi, Some("10.1038/nature12373".to_string()));
+        assert_eq!(entry.journal, Some("Nature".to_string()));
+        assert_eq!(entry.volume, Some("42".to_string()));
+        assert_eq!(entry.pages, Some("100".to_string()));
+        assert_eq!(entry.key, "smith2020");
+    }
+
+    #[test]
+    fn crossref_ref_to_bib_entry_minimal() {
+        let cr = CrossrefReference {
+            doi: None,
+            article_title: None,
+            author: None,
+            year: None,
+            volume: None,
+            first_page: None,
+            journal_title: None,
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
+        assert_eq!(entry.entry_type, "misc");
+        assert!(entry.title.is_empty());
+        assert!(entry.year.is_empty());
+        assert!(entry.authors.is_empty());
+        assert!(entry.doi.is_none());
+        assert!(entry.journal.is_none());
+        assert!(entry.volume.is_none());
+        assert!(entry.pages.is_none());
+    }
+
+    #[test]
+    fn crossref_ref_to_bib_entry_normalizes_doi() {
+        let cr = CrossrefReference {
+            doi: Some("https://doi.org/10.1038/nature12373".to_string()),
+            article_title: Some("X".to_string()),
+            author: None,
+            year: None,
+            volume: None,
+            first_page: None,
+            journal_title: None,
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
+        assert_eq!(entry.doi, Some("10.1038/nature12373".to_string()));
+    }
+
+    #[test]
+    fn crossref_ref_to_bib_entry_key_collision_avoided() {
+        let mut existing = HashSet::new();
+        existing.insert("smith2024".to_string());
+
+        let cr = CrossrefReference {
+            doi: None,
+            article_title: Some("Some Paper".to_string()),
+            author: Some("Smith, J.".to_string()),
+            year: Some("2024".to_string()),
+            volume: None,
+            first_page: None,
+            journal_title: None,
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &existing);
+        assert_eq!(entry.key, "smith2024a");
+    }
+
+    #[test]
+    fn crossref_ref_to_bib_entry_strips_jats_from_title() {
+        let cr = CrossrefReference {
+            doi: None,
+            article_title: Some("<jats:p>Tagged Title</jats:p>".to_string()),
+            author: None,
+            year: None,
+            volume: None,
+            first_page: None,
+            journal_title: None,
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
+        assert_eq!(entry.title, "Tagged Title");
+    }
+
+    // ── Group 12: CslItem reference field deserialization ───────────
+
+    #[test]
+    fn deserialize_csl_item_with_references() {
+        let json = r#"{
+            "title": "Parent Paper",
+            "reference": [
+                {"DOI": "10.1/ref1", "article-title": "Ref One"},
+                {"DOI": "10.1/ref2", "article-title": "Ref Two"}
+            ]
+        }"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert!(item.reference.is_some());
+        let refs = item.reference.unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].doi, Some("10.1/ref1".to_string()));
+        assert_eq!(refs[1].article_title, Some("Ref Two".to_string()));
+    }
+
+    #[test]
+    fn deserialize_csl_item_without_references() {
+        let json = r#"{"title": "No Refs"}"#;
+        let item: CslItem = serde_json::from_str(json).unwrap();
+        assert!(item.reference.is_none());
+    }
+
+    // ── Group 13: minimal_ref_bib_entry ────────────────────────────
+
+    #[test]
+    fn minimal_ref_bib_entry_basic() {
+        let authors = vec!["Smith, J.".to_string()];
+        let title = "A Paper Title".to_string();
+        let year = "2020".to_string();
+        let doi = Some("10.1038/nature12373".to_string());
+        let entry = minimal_ref_bib_entry(
+            authors.clone(),
+            title.clone(),
+            year.clone(),
+            doi.clone(),
+            &HashSet::new(),
+        );
+        assert_eq!(entry.key, "smith2020");
+        assert_eq!(entry.authors, authors);
+        assert_eq!(entry.title, title);
+        assert_eq!(entry.year, year);
+        assert_eq!(entry.doi, doi);
+        assert_eq!(entry.entry_type, "misc");
+        assert_eq!(entry.line_number, 0);
+        assert_eq!(entry.bib_file, None);
+        assert_eq!(entry.abstract_text, None);
+        assert_eq!(entry.journal, None);
+        assert_eq!(entry.url, None);
+        assert_eq!(entry.file, None);
+        assert_eq!(entry.volume, None);
+        assert_eq!(entry.number, None);
+        assert_eq!(entry.pages, None);
+        assert_eq!(entry.publisher, None);
+        assert_eq!(entry.issn, None);
+        assert_eq!(entry.isbn, None);
+        assert_eq!(entry.arxiv_id, None);
+        assert!(entry.tags.is_empty());
+    }
+
+    #[test]
+    fn minimal_ref_bib_entry_key_collision() {
+        let mut existing = HashSet::new();
+        existing.insert("smith2020".to_string());
+        let entry = minimal_ref_bib_entry(
+            vec!["Smith, J.".to_string()],
+            "Title".to_string(),
+            "2020".to_string(),
+            None,
+            &existing,
+        );
+        assert_eq!(entry.key, "smith2020a");
     }
 }

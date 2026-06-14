@@ -714,7 +714,7 @@ export function ReferenceLibrary() {
                               disabled={materializingKey !== null}
                               className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >
-                              Create note
+                              {materializingKey === entry.key ? "Creating…" : "Create note"}
                             </button>
                             {state.materialization === "partial" ? (
                               <span
