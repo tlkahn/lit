@@ -8,6 +8,7 @@ use crate::recognize::attach::generate_pdf_path;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LinkError {
     #[error("entry '{0}' not found in bib database")]
+    #[allow(dead_code)] // constructed in link_pdf_to_entry, which is used by tests
     EntryNotFound(String),
 
     #[error("source file does not exist: {0}")]
@@ -23,8 +24,54 @@ pub(crate) enum LinkError {
     Other(String),
 }
 
+/// Validate PDF magic bytes, copy file to workspace, return the
+/// workspace-relative path (forward-slash separators).
+///
+/// Pure filesystem work -- no DB access, no mutex required.
+fn validate_and_copy_pdf(
+    key: &str,
+    file_path: &Path,
+    workspace_root: &Path,
+) -> Result<String, LinkError> {
+    // 1. Verify source file exists
+    if !file_path.exists() {
+        return Err(LinkError::FileNotFound(file_path.display().to_string()));
+    }
+
+    // 2. Validate PDF magic bytes (%PDF)
+    {
+        let mut f = std::fs::File::open(file_path)?;
+        let mut magic = [0u8; 4];
+        match f.read_exact(&mut magic) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Err(LinkError::NotAPdf);
+            }
+            Err(e) => return Err(LinkError::Io(e)),
+        }
+        if &magic != b"%PDF" {
+            return Err(LinkError::NotAPdf);
+        }
+    }
+
+    // 3. Copy file to workspace using collision-safe naming
+    let filename = format!("{key}.pdf");
+    let dest_path =
+        generate_pdf_path(workspace_root, &filename).map_err(LinkError::Other)?;
+    std::fs::copy(file_path, &dest_path)?;
+
+    // 4. Compute workspace-relative path (forward slashes)
+    let relative = dest_path
+        .strip_prefix(workspace_root)
+        .unwrap_or(&dest_path);
+    Ok(relative
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
 /// Core logic: validate, copy, and update bib DB.
 /// Returns the workspace-relative path (forward slashes).
+#[cfg(test)]
 pub(crate) fn link_pdf_to_entry(
     conn: &rusqlite::Connection,
     key: &str,
@@ -33,49 +80,29 @@ pub(crate) fn link_pdf_to_entry(
 ) -> Result<String, LinkError> {
     // 1. Validate key exists in bib DB
     match crate::bib::db::get_bib_item(conn, key) {
-        Ok(Some(_)) => {} // entry exists, proceed
+        Ok(Some(_)) => {}
         Ok(None) => return Err(LinkError::EntryNotFound(key.to_string())),
         Err(e) => return Err(LinkError::Other(e.to_string())),
     }
 
-    // 2. Verify source file exists
-    if !file_path.exists() {
-        return Err(LinkError::FileNotFound(file_path.display().to_string()));
-    }
-
-    // 3. Validate PDF magic bytes (%PDF)
-    {
-        let mut f = std::fs::File::open(file_path)?;
-        let mut magic = [0u8; 4];
-        if f.read_exact(&mut magic).is_err() {
-            return Err(LinkError::NotAPdf);
-        }
-        if &magic != b"%PDF" {
-            return Err(LinkError::NotAPdf);
-        }
-    }
-
-    // 4. Copy file to workspace using collision-safe naming
-    let filename = format!("{key}.pdf");
-    let dest_path =
-        generate_pdf_path(workspace_root, &filename).map_err(LinkError::Other)?;
-    std::fs::copy(file_path, &dest_path)?;
-
-    // 5. Compute workspace-relative path (forward slashes)
-    let relative = dest_path
-        .strip_prefix(workspace_root)
-        .unwrap_or(&dest_path);
-    let relative_str = relative
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "/");
+    // 2-5. File I/O (delegated)
+    let relative_str = validate_and_copy_pdf(key, file_path, workspace_root)?;
 
     // 6. Update bib DB file field
     let mut fields = HashMap::new();
     fields.insert("file".to_string(), relative_str.clone());
-    crate::bib::db::update_bib_fields(conn, key, &fields)
-        .map_err(|e| LinkError::Other(e.to_string()))?;
+    if let Err(e) = crate::bib::db::update_bib_fields(conn, key, &fields) {
+        // Best-effort cleanup: remove the copied file so we don't leave orphans
+        let abs_dest = workspace_root.join(&relative_str);
+        if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
+            eprintln!(
+                "[pdf_link] failed to clean up {}: {rm_err}",
+                abs_dest.display()
+            );
+        }
+        return Err(LinkError::Other(e.to_string()));
+    }
 
-    // 7. Return relative path
     Ok(relative_str)
 }
 
@@ -91,11 +118,35 @@ pub async fn link_entry_pdf(
     let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
 
-    let relative_path = {
+    // --- Lock 1: validate key exists ---
+    {
         let store = gi.store();
-        link_pdf_to_entry(&store.conn, &key, Path::new(&file_path), &root)
+        crate::bib::db::get_bib_item(&store.conn, &key)
             .map_err(|e| e.to_string())?
-    };
+            .ok_or_else(|| format!("entry '{}' not found in bib database", key))?;
+    }
+
+    // --- File I/O outside lock ---
+    let relative_path = validate_and_copy_pdf(&key, Path::new(&file_path), &root)
+        .map_err(|e| e.to_string())?;
+
+    // --- Lock 2: update DB ---
+    {
+        let store = gi.store();
+        let mut fields = HashMap::new();
+        fields.insert("file".to_string(), relative_path.clone());
+        if let Err(e) = crate::bib::db::update_bib_fields(&store.conn, &key, &fields) {
+            // Best-effort cleanup: remove the copied file so we don't leave orphans
+            let abs_dest = root.join(&relative_path);
+            if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
+                eprintln!(
+                    "[pdf_link] failed to clean up {}: {rm_err}",
+                    abs_dest.display()
+                );
+            }
+            return Err(e.to_string());
+        }
+    }
 
     crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
 
@@ -346,6 +397,36 @@ mod tests {
         assert!(
             rel_path.starts_with("assets/pdf/"),
             "relative path should start with assets/pdf/, got: {rel_path}"
+        );
+    }
+
+    #[test]
+    fn db_update_failure_cleans_up_copied_file() {
+        let store = setup_db_with_entry("smith2024");
+        let workspace = tempfile::TempDir::new().unwrap();
+        let source_dir = tempfile::TempDir::new().unwrap();
+        let pdf_path = create_temp_pdf(source_dir.path(), "paper.pdf");
+
+        // Make the DB read-only so update_bib_fields fails on write
+        store
+            .conn
+            .execute_batch("PRAGMA query_only = ON")
+            .unwrap();
+
+        let result = link_pdf_to_entry(
+            &store.conn,
+            "smith2024",
+            &pdf_path,
+            workspace.path(),
+        );
+
+        assert!(result.is_err(), "should fail because DB is read-only");
+
+        // The copied PDF should have been cleaned up
+        let would_be = workspace.path().join("assets/pdf/smith2024.pdf");
+        assert!(
+            !would_be.exists(),
+            "orphaned PDF should have been removed on DB failure"
         );
     }
 
