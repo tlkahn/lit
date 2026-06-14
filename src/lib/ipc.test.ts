@@ -55,6 +55,7 @@ import {
   bibGet,
   bibUpdateFields,
   bibDelete,
+  getReferences,
   ensureInCompanionBib,
   type RecognizeResult,
   type ConfirmReason,
@@ -699,6 +700,7 @@ describe("ipc", () => {
             references_found: 5,
             references_appended: 5,
             shadow_nodes_created: 3,
+            references_linked: 5,
           };
         case "recognize_pdf": {
           return {
@@ -740,6 +742,20 @@ describe("ipc", () => {
           return true;
         case "bib_delete":
           return true;
+        case "get_references": {
+          const a = args as Record<string, unknown>;
+          if (a?.bibKey === "empty_refs") return [];
+          return [
+            {
+              key: "ref_alpha2020", authors: ["Alpha, A"], title: "Alpha Paper",
+              year: "2020", entry_type: "article", line_number: 0,
+            },
+            {
+              key: "ref_beta2021", authors: ["Beta, B"], title: "Beta Paper",
+              year: "2021", entry_type: "article", line_number: 0,
+            },
+          ];
+        }
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
         default:
@@ -2140,6 +2156,7 @@ describe("ipc", () => {
     expect(result.references_found).toBe(5);
     expect(result.references_appended).toBe(5);
     expect(result.shadow_nodes_created).toBe(3);
+    expect(result.references_linked).toBe(5);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
       bibKey: "smith2020",
@@ -2296,6 +2313,23 @@ describe("ipc", () => {
       citeKey: "smith2020",
       workspacePath: "/workspace",
     });
+  });
+
+  it("getReferences calls get_references and returns entries", async () => {
+    const result = await getReferences("parent2024", "/workspace");
+    expect(result).toHaveLength(2);
+    expect(result[0]!.key).toBe("ref_alpha2020");
+    expect(result[1]!.key).toBe("ref_beta2021");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_references", {
+      bibKey: "parent2024",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("getReferences returns empty array when no references", async () => {
+    const result = await getReferences("empty_refs", "/workspace");
+    expect(result).toEqual([]);
   });
 
   it("ensureInCompanionBib calls ensure_in_companion_bib and returns result", async () => {

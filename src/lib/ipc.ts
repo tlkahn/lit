@@ -503,6 +503,7 @@ export interface EnrichResult {
   references_found: number;
   references_appended: number;
   shadow_nodes_created: number;
+  references_linked: number;
 }
 
 export async function enrichBibEntry(
@@ -578,6 +579,13 @@ export async function bibUpdateFields(
   workspacePath: string,
 ): Promise<boolean> {
   return invoke<boolean>("bib_update_fields", { citeKey, fields, workspacePath });
+}
+
+export async function getReferences(
+  bibKey: string,
+  workspacePath: string,
+): Promise<BibEntry[]> {
+  return invoke<BibEntry[]>("get_references", { bibKey, workspacePath });
 }
 
 export async function bibDelete(

@@ -18,9 +18,16 @@ struct CrossrefResponse {
 /// Parse the raw Crossref API JSON response body into a BibEntry.
 /// Extracted as a pure function so it can be unit-tested without network calls.
 pub fn parse_crossref_body(body: &str) -> Result<BibEntry, String> {
+    let csl = parse_crossref_csl_item(body)?;
+    Ok(csl_to_bib_entry(&csl))
+}
+
+/// Parse the raw Crossref API JSON response body into a CslItem,
+/// preserving the `reference` array for downstream processing.
+pub fn parse_crossref_csl_item(body: &str) -> Result<CslItem, String> {
     let resp: CrossrefResponse = serde_json::from_str(body)
         .map_err(|e| format!("Failed to parse Crossref response: {}", e))?;
-    Ok(csl_to_bib_entry(&resp.message))
+    Ok(resp.message)
 }
 
 /// Parse a CSL-JSON string (array or single item) into BibEntries.
@@ -59,7 +66,7 @@ pub(crate) static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("failed to build reqwest client")
 });
 
-pub(crate) async fn fetch_crossref_by_doi(doi: &str) -> Result<BibEntry, String> {
+pub(crate) async fn fetch_crossref_csl_item(doi: &str) -> Result<CslItem, String> {
     let normalized = normalize_doi(doi);
     if !is_valid_doi(&normalized) {
         return Err(format!("Invalid DOI format: {}", doi));
@@ -94,7 +101,12 @@ pub(crate) async fn fetch_crossref_by_doi(doi: &str) -> Result<BibEntry, String>
         .await
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
-    parse_crossref_body(&body)
+    parse_crossref_csl_item(&body)
+}
+
+pub(crate) async fn fetch_crossref_by_doi(doi: &str) -> Result<BibEntry, String> {
+    let csl = fetch_crossref_csl_item(doi).await?;
+    Ok(csl_to_bib_entry(&csl))
 }
 
 #[tauri::command]
@@ -390,5 +402,49 @@ mod tests {
         assert_eq!(entry.pages, Some("54-58".to_string()));
         assert_eq!(entry.publisher, Some("Springer Science and Business Media LLC".to_string()));
         assert_eq!(entry.issn, Some("0028-0836".to_string()));
+    }
+
+    // ── Group 8: parse_crossref_csl_item extracts references ────────
+
+    #[test]
+    fn parse_crossref_csl_item_extracts_references() {
+        let body = r#"{
+            "status": "ok",
+            "message-type": "work",
+            "message": {
+                "type": "journal-article",
+                "title": ["Parent Paper"],
+                "author": [{"family": "Doe", "given": "Jane"}],
+                "issued": {"date-parts": [[2023]]},
+                "DOI": "10.1038/parent123",
+                "reference": [
+                    {"DOI": "10.1/ref1", "article-title": "Ref One", "author": "Smith", "year": "2020"},
+                    {"DOI": "10.1/ref2", "article-title": "Ref Two"},
+                    {"article-title": "Ref Three Without DOI"}
+                ]
+            }
+        }"#;
+        let csl_item = parse_crossref_csl_item(body).unwrap();
+        assert!(csl_item.reference.is_some());
+        let refs = csl_item.reference.unwrap();
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0].doi, Some("10.1/ref1".to_string()));
+        assert_eq!(refs[0].article_title, Some("Ref One".to_string()));
+        assert_eq!(refs[0].author, Some("Smith".to_string()));
+        assert_eq!(refs[1].doi, Some("10.1/ref2".to_string()));
+        assert!(refs[2].doi.is_none());
+        assert_eq!(refs[2].article_title, Some("Ref Three Without DOI".to_string()));
+    }
+
+    #[test]
+    fn parse_crossref_csl_item_no_references() {
+        let body = r#"{
+            "status": "ok",
+            "message": {
+                "title": ["No Refs Paper"]
+            }
+        }"#;
+        let csl_item = parse_crossref_csl_item(body).unwrap();
+        assert!(csl_item.reference.is_none());
     }
 }

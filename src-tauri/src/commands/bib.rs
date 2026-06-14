@@ -137,7 +137,7 @@ fn build_citation_frontmatter(entry: &BibEntry) -> IndexMap<String, serde_yaml::
 }
 
 /// Build the markdown body for a citation note from a BibEntry.
-fn build_citation_body(entry: &BibEntry) -> String {
+fn build_citation_body(entry: &BibEntry, references: &[BibEntry]) -> String {
     let mut body = String::new();
     if let Some(abstract_text) = &entry.abstract_text {
         body.push_str("## Abstract\n\n");
@@ -145,6 +145,13 @@ fn build_citation_body(entry: &BibEntry) -> String {
         body.push_str("\n\n");
     }
     body.push_str("## Notes\n");
+    if !references.is_empty() {
+        body.push('\n');
+        body.push_str("## References\n\n");
+        for r in references {
+            body.push_str(&format!("- [@{}]\n", r.key));
+        }
+    }
     body
 }
 
@@ -215,13 +222,13 @@ fn build_citation_note_path(
 }
 
 #[tauri::command]
-pub fn materialize_citation(
+pub async fn materialize_citation(
     bib_key: String,
     window: tauri::Window,
-    state: State<WorkspaceRegistry>,
-    registry: State<Arc<WriteHashRegistry>>,
-    oplog_state: State<Arc<OpLogRegistry>>,
-    graph_state: State<Arc<GraphRegistry>>,
+    state: State<'_, WorkspaceRegistry>,
+    registry: State<'_, Arc<WriteHashRegistry>>,
+    oplog_state: State<'_, Arc<OpLogRegistry>>,
+    graph_state: State<'_, Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<PageMeta, String> {
     // 1. Resolve workspace root
@@ -231,12 +238,37 @@ pub fn materialize_citation(
     let gi = lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
 
-    // 3. Look up BibEntry from DB
+    // 3. Look up BibEntry from DB (initial existence check)
+    {
+        let store = gi.store();
+        crate::bib::db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?;
+    }
+
+    // 3a. Best-effort enrichment (online fields + references)
+    match crate::commands::enrich::enrich_entry(&bib_key, &gi).await {
+        Ok(_enrich_result) => {
+            crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+        }
+        Err(e) => {
+            tracing::warn!("Enrichment failed for '{}', proceeding without: {}", bib_key, e);
+        }
+    }
+
+    // 3b. Re-read entry (may have been enriched)
     let entry = {
         let store = gi.store();
         crate::bib::db::get_bib_item(&store.conn, &bib_key)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Bib key '{bib_key}' not found"))?
+            .ok_or_else(|| format!("Bib key '{bib_key}' not found after enrichment"))?
+    };
+
+    // 3c. Load references for body rendering
+    let references = {
+        let store = gi.store();
+        crate::bib::db::get_references_for(&store.conn, &bib_key)
+            .unwrap_or_default()
     };
 
     // 4. Check no citekey page already exists
@@ -253,21 +285,21 @@ pub fn materialize_citation(
     // 6. Build and validate relative path
     let relative_path = build_citation_note_path(&root, &bib_key, &notes_dir)?;
 
-    // 6. Check the file doesn't already exist on disk
+    // 7. Check the file doesn't already exist on disk
     if root.join(&relative_path).exists() {
         return Err(format!("File already exists: {relative_path}"));
     }
 
-    // 7. Build frontmatter and body
+    // 8. Build frontmatter and body
     let frontmatter = build_citation_frontmatter(&entry);
-    let body = build_citation_body(&entry);
+    let body = build_citation_body(&entry, &references);
 
-    // 8. Write the file
+    // 9. Write the file
     let content = serialize_frontmatter(&frontmatter, &body);
     ops::write_page(&root, &relative_path, &body, &frontmatter, &registry)
         .map_err(|e| e.to_string())?;
 
-    // 9. Record oplog action
+    // 10. Record oplog action
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
         let _ = store.record_operation(
@@ -284,7 +316,7 @@ pub fn materialize_citation(
         );
     }
 
-    // 10. Build PageMeta for the new page
+    // 11. Build PageMeta for the new page
     let full_path = root.join(&relative_path);
     let fs_meta = std::fs::metadata(&full_path).map_err(|e| e.to_string())?;
     let created_at = fs_meta
@@ -311,12 +343,12 @@ pub fn materialize_citation(
         file_type: FileType::Markdown,
     };
 
-    // 11. Reindex
+    // 12. Reindex
     reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
         gi.add_file(&relative_path, ann)
     });
 
-    // 12. Return PageMeta
+    // 13. Return PageMeta
     Ok(page_meta)
 }
 
@@ -369,6 +401,20 @@ pub fn bib_update_fields(
         crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
     }
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn get_references(
+    bib_key: String,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<Vec<BibEntry>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::get_references_for(&store.conn, &bib_key)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1437,7 +1483,7 @@ mod tests {
     #[test]
     fn body_includes_abstract_when_present() {
         let entry = sample_citation_entry();
-        let body = super::build_citation_body(&entry);
+        let body = super::build_citation_body(&entry, &[]);
         assert!(body.contains("## Abstract"));
         assert!(body.contains("This paper studies..."));
         assert!(body.contains("## Notes"));
@@ -1467,7 +1513,7 @@ mod tests {
             arxiv_id: None,
             tags: vec![],
         };
-        let body = super::build_citation_body(&entry);
+        let body = super::build_citation_body(&entry, &[]);
         assert!(!body.contains("## Abstract"));
         assert!(body.contains("## Notes"));
     }
@@ -1475,8 +1521,64 @@ mod tests {
     #[test]
     fn body_always_has_notes_section() {
         let entry = sample_citation_entry();
-        let body = super::build_citation_body(&entry);
+        let body = super::build_citation_body(&entry, &[]);
         assert!(body.ends_with("## Notes\n"));
+    }
+
+    // --- build_citation_body with references ---
+
+    #[test]
+    fn body_includes_references_section_with_entries() {
+        let entry = sample_citation_entry();
+        let refs = vec![
+            test_entry("ref_alpha2020"),
+            test_entry("ref_beta2021"),
+            test_entry("ref_gamma2022"),
+        ];
+        let body = super::build_citation_body(&entry, &refs);
+        assert!(body.contains("## References"), "body should contain references section");
+        assert!(body.contains("- [@ref_alpha2020]"));
+        assert!(body.contains("- [@ref_beta2021]"));
+        assert!(body.contains("- [@ref_gamma2022]"));
+        // References section must come after Notes section
+        let notes_pos = body.find("## Notes").unwrap();
+        let refs_pos = body.find("## References").unwrap();
+        assert!(refs_pos > notes_pos, "References should come after Notes");
+    }
+
+    #[test]
+    fn body_omits_references_section_when_empty() {
+        let entry = sample_citation_entry();
+        let body = super::build_citation_body(&entry, &[]);
+        assert!(!body.contains("## References"), "body should NOT contain references section when no refs");
+        assert!(body.contains("## Notes"));
+    }
+
+    #[test]
+    fn body_references_ordered_as_given() {
+        let entry = sample_citation_entry();
+        let refs = vec![
+            test_entry("zzz_last2020"),
+            test_entry("aaa_first2020"),
+        ];
+        let body = super::build_citation_body(&entry, &refs);
+        let zzz_pos = body.find("[@zzz_last2020]").unwrap();
+        let aaa_pos = body.find("[@aaa_first2020]").unwrap();
+        assert!(zzz_pos < aaa_pos, "references should be in insertion order, not sorted");
+    }
+
+    #[test]
+    fn body_with_abstract_and_references() {
+        let entry = sample_citation_entry(); // has abstract_text
+        let refs = vec![test_entry("child2024")];
+        let body = super::build_citation_body(&entry, &refs);
+        // All three sections present in order
+        let abs_pos = body.find("## Abstract").unwrap();
+        let notes_pos = body.find("## Notes").unwrap();
+        let refs_pos = body.find("## References").unwrap();
+        assert!(abs_pos < notes_pos);
+        assert!(notes_pos < refs_pos);
+        assert!(body.contains("- [@child2024]"));
     }
 
     // --- build_citation_note_path ---
@@ -1631,7 +1733,7 @@ mod tests {
 
         let entry = sample_citation_entry();
         let frontmatter = build_citation_frontmatter(&entry);
-        let body = build_citation_body(&entry);
+        let body = build_citation_body(&entry, &[]);
         let content = serialize_frontmatter(&frontmatter, &body);
 
         // The serialized content must be non-empty (regression guard against
@@ -1719,6 +1821,37 @@ mod tests {
         assert!(abs_bib.exists(), "assets/bib/Deep.bib should be created on disk");
         let content = fs::read_to_string(&abs_bib).unwrap();
         assert!(content.contains("smith2024"), "bib file should contain the entry key");
+    }
+
+    // ── get_references tests ─────────────────────────────────────
+
+    #[test]
+    fn test_get_references_returns_children() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        let child1 = test_entry("child_a2024");
+        db::upsert_bib_item(&store.conn, &child1, None, None, false).unwrap();
+        let child2 = test_entry("child_b2024");
+        db::upsert_bib_item(&store.conn, &child2, None, None, false).unwrap();
+
+        db::insert_bib_reference(&store.conn, "parent2024", "child_a2024", Some(0)).unwrap();
+        db::insert_bib_reference(&store.conn, "parent2024", "child_b2024", Some(1)).unwrap();
+
+        let refs = crate::bib::db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].key, "child_a2024");
+        assert_eq!(refs[1].key, "child_b2024");
+    }
+
+    #[test]
+    fn test_get_references_returns_empty_when_no_refs() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("lonely2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        let refs = crate::bib::db::get_references_for(&store.conn, "lonely2024").unwrap();
+        assert!(refs.is_empty());
     }
 
     /// Regression test for F10: bib_update_fields must trigger refresh_shadows

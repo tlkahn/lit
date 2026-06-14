@@ -729,6 +729,51 @@ pub fn save_entry_with_generated_key(
     Ok(outcome)
 }
 
+/// Insert a parent→child reference edge. Idempotent (INSERT OR IGNORE).
+pub fn insert_bib_reference(
+    conn: &Connection,
+    parent_key: &str,
+    child_key: &str,
+    position: Option<i64>,
+) -> Result<(), GraphError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO bib_references (parent_key, child_key, position) VALUES (?1, ?2, ?3)",
+        params![parent_key, child_key, position],
+    )?;
+    Ok(())
+}
+
+/// Return the live BibEntry children linked from `parent_key`, ordered by position.
+pub fn get_references_for(
+    conn: &Connection,
+    parent_key: &str,
+) -> Result<Vec<BibEntry>, GraphError> {
+    let sql = format!(
+        "SELECT {} FROM bib_items \
+         INNER JOIN bib_references ON bib_items.cite_key = bib_references.child_key \
+         WHERE bib_references.parent_key = ?1 AND bib_items.deleted_at IS NULL \
+         ORDER BY bib_references.position ASC",
+        SELECT_COLUMNS
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let entries = stmt
+        .query_map(params![parent_key], |row| row_to_bib_entry(row))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(entries)
+}
+
+/// Delete all reference edges for `parent_key`. Returns the number of rows deleted.
+pub fn delete_references_for(
+    conn: &Connection,
+    parent_key: &str,
+) -> Result<usize, GraphError> {
+    let deleted = conn.execute(
+        "DELETE FROM bib_references WHERE parent_key = ?1",
+        params![parent_key],
+    )?;
+    Ok(deleted)
+}
+
 pub fn live_index(conn: &Connection) -> Result<HashMap<String, BibEntry>, GraphError> {
     let sql = format!(
         "SELECT {} FROM bib_items WHERE deleted_at IS NULL ORDER BY cite_key",
@@ -2420,5 +2465,94 @@ mod tests {
 
         save_entry_with_generated_key(&store.conn, &mut entry).unwrap();
         assert_eq!(entry.key, "smith2024", "key should be mutated to generated key after save");
+    }
+
+    // ── bib_references tests ──────────────────────────────────────
+
+    #[test]
+    fn test_insert_and_get_references() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        let child_a = test_entry("child_a");
+        let child_b = test_entry("child_b");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_a, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_b, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent2024", "child_b", Some(1)).unwrap();
+        insert_bib_reference(&store.conn, "parent2024", "child_a", Some(0)).unwrap();
+
+        let refs = get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].key, "child_a", "position 0 should come first");
+        assert_eq!(refs[1].key, "child_b", "position 1 should come second");
+    }
+
+    #[test]
+    fn test_insert_bib_reference_idempotent() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        let child = test_entry("child2024");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
+        insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
+
+        let refs = get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 1, "duplicate insert should be ignored");
+    }
+
+    #[test]
+    fn test_delete_references_for() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        let child_a = test_entry("child_a");
+        let child_b = test_entry("child_b");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_a, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_b, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent2024", "child_a", Some(0)).unwrap();
+        insert_bib_reference(&store.conn, "parent2024", "child_b", Some(1)).unwrap();
+
+        let deleted = delete_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(deleted, 2);
+
+        let refs = get_references_for(&store.conn, "parent2024").unwrap();
+        assert!(refs.is_empty(), "references should be empty after delete");
+    }
+
+    #[test]
+    fn test_get_references_excludes_tombstoned() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        let child = test_entry("child2024");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent2024", "child2024", Some(0)).unwrap();
+
+        tombstone_bib_item(&store.conn, "child2024").unwrap();
+
+        let refs = get_references_for(&store.conn, "parent2024").unwrap();
+        assert!(refs.is_empty(), "tombstoned child should be excluded from references");
+    }
+
+    #[test]
+    fn test_get_references_empty_when_no_refs() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        let refs = get_references_for(&store.conn, "parent2024").unwrap();
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_delete_references_returns_zero_when_none() {
+        let store = Store::open_memory().unwrap();
+        let deleted = delete_references_for(&store.conn, "nonexistent").unwrap();
+        assert_eq!(deleted, 0);
     }
 }

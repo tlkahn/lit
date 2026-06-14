@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 19;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -178,7 +178,8 @@ impl Store {
                 "schema version from the future — resetting store"
             );
             self.conn.execute_batch(
-                "DROP TABLE IF EXISTS bib_source_files;
+                "DROP TABLE IF EXISTS bib_references;
+                 DROP TABLE IF EXISTS bib_source_files;
                  DROP TABLE IF EXISTS bib_items;
                  DROP TABLE IF EXISTS conversation_messages;
                  DROP TABLE IF EXISTS conversations;
@@ -518,6 +519,20 @@ impl Store {
             self.conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_edges_kind_raw_target ON edges(edge_kind, raw_target);
                  UPDATE meta SET value = '19' WHERE key = 'schema_version';"
+            )?;
+        }
+
+        if version < 20 {
+            info!(from = version, to = 20, "migrating schema: adding bib_references");
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS bib_references (
+                    parent_key TEXT NOT NULL,
+                    child_key  TEXT NOT NULL,
+                    position   INTEGER,
+                    PRIMARY KEY (parent_key, child_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_bib_refs_child ON bib_references(child_key);
+                UPDATE meta SET value = '20' WHERE key = 'schema_version';"
             )?;
         }
 
@@ -3364,8 +3379,29 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_nineteen() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 19);
+    fn schema_version_is_twenty() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
+    }
+
+    #[test]
+    fn migration_v20_creates_bib_references_table() {
+        let store = Store::open_memory().unwrap();
+
+        // Table should exist
+        let table_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bib_references'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(table_count, 1, "bib_references table should exist");
+
+        // Index should exist
+        let idx_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_bib_refs_child'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(idx_count, 1, "idx_bib_refs_child index should exist");
     }
 
     #[test]
