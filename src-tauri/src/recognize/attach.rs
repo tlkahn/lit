@@ -49,6 +49,23 @@ pub fn generate_pdf_path(workspace_root: &Path, desired_filename: &str) -> Resul
     Err(format!("too many collisions for {stem} in {PDF_ASSET_DIR}"))
 }
 
+/// Validate that the first 4 bytes of a readable source are `%PDF`.
+/// Returns `Ok(())` on success, or an error string on failure.
+pub fn validate_pdf_magic<R: std::io::Read>(reader: &mut R) -> Result<(), String> {
+    let mut magic = [0u8; 4];
+    match reader.read_exact(&mut magic) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            return Err("file is not a valid PDF (missing %PDF magic bytes)".to_string());
+        }
+        Err(e) => return Err(format!("I/O error reading magic bytes: {e}")),
+    }
+    if &magic != b"%PDF" {
+        return Err("file is not a valid PDF (missing %PDF magic bytes)".to_string());
+    }
+    Ok(())
+}
+
 /// Ensure that the PDF at `pdf_path` lives inside `workspace_root`.
 ///
 /// - If the PDF is already under the workspace root, returns its

@@ -391,7 +391,7 @@ export function ReferenceLibrary() {
 
   const handleDownload = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || downloadingKey) return;
+      if (!workspacePath || downloadingKey || linkingKey) return;
       setDownloadingKey(entry.key);
       setDownloadProgress(null);
       try {
@@ -405,19 +405,19 @@ export function ReferenceLibrary() {
         setDownloadProgress(null);
       }
     },
-    [workspacePath, downloadingKey, show],
+    [workspacePath, downloadingKey, linkingKey, show],
   );
 
   const handleLinkPdf = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || linkingKey) return;
+      if (!workspacePath || linkingKey || downloadingKey) return;
+      setLinkingKey(entry.key);
       try {
         const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
         const selected = await openDialog({
           filters: [{ name: "PDF", extensions: ["pdf"] }],
         });
         if (!selected || typeof selected !== "string") return;
-        setLinkingKey(entry.key);
         await linkEntryPdf(entry.key, selected, workspacePath);
         show(`Linked PDF for @${entry.key}`);
       } catch (err) {
@@ -429,7 +429,7 @@ export function ReferenceLibrary() {
         setLinkingKey(null);
       }
     },
-    [workspacePath, linkingKey, show],
+    [workspacePath, linkingKey, downloadingKey, show],
   );
 
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -844,7 +844,7 @@ export function ReferenceLibrary() {
                           {!entry.file && (entry.doi || entry.arxiv_id) ? (
                             <button
                               data-testid="download-pdf-btn"
-                              disabled={downloadingKey === entry.key}
+                              disabled={downloadingKey === entry.key || linkingKey === entry.key}
                               onClick={() => handleDownload(entry)}
                               className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >
@@ -860,7 +860,7 @@ export function ReferenceLibrary() {
                           {!entry.file ? (
                             <button
                               data-testid="link-pdf-btn"
-                              disabled={linkingKey === entry.key}
+                              disabled={linkingKey === entry.key || downloadingKey === entry.key}
                               onClick={() => handleLinkPdf(entry)}
                               className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >

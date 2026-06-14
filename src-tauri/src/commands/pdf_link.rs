@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -41,17 +40,8 @@ fn validate_and_copy_pdf(
     // 2. Validate PDF magic bytes (%PDF)
     {
         let mut f = std::fs::File::open(file_path)?;
-        let mut magic = [0u8; 4];
-        match f.read_exact(&mut magic) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Err(LinkError::NotAPdf);
-            }
-            Err(e) => return Err(LinkError::Io(e)),
-        }
-        if &magic != b"%PDF" {
-            return Err(LinkError::NotAPdf);
-        }
+        crate::recognize::attach::validate_pdf_magic(&mut f)
+            .map_err(|_| LinkError::NotAPdf)?;
     }
 
     // 3. Copy file to workspace using collision-safe naming
@@ -91,16 +81,25 @@ pub(crate) fn link_pdf_to_entry(
     // 6. Update bib DB file field
     let mut fields = HashMap::new();
     fields.insert("file".to_string(), relative_str.clone());
-    if let Err(e) = crate::bib::db::update_bib_fields(conn, key, &fields) {
-        // Best-effort cleanup: remove the copied file so we don't leave orphans
-        let abs_dest = workspace_root.join(&relative_str);
+    let cleanup = |rel: &str| {
+        let abs_dest = workspace_root.join(rel);
         if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
             eprintln!(
                 "[pdf_link] failed to clean up {}: {rm_err}",
                 abs_dest.display()
             );
         }
-        return Err(LinkError::Other(e.to_string()));
+    };
+    match crate::bib::db::update_bib_fields(conn, key, &fields) {
+        Ok(true) => {}
+        Ok(false) => {
+            cleanup(&relative_str);
+            return Err(LinkError::EntryNotFound(key.to_string()));
+        }
+        Err(e) => {
+            cleanup(&relative_str);
+            return Err(LinkError::Other(e.to_string()));
+        }
     }
 
     Ok(relative_str)
@@ -135,16 +134,28 @@ pub async fn link_entry_pdf(
         let store = gi.store();
         let mut fields = HashMap::new();
         fields.insert("file".to_string(), relative_path.clone());
-        if let Err(e) = crate::bib::db::update_bib_fields(&store.conn, &key, &fields) {
-            // Best-effort cleanup: remove the copied file so we don't leave orphans
-            let abs_dest = root.join(&relative_path);
-            if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
-                eprintln!(
-                    "[pdf_link] failed to clean up {}: {rm_err}",
-                    abs_dest.display()
-                );
+        match crate::bib::db::update_bib_fields(&store.conn, &key, &fields) {
+            Ok(true) => {}
+            Ok(false) => {
+                let abs_dest = root.join(&relative_path);
+                if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
+                    eprintln!(
+                        "[pdf_link] failed to clean up {}: {rm_err}",
+                        abs_dest.display()
+                    );
+                }
+                return Err(format!("entry '{}' was deleted before the file field could be updated", key));
             }
-            return Err(e.to_string());
+            Err(e) => {
+                let abs_dest = root.join(&relative_path);
+                if let Err(rm_err) = std::fs::remove_file(&abs_dest) {
+                    eprintln!(
+                        "[pdf_link] failed to clean up {}: {rm_err}",
+                        abs_dest.display()
+                    );
+                }
+                return Err(e.to_string());
+            }
         }
     }
 

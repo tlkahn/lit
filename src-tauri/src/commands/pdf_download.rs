@@ -79,14 +79,10 @@ where
     }
 
     {
-        use std::io::{Read, Seek, SeekFrom};
+        use std::io::{Seek, SeekFrom};
         tmp.seek(SeekFrom::Start(0))?;
-        let mut magic = [0u8; 4];
-        tmp.read_exact(&mut magic)
+        crate::recognize::attach::validate_pdf_magic(tmp.as_file_mut())
             .map_err(|_| DownloadError::InvalidContent)?;
-        if &magic != b"%PDF" {
-            return Err(DownloadError::InvalidContent);
-        }
     }
 
     let filename = format!("{}.pdf", cite_key);
