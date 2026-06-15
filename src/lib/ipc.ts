@@ -560,6 +560,7 @@ export interface ImportZoteroResult {
   unmatched: number;
   skipped: number;
   llmPlaced: number;
+  modified: number;
 }
 
 export async function importZoteroAnnotations(
@@ -577,6 +578,7 @@ export interface BatchImportResult {
   totalUnmatched: number;
   totalSkipped: number;
   totalLlmPlaced: number;
+  totalModified: number;
   errors: [string, string][];
 }
 

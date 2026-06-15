@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use strsim::normalized_levenshtein;
 
@@ -29,6 +29,114 @@ pub struct ZoteroPdfRecord {
     pub parent_title: Option<String>,
     pub annotations: Vec<ZoteroAnnotation>,
     pub child_notes: Vec<ZoteroChildNote>,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.2: Sync manifest — incremental import tracking
+// ---------------------------------------------------------------------------
+
+/// Persisted sync state for all Zotero imports in a workspace.
+/// Stored at `{workspace_root}/.lit/zotero-sync.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ZoteroSyncManifest {
+    /// ISO 8601 timestamp of the last successful import run.
+    #[serde(rename = "lastImport", default, skip_serializing_if = "Option::is_none")]
+    pub last_import: Option<String>,
+
+    /// Zotero DB file mtime (seconds since UNIX epoch) at last import.
+    /// Used for quick-skip: if current mtime matches, no DB changes occurred.
+    #[serde(rename = "lastDbMtime", default, skip_serializing_if = "Option::is_none")]
+    pub last_db_mtime: Option<u64>,
+
+    /// Per-entry sync state, keyed by bib entry key (e.g. "smith2024").
+    #[serde(default)]
+    pub entries: HashMap<String, SyncEntryState>,
+}
+
+/// Per-entry sync state within the manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct SyncEntryState {
+    /// Set of annotation IDs that have been imported (e.g. ["zot-301", "zot-note-400"]).
+    #[serde(rename = "importedIds", default)]
+    pub imported_ids: Vec<String>,
+}
+
+/// Compute the manifest file path for a workspace.
+fn manifest_path(root: &Path) -> PathBuf {
+    root.join(".lit").join("zotero-sync.json")
+}
+
+/// Read the Zotero sync manifest from the workspace, returning Default if absent or malformed.
+pub fn read_manifest(root: &Path) -> ZoteroSyncManifest {
+    let path = manifest_path(root);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => ZoteroSyncManifest::default(),
+    }
+}
+
+/// Write the Zotero sync manifest to the workspace.
+/// Creates the `.lit/` directory if it does not exist.
+pub fn write_manifest(root: &Path, manifest: &ZoteroSyncManifest) -> Result<(), String> {
+    let path = manifest_path(root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create .lit directory: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(manifest)
+        .map_err(|e| format!("failed to serialize manifest: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("failed to write sync manifest: {}", e))
+}
+
+/// Get the mtime of a file as seconds since UNIX epoch.
+/// Returns None if the file does not exist or metadata cannot be read.
+pub fn zotero_db_mtime(db_path: &str) -> Option<u64> {
+    std::fs::metadata(db_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+}
+
+/// Check if the Zotero DB has been modified since the last import.
+/// Returns `true` if re-import should proceed, `false` if it can be skipped.
+pub fn zotero_db_changed_since_last_import(
+    db_path: &str,
+    manifest: &ZoteroSyncManifest,
+) -> bool {
+    let current_mtime = zotero_db_mtime(db_path);
+    match (current_mtime, manifest.last_db_mtime) {
+        (Some(current), Some(last)) => current != last,
+        _ => true, // If we can't determine, assume changed
+    }
+}
+
+/// Update the manifest entry for a completed import.
+///
+/// Adds all annotation and note IDs to the entry's `imported_ids`,
+/// preserving any previously tracked IDs.
+fn update_manifest_entry(
+    manifest: &mut ZoteroSyncManifest,
+    entry_key: &str,
+    annotations: &[ZoteroAnnotation],
+    child_notes: &[ZoteroChildNote],
+) {
+    let entry = manifest
+        .entries
+        .entry(entry_key.to_string())
+        .or_insert_with(SyncEntryState::default);
+
+    let mut id_set: HashSet<String> = entry.imported_ids.iter().cloned().collect();
+    for ann in annotations {
+        id_set.insert(format!("zot-{}", ann.item_id));
+    }
+    for note in child_notes {
+        id_set.insert(format!("zot-note-{}", note.item_id));
+    }
+    let mut ids: Vec<String> = id_set.into_iter().collect();
+    ids.sort(); // Stable serialization order
+    entry.imported_ids = ids;
 }
 
 /// Percent-encode characters that are special in SQLite URI filenames.
@@ -738,6 +846,7 @@ pub struct ImportResult {
     pub unmatched: usize,
     pub skipped: usize,
     pub llm_placed: usize,
+    pub modified: usize,
 }
 
 fn ann_type_name(ann_type: i32) -> &'static str {
@@ -1163,6 +1272,10 @@ struct MatchPhaseResult {
     skipped: usize,
     paragraphs: Vec<(String, usize)>,
     companion_path: PathBuf,
+    /// All annotations queried from Zotero (for manifest tracking).
+    all_annotations: Vec<ZoteroAnnotation>,
+    /// All child notes queried from Zotero (for manifest tracking).
+    all_child_notes: Vec<ZoteroChildNote>,
 }
 
 /// Pre-resolved settings for a single import invocation.
@@ -1220,16 +1333,27 @@ fn resolve_import_settings(
     })
 }
 
+/// Return type from `import_single_entry`: the user-visible result plus data
+/// needed to update the sync manifest afterwards.
+struct SingleEntryOutcome {
+    result: ImportResult,
+    all_annotations: Vec<ZoteroAnnotation>,
+    all_child_notes: Vec<ZoteroChildNote>,
+}
+
 /// Core single-entry import logic shared by both single and batch commands.
 ///
 /// Takes a PDF relative path, resolves the companion, queries Zotero,
 /// matches annotations, optionally calls the LLM fallback, and writes
-/// the updated companion. Returns the per-entry ImportResult.
+/// the updated companion. Returns the per-entry ImportResult plus data
+/// for manifest tracking.
 async fn import_single_entry(
     pdf_rel_path: &str,
     root: &std::path::Path,
     settings: &ImportSettings,
-) -> Result<ImportResult, String> {
+    entry_key: &str,
+    manifest: &ZoteroSyncManifest,
+) -> Result<SingleEntryOutcome, String> {
     let root_owned = root.to_path_buf();
     let db_path = settings.db_path.clone();
     let threshold = settings.threshold;
@@ -1240,6 +1364,11 @@ async fn import_single_entry(
     let llm_base_url = settings.llm_base_url.clone();
     let llm_api_key = settings.llm_api_key.clone();
     let pdf_rel_path = pdf_rel_path.to_string();
+    let manifest_ids: HashSet<String> = manifest
+        .entries
+        .get(entry_key)
+        .map(|e| e.imported_ids.iter().cloned().collect())
+        .unwrap_or_default();
 
     // Find companion markdown
     let companion_rel = crate::commands::workspace::find_companion(
@@ -1289,11 +1418,17 @@ async fn import_single_entry(
         let existing_ids = existing_zotero_ids(&content);
         let new_anns: Vec<&ZoteroAnnotation> = annotations
             .iter()
-            .filter(|a| !existing_ids.contains(&format!("zot-{}", a.item_id)))
+            .filter(|a| {
+                let zot_id = format!("zot-{}", a.item_id);
+                !existing_ids.contains(&zot_id) && !manifest_ids.contains(&zot_id)
+            })
             .collect();
         let new_notes: Vec<&ZoteroChildNote> = child_notes
             .iter()
-            .filter(|n| !existing_ids.contains(&format!("zot-note-{}", n.item_id)))
+            .filter(|n| {
+                let zot_id = format!("zot-note-{}", n.item_id);
+                !existing_ids.contains(&zot_id) && !manifest_ids.contains(&zot_id)
+            })
             .collect();
         let skipped =
             (annotations.len() - new_anns.len()) + (child_notes.len() - new_notes.len());
@@ -1307,6 +1442,8 @@ async fn import_single_entry(
                 skipped,
                 paragraphs: Vec::new(),
                 companion_path,
+                all_annotations: annotations,
+                all_child_notes: child_notes,
             });
         }
 
@@ -1351,6 +1488,8 @@ async fn import_single_entry(
             skipped,
             paragraphs,
             companion_path,
+            all_annotations: annotations,
+            all_child_notes: child_notes,
         })
     })
     .await
@@ -1361,11 +1500,16 @@ async fn import_single_entry(
         && phase_a_result.unmatched_anns.is_empty()
         && phase_a_result.note_dsls.is_empty()
     {
-        return Ok(ImportResult {
-            inserted: 0,
-            unmatched: 0,
-            skipped: phase_a_result.skipped,
-            llm_placed: 0,
+        return Ok(SingleEntryOutcome {
+            result: ImportResult {
+                inserted: 0,
+                unmatched: 0,
+                skipped: phase_a_result.skipped,
+                llm_placed: 0,
+                modified: 0,
+            },
+            all_annotations: phase_a_result.all_annotations,
+            all_child_notes: phase_a_result.all_child_notes,
         });
     }
 
@@ -1413,10 +1557,12 @@ async fn import_single_entry(
         note_dsls,
         skipped,
         companion_path,
+        all_annotations,
+        all_child_notes,
         ..
     } = phase_a_result;
 
-    tokio::task::spawn_blocking(move || {
+    let import_result = tokio::task::spawn_blocking(move || {
         let mut remaining_unmatched: Vec<&ZoteroAnnotation> = Vec::new();
         for (i, ann) in unmatched_anns.iter().enumerate() {
             if let Some(&line_idx) = llm_placed_map.get(&i) {
@@ -1463,15 +1609,22 @@ async fn import_single_entry(
         std::fs::write(&companion_path, &result)
             .map_err(|e| format!("failed to write companion: {}", e))?;
 
-        Ok(ImportResult {
+        Ok::<ImportResult, String>(ImportResult {
             inserted: inserted + unmatched_count,
             unmatched: unmatched_count,
             skipped,
             llm_placed: llm_placed_count,
+            modified: 0,
         })
     })
     .await
-    .map_err(|e| format!("task failed: {}", e))?
+    .map_err(|e| format!("task failed: {}", e))??;
+
+    Ok(SingleEntryOutcome {
+        result: import_result,
+        all_annotations,
+        all_child_notes,
+    })
 }
 
 #[tauri::command]
@@ -1499,7 +1652,28 @@ pub async fn import_zotero_annotations(
     };
 
     let settings = resolve_import_settings(&app_handle, &credential_store)?;
-    import_single_entry(&pdf_rel_path, &root, &settings).await
+
+    // Read manifest (single-entry import does NOT quick-skip on mtime)
+    let manifest = read_manifest(&root);
+
+    let outcome = import_single_entry(&pdf_rel_path, &root, &settings, &key, &manifest).await?;
+
+    // Update manifest for this entry
+    let mut updated_manifest = manifest;
+    update_manifest_entry(
+        &mut updated_manifest,
+        &key,
+        &outcome.all_annotations,
+        &outcome.all_child_notes,
+    );
+    updated_manifest.last_import = Some(
+        chrono::Utc::now()
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    );
+    updated_manifest.last_db_mtime = zotero_db_mtime(&settings.db_path);
+    write_manifest(&root, &updated_manifest)?;
+
+    Ok(outcome.result)
 }
 
 // ---------------------------------------------------------------------------
@@ -1513,6 +1687,7 @@ pub struct BatchImportResult {
     pub total_unmatched: usize,
     pub total_skipped: usize,
     pub total_llm_placed: usize,
+    pub total_modified: usize,
     pub errors: Vec<(String, String)>,
 }
 
@@ -1538,6 +1713,20 @@ pub async fn import_zotero_all(
         .ok_or_else(|| "Graph index not ready".to_string())?;
 
     let settings = resolve_import_settings(&app_handle, &credential_store)?;
+
+    // Read manifest; quick-skip if the Zotero DB file has not changed
+    let manifest = read_manifest(&root);
+    if !zotero_db_changed_since_last_import(&settings.db_path, &manifest) {
+        return Ok(BatchImportResult {
+            entries_processed: 0,
+            total_inserted: 0,
+            total_unmatched: 0,
+            total_skipped: 0,
+            total_llm_placed: 0,
+            total_modified: 0,
+            errors: Vec::new(),
+        });
+    }
 
     // Collect eligible entries: have a linked PDF file and a companion markdown
     let eligible: Vec<(String, String)> = {
@@ -1566,6 +1755,7 @@ pub async fn import_zotero_all(
             total_unmatched: 0,
             total_skipped: 0,
             total_llm_placed: 0,
+            total_modified: 0,
             errors: Vec::new(),
         });
     }
@@ -1577,8 +1767,10 @@ pub async fn import_zotero_all(
         total_unmatched: 0,
         total_skipped: 0,
         total_llm_placed: 0,
+        total_modified: 0,
         errors: Vec::new(),
     };
+    let mut updated_manifest = manifest;
 
     for (i, (key, pdf_rel_path)) in eligible.iter().enumerate() {
         let _ = window.emit(
@@ -1590,13 +1782,20 @@ pub async fn import_zotero_all(
             },
         );
 
-        match import_single_entry(pdf_rel_path, &root, &settings).await {
-            Ok(entry_result) => {
+        match import_single_entry(pdf_rel_path, &root, &settings, key, &updated_manifest).await {
+            Ok(outcome) => {
                 result.entries_processed += 1;
-                result.total_inserted += entry_result.inserted;
-                result.total_unmatched += entry_result.unmatched;
-                result.total_skipped += entry_result.skipped;
-                result.total_llm_placed += entry_result.llm_placed;
+                result.total_inserted += outcome.result.inserted;
+                result.total_unmatched += outcome.result.unmatched;
+                result.total_skipped += outcome.result.skipped;
+                result.total_llm_placed += outcome.result.llm_placed;
+                result.total_modified += outcome.result.modified;
+                update_manifest_entry(
+                    &mut updated_manifest,
+                    key,
+                    &outcome.all_annotations,
+                    &outcome.all_child_notes,
+                );
             }
             Err(e) => {
                 result.entries_processed += 1;
@@ -1604,6 +1803,14 @@ pub async fn import_zotero_all(
             }
         }
     }
+
+    // Write updated manifest after all entries are processed
+    updated_manifest.last_import = Some(
+        chrono::Utc::now()
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    );
+    updated_manifest.last_db_mtime = zotero_db_mtime(&settings.db_path);
+    write_manifest(&root, &updated_manifest)?;
 
     Ok(result)
 }
@@ -3767,12 +3974,14 @@ Some text
             unmatched: 2,
             skipped: 1,
             llm_placed: 3,
+            modified: 0,
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["inserted"], 5);
         assert_eq!(json["unmatched"], 2);
         assert_eq!(json["skipped"], 1);
         assert_eq!(json["llm_placed"], 3);
+        assert_eq!(json["modified"], 0);
     }
 
     // -----------------------------------------------------------------------
@@ -3787,6 +3996,7 @@ Some text
             total_unmatched: 3,
             total_skipped: 7,
             total_llm_placed: 2,
+            total_modified: 1,
             errors: vec![
                 ("smith2024".to_string(), "PDF not found in Zotero".to_string()),
             ],
@@ -3797,6 +4007,7 @@ Some text
         assert_eq!(json["total_unmatched"], 3);
         assert_eq!(json["total_skipped"], 7);
         assert_eq!(json["total_llm_placed"], 2);
+        assert_eq!(json["total_modified"], 1);
         let errors = json["errors"].as_array().unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0][0], "smith2024");
@@ -3811,6 +4022,7 @@ Some text
             total_unmatched: 0,
             total_skipped: 0,
             total_llm_placed: 0,
+            total_modified: 0,
             errors: Vec::new(),
         };
         let json = serde_json::to_value(&result).unwrap();
@@ -3829,5 +4041,275 @@ Some text
         assert_eq!(json["current"], 3);
         assert_eq!(json["total"], 10);
         assert_eq!(json["current_key"], "smith2024");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4.2: Sync manifest tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_manifest_path() {
+        let root = std::path::Path::new("/workspace");
+        let path = manifest_path(root);
+        assert_eq!(path, std::path::PathBuf::from("/workspace/.lit/zotero-sync.json"));
+    }
+
+    #[test]
+    fn test_read_manifest_absent_file_returns_default() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manifest = read_manifest(dir.path());
+        assert_eq!(manifest, ZoteroSyncManifest::default());
+        assert!(manifest.last_import.is_none());
+        assert!(manifest.last_db_mtime.is_none());
+        assert!(manifest.entries.is_empty());
+    }
+
+    #[test]
+    fn test_read_manifest_malformed_json_returns_default() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        std::fs::write(lit_dir.join("zotero-sync.json"), "not valid json {{{").unwrap();
+        let manifest = read_manifest(dir.path());
+        assert_eq!(manifest, ZoteroSyncManifest::default());
+    }
+
+    #[test]
+    fn test_write_and_read_manifest_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut manifest = ZoteroSyncManifest::default();
+        manifest.last_import = Some("2024-01-01T00:00:00Z".to_string());
+        manifest.last_db_mtime = Some(1704067200);
+        manifest.entries.insert("smith2024".to_string(), SyncEntryState {
+            imported_ids: vec!["zot-301".to_string(), "zot-302".to_string()],
+        });
+
+        write_manifest(dir.path(), &manifest).unwrap();
+        let loaded = read_manifest(dir.path());
+        assert_eq!(loaded, manifest);
+    }
+
+    #[test]
+    fn test_write_manifest_creates_lit_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let lit_dir = dir.path().join(".lit");
+        assert!(!lit_dir.exists());
+
+        let manifest = ZoteroSyncManifest::default();
+        write_manifest(dir.path(), &manifest).unwrap();
+        assert!(lit_dir.exists());
+        assert!(lit_dir.join("zotero-sync.json").exists());
+    }
+
+    #[test]
+    fn test_zotero_db_mtime_existing_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("test.sqlite");
+        std::fs::write(&file_path, "test").unwrap();
+        let mtime = zotero_db_mtime(file_path.to_str().unwrap());
+        assert!(mtime.is_some());
+        assert!(mtime.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_zotero_db_mtime_nonexistent_file() {
+        let mtime = zotero_db_mtime("/nonexistent/path/zotero.sqlite");
+        assert!(mtime.is_none());
+    }
+
+    #[test]
+    fn test_zotero_db_changed_detects_change() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("test.sqlite");
+        std::fs::write(&file_path, "test").unwrap();
+
+        let manifest = ZoteroSyncManifest {
+            last_db_mtime: Some(12345), // different from actual mtime
+            ..Default::default()
+        };
+        assert!(zotero_db_changed_since_last_import(
+            file_path.to_str().unwrap(),
+            &manifest,
+        ));
+    }
+
+    #[test]
+    fn test_zotero_db_changed_same_mtime_returns_false() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("test.sqlite");
+        std::fs::write(&file_path, "test").unwrap();
+
+        let current_mtime = zotero_db_mtime(file_path.to_str().unwrap()).unwrap();
+        let manifest = ZoteroSyncManifest {
+            last_db_mtime: Some(current_mtime),
+            ..Default::default()
+        };
+        assert!(!zotero_db_changed_since_last_import(
+            file_path.to_str().unwrap(),
+            &manifest,
+        ));
+    }
+
+    #[test]
+    fn test_zotero_db_changed_no_previous_mtime_returns_true() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("test.sqlite");
+        std::fs::write(&file_path, "test").unwrap();
+
+        let manifest = ZoteroSyncManifest {
+            last_db_mtime: None,
+            ..Default::default()
+        };
+        assert!(zotero_db_changed_since_last_import(
+            file_path.to_str().unwrap(),
+            &manifest,
+        ));
+    }
+
+    #[test]
+    fn test_zotero_db_changed_nonexistent_file_returns_true() {
+        let manifest = ZoteroSyncManifest {
+            last_db_mtime: Some(12345),
+            ..Default::default()
+        };
+        assert!(zotero_db_changed_since_last_import(
+            "/nonexistent/path/zotero.sqlite",
+            &manifest,
+        ));
+    }
+
+    #[test]
+    fn test_update_manifest_entry_adds_new_ids() {
+        let mut manifest = ZoteroSyncManifest::default();
+        let anns = vec![
+            ZoteroAnnotation {
+                item_id: 301,
+                ann_type: 1,
+                text: Some("text".to_string()),
+                comment: None,
+                color: None,
+                page_label: None,
+                sort_index: "00001|000001|00000".to_string(),
+            },
+        ];
+        let notes = vec![
+            ZoteroChildNote {
+                item_id: 400,
+                html_content: "note".to_string(),
+                title: None,
+            },
+        ];
+
+        update_manifest_entry(&mut manifest, "smith2024", &anns, &notes);
+
+        let entry = manifest.entries.get("smith2024").unwrap();
+        assert!(entry.imported_ids.contains(&"zot-301".to_string()));
+        assert!(entry.imported_ids.contains(&"zot-note-400".to_string()));
+    }
+
+    #[test]
+    fn test_update_manifest_entry_preserves_existing_ids() {
+        let mut manifest = ZoteroSyncManifest::default();
+        manifest.entries.insert("smith2024".to_string(), SyncEntryState {
+            imported_ids: vec!["zot-100".to_string()],
+        });
+
+        let anns = vec![
+            ZoteroAnnotation {
+                item_id: 301,
+                ann_type: 1,
+                text: None,
+                comment: None,
+                color: None,
+                page_label: None,
+                sort_index: "00001|000001|00000".to_string(),
+            },
+        ];
+
+        update_manifest_entry(&mut manifest, "smith2024", &anns, &[]);
+
+        let entry = manifest.entries.get("smith2024").unwrap();
+        assert!(entry.imported_ids.contains(&"zot-100".to_string()), "old ID should be preserved");
+        assert!(entry.imported_ids.contains(&"zot-301".to_string()), "new ID should be added");
+    }
+
+    #[test]
+    fn test_update_manifest_entry_sorted_ids() {
+        let mut manifest = ZoteroSyncManifest::default();
+        let anns = vec![
+            ZoteroAnnotation {
+                item_id: 999,
+                ann_type: 1,
+                text: None,
+                comment: None,
+                color: None,
+                page_label: None,
+                sort_index: "00001|000001|00000".to_string(),
+            },
+            ZoteroAnnotation {
+                item_id: 100,
+                ann_type: 1,
+                text: None,
+                comment: None,
+                color: None,
+                page_label: None,
+                sort_index: "00002|000001|00000".to_string(),
+            },
+        ];
+
+        update_manifest_entry(&mut manifest, "smith2024", &anns, &[]);
+
+        let entry = manifest.entries.get("smith2024").unwrap();
+        // IDs should be sorted for stable serialization
+        let idx_100 = entry.imported_ids.iter().position(|id| id == "zot-100").unwrap();
+        let idx_999 = entry.imported_ids.iter().position(|id| id == "zot-999").unwrap();
+        assert!(idx_100 < idx_999, "IDs should be sorted");
+    }
+
+    #[test]
+    fn test_manifest_dedup_supplements_existing_ids() {
+        // Simulate: annotation zot-301 is in the manifest but NOT in the markdown.
+        // The manifest should still cause it to be skipped.
+        let manifest_ids: HashSet<String> = vec!["zot-301".to_string()].into_iter().collect();
+        let existing_ids: HashSet<String> = HashSet::new(); // not in markdown
+
+        let ann = ZoteroAnnotation {
+            item_id: 301,
+            ann_type: 1,
+            text: Some("text".to_string()),
+            comment: None,
+            color: None,
+            page_label: None,
+            sort_index: "00001|000001|00000".to_string(),
+        };
+
+        let zot_id = format!("zot-{}", ann.item_id);
+        let should_skip = existing_ids.contains(&zot_id) || manifest_ids.contains(&zot_id);
+        assert!(should_skip, "manifest IDs should supplement dedup");
+    }
+
+    #[test]
+    fn test_manifest_serialization_format() {
+        let mut manifest = ZoteroSyncManifest::default();
+        manifest.last_import = Some("2024-06-15T12:00:00Z".to_string());
+        manifest.last_db_mtime = Some(1718452800);
+        manifest.entries.insert("jones2023".to_string(), SyncEntryState {
+            imported_ids: vec!["zot-10".to_string(), "zot-note-20".to_string()],
+        });
+
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        assert!(json.contains("\"lastImport\""));
+        assert!(json.contains("\"lastDbMtime\""));
+        assert!(json.contains("\"importedIds\""));
+        assert!(json.contains("\"jones2023\""));
+    }
+
+    #[test]
+    fn test_manifest_backward_compatible_empty_entries() {
+        // Manifest with no entries field should deserialize fine
+        let json = r#"{"lastImport": "2024-01-01T00:00:00Z"}"#;
+        let manifest: ZoteroSyncManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.last_import.as_deref(), Some("2024-01-01T00:00:00Z"));
+        assert!(manifest.entries.is_empty());
     }
 }

@@ -34,6 +34,9 @@ export function initZoteroImportCommands(): void {
           if (result.totalLlmPlaced > 0) {
             parts.push(`${result.totalLlmPlaced} placed by LLM`);
           }
+          if (result.totalModified > 0) {
+            parts.push(`${result.totalModified} modified`);
+          }
           if (result.totalUnmatched > 0) {
             parts.push(`${result.totalUnmatched} unmatched`);
           }

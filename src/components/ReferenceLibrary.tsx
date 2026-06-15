@@ -457,7 +457,8 @@ export function ReferenceLibrary() {
           show(`All annotations already imported for @${entry.key}`);
         } else {
           const llmInfo = result.llmPlaced > 0 ? `, ${result.llmPlaced} placed by LLM` : "";
-          show(`Imported ${result.inserted} annotations for @${entry.key} (${result.unmatched} unmatched${llmInfo}, ${result.skipped} skipped)`);
+          const modifiedInfo = result.modified > 0 ? `, ${result.modified} modified` : "";
+          show(`Imported ${result.inserted} annotations for @${entry.key} (${result.unmatched} unmatched${llmInfo}${modifiedInfo}, ${result.skipped} skipped)`);
         }
         refreshPages();
       } catch (err) {
