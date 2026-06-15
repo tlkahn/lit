@@ -283,3 +283,14 @@ select:disabled {
 [data-testid="cardbox-card"][data-annotation-type] [data-testid="card-original"] {
   border-left-color: rgba(var(--ann-color), 0.6);
 }
+
+/* Color tag overrides — user-assigned color replaces annotation-type border */
+[data-testid="cardbox-card"][data-color-tag="blue"]   { --tag-color: 68, 138, 255; }
+[data-testid="cardbox-card"][data-color-tag="orange"] { --tag-color: 255, 145, 0; }
+[data-testid="cardbox-card"][data-color-tag="green"]  { --tag-color: 0, 200, 83; }
+[data-testid="cardbox-card"][data-color-tag="purple"] { --tag-color: 156, 39, 176; }
+[data-testid="cardbox-card"][data-color-tag="pink"]   { --tag-color: 233, 30, 99; }
+[data-testid="cardbox-card"][data-color-tag="cyan"]   { --tag-color: 0, 188, 212; }
+[data-testid="cardbox-card"][data-color-tag] {
+  border-left: 4px solid rgba(var(--tag-color), 0.6);
+}
