@@ -12,6 +12,7 @@ import type { DragStartEvent, DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
 import { useCardboxStore } from "../stores/cardbox";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
 import type { CardboxAnnotation } from "../lib/ipc";
@@ -107,6 +108,18 @@ export default function CardboxView() {
       return ai - bi;
     });
   }, [filteredAnnotations, order]);
+
+  const { gridRef, handleKeyDown: handleGridKeyDown } = useCardboxKeyboard({
+    onExpand: (index) => {
+      const ann = sortedAnnotations[index];
+      if (ann) toggleExpand(ann.uuid);
+    },
+    onNavigate: (index) => {
+      const ann = sortedAnnotations[index];
+      if (ann) handleNavigate(ann);
+    },
+    itemCount: sortedAnnotations.length,
+  });
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(event.active.id as string);
@@ -214,8 +227,10 @@ export default function CardboxView() {
           >
             <SortableContext items={sortedAnnotations.map((a) => a.uuid)} strategy={rectSortingStrategy}>
               <div
+                ref={gridRef}
                 className="grid gap-4"
                 style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}
+                onKeyDown={handleGridKeyDown}
               >
                 {sortedAnnotations.map((ann) => (
                   <SortableCard

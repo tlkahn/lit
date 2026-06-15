@@ -29,7 +29,7 @@ export function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }
   return (
     <div
       ref={cardRef}
-      className="cursor-pointer rounded-lg border border-border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover"
+      className="cursor-pointer rounded-lg border border-border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none"
       onClick={onToggleExpand}
       onKeyDown={handleKeyDown}
       tabIndex={0}
