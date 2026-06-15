@@ -38,6 +38,8 @@ export default function CardboxView() {
   const loading = useCardboxStore((s) => s.loading);
   const searchQuery = useCardboxStore((s) => s.searchQuery);
   const activeTypes = useCardboxStore((s) => s.activeTypes);
+  const activeColors = useCardboxStore((s) => s.activeColors);
+  const toggleColor = useCardboxStore((s) => s.toggleColor);
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
@@ -122,6 +124,11 @@ export default function CardboxView() {
     [annotations],
   );
 
+  const usedColors = useMemo(
+    () => [...new Set(Object.values(colors))].sort(),
+    [colors],
+  );
+
   // Combined filter pipeline
   const filteredAnnotations = useMemo(() => {
     const query = searchQuery.toLowerCase();
@@ -129,6 +136,12 @@ export default function CardboxView() {
       // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
+      // Color filter (null = no filter; non-null = show only cards with a matching color tag)
+      if (activeColors !== null && activeColors.size > 0) {
+        const c = colors[ann.uuid];
+        if (!c || !activeColors.has(c)) return false;
+      }
+      if (activeColors !== null && activeColors.size === 0) return false;
       // Pinned cards bypass search filter
       if (pinnedSet.has(ann.uuid)) return true;
       // Search filter
@@ -141,7 +154,7 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes, pinnedSet]);
+  }, [annotations, searchQuery, activeTypes, activeColors, colors, pinnedSet]);
 
   // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
   const visiblePinnedUuids = useMemo(() => {
@@ -595,6 +608,23 @@ export default function CardboxView() {
               >
                 {type}
               </button>
+            ))}
+          </div>
+        )}
+        {usedColors.length >= 2 && (
+          <div className="flex flex-wrap gap-1" data-testid="cardbox-color-chips">
+            {usedColors.map((color) => (
+              <button
+                key={color}
+                onClick={() => toggleColor(color)}
+                className="h-5 w-5 rounded-full border border-border transition-opacity duration-150"
+                style={{
+                  backgroundColor: `rgba(var(--chip-${color}), 0.6)`,
+                  opacity: activeColors === null || activeColors.has(color) ? 1 : 0.3,
+                }}
+                data-testid={`color-chip-${color}`}
+                aria-label={`Filter by ${color}`}
+              />
             ))}
           </div>
         )}
