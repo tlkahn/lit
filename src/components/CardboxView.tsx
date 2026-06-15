@@ -17,7 +17,7 @@ import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
 import { SortableGroup } from "./SortableGroup";
 import { LinkPicker } from "./LinkPicker";
-import { cardboxCollisionDetection } from "../lib/cardboxCollision";
+import { makeCardboxCollision } from "../lib/cardboxCollision";
 import { parseActiveId, parseOverId } from "../lib/dndIds";
 import type { ParsedActiveId } from "../lib/dndIds";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
@@ -55,6 +55,7 @@ export default function CardboxView() {
   const moveCardToGroup = useCardboxStore((s) => s.moveCardToGroup);
   const removeCardFromGroup = useCardboxStore((s) => s.removeCardFromGroup);
   const reorderWithinGroup = useCardboxStore((s) => s.reorderWithinGroup);
+  const moveCardBetweenGroups = useCardboxStore((s) => s.moveCardBetweenGroups);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -65,6 +66,12 @@ export default function CardboxView() {
       activationConstraint: { distance: 8 },
     }),
   );
+
+  const collisionDetection = useMemo(() => {
+    if (!dragState) return makeCardboxCollision(null);
+    const sourceGroupId = dragState.parsed.type === "groupCard" ? dragState.parsed.groupId : null;
+    return makeCardboxCollision(sourceGroupId);
+  }, [dragState]);
 
   useEffect(() => {
     fetchAnnotations().then(() => loadLayout());
@@ -310,10 +317,19 @@ export default function CardboxView() {
     },
     onAddToGroup: (cardUuid) => {
       const groupIds = Object.keys(groups);
-      if (groupIds.length === 1 && groupIds[0]) {
-        moveCardToGroup(cardUuid, groupIds[0]);
-        debouncedSave();
+      if (groupIds.length === 0) return;
+      // Pick the group with the fewest cards (heuristic until a picker is built)
+      let bestId = groupIds[0]!;
+      let bestCount = groups[bestId]?.order.length ?? Infinity;
+      for (const gid of groupIds) {
+        const count = groups[gid]?.order.length ?? Infinity;
+        if (count < bestCount) {
+          bestId = gid;
+          bestCount = count;
+        }
       }
+      moveCardToGroup(cardUuid, bestId);
+      debouncedSave();
       // TODO: Phase D polish — show group picker when multiple groups exist
     },
     onRemoveFromGroup: (cardUuid, groupId) => {
@@ -432,13 +448,8 @@ export default function CardboxView() {
       // CASE 5: Group card → group drop zone
       if (src.type === "groupCard" && dst.type === "groupDropZone") {
         if (src.groupId === dst.groupId) return; // same group, no-op
-        removeCardFromGroup(src.uuid, src.groupId);
-        // After removing, the card lands in top-level; now move it to the target group
-        // Use setTimeout to let the state settle from removeCardFromGroup
-        setTimeout(() => {
-          moveCardToGroup(src.uuid, dst.groupId);
-          debouncedSave();
-        }, 0);
+        moveCardBetweenGroups(src.uuid, src.groupId, dst.groupId);
+        debouncedSave();
         return;
       }
 
@@ -453,25 +464,28 @@ export default function CardboxView() {
         // Cross-group move
         const targetGroup = groups[dst.groupId];
         const idx = targetGroup ? targetGroup.order.indexOf(dst.uuid) : undefined;
-        removeCardFromGroup(src.uuid, src.groupId);
-        setTimeout(() => {
-          moveCardToGroup(src.uuid, dst.groupId, idx != null && idx >= 0 ? idx : undefined);
-          debouncedSave();
-        }, 0);
+        moveCardBetweenGroups(src.uuid, src.groupId, dst.groupId, idx != null && idx >= 0 ? idx : undefined);
+        debouncedSave();
         return;
       }
 
       // CASE 7: Group card → top-level card or group entry (drag out of group)
       if (src.type === "groupCard" && (dst.type === "topCard" || dst.type === "group")) {
-        const visibleIds = renderEntries.map((e) =>
-          e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
-        );
-        const overIdx = visibleIds.indexOf(over.id as string);
-        // Compute insertion index in the full order array
+        // Guard: dropping on own group header is a no-op
+        if (dst.type === "group" && src.groupId === dst.groupId) return;
+
         const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
+        const overEntry = over.id as string;
+
+        // Fix 4: account for auto-dissolve shifting indices
+        const sourceGroup = groups[src.groupId];
+        const willDissolve = sourceGroup != null && sourceGroup.order.length <= 1;
         let topLevelIndex: number | undefined;
-        if (overIdx >= 0) {
-          const overEntry = over.id as string;
+        if (willDissolve) {
+          // After dissolve, group:{gid} is removed — insert at the group's former position
+          const groupPos = currentOrder.indexOf(`group:${src.groupId}`);
+          topLevelIndex = groupPos >= 0 ? groupPos : undefined;
+        } else {
           const pos = currentOrder.indexOf(overEntry);
           topLevelIndex = pos >= 0 ? pos : undefined;
         }
@@ -496,6 +510,7 @@ export default function CardboxView() {
       moveCardToGroup,
       removeCardFromGroup,
       reorderWithinGroup,
+      moveCardBetweenGroups,
       debouncedSave,
     ],
   );
@@ -582,7 +597,7 @@ export default function CardboxView() {
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={cardboxCollisionDetection}
+            collisionDetection={collisionDetection}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}

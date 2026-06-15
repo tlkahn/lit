@@ -42,6 +42,7 @@ export interface CardboxStore {
   removeCardFromGroup: (cardUuid: string, groupId: string, topLevelIndex?: number) => Promise<void>;
   toggleGroupCollapse: (groupId: string) => Promise<void>;
   reorderWithinGroup: (groupId: string, activeUuid: string, overUuid: string) => void;
+  moveCardBetweenGroups: (cardUuid: string, sourceGroupId: string, targetGroupId: string, index?: number) => Promise<void>;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -296,5 +297,41 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         groups: { ...s.groups, [groupId]: { ...group, order: newOrder } },
       };
     });
+  },
+  moveCardBetweenGroups: async (cardUuid, sourceGroupId, targetGroupId, index) => {
+    set((s) => {
+      const srcGroup = s.groups[sourceGroupId];
+      const dstGroup = s.groups[targetGroupId];
+      if (!srcGroup || !dstGroup) return s;
+
+      const groups: Record<string, GroupInfo> = { ...s.groups };
+      let order = [...s.order];
+
+      // Remove card from source group
+      const newSrcOrder = srcGroup.order.filter((id) => id !== cardUuid);
+
+      // Auto-dissolve source group if it becomes empty
+      if (newSrcOrder.length === 0) {
+        delete groups[sourceGroupId];
+        order = order.filter((id) => id !== `group:${sourceGroupId}`);
+      } else {
+        groups[sourceGroupId] = { ...srcGroup, order: newSrcOrder };
+      }
+
+      // Insert card into target group (use fresh ref in case target was modified)
+      const target = groups[targetGroupId]!;
+      const targetOrder = [...target.order.filter((id) => id !== cardUuid)];
+      const insertIdx = index != null ? Math.min(index, targetOrder.length) : targetOrder.length;
+      targetOrder.splice(insertIdx, 0, cardUuid);
+      groups[targetGroupId] = { ...target, order: targetOrder };
+
+      // Also remove card from top-level order in case it was there
+      order = order.filter((id) => id !== cardUuid);
+
+      return { order, groups };
+    });
+    // IPC: remove from source, then add to target
+    await removeCardFromGroupIpc(cardUuid, sourceGroupId);
+    await moveCardToGroupIpc(cardUuid, targetGroupId, index);
   },
 }));
