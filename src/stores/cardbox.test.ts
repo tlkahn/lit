@@ -40,6 +40,8 @@ describe("cardbox store", () => {
       annotations: [],
       expandedUuid: null,
       loading: false,
+      searchQuery: "",
+      activeTypes: new Set<string>(),
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
@@ -102,5 +104,47 @@ describe("cardbox store", () => {
     useCardboxStore.getState().toggleExpand("u1");
     useCardboxStore.getState().collapseAll();
     expect(useCardboxStore.getState().expandedUuid).toBeNull();
+  });
+
+  it("fetchAnnotations initializes activeTypes from annotation types", async () => {
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.activeTypes).toEqual(new Set(["note", "question"]));
+  });
+
+  it("setSearchQuery updates searchQuery", () => {
+    useCardboxStore.getState().setSearchQuery("hello");
+    expect(useCardboxStore.getState().searchQuery).toBe("hello");
+  });
+
+  it("toggleType removes a type from activeTypes", () => {
+    useCardboxStore.setState({ activeTypes: new Set(["note", "question"]) });
+    useCardboxStore.getState().toggleType("note");
+    expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question"]));
+  });
+
+  it("toggleType adds a type back to activeTypes", () => {
+    useCardboxStore.setState({ activeTypes: new Set(["question"]) });
+    useCardboxStore.getState().toggleType("note");
+    expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question", "note"]));
+  });
+
+  it("resetFilters clears searchQuery and sets activeTypes to all", async () => {
+    await useCardboxStore.getState().fetchAnnotations();
+    useCardboxStore.getState().setSearchQuery("test");
+    useCardboxStore.getState().toggleType("note");
+    useCardboxStore.getState().resetFilters();
+    const state = useCardboxStore.getState();
+    expect(state.searchQuery).toBe("");
+    expect(state.activeTypes).toEqual(new Set(["note", "question"]));
+  });
+
+  it("fetchAnnotations preserves user's activeTypes on refresh", async () => {
+    await useCardboxStore.getState().fetchAnnotations();
+    useCardboxStore.getState().toggleType("note");
+    // Re-fetch (simulates graph-updated refresh)
+    await useCardboxStore.getState().fetchAnnotations();
+    // activeTypes should be preserved, not reset
+    expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question"]));
   });
 });
