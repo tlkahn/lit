@@ -56,6 +56,127 @@ fn persist_layout(lit_dir: &std::path::Path, layout: &CardboxLayout) -> Result<(
     Ok(())
 }
 
+/// Remove a card UUID from wherever it currently lives (top-level order and all group orders).
+fn remove_card_from_all(layout: &mut CardboxLayout, uuid: &str) {
+    layout.order.retain(|e| e != uuid);
+    for group in layout.groups.values_mut() {
+        group.order.retain(|e| e != uuid);
+    }
+}
+
+/// Pure mutation: create a group, moving cards from their current locations into it.
+fn do_create_group(
+    layout: &mut CardboxLayout,
+    group_id: String,
+    name: String,
+    card_uuids: Vec<String>,
+    after_entry: Option<String>,
+) {
+    for uuid in &card_uuids {
+        remove_card_from_all(layout, uuid);
+    }
+    layout.groups.insert(group_id.clone(), GroupInfo {
+        name,
+        order: card_uuids,
+        collapsed: false,
+    });
+    let group_entry = format!("group:{}", group_id);
+    if let Some(after) = after_entry {
+        if let Some(pos) = layout.order.iter().position(|e| *e == after) {
+            layout.order.insert(pos + 1, group_entry);
+        } else {
+            layout.order.push(group_entry);
+        }
+    } else {
+        layout.order.push(group_entry);
+    }
+    layout.version = 3;
+}
+
+/// Pure mutation: rename a group.
+fn do_rename_group(layout: &mut CardboxLayout, group_id: &str, name: String) -> Result<(), String> {
+    let group = layout.groups.get_mut(group_id)
+        .ok_or_else(|| format!("Group '{}' does not exist", group_id))?;
+    group.name = name;
+    Ok(())
+}
+
+/// Pure mutation: dissolve a group, splicing its members back into top-level order.
+fn do_dissolve_group(layout: &mut CardboxLayout, group_id: &str) -> Result<(), String> {
+    let group = layout.groups.remove(group_id)
+        .ok_or_else(|| format!("Group '{}' does not exist", group_id))?;
+    let group_entry = format!("group:{}", group_id);
+    if let Some(pos) = layout.order.iter().position(|e| *e == group_entry) {
+        layout.order.remove(pos);
+        for (i, uuid) in group.order.into_iter().enumerate() {
+            layout.order.insert(pos + i, uuid);
+        }
+    }
+    Ok(())
+}
+
+/// Pure mutation: move a card into a group at an optional index.
+fn do_move_card_to_group(
+    layout: &mut CardboxLayout,
+    card_uuid: String,
+    target_group_id: &str,
+    index: Option<usize>,
+) -> Result<(), String> {
+    if !layout.groups.contains_key(target_group_id) {
+        return Err(format!("Group '{}' does not exist", target_group_id));
+    }
+    remove_card_from_all(layout, &card_uuid);
+    let group = layout.groups.get_mut(target_group_id).unwrap();
+    match index {
+        Some(idx) => {
+            let clamped = idx.min(group.order.len());
+            group.order.insert(clamped, card_uuid);
+        }
+        None => group.order.push(card_uuid),
+    }
+    Ok(())
+}
+
+/// Pure mutation: remove a card from a specific group and place it at top-level.
+/// Auto-dissolves the group if it becomes empty.
+fn do_remove_card_from_group(
+    layout: &mut CardboxLayout,
+    card_uuid: String,
+    group_id: &str,
+    top_level_index: Option<usize>,
+) -> Result<(), String> {
+    let group = layout.groups.get_mut(group_id)
+        .ok_or_else(|| format!("Group '{}' does not exist", group_id))?;
+    group.order.retain(|e| e != &card_uuid);
+
+    match top_level_index {
+        Some(idx) => {
+            let clamped = idx.min(layout.order.len());
+            layout.order.insert(clamped, card_uuid);
+        }
+        None => layout.order.push(card_uuid),
+    }
+
+    if layout.groups.get(group_id).map_or(false, |g| g.order.is_empty()) {
+        layout.groups.remove(group_id);
+        let group_entry = format!("group:{}", group_id);
+        layout.order.retain(|e| *e != group_entry);
+    }
+    Ok(())
+}
+
+/// Pure mutation: set the collapsed flag on a group.
+fn do_toggle_group_collapsed(
+    layout: &mut CardboxLayout,
+    group_id: &str,
+    collapsed: bool,
+) -> Result<(), String> {
+    let group = layout.groups.get_mut(group_id)
+        .ok_or_else(|| format!("Group '{}' does not exist", group_id))?;
+    group.collapsed = collapsed;
+    Ok(())
+}
+
 fn prune_layout(layout: &mut CardboxLayout, valid_uuids: &HashSet<&str>) {
     // Prune stale UUIDs from each group's order
     for group in layout.groups.values_mut() {
@@ -205,6 +326,117 @@ pub fn remove_cardbox_link(
         return Ok(());
     }
 
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn create_cardbox_group(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    group_id: String,
+    name: String,
+    card_uuids: Vec<String>,
+    after_entry: Option<String>,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    do_create_group(&mut layout, group_id, name, card_uuids, after_entry);
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn rename_cardbox_group(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    group_id: String,
+    name: String,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    do_rename_group(&mut layout, &group_id, name)?;
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn dissolve_cardbox_group(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    group_id: String,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    do_dissolve_group(&mut layout, &group_id)?;
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn move_card_to_group(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    card_uuid: String,
+    target_group_id: String,
+    index: Option<usize>,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    do_move_card_to_group(&mut layout, card_uuid, &target_group_id, index)?;
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn remove_card_from_group(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    card_uuid: String,
+    group_id: String,
+    top_level_index: Option<usize>,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    do_remove_card_from_group(&mut layout, card_uuid, &group_id, top_level_index)?;
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn toggle_group_collapsed(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    group_id: String,
+    collapsed: bool,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    do_toggle_group_collapsed(&mut layout, &group_id, collapsed)?;
     persist_layout(&lit_dir, &layout)
 }
 
@@ -866,5 +1098,289 @@ mod tests {
         let result = read_layout(dir.path());
         assert!(result.groups.is_empty());
         assert_eq!(result, layout);
+    }
+
+    // ---- Phase A2: CRUD group command tests ----
+
+    #[test]
+    fn create_group_basic() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["a".into(), "b".into(), "c".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_create_group(
+            &mut layout,
+            "g1".to_string(),
+            "G1".to_string(),
+            vec!["a".to_string(), "c".to_string()],
+            None,
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.order, vec!["b", "group:g1"]);
+        assert_eq!(result.groups["g1"].order, vec!["a", "c"]);
+        assert_eq!(result.groups["g1"].name, "G1");
+        assert!(!result.groups["g1"].collapsed);
+        assert_eq!(result.version, 3);
+    }
+
+    #[test]
+    fn create_group_with_after_entry() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["a".into(), "b".into(), "c".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_create_group(
+            &mut layout,
+            "g1".to_string(),
+            "G1".to_string(),
+            vec!["c".to_string()],
+            Some("a".to_string()),
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.order, vec!["a", "group:g1", "b"]);
+    }
+
+    #[test]
+    fn create_group_at_end_without_after() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["a".into(), "b".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_create_group(
+            &mut layout,
+            "g1".to_string(),
+            "G1".to_string(),
+            vec![],
+            None,
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.order, vec!["a", "b", "group:g1"]);
+        assert!(result.groups["g1"].order.is_empty());
+    }
+
+    #[test]
+    fn rename_group_updates_name() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "Old Name".to_string(),
+            order: vec!["a".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["group:g1".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_rename_group(&mut layout, "g1", "New Name".to_string()).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.groups["g1"].name, "New Name");
+    }
+
+    #[test]
+    fn rename_nonexistent_group_errors() {
+        let mut layout = super::CardboxLayout::default();
+        let result = super::do_rename_group(&mut layout, "nonexistent", "Name".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn dissolve_group_splices_members() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["x".into(), "y".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["a".into(), "group:g1".into(), "b".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_dissolve_group(&mut layout, "g1").unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.order, vec!["a", "x", "y", "b"]);
+        assert!(!result.groups.contains_key("g1"));
+    }
+
+    #[test]
+    fn move_card_to_group_from_toplevel() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["x".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["a".into(), "group:g1".into(), "b".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_move_card_to_group(&mut layout, "b".to_string(), "g1", None).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.order, vec!["a", "group:g1"]);
+        assert_eq!(result.groups["g1"].order, vec!["x", "b"]);
+    }
+
+    #[test]
+    fn move_card_between_groups() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["a".into(), "b".into()],
+            collapsed: false,
+        });
+        groups.insert("g2".to_string(), super::GroupInfo {
+            name: "G2".to_string(),
+            order: vec!["c".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["group:g1".into(), "group:g2".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_move_card_to_group(&mut layout, "b".to_string(), "g2", Some(0)).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.groups["g1"].order, vec!["a"]);
+        assert_eq!(result.groups["g2"].order, vec!["b", "c"]);
+    }
+
+    #[test]
+    fn remove_card_from_group_to_toplevel() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["a".into(), "b".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["group:g1".into(), "z".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_remove_card_from_group(&mut layout, "a".to_string(), "g1", None).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.groups["g1"].order, vec!["b"]);
+        assert_eq!(result.order, vec!["group:g1", "z", "a"]);
+    }
+
+    #[test]
+    fn remove_card_auto_dissolves_empty_group() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["a".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["z".into(), "group:g1".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_remove_card_from_group(&mut layout, "a".to_string(), "g1", None).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(!result.groups.contains_key("g1"));
+        assert!(!result.order.contains(&"group:g1".to_string()));
+        assert_eq!(result.order, vec!["z", "a"]);
+    }
+
+    #[test]
+    fn toggle_collapsed() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["a".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["group:g1".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        super::do_toggle_group_collapsed(&mut layout, "g1", true).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(result.groups["g1"].collapsed);
+
+        // Toggle back
+        let mut layout = result;
+        super::do_toggle_group_collapsed(&mut layout, "g1", false).unwrap();
+        write_layout(dir.path(), &layout);
+
+        let result2 = read_layout(dir.path());
+        assert!(!result2.groups["g1"].collapsed);
     }
 }
