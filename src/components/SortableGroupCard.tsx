@@ -16,6 +16,7 @@ interface SortableGroupCardProps {
   linkedCards?: CardboxAnnotation[];
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
+  onShowConnections?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   note?: string;
   onSetNote?: (body: string) => void;
@@ -32,6 +33,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   linkedCards,
   onFocusCard,
   onRemoveLink,
+  onShowConnections,
   onContextMenu,
   note,
   onSetNote,
@@ -79,6 +81,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
           note={note}
           onSetNote={onSetNote}
           onExportNote={onExportNote}
+          onShowConnections={onShowConnections}
         />
       </div>
     </div>

@@ -29,6 +29,7 @@ interface SortableGroupProps {
   onExportNote?: (uuid: string) => void;
   onToggleCollapse: () => void;
   onRename: (name: string) => void;
+  onShowConnections?: (uuid: string) => void;
   onCardContextMenu?: (cardUuid: string, e: React.MouseEvent) => void;
   onHeaderContextMenu?: (e: React.MouseEvent) => void;
   colors?: Record<string, string>;
@@ -51,6 +52,7 @@ export const SortableGroup = memo(function SortableGroup({
   onExportNote,
   onToggleCollapse,
   onRename,
+  onShowConnections,
   onCardContextMenu,
   onHeaderContextMenu,
   colors,
@@ -143,6 +145,7 @@ export const SortableGroup = memo(function SortableGroup({
                     note={notesMap?.[ann.uuid]?.body}
                     onSetNote={onSetNote ? (body: string) => onSetNote(ann.uuid, body) : undefined}
                     onExportNote={onExportNote ? () => onExportNote(ann.uuid) : undefined}
+                    onShowConnections={onShowConnections ? () => onShowConnections(ann.uuid) : undefined}
                     onContextMenu={(e) => onCardContextMenu?.(ann.uuid, e)}
                   />
                 ))}

@@ -6,11 +6,14 @@ interface UseCardboxKeyboardOptions {
   onOpenLinkPicker?: () => void;
   onTogglePin?: (index: number) => void;
   onToggleNote?: () => void;
+  onShowConnections?: () => void;
+  onExitConnections?: () => void;
   expandedUuid: string | null;
+  connectionsActive?: boolean;
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, expandedUuid, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -27,6 +30,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
 
     const tag = (document.activeElement as HTMLElement)?.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT" || (document.activeElement as HTMLElement)?.isContentEditable) return;
+
+    // Escape from connections mode — must fire before card-focus check
+    if (e.key === "Escape" && connectionsActive) {
+      e.preventDefault();
+      onExitConnections?.();
+      return;
+    }
 
     const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='cardbox-card']"));
     const focused = document.activeElement as HTMLElement;
@@ -79,6 +89,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
           onToggleNote?.();
         }
         return;
+      case "c":
+      case "C":
+        if (expandedUuid && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          onShowConnections?.();
+        }
+        return;
       default:
         return;
     }
@@ -87,7 +104,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, expandedUuid]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, expandedUuid, connectionsActive]);
 
   return { gridRef, handleKeyDown };
 }
