@@ -26,3 +26,4 @@ pub mod reindex_queue;
 pub mod pdf_download;
 pub mod ocr;
 pub mod pdf_link;
+pub mod zotero_annotations;
