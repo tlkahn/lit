@@ -1232,10 +1232,17 @@ export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
   return invoke<CardboxAnnotation[]>("list_all_annotations", {});
 }
 
+export interface GroupInfo {
+  name: string;
+  order: string[];
+  collapsed: boolean;
+}
+
 export interface CardboxLayout {
   version: number;
   order: string[];
   links: [string, string][];
+  groups: Record<string, GroupInfo>;
 }
 
 export async function readCardboxLayout(): Promise<CardboxLayout> {

@@ -249,7 +249,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]] },
+      layout: { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {} },
     });
   });
 

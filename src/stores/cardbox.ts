@@ -105,7 +105,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   saveLayout: async () => {
     const { order, links } = get();
     try {
-      await writeCardboxLayout({ version: 2, order, links });
+      await writeCardboxLayout({ version: 2, order, links, groups: {} });
     } catch {
       // Ignore write failures silently
     }

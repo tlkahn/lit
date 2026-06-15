@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use tauri::State;
@@ -9,6 +9,26 @@ pub struct CardboxLayout {
     pub order: Vec<String>,
     #[serde(default)]
     pub links: Vec<[String; 2]>,
+    #[serde(default)]
+    pub groups: HashMap<String, GroupInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GroupInfo {
+    pub name: String,
+    pub order: Vec<String>,
+    pub collapsed: bool,
+}
+
+impl Default for CardboxLayout {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            order: vec![],
+            links: vec![],
+            groups: HashMap::new(),
+        }
+    }
 }
 
 fn normalize_link(a: &str, b: &str) -> [String; 2] {
@@ -22,8 +42,8 @@ fn normalize_link(a: &str, b: &str) -> [String; 2] {
 fn load_layout_from_disk(layout_path: &std::path::Path) -> CardboxLayout {
     match std::fs::read_to_string(layout_path) {
         Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout { version: 1, order: vec![], links: vec![] }),
-        Err(_) => CardboxLayout { version: 1, order: vec![], links: vec![] },
+            .unwrap_or(CardboxLayout::default()),
+        Err(_) => CardboxLayout::default(),
     }
 }
 
@@ -34,6 +54,46 @@ fn persist_layout(lit_dir: &std::path::Path, layout: &CardboxLayout) -> Result<(
     std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn prune_layout(layout: &mut CardboxLayout, valid_uuids: &HashSet<&str>) {
+    // Prune stale UUIDs from each group's order
+    for group in layout.groups.values_mut() {
+        group.order.retain(|uuid| valid_uuids.contains(uuid.as_str()));
+    }
+
+    // Remove empty groups
+    let empty_group_ids: Vec<String> = layout.groups.iter()
+        .filter(|(_, g)| g.order.is_empty())
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &empty_group_ids {
+        layout.groups.remove(id);
+    }
+
+    // Collect all UUIDs that belong to any group (for dedup)
+    let grouped_uuids: HashSet<&str> = layout.groups.values()
+        .flat_map(|g| g.order.iter().map(|s| s.as_str()))
+        .collect();
+
+    // Collect valid group IDs to avoid borrow conflict in retain
+    let valid_group_ids: HashSet<&str> = layout.groups.keys().map(|s| s.as_str()).collect();
+
+    // Prune top-level order:
+    //   - keep "group:xxx" entries only if the group still exists
+    //   - keep UUID entries only if valid AND not inside any group
+    layout.order.retain(|entry| {
+        if let Some(group_id) = entry.strip_prefix("group:") {
+            valid_group_ids.contains(group_id)
+        } else {
+            valid_uuids.contains(entry.as_str()) && !grouped_uuids.contains(entry.as_str())
+        }
+    });
+
+    // Prune stale links
+    layout.links.retain(|pair| {
+        valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
+    });
 }
 
 #[tauri::command]
@@ -69,14 +129,11 @@ pub fn read_cardbox_layout(
     layout.links.sort();
     layout.links.dedup();
 
-    // Prune stale UUIDs
+    // Prune stale UUIDs and reconcile groups
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let all_anns = gi.list_all_cardbox_annotations()?;
         let valid_uuids: HashSet<&str> = all_anns.iter().map(|a| a.uuid.as_str()).collect();
-        layout.order.retain(|uuid| valid_uuids.contains(uuid.as_str()));
-        layout.links.retain(|pair| {
-            valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
-        });
+        prune_layout(&mut layout, &valid_uuids);
         Ok(())
     })?;
 
@@ -153,6 +210,7 @@ pub fn remove_cardbox_link(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use crate::graph::indexer::GraphIndex;
 
     fn create_workspace() -> tempfile::TempDir {
@@ -220,10 +278,10 @@ mod tests {
         // Simulate reading: no file should return empty layout
         let layout = match std::fs::read_to_string(&layout_path) {
             Ok(content) => serde_json::from_str::<super::CardboxLayout>(&content)
-                .unwrap_or(super::CardboxLayout { version: 1, order: vec![], links: vec![] }),
-            Err(_) => super::CardboxLayout { version: 1, order: vec![], links: vec![] },
+                .unwrap_or(super::CardboxLayout::default()),
+            Err(_) => super::CardboxLayout::default(),
         };
-        assert_eq!(layout, super::CardboxLayout { version: 1, order: vec![], links: vec![] });
+        assert_eq!(layout, super::CardboxLayout::default());
     }
 
     #[test]
@@ -236,6 +294,7 @@ mod tests {
             version: 1,
             order: vec!["uuid-1".into(), "uuid-2".into(), "uuid-3".into()],
             links: vec![],
+            ..Default::default()
         };
 
         // Write
@@ -269,6 +328,7 @@ mod tests {
             version: 1,
             order: vec!["stale-uuid".into(), real_uuid.clone()],
             links: vec![],
+            ..Default::default()
         };
         std::fs::write(
             lit_dir.join("cardbox.json"),
@@ -294,7 +354,7 @@ mod tests {
         assert!(!lit_dir.exists());
 
         std::fs::create_dir_all(&lit_dir).unwrap();
-        let layout = super::CardboxLayout { version: 1, order: vec!["a".into()], links: vec![] };
+        let layout = super::CardboxLayout { version: 1, order: vec!["a".into()], links: vec![], ..Default::default() };
         let content = serde_json::to_string_pretty(&layout).unwrap();
         std::fs::write(lit_dir.join("cardbox.json"), &content).unwrap();
 
@@ -367,6 +427,7 @@ mod tests {
             version: 1,
             order: vec![],
             links: vec![],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -389,6 +450,7 @@ mod tests {
             version: 2,
             order: vec![],
             links: vec![normalized.clone()],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -409,6 +471,7 @@ mod tests {
             version: 1,
             order: vec![],
             links: vec![],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -439,6 +502,7 @@ mod tests {
             version: 2,
             order: vec![],
             links: vec![normalized.clone()],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -457,6 +521,7 @@ mod tests {
             version: 2,
             order: vec![],
             links: vec![super::normalize_link("uuid-a", "uuid-b")],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -485,6 +550,7 @@ mod tests {
                 super::normalize_link(&uuid_a, &uuid_b),
                 super::normalize_link(&uuid_a, "stale-uuid"),
             ],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -513,6 +579,7 @@ mod tests {
             version: 2,
             order: vec![uuid_a.clone(), uuid_b.clone()],
             links: vec![link.clone()],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
@@ -548,10 +615,256 @@ mod tests {
             links: vec![
                 super::normalize_link("uuid-1", "uuid-2"),
             ],
+            ..Default::default()
         };
         write_layout(dir.path(), &layout);
 
         let result = read_layout(dir.path());
+        assert_eq!(result, layout);
+    }
+
+    // ---- Phase A1: GroupInfo and groups tests ----
+
+    #[test]
+    fn v2_file_deserializes_with_empty_groups() {
+        // A v2-format JSON (no "groups" key) should deserialize with empty groups
+        let json = r#"{"version":2,"order":["uuid-1"],"links":[["a","b"]]}"#;
+        let layout: super::CardboxLayout = serde_json::from_str(json).unwrap();
+        assert_eq!(layout.version, 2);
+        assert_eq!(layout.order, vec!["uuid-1"]);
+        assert!(layout.groups.is_empty());
+    }
+
+    #[test]
+    fn group_info_serde_roundtrip() {
+        let group = super::GroupInfo {
+            name: "My Group".to_string(),
+            order: vec!["a".into(), "b".into()],
+            collapsed: false,
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        let deserialized: super::GroupInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, group);
+    }
+
+    #[test]
+    fn v3_roundtrip_with_groups() {
+        let dir = create_workspace();
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "Group One".to_string(),
+            order: vec!["uuid-a".into(), "uuid-b".into()],
+            collapsed: false,
+        });
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["group:g1".into(), "uuid-c".into()],
+            links: vec![],
+            groups,
+        };
+        write_layout(dir.path(), &layout);
+        let result = read_layout(dir.path());
+        assert_eq!(result, layout);
+    }
+
+    #[test]
+    fn groups_collapsed_roundtrip() {
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "Collapsed Group".to_string(),
+            order: vec!["x".into()],
+            collapsed: true,
+        });
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["group:g1".into()],
+            links: vec![],
+            groups,
+        };
+        let json = serde_json::to_string(&layout).unwrap();
+        let deserialized: super::CardboxLayout = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.groups["g1"].collapsed, true);
+    }
+
+    #[test]
+    fn group_member_pruning_removes_stale_uuids() {
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["valid-1".into(), "stale-1".into(), "valid-2".into()],
+            collapsed: false,
+        });
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["group:g1".into()],
+            links: vec![],
+            groups,
+        };
+
+        let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        assert_eq!(layout.groups["g1"].order, vec!["valid-1", "valid-2"]);
+    }
+
+    #[test]
+    fn empty_group_removed_after_pruning() {
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "Doomed".to_string(),
+            order: vec!["stale-only".into()],
+            collapsed: false,
+        });
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["group:g1".into(), "valid-1".into()],
+            links: vec![],
+            groups,
+        };
+
+        let valid: std::collections::HashSet<&str> = ["valid-1"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        assert!(layout.groups.is_empty(), "empty group should be removed");
+        assert!(!layout.order.contains(&"group:g1".to_string()), "group:g1 entry should be removed from order");
+        assert_eq!(layout.order, vec!["valid-1"]);
+    }
+
+    #[test]
+    fn group_entries_survive_uuid_pruning() {
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["uuid-a".into()],
+            collapsed: false,
+        });
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["uuid-1".into(), "group:g1".into(), "uuid-2".into()],
+            links: vec![],
+            groups,
+        };
+
+        let valid: std::collections::HashSet<&str> = ["uuid-1", "uuid-2", "uuid-a"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        assert!(layout.order.contains(&"group:g1".to_string()), "group:g1 must survive pruning");
+        assert!(layout.order.contains(&"uuid-1".to_string()));
+        assert!(layout.order.contains(&"uuid-2".to_string()));
+    }
+
+    #[test]
+    fn dedup_uuid_in_group_and_toplevel() {
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["uuid-dup".into()],
+            collapsed: false,
+        });
+        // uuid-dup appears both at top-level and inside g1
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["uuid-dup".into(), "group:g1".into(), "uuid-solo".into()],
+            links: vec![],
+            groups,
+        };
+
+        let valid: std::collections::HashSet<&str> = ["uuid-dup", "uuid-solo"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        // uuid-dup should be removed from top-level (it's in a group)
+        let top_uuids: Vec<&str> = layout.order.iter()
+            .filter(|e| !e.starts_with("group:"))
+            .map(|s| s.as_str())
+            .collect();
+        assert!(!top_uuids.contains(&"uuid-dup"), "uuid-dup should not be in top-level order");
+        assert!(top_uuids.contains(&"uuid-solo"));
+        // group:g1 and uuid-solo remain
+        assert!(layout.order.contains(&"group:g1".to_string()));
+    }
+
+    #[test]
+    fn orphan_group_ref_cleaned_up() {
+        // "group:nonexistent" in top-level order but no matching group in map
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["uuid-1".into(), "group:nonexistent".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+
+        let valid: std::collections::HashSet<&str> = ["uuid-1"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        assert!(!layout.order.contains(&"group:nonexistent".to_string()));
+        assert_eq!(layout.order, vec!["uuid-1"]);
+    }
+
+    #[test]
+    fn multiple_groups_mixed_pruning() {
+        let mut groups = HashMap::new();
+        groups.insert("ga".to_string(), super::GroupInfo {
+            name: "Group A".to_string(),
+            order: vec!["valid-1".into(), "stale-1".into()],
+            collapsed: false,
+        });
+        groups.insert("gb".to_string(), super::GroupInfo {
+            name: "Group B".to_string(),
+            order: vec!["stale-2".into(), "stale-3".into()],
+            collapsed: false,
+        });
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["group:ga".into(), "group:gb".into(), "valid-2".into()],
+            links: vec![],
+            groups,
+        };
+
+        let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        // Group A survives with 1 member
+        assert_eq!(layout.groups.len(), 1);
+        assert_eq!(layout.groups["ga"].order, vec!["valid-1"]);
+        // Group B removed (all stale)
+        assert!(!layout.groups.contains_key("gb"));
+        // Top-level: group:ga stays, group:gb removed, valid-2 stays
+        assert_eq!(layout.order, vec!["group:ga".to_string(), "valid-2".to_string()]);
+    }
+
+    #[test]
+    fn pruning_preserves_group_internal_order() {
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["c".into(), "a".into(), "b".into()],
+            collapsed: false,
+        });
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["group:g1".into()],
+            links: vec![],
+            groups,
+        };
+
+        let valid: std::collections::HashSet<&str> = ["a", "b", "c"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        assert_eq!(layout.groups["g1"].order, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn empty_groups_map_roundtrip() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["uuid-1".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+        write_layout(dir.path(), &layout);
+        let result = read_layout(dir.path());
+        assert!(result.groups.is_empty());
         assert_eq!(result, layout);
     }
 }
