@@ -7,7 +7,7 @@ export interface CardboxStore {
   expandedUuid: string | null;
   loading: boolean;
   searchQuery: string;
-  activeTypes: Set<string>;
+  activeTypes: Set<string> | null;
   order: string[];
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
@@ -25,7 +25,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   expandedUuid: null,
   loading: false,
   searchQuery: "",
-  activeTypes: new Set<string>(),
+  activeTypes: null,
   order: [],
   fetchAnnotations: async () => {
     if (get().loading) return;
@@ -36,8 +36,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       set((s) => ({
         annotations,
         loading: false,
-        // Initialize activeTypes to all types on first load, preserve user's selection on refreshes
-        activeTypes: s.activeTypes.size === 0 ? types : s.activeTypes,
+        activeTypes: s.activeTypes === null ? types : s.activeTypes,
         // Initialize order from annotation UUIDs on first load, preserve on refreshes
         order: s.order.length === 0 ? annotations.map((a) => a.uuid) : s.order,
       }));

@@ -41,7 +41,7 @@ describe("cardbox store", () => {
       expandedUuid: null,
       loading: false,
       searchQuery: "",
-      activeTypes: new Set<string>(),
+      activeTypes: null,
       order: [],
     });
     mockInvoke((cmd) => {

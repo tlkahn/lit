@@ -49,7 +49,12 @@ export default function CardboxView() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => saveLayout(), 500);
   }, [saveLayout]);
-  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
+  useEffect(() => () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveLayout();
+    }
+  }, [saveLayout]);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,8 +82,9 @@ export default function CardboxView() {
   const filteredAnnotations = useMemo(() => {
     const query = searchQuery.toLowerCase();
     return annotations.filter((ann) => {
-      // Type filter
-      if (activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
+      // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
+      if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
+      if (activeTypes !== null && activeTypes.size === 0) return false;
       // Search filter
       if (query) {
         const searchable = [ann.body, ann.original, ann.source_page_title]
@@ -176,7 +182,7 @@ export default function CardboxView() {
                 key={type}
                 onClick={() => toggleType(type)}
                 className={`rounded-full px-2 py-0.5 text-[11px] transition-opacity duration-150 ${
-                  activeTypes.has(type) ? "opacity-100" : "opacity-40"
+                  activeTypes === null || activeTypes.has(type) ? "opacity-100" : "opacity-40"
                 }`}
                 data-annotation-type={type}
                 data-testid={`chip-${type}`}
@@ -223,7 +229,7 @@ export default function CardboxView() {
               </div>
             </SortableContext>
             <DragOverlay>
-              {activeId ? (
+              {activeId && annotations.find((a) => a.uuid === activeId) ? (
                 <CardboxCard
                   annotation={annotations.find((a) => a.uuid === activeId)!}
                   expanded={false}
