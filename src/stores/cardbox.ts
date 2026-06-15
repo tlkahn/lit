@@ -91,6 +91,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         // Collect all known group IDs so we can preserve them in order
         const groupIdSet = new Set(Object.keys(prunedGroups));
         const prunedPinned = s.pinned.filter((id) => newUuids.has(id));
+        const prunedNotes: Record<string, CardNote> = {};
+        for (const [id, note] of Object.entries(s.notes)) {
+          if (newUuids.has(id)) prunedNotes[id] = note;
+        }
         return {
           annotations,
           loading: false,
@@ -98,6 +102,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           links: prunedLinks,
           groups: prunedGroups,
           pinned: prunedPinned,
+          notes: prunedNotes,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
             // Keep entries that are either annotation UUIDs or group: refs
@@ -376,7 +381,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         return { notes: rest };
       }
       return {
-        notes: { ...s.notes, [uuid]: { body, updated_at: new Date().toISOString() } },
+        notes: { ...s.notes, [uuid]: { body: trimmed, updated_at: new Date().toISOString() } },
       };
     });
     await setCardNote(uuid, body);
