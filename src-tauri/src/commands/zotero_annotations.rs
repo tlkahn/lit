@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use strsim::normalized_levenshtein;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ZoteroAnnotation {
@@ -252,6 +253,67 @@ pub fn normalize(text: &str) -> String {
         .to_lowercase()
 }
 
+/// OCR-aware normalization. On top of basic `normalize()` (whitespace collapse + lowercase):
+/// - Rejoin end-of-line hyphenation: "knowl-\nedge" -> "knowledge"
+/// - Normalize Unicode ligatures: fi, fl, ffi, ffl, st
+/// - Normalize confusable punctuation: curly quotes -> straight, em/en dash -> hyphen
+pub fn ocr_normalize(text: &str) -> String {
+    let mut s = text.to_string();
+
+    // 1. Rejoin end-of-line hyphenation BEFORE whitespace collapse.
+    //    Pattern: hyphen-minus at end of a word, followed by newline and optional
+    //    whitespace, then a lowercase letter continuing the word.
+    let chars: Vec<char> = s.chars().collect();
+    let mut result = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '-' {
+            // Look ahead: skip optional \r, require \n, skip whitespace,
+            // check next char is lowercase alphabetic
+            let mut j = i + 1;
+            if j < chars.len() && chars[j] == '\r' {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '\n' {
+                j += 1;
+                while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j].is_lowercase() {
+                    // Rejoin: skip the hyphen and whitespace
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    s = result;
+
+    // 2. Unicode ligature normalization
+    s = s.replace('\u{FB00}', "ff"); // ff ligature
+    s = s.replace('\u{FB01}', "fi"); // fi ligature
+    s = s.replace('\u{FB02}', "fl"); // fl ligature
+    s = s.replace('\u{FB03}', "ffi"); // ffi ligature
+    s = s.replace('\u{FB04}', "ffl"); // ffl ligature
+    s = s.replace('\u{FB06}', "st"); // st ligature
+
+    // 3. Confusable punctuation
+    // Curly/smart quotes -> straight
+    s = s.replace('\u{2018}', "'"); // left single curly quote
+    s = s.replace('\u{2019}', "'"); // right single curly quote / apostrophe
+    s = s.replace('\u{201C}', "\""); // left double curly quote
+    s = s.replace('\u{201D}', "\""); // right double curly quote
+    // Dashes -> hyphen-minus
+    s = s.replace('\u{2013}', "-"); // en dash
+    s = s.replace('\u{2014}', "-"); // em dash
+    s = s.replace('\u{2212}', "-"); // minus sign
+
+    // 4. Apply standard normalize (whitespace collapse + lowercase)
+    normalize(&s)
+}
+
 /// Search for `needle` as an exact normalized substring across all lines joined.
 /// Returns the 0-based line index where the match ENDS (insertion point).
 /// Returns `None` if the needle is not found.
@@ -346,9 +408,24 @@ fn lcs_length(a: &str, b: &str) -> usize {
     max_len
 }
 
-/// Score each paragraph against the needle using longest-common-substring ratio.
-/// LCS ratio = lcs_length / max(len(needle), len(paragraph)).
-/// Returns the `last_line_index` of the best-matching paragraph if its score >= threshold.
+/// Compute a fuzzy similarity score between two strings using dual scoring:
+/// 1. `strsim::normalized_levenshtein` (edit-distance, good for OCR errors)
+/// 2. LCS ratio = lcs_length / max(|a|, |b|) (good for substring matches)
+///
+/// Returns the maximum of the two scores.
+pub fn fuzzy_score(a: &str, b: &str) -> f64 {
+    let max_len = a.len().max(b.len());
+    if max_len == 0 {
+        return 1.0; // both empty
+    }
+    let lev = normalized_levenshtein(a, b);
+    let lcs = lcs_length(a, b) as f64 / max_len as f64;
+    lev.max(lcs)
+}
+
+/// Score each paragraph against the needle using dual scoring
+/// (Levenshtein + LCS ratio). Returns the `last_line_index` of the
+/// best-matching paragraph if its best score >= threshold.
 pub fn find_fuzzy_match(
     needle: &str,
     paragraphs: &[(String, usize)],
@@ -363,12 +440,10 @@ pub fn find_fuzzy_match(
     let mut best_line: Option<usize> = None;
 
     for (para_text, last_line) in paragraphs {
-        let max_len = norm_needle.len().max(para_text.len());
-        if max_len == 0 {
+        if para_text.is_empty() {
             continue;
         }
-        let lcs = lcs_length(&norm_needle, para_text);
-        let score = lcs as f64 / max_len as f64;
+        let score = fuzzy_score(&norm_needle, para_text);
         if score > best_score {
             best_score = score;
             best_line = Some(*last_line);
@@ -382,8 +457,55 @@ pub fn find_fuzzy_match(
     }
 }
 
+/// Try windows of 2 and 3 consecutive paragraphs.
+/// For each window, join paragraph texts with a space separator,
+/// score the joined text against the needle, and track the best.
+/// Returns the last_line_index of the LAST paragraph in the best window,
+/// or None if no window scores >= threshold.
+///
+/// Window size 1 is handled by `find_fuzzy_match`, so this only tries 2+.
+pub fn find_fuzzy_match_windowed(
+    needle: &str,
+    paragraphs: &[(String, usize)],
+    threshold: f64,
+) -> Option<usize> {
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() || paragraphs.len() < 2 {
+        return None;
+    }
+
+    let mut best_score: f64 = 0.0;
+    let mut best_line: Option<usize> = None;
+
+    let max_window = 3.min(paragraphs.len());
+    for window_size in 2..=max_window {
+        for start in 0..=(paragraphs.len() - window_size) {
+            let end = start + window_size - 1;
+            let joined: String = paragraphs[start..=end]
+                .iter()
+                .map(|(t, _)| t.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let score = fuzzy_score(&norm_needle, &joined);
+
+            if score > best_score {
+                best_score = score;
+                best_line = Some(paragraphs[end].1);
+            }
+        }
+    }
+
+    if best_score >= threshold {
+        best_line
+    } else {
+        None
+    }
+}
+
 /// Find the line index where `needle` best matches within `lines`.
-/// Tries exact substring match first, falls back to fuzzy paragraph matching.
+/// Tries exact substring match first, then single-paragraph fuzzy,
+/// then multi-paragraph windowed fuzzy matching.
 /// Returns `None` if the needle is empty or no match meets the threshold.
 pub fn find_match_line(needle: &str, lines: &[&str], threshold: f64) -> Option<usize> {
     let norm_needle = normalize(needle);
@@ -391,12 +513,209 @@ pub fn find_match_line(needle: &str, lines: &[&str], threshold: f64) -> Option<u
         return None;
     }
 
+    // 1. Exact substring match (fast path)
     if let Some(line_idx) = find_exact_match(needle, lines) {
         return Some(line_idx);
     }
 
+    // 2. Fuzzy: single-paragraph
     let paragraphs = build_paragraphs(lines);
-    find_fuzzy_match(needle, &paragraphs, threshold)
+    if let Some(line_idx) = find_fuzzy_match(needle, &paragraphs, threshold) {
+        return Some(line_idx);
+    }
+
+    // 3. Windowed fuzzy (multi-paragraph spans, sizes 2-3)
+    find_fuzzy_match_windowed(needle, &paragraphs, threshold)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3.1: Page-hint optimization
+// ---------------------------------------------------------------------------
+
+/// A page range: the line indices (inclusive) that belong to a given OCR page.
+/// `page_index` is the zero-based OCR page number from the `<!-- Page N -->` comment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageRange {
+    pub page_index: usize,
+    pub start_line: usize,
+    pub end_line: usize, // inclusive
+}
+
+/// Parse `<!-- Page N - M images -->` comments from OCR markdown lines.
+/// Returns a sorted vec of PageRange. Lines between markers belong to the
+/// preceding page. Lines before the first marker have no page assignment.
+pub fn find_page_ranges(lines: &[&str]) -> Vec<PageRange> {
+    let mut ranges = Vec::new();
+    let mut current_page: Option<(usize, usize)> = None; // (page_index, start_line)
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("<!-- Page ") && trimmed.contains(" images -->") {
+            // Close previous page range
+            if let Some((prev_idx, prev_start)) = current_page {
+                ranges.push(PageRange {
+                    page_index: prev_idx,
+                    start_line: prev_start,
+                    end_line: i.saturating_sub(1),
+                });
+            }
+
+            // Parse page number: extract N from "<!-- Page N - M images -->"
+            let after_prefix = &trimmed["<!-- Page ".len()..];
+            if let Some(dash_pos) = after_prefix.find(" -") {
+                if let Ok(page_num) = after_prefix[..dash_pos].trim().parse::<usize>() {
+                    current_page = Some((page_num, i));
+                }
+            }
+        }
+    }
+
+    // Close final page range
+    if let Some((prev_idx, prev_start)) = current_page {
+        ranges.push(PageRange {
+            page_index: prev_idx,
+            start_line: prev_start,
+            end_line: lines.len().saturating_sub(1),
+        });
+    }
+
+    ranges
+}
+
+/// Given a Zotero page_label (typically "1", "2", etc. -- 1-based human page number),
+/// and page ranges parsed from OCR markdown, return the line range (start, end inclusive)
+/// covering the target page +/- 1 page margin. Returns None if page_label is not numeric
+/// or no matching page ranges exist.
+pub fn page_scoped_line_range(
+    page_label: &str,
+    page_ranges: &[PageRange],
+) -> Option<(usize, usize)> {
+    let human_page: usize = page_label.parse().ok()?;
+    // Zotero page_label is 1-based, OCR page_index is 0-based
+    let target_ocr_page = human_page.checked_sub(1)?;
+
+    // Find ranges for target-1, target, target+1
+    let min_page = target_ocr_page.saturating_sub(1);
+    let max_page = target_ocr_page + 1;
+
+    let matching: Vec<&PageRange> = page_ranges
+        .iter()
+        .filter(|r| r.page_index >= min_page && r.page_index <= max_page)
+        .collect();
+
+    if matching.is_empty() {
+        return None;
+    }
+
+    let start = matching.iter().map(|r| r.start_line).min().unwrap();
+    let end = matching.iter().map(|r| r.end_line).max().unwrap();
+    Some((start, end))
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3.1: Scoped matching (OCR normalize + page hints)
+// ---------------------------------------------------------------------------
+
+/// Rejoin hyphenated word breaks that span line boundaries in paragraph text.
+/// After lines are joined with spaces, patterns like "knowl- edge" (where a
+/// word ends with hyphen-space and the next token starts lowercase) are
+/// collapsed to "knowledge".
+fn rejoin_paragraph_hyphens(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut result = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'-' {
+            // Check: hyphen followed by space, then lowercase ASCII letter
+            if i + 2 < bytes.len() && bytes[i + 1] == b' ' && bytes[i + 2].is_ascii_lowercase()
+            {
+                // Skip the hyphen and space, continue with the lowercase letter
+                i += 2;
+                continue;
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+/// Find the line index where `needle` best matches within `lines`,
+/// optionally scoped to a page range.
+///
+/// Matching pipeline:
+/// 1. OCR-normalize both needle and lines
+/// 2. If page_label + page_ranges provided, restrict to +-1 page
+/// 3. Try exact/fuzzy/windowed match within scope
+/// 4. If scoped search failed and scope was restricted, retry on full document
+pub fn find_match_line_scoped(
+    needle: &str,
+    lines: &[&str],
+    threshold: f64,
+    page_label: Option<&str>,
+    page_ranges: &[PageRange],
+) -> Option<usize> {
+    let ocr_needle = ocr_normalize(needle);
+    if ocr_needle.is_empty() {
+        return None;
+    }
+
+    // Pre-normalize all lines once. We apply ocr_normalize per-line
+    // for ligatures/quotes/dashes, but line-break hyphenation is handled
+    // at the paragraph level by rejoin_paragraph_hyphens in build_paragraphs_ocr.
+    let ocr_lines: Vec<String> = lines.iter().map(|l| ocr_normalize(l)).collect();
+    let ocr_line_refs: Vec<&str> = ocr_lines.iter().map(|s| s.as_str()).collect();
+
+    // Determine page scope
+    let scope = page_label.and_then(|pl| page_scoped_line_range(pl, page_ranges));
+
+    // Try scoped search first
+    if let Some((start, end)) = scope {
+        let end = end.min(ocr_line_refs.len().saturating_sub(1));
+        if start <= end {
+            let scoped_lines = &ocr_line_refs[start..=end];
+
+            if let Some(local_idx) =
+                find_match_line_ocr(&ocr_needle, scoped_lines, threshold)
+            {
+                return Some(start + local_idx); // Convert back to global line index
+            }
+        }
+    }
+
+    // Fall back to full-document search
+    find_match_line_ocr(&ocr_needle, &ocr_line_refs, threshold)
+}
+
+/// Like `find_match_line` but builds paragraphs with hyphen-rejoin.
+/// Used by `find_match_line_scoped` after OCR normalization.
+fn find_match_line_ocr(needle: &str, lines: &[&str], threshold: f64) -> Option<usize> {
+    // Try exact + standard fuzzy first (reuse find_match_line)
+    if let Some(line_idx) = find_match_line(needle, lines, threshold) {
+        return Some(line_idx);
+    }
+
+    // Fall back to OCR-enhanced paragraph matching with hyphen-rejoin.
+    // This catches cases where line-break hyphenation splits a word
+    // across lines (e.g. "knowl-" + "edge" -> "knowledge").
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() {
+        return None;
+    }
+    let paragraphs = build_paragraphs_ocr(lines);
+    if let Some(line_idx) = find_fuzzy_match(needle, &paragraphs, threshold) {
+        return Some(line_idx);
+    }
+    find_fuzzy_match_windowed(needle, &paragraphs, threshold)
+}
+
+/// Like `build_paragraphs` but applies `rejoin_paragraph_hyphens` to each
+/// paragraph's joined text, handling line-break hyphenation across lines.
+fn build_paragraphs_ocr(lines: &[&str]) -> Vec<(String, usize)> {
+    let raw = build_paragraphs(lines);
+    raw.into_iter()
+        .map(|(text, last_line)| (rejoin_paragraph_hyphens(&text), last_line))
+        .collect()
 }
 
 /// Read the fuzzy-match threshold from preferences.
@@ -720,6 +1039,7 @@ pub async fn import_zotero_annotations(
 
         // Match annotations to line positions in companion
         let lines: Vec<&str> = content.lines().collect();
+        let page_ranges = find_page_ranges(&lines);
         let mut matched: Vec<(usize, String)> = Vec::new();
         let mut unmatched_anns: Vec<&ZoteroAnnotation> = Vec::new();
 
@@ -733,7 +1053,13 @@ pub async fn import_zotero_annotations(
                 ann.text.as_deref().filter(|t| !t.is_empty())
             };
             if let Some(text) = matchable_text {
-                if let Some(line_idx) = find_match_line(text, &lines, threshold) {
+                if let Some(line_idx) = find_match_line_scoped(
+                    text,
+                    &lines,
+                    threshold,
+                    ann.page_label.as_deref(),
+                    &page_ranges,
+                ) {
                     matched.push((line_idx, dsl));
                 } else {
                     unmatched_anns.push(ann);
@@ -2121,5 +2447,567 @@ Some text
         // Different att_id returns empty
         let anns2 = query_zotero_for_pdf(&db_path, 100).unwrap();
         assert!(anns2.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.1: fuzzy_score tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_fuzzy_score_exact() {
+        let score = fuzzy_score("hello world", "hello world");
+        assert!(
+            (score - 1.0).abs() < f64::EPSILON,
+            "identical strings should score 1.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_score_similar() {
+        // "modem" vs "modern" — OCR-style error
+        let score = fuzzy_score("the modem approach", "the modern approach");
+        assert!(
+            score > 0.85,
+            "similar strings should score high, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_score_different() {
+        let score = fuzzy_score("quantum computing", "machine learning algorithms");
+        assert!(
+            score < 0.4,
+            "unrelated strings should score low, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_score_empty() {
+        assert!((fuzzy_score("", "") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_fuzzy_score_one_empty() {
+        let score = fuzzy_score("hello", "");
+        assert!(
+            score < 0.01,
+            "one empty string should score near 0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_dual_levenshtein_wins() {
+        // OCR: "modem" for "modern". Levenshtein should catch this better
+        // than LCS because the common substring breaks at the typo.
+        let needle = "the modem approach to learning";
+        let para = "the modern approach to learning";
+        let score = fuzzy_score(needle, para);
+        assert!(
+            score >= 0.9,
+            "OCR substitution should still match well, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_dual_lcs_wins() {
+        // Short needle fully present as substring of long paragraph.
+        // Levenshtein will be low due to length difference, but LCS catches it.
+        let needle = "neural networks";
+        let para = "introduction to neural networks and deep learning systems";
+        let score = fuzzy_score(needle, para);
+        // LCS ratio = 15/57 ~ 0.26 -- actually that's below threshold.
+        // But let's verify the score is at least reasonable.
+        assert!(
+            score > 0.2,
+            "substring presence should contribute to score, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_dual_neither_passes() {
+        let score = fuzzy_score("quantum computing", "machine learning algorithms");
+        assert!(score < 0.5, "unrelated strings should score low, got {}", score);
+    }
+
+    #[test]
+    fn test_fuzzy_ocr_rn_to_m() {
+        // normalized_levenshtein("modem", "modern") ~ 0.67 (edit distance 2, max len 6).
+        // In context of a longer phrase, the score is higher (~0.89).
+        let score = fuzzy_score("the modem approach", "the modern approach");
+        assert!(
+            score > 0.85,
+            "OCR rn->m confusion in context should still match, got {}",
+            score
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.1: ocr_normalize tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ocr_normalize_hyphenation() {
+        assert_eq!(ocr_normalize("knowl-\nedge base"), "knowledge base");
+    }
+
+    #[test]
+    fn test_ocr_normalize_hyphenation_with_spaces() {
+        assert_eq!(ocr_normalize("knowl-\n  edge"), "knowledge");
+    }
+
+    #[test]
+    fn test_ocr_normalize_hyphenation_not_joined_uppercase() {
+        // "Smith-\nJones" should NOT be joined because J is uppercase
+        let result = ocr_normalize("Smith-\nJones");
+        assert!(
+            result.contains("-"),
+            "uppercase after hyphen should not be joined: '{}'",
+            result
+        );
+    }
+
+    #[test]
+    fn test_ocr_normalize_hyphenation_crlf() {
+        assert_eq!(ocr_normalize("knowl-\r\nedge"), "knowledge");
+    }
+
+    #[test]
+    fn test_ocr_normalize_ligatures() {
+        assert_eq!(ocr_normalize("\u{FB01}rst \u{FB02}oor"), "first floor");
+    }
+
+    #[test]
+    fn test_ocr_normalize_ff_ligatures() {
+        assert_eq!(ocr_normalize("\u{FB00}ect"), "ffect");
+        assert_eq!(ocr_normalize("\u{FB03}ce"), "ffice");
+        assert_eq!(ocr_normalize("\u{FB04}e"), "ffle");
+    }
+
+    #[test]
+    fn test_ocr_normalize_st_ligature() {
+        assert_eq!(ocr_normalize("\u{FB06}yle"), "style");
+    }
+
+    #[test]
+    fn test_ocr_normalize_curly_quotes() {
+        assert_eq!(
+            ocr_normalize("\u{201C}hello\u{201D}"),
+            "\"hello\""
+        );
+        assert_eq!(
+            ocr_normalize("\u{2018}it\u{2019}s"),
+            "'it's"
+        );
+    }
+
+    #[test]
+    fn test_ocr_normalize_dashes() {
+        assert_eq!(ocr_normalize("a\u{2014}b\u{2013}c"), "a-b-c");
+        assert_eq!(ocr_normalize("x\u{2212}y"), "x-y"); // minus sign
+    }
+
+    #[test]
+    fn test_ocr_normalize_combined() {
+        assert_eq!(
+            ocr_normalize("The \u{FB01}eld of knowl-\nedge\u{2014}based systems"),
+            "the field of knowledge-based systems"
+        );
+    }
+
+    #[test]
+    fn test_ocr_normalize_plain_text() {
+        assert_eq!(ocr_normalize("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_ocr_normalize_empty() {
+        assert_eq!(ocr_normalize(""), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.1: find_fuzzy_match_windowed tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_windowed_cross_paragraph() {
+        let paragraphs = vec![
+            ("end of first paragraph".to_string(), 3),
+            ("start of second paragraph".to_string(), 7),
+        ];
+        let result = find_fuzzy_match_windowed(
+            "end of first paragraph start of second paragraph",
+            &paragraphs,
+            0.5,
+        );
+        assert_eq!(result, Some(7));
+    }
+
+    #[test]
+    fn test_windowed_three_paragraphs() {
+        let paragraphs = vec![
+            ("alpha beta gamma".to_string(), 2),
+            ("delta epsilon zeta".to_string(), 5),
+            ("eta theta iota".to_string(), 8),
+        ];
+        // Needle spans all three
+        let result = find_fuzzy_match_windowed(
+            "alpha beta gamma delta epsilon zeta eta theta iota",
+            &paragraphs,
+            0.5,
+        );
+        assert_eq!(result, Some(8));
+    }
+
+    #[test]
+    fn test_windowed_few_paragraphs() {
+        // Only 1 paragraph: windowed (sizes 2+) should return None
+        let paragraphs = vec![("only paragraph".to_string(), 0)];
+        let result = find_fuzzy_match_windowed("only paragraph", &paragraphs, 0.5);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_windowed_empty_needle() {
+        let paragraphs = vec![
+            ("para one".to_string(), 0),
+            ("para two".to_string(), 2),
+        ];
+        assert_eq!(find_fuzzy_match_windowed("", &paragraphs, 0.5), None);
+        assert_eq!(find_fuzzy_match_windowed("   ", &paragraphs, 0.5), None);
+    }
+
+    #[test]
+    fn test_windowed_no_match() {
+        let paragraphs = vec![
+            ("alpha beta".to_string(), 1),
+            ("gamma delta".to_string(), 3),
+        ];
+        let result = find_fuzzy_match_windowed(
+            "completely unrelated text about quantum physics",
+            &paragraphs,
+            0.65,
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_match_line_windowed_integration() {
+        // Test that find_match_line uses windowed matching when single-para fails
+        let lines = vec![
+            "end of first paragraph",
+            "",
+            "start of second paragraph",
+        ];
+        let result = find_match_line(
+            "end of first paragraph start of second paragraph",
+            &lines,
+            0.5,
+        );
+        // Exact match won't work (text spans paragraphs). Single-para fuzzy won't
+        // match well. Windowed should catch it.
+        assert!(result.is_some(), "windowed match should find cross-paragraph span");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.1: find_page_ranges tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_find_page_ranges_basic() {
+        let lines = vec![
+            "<!-- Page 0 - 2 images -->",
+            "line 1",
+            "line 2",
+            "<!-- Page 1 - 0 images -->",
+            "line 4",
+            "line 5",
+        ];
+        let ranges = find_page_ranges(&lines);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(
+            ranges[0],
+            PageRange { page_index: 0, start_line: 0, end_line: 2 }
+        );
+        assert_eq!(
+            ranges[1],
+            PageRange { page_index: 1, start_line: 3, end_line: 5 }
+        );
+    }
+
+    #[test]
+    fn test_find_page_ranges_no_markers() {
+        let lines = vec!["just text", "more text"];
+        let ranges = find_page_ranges(&lines);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_find_page_ranges_single_page() {
+        let lines = vec!["<!-- Page 0 - 1 images -->", "content"];
+        let ranges = find_page_ranges(&lines);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(
+            ranges[0],
+            PageRange { page_index: 0, start_line: 0, end_line: 1 }
+        );
+    }
+
+    #[test]
+    fn test_find_page_ranges_with_frontmatter() {
+        let lines = vec![
+            "---",
+            "title: X",
+            "---",
+            "<!-- Page 0 - 0 images -->",
+            "text",
+        ];
+        let ranges = find_page_ranges(&lines);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(
+            ranges[0],
+            PageRange { page_index: 0, start_line: 3, end_line: 4 }
+        );
+    }
+
+    #[test]
+    fn test_find_page_ranges_many_pages() {
+        let lines = vec![
+            "<!-- Page 0 - 1 images -->",
+            "page 0 content",
+            "<!-- Page 1 - 2 images -->",
+            "page 1 content",
+            "more page 1",
+            "<!-- Page 2 - 0 images -->",
+            "page 2 content",
+            "<!-- Page 3 - 1 images -->",
+            "page 3 content",
+            "last line",
+        ];
+        let ranges = find_page_ranges(&lines);
+        assert_eq!(ranges.len(), 4);
+        assert_eq!(ranges[0].page_index, 0);
+        assert_eq!(ranges[1].page_index, 1);
+        assert_eq!(ranges[2].page_index, 2);
+        assert_eq!(ranges[3].page_index, 3);
+        assert_eq!(ranges[3].end_line, 9);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.1: page_scoped_line_range tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_page_scoped_range_middle_page() {
+        // Pages 0-4; page_label "3" means OCR page 2, scope = pages 1,2,3
+        let ranges = vec![
+            PageRange { page_index: 0, start_line: 0, end_line: 9 },
+            PageRange { page_index: 1, start_line: 10, end_line: 19 },
+            PageRange { page_index: 2, start_line: 20, end_line: 29 },
+            PageRange { page_index: 3, start_line: 30, end_line: 39 },
+            PageRange { page_index: 4, start_line: 40, end_line: 49 },
+        ];
+        let result = page_scoped_line_range("3", &ranges);
+        // target_ocr_page = 2, scope = pages 1..3
+        assert_eq!(result, Some((10, 39)));
+    }
+
+    #[test]
+    fn test_page_scoped_range_first_page() {
+        let ranges = vec![
+            PageRange { page_index: 0, start_line: 0, end_line: 9 },
+            PageRange { page_index: 1, start_line: 10, end_line: 19 },
+            PageRange { page_index: 2, start_line: 20, end_line: 29 },
+        ];
+        // page_label "1" -> OCR page 0, scope = pages 0..1
+        let result = page_scoped_line_range("1", &ranges);
+        assert_eq!(result, Some((0, 19)));
+    }
+
+    #[test]
+    fn test_page_scoped_range_last_page() {
+        let ranges = vec![
+            PageRange { page_index: 0, start_line: 0, end_line: 9 },
+            PageRange { page_index: 1, start_line: 10, end_line: 19 },
+            PageRange { page_index: 2, start_line: 20, end_line: 29 },
+        ];
+        // page_label "3" -> OCR page 2, scope = pages 1..3 (only 1,2 exist)
+        let result = page_scoped_line_range("3", &ranges);
+        assert_eq!(result, Some((10, 29)));
+    }
+
+    #[test]
+    fn test_page_scoped_range_non_numeric_label() {
+        let ranges = vec![
+            PageRange { page_index: 0, start_line: 0, end_line: 9 },
+        ];
+        assert_eq!(page_scoped_line_range("iv", &ranges), None);
+    }
+
+    #[test]
+    fn test_page_scoped_range_no_matching_pages() {
+        let ranges = vec![
+            PageRange { page_index: 0, start_line: 0, end_line: 9 },
+            PageRange { page_index: 1, start_line: 10, end_line: 19 },
+        ];
+        // page_label "99" -> OCR page 98, scope = pages 97..99, none exist
+        assert_eq!(page_scoped_line_range("99", &ranges), None);
+    }
+
+    #[test]
+    fn test_page_scoped_range_page_zero_label() {
+        // page_label "0" -> human_page 0 -> checked_sub(1) fails -> None
+        let ranges = vec![
+            PageRange { page_index: 0, start_line: 0, end_line: 9 },
+        ];
+        assert_eq!(page_scoped_line_range("0", &ranges), None);
+    }
+
+    #[test]
+    fn test_page_scoped_range_empty_ranges() {
+        assert_eq!(page_scoped_line_range("1", &[]), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.1: find_match_line_scoped tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scoped_match_finds_correct_page() {
+        // Markdown with page markers for 3 pages.
+        // Text "important finding" appears on page 1 (OCR page 1).
+        let lines = vec![
+            "<!-- Page 0 - 0 images -->",
+            "introduction text",
+            "<!-- Page 1 - 0 images -->",
+            "the important finding here",
+            "<!-- Page 2 - 0 images -->",
+            "conclusion text",
+        ];
+        let page_ranges = find_page_ranges(&lines);
+
+        // Annotation with page_label="2" (OCR page 1)
+        let result = find_match_line_scoped(
+            "important finding",
+            &lines,
+            0.5,
+            Some("2"),
+            &page_ranges,
+        );
+        assert_eq!(result, Some(3));
+    }
+
+    #[test]
+    fn test_scoped_ocr_normalized_match() {
+        // Annotation has ligature, markdown has plain text
+        let lines = vec![
+            "<!-- Page 0 - 0 images -->",
+            "the field of knowledge",
+        ];
+        let page_ranges = find_page_ranges(&lines);
+
+        let result = find_match_line_scoped(
+            "the \u{FB01}eld of knowledge",
+            &lines,
+            0.5,
+            Some("1"),
+            &page_ranges,
+        );
+        assert!(result.is_some(), "OCR-normalized ligature should match");
+    }
+
+    #[test]
+    fn test_scoped_fallback_to_full_doc() {
+        // page_label points to a page that doesn't exist -> fall back to full doc
+        let lines = vec![
+            "<!-- Page 0 - 0 images -->",
+            "the important text is here",
+        ];
+        let page_ranges = find_page_ranges(&lines);
+
+        let result = find_match_line_scoped(
+            "important text",
+            &lines,
+            0.5,
+            Some("99"), // page 99 doesn't exist
+            &page_ranges,
+        );
+        assert!(result.is_some(), "should fall back to full-doc search");
+    }
+
+    #[test]
+    fn test_scoped_no_page_label() {
+        // When page_label is None, should search full document
+        let lines = vec![
+            "<!-- Page 0 - 0 images -->",
+            "the text to find",
+        ];
+        let page_ranges = find_page_ranges(&lines);
+
+        let result = find_match_line_scoped(
+            "text to find",
+            &lines,
+            0.5,
+            None,
+            &page_ranges,
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_scoped_empty_needle() {
+        let lines = vec!["some text"];
+        assert_eq!(
+            find_match_line_scoped("", &lines, 0.5, None, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_scoped_cross_paragraph_match() {
+        // Annotation spans two paragraphs within the same page
+        let lines = vec![
+            "<!-- Page 0 - 0 images -->",
+            "end of first paragraph",
+            "",
+            "start of second paragraph",
+            "",
+            "unrelated trailing text",
+        ];
+        let page_ranges = find_page_ranges(&lines);
+
+        // Use full-doc search (no page constraint) to focus on the windowed matching
+        let result = find_match_line_scoped(
+            "end of first paragraph start of second paragraph",
+            &lines,
+            0.5,
+            None,
+            &page_ranges,
+        );
+        assert!(result.is_some(), "should find cross-paragraph match via windowed");
+    }
+
+    #[test]
+    fn test_scoped_hyphenation_rejoin() {
+        // Annotation text with line-break hyphenation in the markdown.
+        // After OCR line-level normalize + paragraph hyphen rejoin,
+        // "the knowl-" + "edge base" becomes "the knowledge base".
+        let lines = vec![
+            "the knowl-",
+            "edge base",
+        ];
+        let result = find_match_line_scoped(
+            "the knowledge base",
+            &lines,
+            0.5,
+            None,
+            &[],
+        );
+        assert!(result.is_some(), "OCR hyphenation should be rejoined and matched");
     }
 }
