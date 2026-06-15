@@ -426,6 +426,7 @@ pub fn run() {
             commands::ocr::ocr_pdf_to_markdown,
             commands::ocr::check_ocr_target_exists,
             commands::zotero_annotations::import_zotero_annotations,
+            commands::zotero_annotations::import_zotero_all,
             context_menu::show_trash_context_menu,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,

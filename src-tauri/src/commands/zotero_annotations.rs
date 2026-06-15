@@ -1165,38 +1165,30 @@ struct MatchPhaseResult {
     companion_path: PathBuf,
 }
 
-#[tauri::command]
-pub async fn import_zotero_annotations(
-    key: String,
-    workspace_path: String,
-    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
-    app_handle: tauri::AppHandle,
-    credential_store: tauri::State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
-) -> Result<ImportResult, String> {
-    let root = PathBuf::from(&workspace_path);
-    let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
-        .ok_or_else(|| "Graph index not ready".to_string())?;
+/// Pre-resolved settings for a single import invocation.
+/// Computed once per command call and passed into `import_single_entry`.
+struct ImportSettings {
+    db_path: String,
+    threshold: f64,
+    search_paths: Vec<String>,
+    llm_fallback: bool,
+    llm_provider_id: String,
+    llm_model: String,
+    llm_base_url: Option<String>,
+    llm_api_key: Option<String>,
+}
 
-    // Get bib entry and its PDF file path
-    let pdf_rel_path = {
-        let store = gi.store();
-        let entry = crate::bib::db::get_bib_item(&store.conn, &key)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("entry '{}' not found", key))?;
-        entry
-            .file
-            .filter(|f| !f.is_empty())
-            .ok_or_else(|| format!("entry '{}' has no linked PDF", key))?
-    };
-
-    // Read preferences
-    let prefs = crate::preferences::read_preferences(&app_handle);
+/// Read preferences and credential store to build ImportSettings.
+fn resolve_import_settings(
+    app_handle: &tauri::AppHandle,
+    credential_store: &Arc<dyn crate::commands::credential::CredentialStore>,
+) -> Result<ImportSettings, String> {
+    let prefs = crate::preferences::read_preferences(app_handle);
     let db_path = zotero_db_path(&prefs);
     let threshold = zotero_match_threshold(&prefs);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
     let llm_fallback = zotero_llm_fallback(&prefs);
 
-    // Resolve LLM settings eagerly (before spawn_blocking) if fallback is enabled
     let (llm_provider_id, llm_model, llm_base_url, _llm_temperature) = if llm_fallback {
         crate::commands::merge_split::resolve_llm_settings(&prefs)
     } else {
@@ -1211,15 +1203,48 @@ pub async fn import_zotero_annotations(
     // Pre-check: Zotero database file exists
     if !std::path::Path::new(&db_path).exists() {
         return Err(format!(
-            "Zotero database not found at '{}'. Set the path in Preferences → zotero.databasePath",
+            "Zotero database not found at '{}'. Set the path in Preferences -> zotero.databasePath",
             db_path
         ));
     }
 
+    Ok(ImportSettings {
+        db_path,
+        threshold,
+        search_paths,
+        llm_fallback,
+        llm_provider_id,
+        llm_model,
+        llm_base_url,
+        llm_api_key,
+    })
+}
+
+/// Core single-entry import logic shared by both single and batch commands.
+///
+/// Takes a PDF relative path, resolves the companion, queries Zotero,
+/// matches annotations, optionally calls the LLM fallback, and writes
+/// the updated companion. Returns the per-entry ImportResult.
+async fn import_single_entry(
+    pdf_rel_path: &str,
+    root: &std::path::Path,
+    settings: &ImportSettings,
+) -> Result<ImportResult, String> {
+    let root_owned = root.to_path_buf();
+    let db_path = settings.db_path.clone();
+    let threshold = settings.threshold;
+    let search_paths = settings.search_paths.clone();
+    let llm_fallback = settings.llm_fallback;
+    let llm_provider_id = settings.llm_provider_id.clone();
+    let llm_model = settings.llm_model.clone();
+    let llm_base_url = settings.llm_base_url.clone();
+    let llm_api_key = settings.llm_api_key.clone();
+    let pdf_rel_path = pdf_rel_path.to_string();
+
     // Find companion markdown
     let companion_rel = crate::commands::workspace::find_companion(
         &pdf_rel_path,
-        &root,
+        &root_owned,
         &search_paths,
     )
     .ok_or_else(|| {
@@ -1228,7 +1253,7 @@ pub async fn import_zotero_annotations(
             pdf_rel_path
         )
     })?;
-    let companion_abs = root.join(&companion_rel);
+    let companion_abs = root_owned.join(&companion_rel);
 
     // Extract PDF filename for Zotero lookup
     let pdf_path_obj = std::path::Path::new(&pdf_rel_path);
@@ -1238,7 +1263,6 @@ pub async fn import_zotero_annotations(
         .to_str()
         .ok_or_else(|| "invalid PDF filename".to_string())?
         .to_string();
-
     let pdf_stem = pdf_path_obj
         .file_stem()
         .ok_or_else(|| "invalid PDF path".to_string())?
@@ -1251,21 +1275,17 @@ pub async fn import_zotero_annotations(
     // -----------------------------------------------------------------------
     let companion_path = companion_abs.clone();
     let phase_a_result: MatchPhaseResult = tokio::task::spawn_blocking(move || -> Result<MatchPhaseResult, String> {
-        // Resolve in Zotero
         let (att_id, parent_id) = resolve_pdf_in_zotero(&db_path, &pdf_stem)?
             .ok_or_else(|| {
                 format!("PDF '{}' not found in Zotero database", pdf_filename)
             })?;
 
-        // Get annotations and child notes
         let annotations = query_zotero_for_pdf(&db_path, att_id)?;
         let child_notes = query_zotero_child_notes(&db_path, parent_id)?;
 
-        // Read companion content
         let content = std::fs::read_to_string(&companion_path)
             .map_err(|e| format!("failed to read companion: {}", e))?;
 
-        // Dedup
         let existing_ids = existing_zotero_ids(&content);
         let new_anns: Vec<&ZoteroAnnotation> = annotations
             .iter()
@@ -1290,7 +1310,6 @@ pub async fn import_zotero_annotations(
             });
         }
 
-        // Match annotations to line positions in companion
         let lines: Vec<&str> = content.lines().collect();
         let page_ranges = find_page_ranges(&lines);
         let paragraphs = build_paragraphs(&lines);
@@ -1355,7 +1374,6 @@ pub async fn import_zotero_annotations(
     // -----------------------------------------------------------------------
     let llm_placed_map: HashMap<usize, usize> =
         if llm_fallback && !phase_a_result.unmatched_anns.is_empty() {
-            // Build indexed unmatched list for the LLM
             let indexed_unmatched: Vec<(usize, &ZoteroAnnotation)> = phase_a_result
                 .unmatched_anns
                 .iter()
@@ -1399,7 +1417,6 @@ pub async fn import_zotero_annotations(
     } = phase_a_result;
 
     tokio::task::spawn_blocking(move || {
-        // Move LLM-placed annotations from unmatched to matched
         let mut remaining_unmatched: Vec<&ZoteroAnnotation> = Vec::new();
         for (i, ann) in unmatched_anns.iter().enumerate() {
             if let Some(&line_idx) = llm_placed_map.get(&i) {
@@ -1415,7 +1432,6 @@ pub async fn import_zotero_annotations(
 
         let mut result = insert_annotations_into_markdown(&content, matched);
 
-        // Append child notes at end
         if !note_dsls.is_empty() {
             if !result.ends_with('\n') {
                 result.push('\n');
@@ -1427,7 +1443,6 @@ pub async fn import_zotero_annotations(
             }
         }
 
-        // Append remaining unmatched section
         if !remaining_unmatched.is_empty() {
             let section = collect_unmatched_section(
                 &remaining_unmatched
@@ -1445,7 +1460,6 @@ pub async fn import_zotero_annotations(
             }
         }
 
-        // Write back
         std::fs::write(&companion_path, &result)
             .map_err(|e| format!("failed to write companion: {}", e))?;
 
@@ -1458,6 +1472,140 @@ pub async fn import_zotero_annotations(
     })
     .await
     .map_err(|e| format!("task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn import_zotero_annotations(
+    key: String,
+    workspace_path: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+    credential_store: tauri::State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
+) -> Result<ImportResult, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    // Get bib entry and its PDF file path
+    let pdf_rel_path = {
+        let store = gi.store();
+        let entry = crate::bib::db::get_bib_item(&store.conn, &key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("entry '{}' not found", key))?;
+        entry
+            .file
+            .filter(|f| !f.is_empty())
+            .ok_or_else(|| format!("entry '{}' has no linked PDF", key))?
+    };
+
+    let settings = resolve_import_settings(&app_handle, &credential_store)?;
+    import_single_entry(&pdf_rel_path, &root, &settings).await
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4.1: Batch import
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchImportResult {
+    pub entries_processed: usize,
+    pub total_inserted: usize,
+    pub total_unmatched: usize,
+    pub total_skipped: usize,
+    pub total_llm_placed: usize,
+    pub errors: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BatchProgressPayload {
+    current: usize,
+    total: usize,
+    current_key: String,
+}
+
+#[tauri::command]
+pub async fn import_zotero_all(
+    workspace_path: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+    window: tauri::Window,
+    credential_store: tauri::State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
+) -> Result<BatchImportResult, String> {
+    use tauri::Emitter;
+
+    let root = PathBuf::from(&workspace_path);
+    let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    let settings = resolve_import_settings(&app_handle, &credential_store)?;
+
+    // Collect eligible entries: have a linked PDF file and a companion markdown
+    let eligible: Vec<(String, String)> = {
+        let store = gi.store();
+        let all_entries = crate::bib::db::list_bib_items(&store.conn)
+            .map_err(|e| e.to_string())?;
+        all_entries
+            .into_iter()
+            .filter_map(|entry| {
+                let pdf_path = entry.file.as_ref().filter(|f| !f.is_empty())?;
+                // Check companion exists
+                let _companion = crate::commands::workspace::find_companion(
+                    pdf_path,
+                    &root,
+                    &settings.search_paths,
+                )?;
+                Some((entry.key, pdf_path.clone()))
+            })
+            .collect()
+    };
+
+    if eligible.is_empty() {
+        return Ok(BatchImportResult {
+            entries_processed: 0,
+            total_inserted: 0,
+            total_unmatched: 0,
+            total_skipped: 0,
+            total_llm_placed: 0,
+            errors: Vec::new(),
+        });
+    }
+
+    let total = eligible.len();
+    let mut result = BatchImportResult {
+        entries_processed: 0,
+        total_inserted: 0,
+        total_unmatched: 0,
+        total_skipped: 0,
+        total_llm_placed: 0,
+        errors: Vec::new(),
+    };
+
+    for (i, (key, pdf_rel_path)) in eligible.iter().enumerate() {
+        let _ = window.emit(
+            "lit:zotero-import-progress",
+            BatchProgressPayload {
+                current: i + 1,
+                total,
+                current_key: key.clone(),
+            },
+        );
+
+        match import_single_entry(pdf_rel_path, &root, &settings).await {
+            Ok(entry_result) => {
+                result.entries_processed += 1;
+                result.total_inserted += entry_result.inserted;
+                result.total_unmatched += entry_result.unmatched;
+                result.total_skipped += entry_result.skipped;
+                result.total_llm_placed += entry_result.llm_placed;
+            }
+            Err(e) => {
+                result.entries_processed += 1;
+                result.errors.push((key.clone(), e));
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -3625,5 +3773,61 @@ Some text
         assert_eq!(json["unmatched"], 2);
         assert_eq!(json["skipped"], 1);
         assert_eq!(json["llm_placed"], 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4.1: Batch import structs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_batch_import_result_serialization() {
+        let result = BatchImportResult {
+            entries_processed: 10,
+            total_inserted: 25,
+            total_unmatched: 3,
+            total_skipped: 7,
+            total_llm_placed: 2,
+            errors: vec![
+                ("smith2024".to_string(), "PDF not found in Zotero".to_string()),
+            ],
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["entries_processed"], 10);
+        assert_eq!(json["total_inserted"], 25);
+        assert_eq!(json["total_unmatched"], 3);
+        assert_eq!(json["total_skipped"], 7);
+        assert_eq!(json["total_llm_placed"], 2);
+        let errors = json["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0][0], "smith2024");
+        assert_eq!(errors[0][1], "PDF not found in Zotero");
+    }
+
+    #[test]
+    fn test_batch_import_result_empty() {
+        let result = BatchImportResult {
+            entries_processed: 0,
+            total_inserted: 0,
+            total_unmatched: 0,
+            total_skipped: 0,
+            total_llm_placed: 0,
+            errors: Vec::new(),
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["entries_processed"], 0);
+        assert!(json["errors"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_batch_progress_payload_serialization() {
+        let payload = BatchProgressPayload {
+            current: 3,
+            total: 10,
+            current_key: "smith2024".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["current"], 3);
+        assert_eq!(json["total"], 10);
+        assert_eq!(json["current_key"], "smith2024");
     }
 }

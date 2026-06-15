@@ -569,6 +569,23 @@ export async function importZoteroAnnotations(
   return invoke<ImportZoteroResult>("import_zotero_annotations", { key, workspacePath });
 }
 
+// Batch Zotero annotation import
+
+export interface BatchImportResult {
+  entriesProcessed: number;
+  totalInserted: number;
+  totalUnmatched: number;
+  totalSkipped: number;
+  totalLlmPlaced: number;
+  errors: [string, string][];
+}
+
+export async function importZoteroAll(
+  workspacePath: string,
+): Promise<BatchImportResult> {
+  return invoke<BatchImportResult>("import_zotero_all", { workspacePath });
+}
+
 // PDF recognition
 
 export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";
