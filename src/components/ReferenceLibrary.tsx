@@ -18,6 +18,7 @@ import {
   bibDelete,
   bibUpdateFields,
   downloadEntryPdf,
+  linkEntryPdf,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
@@ -155,6 +156,7 @@ export function ReferenceLibrary() {
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
+  const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
@@ -389,7 +391,7 @@ export function ReferenceLibrary() {
 
   const handleDownload = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || downloadingKey) return;
+      if (!workspacePath || downloadingKey || linkingKey) return;
       setDownloadingKey(entry.key);
       setDownloadProgress(null);
       try {
@@ -403,7 +405,41 @@ export function ReferenceLibrary() {
         setDownloadProgress(null);
       }
     },
-    [workspacePath, downloadingKey, show],
+    [workspacePath, downloadingKey, linkingKey, show],
+  );
+
+  const handleLinkPdf = useCallback(
+    async (entry: BibEntry) => {
+      if (!workspacePath || linkingKey || downloadingKey) return;
+      setLinkingKey(entry.key);
+      try {
+        const { ask, open: openDialog } = await import("@tauri-apps/plugin-dialog");
+
+        // Re-link confirmation: ask before overwriting an existing linked PDF
+        if (entry.file) {
+          const confirmed = await ask(
+            `This entry already has a linked PDF:\n${entry.file}\n\nReplace it?`,
+            { title: "Replace linked PDF?", kind: "warning" },
+          );
+          if (!confirmed) return;
+        }
+
+        const selected = await openDialog({
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
+        if (!selected || typeof selected !== "string") return;
+        await linkEntryPdf(entry.key, selected, workspacePath);
+        show(`Linked PDF for @${entry.key}`);
+      } catch (err) {
+        show(
+          err instanceof Error ? err.message : String(err),
+          "error",
+        );
+      } finally {
+        setLinkingKey(null);
+      }
+    },
+    [workspacePath, linkingKey, downloadingKey, show],
   );
 
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -795,6 +831,7 @@ export function ReferenceLibrary() {
                             <button
                               data-testid="open-pdf-btn"
                               onClick={() => selectPage(entry.file!)}
+                              title={entry.file}
                               className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
                               Open PDF
@@ -818,7 +855,7 @@ export function ReferenceLibrary() {
                           {!entry.file && (entry.doi || entry.arxiv_id) ? (
                             <button
                               data-testid="download-pdf-btn"
-                              disabled={downloadingKey === entry.key}
+                              disabled={downloadingKey === entry.key || linkingKey === entry.key}
                               onClick={() => handleDownload(entry)}
                               className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >
@@ -831,6 +868,18 @@ export function ReferenceLibrary() {
                                 : "Download PDF"}
                             </button>
                           ) : null}
+                          <button
+                            data-testid="link-pdf-btn"
+                            disabled={linkingKey === entry.key || downloadingKey === entry.key}
+                            onClick={() => handleLinkPdf(entry)}
+                            className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                          >
+                            {linkingKey === entry.key
+                              ? "Linking…"
+                              : entry.file
+                                ? "Re-link PDF"
+                                : "Link PDF"}
+                          </button>
                           <button data-testid="edit-entry-btn" onClick={() => startEdit(entry)}
                             className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover">
                             Edit

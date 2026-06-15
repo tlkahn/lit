@@ -45,6 +45,7 @@ import {
   materializeCitation,
   enrichBibEntry,
   downloadEntryPdf,
+  linkEntryPdf,
   ocrPdfToMarkdown,
   checkOcrTargetExists,
   type OcrProgressPayload,
@@ -707,6 +708,8 @@ describe("ipc", () => {
             references_linked: 5,
           };
         case "download_entry_pdf":
+          return "assets/pdf/smith2020.pdf";
+        case "link_entry_pdf":
           return "assets/pdf/smith2020.pdf";
         case "ocr_pdf_to_markdown":
           return "smith2020.md";
@@ -2180,6 +2183,17 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("download_entry_pdf", {
       key: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("linkEntryPdf calls link_entry_pdf with key, filePath, and workspacePath", async () => {
+    const result = await linkEntryPdf("smith2020", "/tmp/paper.pdf", "/workspace");
+    expect(result).toBe("assets/pdf/smith2020.pdf");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("link_entry_pdf", {
+      key: "smith2020",
+      filePath: "/tmp/paper.pdf",
       workspacePath: "/workspace",
     });
   });

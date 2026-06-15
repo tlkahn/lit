@@ -420,6 +420,7 @@ pub fn run() {
             commands::academic_export::export_document,
             commands::enrich::enrich_bib_entry,
             commands::pdf_download::download_entry_pdf,
+            commands::pdf_link::link_entry_pdf,
             commands::recognize::recognize_pdf,
             commands::recognize::import_recognized_entry,
             commands::ocr::ocr_pdf_to_markdown,
