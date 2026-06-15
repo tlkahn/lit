@@ -1,6 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useCardboxStore } from "../stores/cardbox";
+import { useWorkspaceStore } from "../stores/workspace";
 import { CardboxCard } from "./CardboxCard";
+import type { CardboxAnnotation } from "../lib/ipc";
 
 export default function CardboxView() {
   const annotations = useCardboxStore((s) => s.annotations);
@@ -8,10 +11,27 @@ export default function CardboxView() {
   const loading = useCardboxStore((s) => s.loading);
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
+  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   useEffect(() => {
     fetchAnnotations();
   }, [fetchAnnotations]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:graph-updated", () => {
+      fetchAnnotations();
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [fetchAnnotations]);
+
+  const handleNavigate = useCallback((ann: CardboxAnnotation) => {
+    window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "editor" }));
+    selectPageAtLine(ann.source_page_id, ann.source_line);
+  }, [selectPageAtLine]);
 
   if (loading && annotations.length === 0) {
     return (
@@ -44,7 +64,7 @@ export default function CardboxView() {
             annotation={ann}
             expanded={expandedUuid === ann.uuid}
             onToggleExpand={() => toggleExpand(ann.uuid)}
-            onNavigate={() => {}}
+            onNavigate={() => handleNavigate(ann)}
           />
         ))}
       </div>
