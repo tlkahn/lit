@@ -752,7 +752,7 @@ describe("cardbox store", () => {
       expect(s.connectionsSavedFilters).toBeNull();
     });
 
-    it("fetchAnnotations does not restore saved filters when target is pruned", async () => {
+    it("fetchAnnotations restores saved filters when target is pruned", async () => {
       useCardboxStore.setState({
         searchQuery: "during-connections",
         activeTypes: null,
@@ -762,7 +762,24 @@ describe("cardbox store", () => {
       await useCardboxStore.getState().fetchAnnotations();
       const s = useCardboxStore.getState();
       expect(s.connectionsForUuid).toBeNull();
+      expect(s.connectionsSavedFilters).toBeNull();
+      expect(s.searchQuery).toBe("original");
+      expect(s.activeTypes).toEqual(new Set(["note"]));
+    });
+
+    it("fetchAnnotations falls back to current filters when saved filters are null on prune", async () => {
+      useCardboxStore.setState({
+        searchQuery: "during-connections",
+        activeTypes: null,
+        connectionsForUuid: "stale-uuid",
+        connectionsSavedFilters: null,
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBeNull();
       expect(s.searchQuery).toBe("during-connections");
+      // activeTypes falls back to all types since savedFilters is null
+      expect(s.activeTypes).toEqual(new Set(["note", "question"]));
     });
 
     it("fetchAnnotations preserves connections when focused card still exists", async () => {
@@ -774,6 +791,17 @@ describe("cardbox store", () => {
       const s = useCardboxStore.getState();
       expect(s.connectionsForUuid).toBe("u1");
       expect(s.connectionsSavedFilters).toEqual({ searchQuery: "old", activeTypes: null });
+    });
+
+    it("fetchAnnotations does not overwrite activeTypes=null during connections mode", async () => {
+      useCardboxStore.setState({
+        connectionsForUuid: "u1",
+        activeTypes: null,
+        connectionsSavedFilters: { searchQuery: "", activeTypes: new Set(["note"]) },
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.activeTypes).toBeNull();
     });
   });
 

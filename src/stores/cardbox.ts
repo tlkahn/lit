@@ -118,10 +118,16 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         }
         const connectionsStale = s.connectionsForUuid != null && !newUuids.has(s.connectionsForUuid);
         return {
-          ...(connectionsStale ? { connectionsForUuid: null, connectionsSavedFilters: null } : {}),
+          ...(connectionsStale ? {
+            searchQuery: s.connectionsSavedFilters?.searchQuery ?? s.searchQuery,
+            connectionsForUuid: null,
+            connectionsSavedFilters: null,
+          } : {}),
           annotations,
           loading: false,
-          activeTypes: s.activeTypes === null ? types : s.activeTypes,
+          activeTypes: connectionsStale
+            ? (s.connectionsSavedFilters?.activeTypes ?? types)
+            : (s.activeTypes === null && !s.connectionsForUuid ? types : s.activeTypes),
           links: prunedLinks,
           groups: prunedGroups,
           pinned: prunedPinned,
