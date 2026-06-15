@@ -39,6 +39,18 @@ pub const EVENT_CTX_GRAPH_EXPORT_NETWORK: &str = "context-menu://graph/export-ne
 pub const EVENT_CTX_GRAPH_FETCH_DETAILS: &str = "context-menu://graph/fetch-details";
 pub const EVENT_CTX_GRAPH_CREATE_NOTE: &str = "context-menu://graph/create-note";
 
+pub const CTX_CARDBOX_NEW_GROUP: &str = "ctx_cardbox_new_group";
+pub const CTX_CARDBOX_ADD_TO_GROUP: &str = "ctx_cardbox_add_to_group";
+pub const CTX_CARDBOX_REMOVE_FROM_GROUP: &str = "ctx_cardbox_remove_from_group";
+pub const CTX_CARDBOX_DISSOLVE_GROUP: &str = "ctx_cardbox_dissolve_group";
+pub const CTX_CARDBOX_RENAME_GROUP: &str = "ctx_cardbox_rename_group";
+
+pub const EVENT_CTX_CARDBOX_NEW_GROUP: &str = "context-menu://cardbox/new-group";
+pub const EVENT_CTX_CARDBOX_ADD_TO_GROUP: &str = "context-menu://cardbox/add-to-group";
+pub const EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP: &str = "context-menu://cardbox/remove-from-group";
+pub const EVENT_CTX_CARDBOX_DISSOLVE_GROUP: &str = "context-menu://cardbox/dissolve-group";
+pub const EVENT_CTX_CARDBOX_RENAME_GROUP: &str = "context-menu://cardbox/rename-group";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
     TrashRestore,
@@ -55,6 +67,11 @@ pub enum ContextMenuAction {
     GraphExportNetwork,
     GraphFetchDetails,
     GraphCreateNote,
+    CardboxNewGroup,
+    CardboxAddToGroup,
+    CardboxRemoveFromGroup,
+    CardboxDissolveGroup,
+    CardboxRenameGroup,
 }
 
 impl ContextMenuAction {
@@ -74,6 +91,11 @@ impl ContextMenuAction {
             CTX_GRAPH_EXPORT_NETWORK => Some(Self::GraphExportNetwork),
             CTX_GRAPH_FETCH_DETAILS => Some(Self::GraphFetchDetails),
             CTX_GRAPH_CREATE_NOTE => Some(Self::GraphCreateNote),
+            CTX_CARDBOX_NEW_GROUP => Some(Self::CardboxNewGroup),
+            CTX_CARDBOX_ADD_TO_GROUP => Some(Self::CardboxAddToGroup),
+            CTX_CARDBOX_REMOVE_FROM_GROUP => Some(Self::CardboxRemoveFromGroup),
+            CTX_CARDBOX_DISSOLVE_GROUP => Some(Self::CardboxDissolveGroup),
+            CTX_CARDBOX_RENAME_GROUP => Some(Self::CardboxRenameGroup),
             _ => None,
         }
     }
@@ -104,6 +126,12 @@ pub struct MindmapContextPayload {
 pub struct GraphContextPayload {
     pub node_id: String,
     pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CardboxContextPayload {
+    pub card_uuid: Option<String>,
+    pub group_id: Option<String>,
 }
 
 pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
@@ -186,6 +214,12 @@ pub struct GraphMenuContext {
     pub is_shadow: bool,
 }
 
+pub struct CardboxMenuContext {
+    pub is_grouped: bool,
+    pub is_group_header: bool,
+    pub has_groups: bool,
+}
+
 pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
     let mut items = Vec::new();
     if ctx.is_shadow && ctx.selection_count <= 1 {
@@ -233,6 +267,42 @@ pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
     items
 }
 
+pub fn cardbox_menu_items(ctx: &CardboxMenuContext) -> Vec<MenuItemSpec> {
+    let mut items = Vec::new();
+    if ctx.is_group_header {
+        items.push(MenuItemSpec {
+            id: CTX_CARDBOX_RENAME_GROUP,
+            label: "Rename Group".into(),
+            enabled: true,
+        });
+        items.push(MenuItemSpec {
+            id: CTX_CARDBOX_DISSOLVE_GROUP,
+            label: "Dissolve Group".into(),
+            enabled: true,
+        });
+    } else if ctx.is_grouped {
+        items.push(MenuItemSpec {
+            id: CTX_CARDBOX_REMOVE_FROM_GROUP,
+            label: "Remove from Group".into(),
+            enabled: true,
+        });
+    } else {
+        items.push(MenuItemSpec {
+            id: CTX_CARDBOX_NEW_GROUP,
+            label: "New Group".into(),
+            enabled: true,
+        });
+        if ctx.has_groups {
+            items.push(MenuItemSpec {
+                id: CTX_CARDBOX_ADD_TO_GROUP,
+                label: "Add to Group\u{2026}".into(),
+                enabled: true,
+            });
+        }
+    }
+    items
+}
+
 pub fn dispatch_mindmap_action(
     action: ContextMenuAction,
     node_id: &str,
@@ -269,6 +339,26 @@ pub fn dispatch_graph_action(
     (event, payload)
 }
 
+pub fn dispatch_cardbox_action(
+    action: ContextMenuAction,
+    card_uuid: Option<String>,
+    group_id: Option<String>,
+) -> (&'static str, CardboxContextPayload) {
+    let payload = CardboxContextPayload {
+        card_uuid,
+        group_id,
+    };
+    let event = match action {
+        ContextMenuAction::CardboxNewGroup => EVENT_CTX_CARDBOX_NEW_GROUP,
+        ContextMenuAction::CardboxAddToGroup => EVENT_CTX_CARDBOX_ADD_TO_GROUP,
+        ContextMenuAction::CardboxRemoveFromGroup => EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP,
+        ContextMenuAction::CardboxDissolveGroup => EVENT_CTX_CARDBOX_DISSOLVE_GROUP,
+        ContextMenuAction::CardboxRenameGroup => EVENT_CTX_CARDBOX_RENAME_GROUP,
+        _ => unreachable!("dispatch_cardbox_action called with non-cardbox action"),
+    };
+    (event, payload)
+}
+
 pub fn dispatch_context_action(
     action: ContextMenuAction,
     context: &str,
@@ -296,6 +386,7 @@ pub enum ContextMenuContext {
     Sidebar { relative_path: String },
     Mindmap { node_id: String },
     Graph { node_id: String, node_ids: Vec<String> },
+    Cardbox { card_uuid: Option<String>, group_id: Option<String> },
 }
 
 pub struct PendingContextMenu(pub Mutex<Option<ContextMenuContext>>);
@@ -389,6 +480,13 @@ pub fn handle_context_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let _ = window.emit(event_name, &payload);
             }
         }
+        ContextMenuContext::Cardbox { card_uuid, group_id } => {
+            let (event_name, payload) = dispatch_cardbox_action(action, card_uuid, group_id);
+            let windows = app.webview_windows();
+            for window in windows.values() {
+                let _ = window.emit(event_name, &payload);
+            }
+        }
     }
 }
 
@@ -426,6 +524,29 @@ pub fn show_mindmap_context_menu(
 ) -> Result<(), String> {
     *pending.0.lock().unwrap() = Some(ContextMenuContext::Mindmap { node_id });
     let specs = mindmap_menu_items(has_export);
+    show_popup_menu(&specs, &window)
+}
+
+#[tauri::command]
+pub fn show_cardbox_context_menu(
+    card_uuid: Option<String>,
+    group_id: Option<String>,
+    is_grouped: bool,
+    is_group_header: bool,
+    has_groups: bool,
+    window: tauri::Window,
+    pending: tauri::State<PendingContextMenu>,
+) -> Result<(), String> {
+    *pending.0.lock().unwrap() = Some(ContextMenuContext::Cardbox {
+        card_uuid,
+        group_id,
+    });
+    let ctx = CardboxMenuContext {
+        is_grouped,
+        is_group_header,
+        has_groups,
+    };
+    let specs = cardbox_menu_items(&ctx);
     show_popup_menu(&specs, &window)
 }
 
@@ -1184,5 +1305,242 @@ mod tests {
             }
             _ => panic!("Expected Graph variant"),
         }
+    }
+
+    // --- Cardbox context menu ---
+
+    #[test]
+    fn cardbox_context_menu_ids_are_defined() {
+        assert_eq!(CTX_CARDBOX_NEW_GROUP, "ctx_cardbox_new_group");
+        assert_eq!(CTX_CARDBOX_ADD_TO_GROUP, "ctx_cardbox_add_to_group");
+        assert_eq!(CTX_CARDBOX_REMOVE_FROM_GROUP, "ctx_cardbox_remove_from_group");
+        assert_eq!(CTX_CARDBOX_DISSOLVE_GROUP, "ctx_cardbox_dissolve_group");
+        assert_eq!(CTX_CARDBOX_RENAME_GROUP, "ctx_cardbox_rename_group");
+    }
+
+    #[test]
+    fn cardbox_event_constants_are_defined() {
+        assert_eq!(EVENT_CTX_CARDBOX_NEW_GROUP, "context-menu://cardbox/new-group");
+        assert_eq!(EVENT_CTX_CARDBOX_ADD_TO_GROUP, "context-menu://cardbox/add-to-group");
+        assert_eq!(EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP, "context-menu://cardbox/remove-from-group");
+        assert_eq!(EVENT_CTX_CARDBOX_DISSOLVE_GROUP, "context-menu://cardbox/dissolve-group");
+        assert_eq!(EVENT_CTX_CARDBOX_RENAME_GROUP, "context-menu://cardbox/rename-group");
+    }
+
+    #[test]
+    fn from_id_maps_cardbox_ids() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_NEW_GROUP),
+            Some(ContextMenuAction::CardboxNewGroup)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_ADD_TO_GROUP),
+            Some(ContextMenuAction::CardboxAddToGroup)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_REMOVE_FROM_GROUP),
+            Some(ContextMenuAction::CardboxRemoveFromGroup)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_DISSOLVE_GROUP),
+            Some(ContextMenuAction::CardboxDissolveGroup)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_RENAME_GROUP),
+            Some(ContextMenuAction::CardboxRenameGroup)
+        );
+    }
+
+    #[test]
+    fn cardbox_ids_do_not_collide_with_app_menu_ids() {
+        use crate::menu;
+        let app_menu_ids = [
+            menu::MENU_ID_OPEN_WORKSPACE,
+            menu::MENU_ID_INSTALL_CLI,
+            menu::MENU_ID_OPEN_PREFERENCES,
+            menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            menu::MENU_ID_CLOSE,
+            menu::MENU_ID_EXPORT_MARKDOWN,
+            menu::MENU_ID_BUY_LICENSE,
+            menu::MENU_ID_ENTER_LICENSE_KEY,
+            menu::MENU_ID_LICENSE_INFO,
+            menu::MENU_ID_ABOUT,
+        ];
+        let cardbox_ids = [
+            CTX_CARDBOX_NEW_GROUP,
+            CTX_CARDBOX_ADD_TO_GROUP,
+            CTX_CARDBOX_REMOVE_FROM_GROUP,
+            CTX_CARDBOX_DISSOLVE_GROUP,
+            CTX_CARDBOX_RENAME_GROUP,
+        ];
+        for cid in &cardbox_ids {
+            for aid in &app_menu_ids {
+                assert_ne!(cid, aid, "Cardbox ID {cid} collides with app menu ID {aid}");
+            }
+        }
+    }
+
+    #[test]
+    fn cardbox_ids_do_not_collide_with_other_context_menu_ids() {
+        let other_ids = [
+            CTX_TRASH_RESTORE,
+            CTX_TRASH_PURGE,
+            CTX_SIDEBAR_RENAME,
+            CTX_SIDEBAR_EXTERNAL_EDITOR,
+            CTX_SIDEBAR_EXPORT_NETWORK,
+            CTX_SIDEBAR_TRASH,
+            CTX_MINDMAP_EDIT,
+            CTX_MINDMAP_EXPORT_NETWORK,
+            CTX_GRAPH_MERGE,
+            CTX_GRAPH_SPLIT,
+            CTX_GRAPH_DELETE,
+            CTX_GRAPH_EXPORT_NETWORK,
+            CTX_GRAPH_FETCH_DETAILS,
+            CTX_GRAPH_CREATE_NOTE,
+        ];
+        let cardbox_ids = [
+            CTX_CARDBOX_NEW_GROUP,
+            CTX_CARDBOX_ADD_TO_GROUP,
+            CTX_CARDBOX_REMOVE_FROM_GROUP,
+            CTX_CARDBOX_DISSOLVE_GROUP,
+            CTX_CARDBOX_RENAME_GROUP,
+        ];
+        for cid in &cardbox_ids {
+            for oid in &other_ids {
+                assert_ne!(cid, oid, "Cardbox ID {cid} collides with context menu ID {oid}");
+            }
+        }
+    }
+
+    #[test]
+    fn cardbox_menu_items_ungrouped_card_without_groups() {
+        let ctx = CardboxMenuContext {
+            is_grouped: false,
+            is_group_header: false,
+            has_groups: false,
+        };
+        let items = cardbox_menu_items(&ctx);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, CTX_CARDBOX_NEW_GROUP);
+        assert_eq!(items[0].label, "New Group");
+        assert!(items[0].enabled);
+    }
+
+    #[test]
+    fn cardbox_menu_items_ungrouped_card_with_groups() {
+        let ctx = CardboxMenuContext {
+            is_grouped: false,
+            is_group_header: false,
+            has_groups: true,
+        };
+        let items = cardbox_menu_items(&ctx);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, CTX_CARDBOX_NEW_GROUP);
+        assert_eq!(items[0].label, "New Group");
+        assert!(items[0].enabled);
+        assert_eq!(items[1].id, CTX_CARDBOX_ADD_TO_GROUP);
+        assert_eq!(items[1].label, "Add to Group\u{2026}");
+        assert!(items[1].enabled);
+    }
+
+    #[test]
+    fn cardbox_menu_items_grouped_card() {
+        let ctx = CardboxMenuContext {
+            is_grouped: true,
+            is_group_header: false,
+            has_groups: true,
+        };
+        let items = cardbox_menu_items(&ctx);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, CTX_CARDBOX_REMOVE_FROM_GROUP);
+        assert_eq!(items[0].label, "Remove from Group");
+        assert!(items[0].enabled);
+    }
+
+    #[test]
+    fn cardbox_menu_items_group_header() {
+        let ctx = CardboxMenuContext {
+            is_grouped: false,
+            is_group_header: true,
+            has_groups: true,
+        };
+        let items = cardbox_menu_items(&ctx);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, CTX_CARDBOX_RENAME_GROUP);
+        assert_eq!(items[0].label, "Rename Group");
+        assert!(items[0].enabled);
+        assert_eq!(items[1].id, CTX_CARDBOX_DISSOLVE_GROUP);
+        assert_eq!(items[1].label, "Dissolve Group");
+        assert!(items[1].enabled);
+    }
+
+    #[test]
+    fn dispatch_cardbox_actions() {
+        // New Group
+        let (event, payload) = dispatch_cardbox_action(
+            ContextMenuAction::CardboxNewGroup,
+            Some("uuid-1".to_string()),
+            None,
+        );
+        assert_eq!(event, EVENT_CTX_CARDBOX_NEW_GROUP);
+        assert_eq!(payload.card_uuid.as_deref(), Some("uuid-1"));
+        assert!(payload.group_id.is_none());
+
+        // Add to Group
+        let (event, payload) = dispatch_cardbox_action(
+            ContextMenuAction::CardboxAddToGroup,
+            Some("uuid-2".to_string()),
+            None,
+        );
+        assert_eq!(event, EVENT_CTX_CARDBOX_ADD_TO_GROUP);
+        assert_eq!(payload.card_uuid.as_deref(), Some("uuid-2"));
+
+        // Remove from Group
+        let (event, payload) = dispatch_cardbox_action(
+            ContextMenuAction::CardboxRemoveFromGroup,
+            Some("uuid-3".to_string()),
+            Some("group-a".to_string()),
+        );
+        assert_eq!(event, EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP);
+        assert_eq!(payload.card_uuid.as_deref(), Some("uuid-3"));
+        assert_eq!(payload.group_id.as_deref(), Some("group-a"));
+
+        // Dissolve Group
+        let (event, payload) = dispatch_cardbox_action(
+            ContextMenuAction::CardboxDissolveGroup,
+            None,
+            Some("group-b".to_string()),
+        );
+        assert_eq!(event, EVENT_CTX_CARDBOX_DISSOLVE_GROUP);
+        assert!(payload.card_uuid.is_none());
+        assert_eq!(payload.group_id.as_deref(), Some("group-b"));
+
+        // Rename Group
+        let (event, payload) = dispatch_cardbox_action(
+            ContextMenuAction::CardboxRenameGroup,
+            None,
+            Some("group-c".to_string()),
+        );
+        assert_eq!(event, EVENT_CTX_CARDBOX_RENAME_GROUP);
+        assert_eq!(payload.group_id.as_deref(), Some("group-c"));
+    }
+
+    #[test]
+    fn cardbox_context_payload_serializes_correctly() {
+        let payload = CardboxContextPayload {
+            card_uuid: Some("abc".to_string()),
+            group_id: Some("grp-1".to_string()),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["card_uuid"], "abc");
+        assert_eq!(json["group_id"], "grp-1");
+
+        let payload_none = CardboxContextPayload {
+            card_uuid: None,
+            group_id: None,
+        };
+        let json_none = serde_json::to_value(&payload_none).unwrap();
+        assert!(json_none["card_uuid"].is_null());
+        assert!(json_none["group_id"].is_null());
     }
 }
