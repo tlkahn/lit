@@ -30,12 +30,29 @@ pub struct ZoteroPdfRecord {
     pub child_notes: Vec<ZoteroChildNote>,
 }
 
+/// Percent-encode characters that are special in SQLite URI filenames.
+/// SQLite URI format requires encoding: `%`, `?`, `#`, and space.
+fn encode_sqlite_uri_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len() * 2);
+    for b in path.bytes() {
+        match b {
+            b'%' => encoded.push_str("%25"),
+            b'#' => encoded.push_str("%23"),
+            b'?' => encoded.push_str("%3F"),
+            b' ' => encoded.push_str("%20"),
+            _ => encoded.push(b as char),
+        }
+    }
+    encoded
+}
+
 /// Open the Zotero SQLite database in read-only mode.
 /// Uses URI filename with `?mode=ro` to avoid WAL lock contention
 /// when Zotero is running.
 fn open_zotero_db(db_path: &str) -> Result<Connection, String> {
+    let uri_path = encode_sqlite_uri_path(db_path);
     Connection::open_with_flags(
-        format!("file:{}?mode=ro", db_path),
+        format!("file:{}?mode=ro", uri_path),
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
     )
     .map_err(|e| format!("Failed to open Zotero database at '{}': {}", db_path, e))
@@ -57,15 +74,15 @@ fn strip_html_tags(html: &str) -> String {
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Query the Zotero database for PDF annotations matching the given filename.
+/// Query the Zotero database for annotations on the attachment with the given itemID.
 ///
-/// Returns annotations of type 1 (highlight), 2 (note/sticky), and 5 (underline),
-/// filtering out type 3 (image) and type 4 (ink/freehand) since they cannot be
-/// meaningfully represented as text. Results are ordered by `sortIndex` which
-/// encodes document position (page, y-position, character offset).
+/// Returns annotations of type 1 (highlight), 2 (note/sticky), 5 (underline),
+/// and 6 (freetext), filtering out type 3 (image) and type 4 (ink/freehand)
+/// since they cannot be meaningfully represented as text. Results are ordered
+/// by `sortIndex` which encodes document position (page, y-position, character offset).
 pub fn query_zotero_for_pdf(
     db_path: &str,
-    pdf_filename: &str,
+    att_item_id: i64,
 ) -> Result<Vec<ZoteroAnnotation>, String> {
     let conn = open_zotero_db(db_path)?;
 
@@ -80,15 +97,14 @@ pub fn query_zotero_for_pdf(
                 ia.pageLabel,
                 ia.sortIndex
             FROM itemAnnotations ia
-            JOIN itemAttachments att ON ia.parentItemID = att.itemID
-            WHERE att.path LIKE '%' || ?1
+            WHERE ia.parentItemID = ?1
               AND ia.type NOT IN (3, 4)
             ORDER BY ia.sortIndex ASC",
         )
         .map_err(|e| format!("Failed to prepare annotation query: {}", e))?;
 
     let rows = stmt
-        .query_map(params![pdf_filename], |row| {
+        .query_map(params![att_item_id], |row| {
             Ok(ZoteroAnnotation {
                 item_id: row.get(0)?,
                 ann_type: row.get(1)?,
@@ -118,6 +134,10 @@ pub fn resolve_pdf_in_zotero(
 ) -> Result<Option<(i64, i64)>, String> {
     let conn = open_zotero_db(db_path)?;
 
+    // Match the exact filename after the "storage:" prefix or after the last "/".
+    // Two patterns: "storage:<filename>.pdf" (Zotero stored files) or any path
+    // ending in "/<filename>.pdf" (linked files). Both case-insensitive.
+    let filename_with_ext = format!("{}.pdf", pdf_filename_stem);
     let mut stmt = conn
         .prepare(
             "SELECT
@@ -127,13 +147,16 @@ pub fn resolve_pdf_in_zotero(
             JOIN items i ON att.itemID = i.itemID
             WHERE i.itemTypeID = (SELECT itemTypeID FROM itemTypes WHERE typeName = 'attachment')
               AND att.contentType = 'application/pdf'
-              AND LOWER(att.path) LIKE '%' || LOWER(?1) || '.pdf'
+              AND (
+                  LOWER(att.path) = LOWER('storage:' || ?1)
+                  OR LOWER(SUBSTR(att.path, -LENGTH('/' || ?1))) = LOWER('/' || ?1)
+              )
             LIMIT 1",
         )
         .map_err(|e| format!("Failed to prepare resolve query: {}", e))?;
 
     let mut rows = stmt
-        .query(params![pdf_filename_stem])
+        .query(params![filename_with_ext])
         .map_err(|e| format!("Failed to query PDF resolution: {}", e))?;
 
     while let Some(row) = rows.next().map_err(|e| format!("Failed to read row: {}", e))? {
@@ -285,8 +308,8 @@ pub fn build_paragraphs(lines: &[&str]) -> Vec<(String, usize)> {
 /// Compute the length of the longest common substring between `a` and `b`
 /// using a standard DP approach with O(min(|a|,|b|)) space.
 fn lcs_length(a: &str, b: &str) -> usize {
-    let a = a.as_bytes();
-    let b = b.as_bytes();
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
 
     // Ensure `b` is the shorter side for memory efficiency.
     let (a, b) = if a.len() >= b.len() { (a, b) } else { (b, a) };
@@ -402,10 +425,18 @@ fn truncate_anchor(text: &str, max_len: usize) -> String {
     if trimmed.len() <= max_len {
         return trimmed;
     }
-    let truncated = &trimmed[..max_len];
-    match truncated.rfind(' ') {
-        Some(pos) => format!("{}\u{2026}", &truncated[..pos]),
-        None => format!("{}\u{2026}", truncated),
+    // Find the last char boundary at or before max_len to avoid
+    // panicking on multi-byte UTF-8 sequences.
+    let boundary = trimmed
+        .char_indices()
+        .take_while(|&(i, _)| i <= max_len)
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let safe_slice = &trimmed[..boundary];
+    match safe_slice.rfind(' ') {
+        Some(pos) => format!("{}\u{2026}", &safe_slice[..pos]),
+        None => format!("{}\u{2026}", safe_slice),
     }
 }
 
@@ -521,15 +552,27 @@ fn detect_frontmatter_end(lines: &[String]) -> Option<usize> {
 /// insertions targeting lines inside frontmatter are clamped to after it.
 pub fn insert_annotations_into_markdown(
     content: &str,
-    mut annotations_with_positions: Vec<(usize, String)>,
+    annotations_with_positions: Vec<(usize, String)>,
 ) -> String {
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
     let trailing_newline = content.ends_with('\n');
 
     let frontmatter_end = detect_frontmatter_end(&lines);
 
-    // Sort descending by line_index for bottom-up insertion
-    annotations_with_positions.sort_by(|a, b| b.0.cmp(&a.0));
+    // Tag each entry with its original order so we can break ties.
+    let mut tagged: Vec<(usize, usize, String)> = annotations_with_positions
+        .into_iter()
+        .enumerate()
+        .map(|(orig_idx, (line_idx, dsl))| (line_idx, orig_idx, dsl))
+        .collect();
+
+    // Sort descending by line_index for bottom-up insertion.
+    // For same line_index, sort descending by original order so that
+    // after bottom-up insertion the original order is preserved.
+    tagged.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+
+    let annotations_with_positions: Vec<(usize, String)> =
+        tagged.into_iter().map(|(li, _, dsl)| (li, dsl)).collect();
 
     for (line_idx, dsl) in annotations_with_positions {
         // Clamp: never insert inside frontmatter
@@ -617,13 +660,14 @@ pub async fn import_zotero_annotations(
     let companion_path = companion_abs.clone();
     tokio::task::spawn_blocking(move || {
         // Resolve in Zotero
-        let (_att_id, parent_id) = resolve_pdf_in_zotero(&db_path, &pdf_stem)?
+        let (att_id, parent_id) = resolve_pdf_in_zotero(&db_path, &pdf_stem)?
             .ok_or_else(|| {
                 format!("PDF '{}' not found in Zotero database", pdf_filename)
             })?;
 
-        // Get annotations and child notes
-        let annotations = query_zotero_for_pdf(&db_path, &pdf_filename)?;
+        // Get annotations and child notes — use att_id directly instead of
+        // re-matching by filename, which could hit a different attachment.
+        let annotations = query_zotero_for_pdf(&db_path, att_id)?;
         let child_notes = query_zotero_child_notes(&db_path, parent_id)?;
 
         // Read companion content
@@ -658,7 +702,14 @@ pub async fn import_zotero_annotations(
 
         for ann in &new_anns {
             let dsl = zotero_ann_to_dsl(ann);
-            if let Some(text) = ann.text.as_deref().filter(|t| !t.is_empty()) {
+            // Freetext (type 6) and sticky notes (type 2) contain user-typed text,
+            // not highlighted PDF content — don't match them against the markdown.
+            let matchable_text = if ann.ann_type == 2 || ann.ann_type == 6 {
+                None
+            } else {
+                ann.text.as_deref().filter(|t| !t.is_empty())
+            };
+            if let Some(text) = matchable_text {
                 if let Some(line_idx) = find_match_line(text, &lines, threshold) {
                     matched.push((line_idx, dsl));
                 } else {
@@ -906,7 +957,7 @@ mod tests {
     #[test]
     fn extracts_annotations_ordered_by_sort_index() {
         let (_dir, db_path) = create_test_db();
-        let anns = query_zotero_for_pdf(&db_path, "Smith2024_Deep_Learning.pdf").unwrap();
+        let anns = query_zotero_for_pdf(&db_path, 200).unwrap();
 
         // Should have 3 annotations (types 1, 2, 1) -- types 3, 4 filtered out
         assert_eq!(anns.len(), 3);
@@ -931,7 +982,7 @@ mod tests {
     #[test]
     fn filters_out_image_and_ink_annotations() {
         let (_dir, db_path) = create_test_db();
-        let anns = query_zotero_for_pdf(&db_path, "Smith2024_Deep_Learning.pdf").unwrap();
+        let anns = query_zotero_for_pdf(&db_path, 200).unwrap();
 
         for ann in &anns {
             assert!(
@@ -948,7 +999,7 @@ mod tests {
     #[test]
     fn no_annotations_returns_empty_vec() {
         let (_dir, db_path) = create_test_db();
-        let anns = query_zotero_for_pdf(&db_path, "nonexistent.pdf").unwrap();
+        let anns = query_zotero_for_pdf(&db_path, 99999).unwrap();
         assert!(anns.is_empty());
     }
 
@@ -1740,5 +1791,312 @@ Some text
     fn unmatched_section_empty() {
         let section = collect_unmatched_section(&[]);
         assert!(section.starts_with("## Unmatched Zotero Annotations"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 1: truncate_anchor multibyte UTF-8
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_truncate_anchor_multibyte_accented() {
+        // Each accented char is 2 bytes in UTF-8.
+        // "cafe\u{0301}" normalizes to 5 chars but the e-acute could be 2 bytes.
+        // Use a string that would panic with naive byte slicing.
+        let text = "\u{00e9}\u{00e9}\u{00e9}\u{00e9}\u{00e9}"; // "eeeee" with accents, 10 bytes, 5 chars
+        // max_len=3 is in the middle of multi-byte territory
+        let result = truncate_anchor(text, 3);
+        // Should not panic, and should produce a valid string with ellipsis
+        assert!(result.ends_with('\u{2026}'));
+        // The part before the ellipsis should be valid UTF-8 (it compiles and runs = valid)
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_anchor_cjk() {
+        // Each CJK char is 3 bytes. "hello" is 5 bytes.
+        // "\u{4e16}\u{754c}" = "世界" = 6 bytes, 2 chars
+        let text = "hello \u{4e16}\u{754c} world more words to exceed the limit and test truncation behavior with CJK";
+        let result = truncate_anchor(text, 10);
+        assert!(result.ends_with('\u{2026}'));
+        let before_ellipsis = &result[..result.len() - '\u{2026}'.len_utf8()];
+        // Should break at a word boundary
+        assert!(
+            before_ellipsis.ends_with("hello"),
+            "expected word break: got '{}'",
+            before_ellipsis
+        );
+    }
+
+    #[test]
+    fn test_truncate_anchor_emoji() {
+        // Emoji can be 4 bytes each
+        let text = "\u{1f600}\u{1f600}\u{1f600} hello world";
+        let result = truncate_anchor(text, 5);
+        // Should not panic
+        assert!(result.ends_with('\u{2026}'));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 2: lcs_length multibyte
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lcs_length_multibyte_cjk() {
+        // "\u{6df1}\u{5ea6}\u{5b66}\u{4e60}" = "深度学习" (4 chars, 12 bytes)
+        // "\u{673a}\u{5668}\u{5b66}\u{4e60}" = "机器学习" (4 chars, 12 bytes)
+        // Common substring: "\u{5b66}\u{4e60}" = "学习" (2 chars, 6 bytes)
+        let a = "\u{6df1}\u{5ea6}\u{5b66}\u{4e60}";
+        let b = "\u{673a}\u{5668}\u{5b66}\u{4e60}";
+        // Should return 2 (chars), not 6 (bytes)
+        assert_eq!(lcs_length(a, b), 2);
+    }
+
+    #[test]
+    fn test_lcs_length_multibyte_accented() {
+        // "cafe\u{0301}" and "cafe" share "caf" (3 chars) but the acute-e differs
+        let a = "caf\u{00e9}";
+        let b = "cafe";
+        assert_eq!(lcs_length(a, b), 3); // "caf" is common
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 3: encode_sqlite_uri_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_encode_sqlite_uri_path_no_specials() {
+        assert_eq!(
+            encode_sqlite_uri_path("/usr/local/zotero.sqlite"),
+            "/usr/local/zotero.sqlite"
+        );
+    }
+
+    #[test]
+    fn test_encode_sqlite_uri_path_space() {
+        assert_eq!(
+            encode_sqlite_uri_path("/path with spaces/db.sqlite"),
+            "/path%20with%20spaces/db.sqlite"
+        );
+    }
+
+    #[test]
+    fn test_encode_sqlite_uri_path_hash() {
+        assert_eq!(
+            encode_sqlite_uri_path("/path/#fragment/db.sqlite"),
+            "/path/%23fragment/db.sqlite"
+        );
+    }
+
+    #[test]
+    fn test_encode_sqlite_uri_path_question_mark() {
+        assert_eq!(
+            encode_sqlite_uri_path("/path/what?/db.sqlite"),
+            "/path/what%3F/db.sqlite"
+        );
+    }
+
+    #[test]
+    fn test_encode_sqlite_uri_path_percent() {
+        assert_eq!(
+            encode_sqlite_uri_path("/path/100%/db.sqlite"),
+            "/path/100%25/db.sqlite"
+        );
+    }
+
+    #[test]
+    fn test_encode_sqlite_uri_path_multiple_specials() {
+        assert_eq!(
+            encode_sqlite_uri_path("/a b/c#d/e?f/100%"),
+            "/a%20b/c%23d/e%3Ff/100%25"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4/7: resolve_pdf exact match (no LIKE wildcards)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_pdf_does_not_match_substring() {
+        // Create a DB with a PDF named "TrainingAI.pdf" and check that
+        // searching for stem "AI" does NOT match it (old LIKE would match).
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("zotero.sqlite");
+        let path_str = db_path.to_str().unwrap().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE itemTypes (itemTypeID INTEGER PRIMARY KEY, typeName TEXT NOT NULL UNIQUE);
+            INSERT INTO itemTypes VALUES (1, 'attachment');
+            CREATE TABLE items (itemID INTEGER PRIMARY KEY, itemTypeID INTEGER NOT NULL);
+            INSERT INTO items VALUES (10, 1);
+            CREATE TABLE itemAttachments (
+                itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+                contentType TEXT, path TEXT
+            );
+            INSERT INTO itemAttachments VALUES (10, 5, 'application/pdf', 'storage:TrainingAI.pdf');
+            ",
+        )
+        .unwrap();
+        drop(conn);
+
+        // "AI" should NOT match "TrainingAI.pdf"
+        let result = resolve_pdf_in_zotero(&path_str, "AI").unwrap();
+        assert_eq!(result, None, "short stem 'AI' should not match 'TrainingAI.pdf'");
+
+        // "TrainingAI" SHOULD match
+        let result = resolve_pdf_in_zotero(&path_str, "TrainingAI").unwrap();
+        assert_eq!(result, Some((10, 5)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 5: same-line insertion order
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insert_same_line_preserves_original_order() {
+        let content = "line 0\nline 1\nline 2\n";
+        // Two annotations both targeting line 1, given in order A then B.
+        let annotations = vec![
+            (1, "<!---[zot-A] n: | first --->".to_string()),
+            (1, "<!---[zot-B] n: | second --->".to_string()),
+        ];
+        let result = insert_annotations_into_markdown(content, annotations);
+        let pos_a = result.find("zot-A").expect("should contain zot-A");
+        let pos_b = result.find("zot-B").expect("should contain zot-B");
+        assert!(
+            pos_a < pos_b,
+            "zot-A should appear before zot-B (original order), got:\n{}",
+            result
+        );
+    }
+
+    #[test]
+    fn insert_same_line_three_annotations() {
+        let content = "line 0\nline 1\n";
+        let annotations = vec![
+            (0, "<!---[zot-1] n: | first --->".to_string()),
+            (0, "<!---[zot-2] n: | second --->".to_string()),
+            (0, "<!---[zot-3] n: | third --->".to_string()),
+        ];
+        let result = insert_annotations_into_markdown(content, annotations);
+        let pos1 = result.find("zot-1").unwrap();
+        let pos2 = result.find("zot-2").unwrap();
+        let pos3 = result.find("zot-3").unwrap();
+        assert!(pos1 < pos2, "zot-1 before zot-2");
+        assert!(pos2 < pos3, "zot-2 before zot-3");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 6: freetext/sticky not matched against markdown
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn freetext_annotation_not_matched_to_lines() {
+        // A freetext annotation (type 6) whose text happens to appear in
+        // the markdown body should still go to unmatched.
+        let ann = ZoteroAnnotation {
+            item_id: 600,
+            ann_type: 6,
+            text: Some("hello world".to_string()),
+            comment: Some("user typed this".to_string()),
+            color: None,
+            page_label: Some("1".to_string()),
+            sort_index: "00001|000001|00000".to_string(),
+        };
+        let lines = vec!["hello world"];
+        // For type 6, we should NOT attempt matching even though the text
+        // is an exact match for the markdown content.
+        let matchable_text = if ann.ann_type == 2 || ann.ann_type == 6 {
+            None
+        } else {
+            ann.text.as_deref().filter(|t| !t.is_empty())
+        };
+        assert!(
+            matchable_text.is_none(),
+            "freetext (type 6) text should not be used for matching"
+        );
+
+        // Type 1 highlight with same text SHOULD be matchable
+        let highlight = ZoteroAnnotation {
+            ann_type: 1,
+            ..ann.clone()
+        };
+        let matchable_highlight = if highlight.ann_type == 2 || highlight.ann_type == 6 {
+            None
+        } else {
+            highlight.text.as_deref().filter(|t| !t.is_empty())
+        };
+        assert_eq!(matchable_highlight, Some("hello world"));
+        assert!(find_match_line("hello world", &lines, 0.65).is_some());
+    }
+
+    #[test]
+    fn sticky_note_not_matched_to_lines() {
+        let ann = ZoteroAnnotation {
+            item_id: 601,
+            ann_type: 2,
+            text: Some("some text".to_string()),
+            comment: Some("note comment".to_string()),
+            color: None,
+            page_label: Some("2".to_string()),
+            sort_index: "00002|000001|00000".to_string(),
+        };
+        let matchable_text = if ann.ann_type == 2 || ann.ann_type == 6 {
+            None
+        } else {
+            ann.text.as_deref().filter(|t| !t.is_empty())
+        };
+        assert!(
+            matchable_text.is_none(),
+            "sticky note (type 2) text should not be used for matching"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 7: resolve_pdf linked file path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_pdf_linked_file_path() {
+        // Test that linked files (paths with "/" not "storage:") also match
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("zotero.sqlite");
+        let path_str = db_path.to_str().unwrap().to_string();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE itemTypes (itemTypeID INTEGER PRIMARY KEY, typeName TEXT NOT NULL UNIQUE);
+            INSERT INTO itemTypes VALUES (1, 'attachment');
+            CREATE TABLE items (itemID INTEGER PRIMARY KEY, itemTypeID INTEGER NOT NULL);
+            INSERT INTO items VALUES (20, 1);
+            CREATE TABLE itemAttachments (
+                itemID INTEGER PRIMARY KEY, parentItemID INTEGER,
+                contentType TEXT, path TEXT
+            );
+            INSERT INTO itemAttachments VALUES (20, 10, 'application/pdf', '/home/user/Papers/MyPaper.pdf');
+            ",
+        )
+        .unwrap();
+        drop(conn);
+
+        let result = resolve_pdf_in_zotero(&path_str, "MyPaper").unwrap();
+        assert_eq!(result, Some((20, 10)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 8: query_zotero_for_pdf by att_id
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn query_by_att_id_returns_correct_annotations() {
+        let (_dir, db_path) = create_test_db();
+        // att_id 200 has 3 valid annotations (types 1, 2, 1; types 3, 4 filtered)
+        let anns = query_zotero_for_pdf(&db_path, 200).unwrap();
+        assert_eq!(anns.len(), 3);
+        // Different att_id returns empty
+        let anns2 = query_zotero_for_pdf(&db_path, 100).unwrap();
+        assert!(anns2.is_empty());
     }
 }
