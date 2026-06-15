@@ -97,6 +97,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
       { value: "editor", label: "Editor" },
       { value: "mindmap", label: "Mindmap" },
       { value: "graph", label: "Graph" },
+      { value: "cardbox", label: "Cardbox" },
     ],
   },
   {

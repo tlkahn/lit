@@ -1,7 +1,6 @@
 import { useCallback, useRef } from "react";
-import { TYPE_ICON, getMarkIcon, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
-import type { CardboxAnnotation } from "../lib/ipc";
-import type { AnnotationType } from "../lib/ipc";
+import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
+import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
@@ -23,10 +22,7 @@ export function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }
     [expanded, onToggleExpand],
   );
 
-  const icon =
-    annotation.annotation_type === "mark"
-      ? getMarkIcon(annotation.annotation_type)
-      : (TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "...");
+  const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
 
   const certainty = certaintyMark(annotation.certainty);
 
@@ -69,7 +65,7 @@ export function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }
       <div
         className="overflow-hidden transition-all duration-200 ease-out"
         style={{
-          maxHeight: expanded ? "500px" : "0",
+          maxHeight: expanded ? "2000px" : "0",
           opacity: expanded ? 1 : 0,
         }}
       >

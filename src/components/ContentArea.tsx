@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
-import { writePage, parseRawYaml, type ViewMode } from "../lib/ipc";
+import { writePage, parseRawYaml, isViewMode, type ViewMode } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
@@ -300,7 +300,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   useEffect(() => {
     const setModeHandler = (e: Event) => {
       const mode = (e as CustomEvent<string>).detail;
-      if (mode === "editor" || mode === "mindmap" || mode === "graph" || mode === "cardbox") {
+      if (isViewMode(mode)) {
         setViewMode(mode);
       }
     };

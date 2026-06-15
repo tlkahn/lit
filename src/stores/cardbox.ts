@@ -11,11 +11,12 @@ export interface CardboxStore {
   collapseAll: () => void;
 }
 
-export const useCardboxStore = create<CardboxStore>((set) => ({
+export const useCardboxStore = create<CardboxStore>((set, get) => ({
   annotations: [],
   expandedUuid: null,
   loading: false,
   fetchAnnotations: async () => {
+    if (get().loading) return;
     set({ loading: true });
     try {
       const annotations = await listAllAnnotations();
