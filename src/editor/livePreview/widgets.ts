@@ -217,10 +217,15 @@ export class CalloutHeaderWidget extends WidgetType {
   }
 }
 
-function markClipped(el: HTMLElement): void {
+function fitInlineMath(el: HTMLElement): void {
   requestAnimationFrame(() => {
     if (!el.isConnected) return;
-    el.classList.toggle("is-clipped", el.scrollWidth > el.clientWidth + 1);
+    el.style.zoom = "";
+    const natural = el.scrollWidth;
+    const available = el.clientWidth;
+    if (natural > available + 1) {
+      el.style.zoom = String(Math.max(0.5, available / natural));
+    }
   });
 }
 
@@ -240,7 +245,7 @@ export class InlineMathWidget extends WidgetType {
         span.textContent = this.latex;
         span.classList.add("cm-preview-math-error");
       }
-      markClipped(span);
+      fitInlineMath(span);
     } else {
       span.textContent = this.latex;
       span.classList.add("cm-preview-math-placeholder");
@@ -253,7 +258,7 @@ export class InlineMathWidget extends WidgetType {
           span.textContent = this.latex;
           span.classList.add("cm-preview-math-error");
         }
-        markClipped(span);
+        fitInlineMath(span);
       });
     }
     return span;
@@ -261,7 +266,7 @@ export class InlineMathWidget extends WidgetType {
 
   updateDOM(dom: HTMLElement): boolean {
     dom.innerHTML = "";
-    dom.classList.remove("cm-preview-math-error", "cm-preview-math-placeholder", "is-clipped");
+    dom.classList.remove("cm-preview-math-error", "cm-preview-math-placeholder");
     const katex = getKatexSync();
     if (katex) {
       try {
@@ -270,7 +275,7 @@ export class InlineMathWidget extends WidgetType {
         dom.textContent = this.latex;
         dom.classList.add("cm-preview-math-error");
       }
-      markClipped(dom);
+      fitInlineMath(dom);
     } else {
       dom.textContent = this.latex;
       dom.classList.add("cm-preview-math-placeholder");
@@ -283,7 +288,7 @@ export class InlineMathWidget extends WidgetType {
           dom.textContent = this.latex;
           dom.classList.add("cm-preview-math-error");
         }
-        markClipped(dom);
+        fitInlineMath(dom);
       });
     }
     return true;
