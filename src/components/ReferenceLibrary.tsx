@@ -19,6 +19,7 @@ import {
   bibUpdateFields,
   downloadEntryPdf,
   linkEntryPdf,
+  importZoteroAnnotations,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
@@ -159,6 +160,7 @@ export function ReferenceLibrary() {
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
+  const [importingZoteroKey, setImportingZoteroKey] = useState<string | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -441,6 +443,28 @@ export function ReferenceLibrary() {
       }
     },
     [workspacePath, linkingKey, downloadingKey, show],
+  );
+
+  const handleImportZotero = useCallback(
+    async (entry: BibEntry) => {
+      if (!workspacePath || importingZoteroKey) return;
+      setImportingZoteroKey(entry.key);
+      try {
+        const result = await importZoteroAnnotations(entry.key, workspacePath);
+        if (result.inserted === 0 && result.skipped > 0) {
+          show(`All annotations already imported for @${entry.key}`);
+        } else {
+          show(`Imported ${result.inserted} annotations for @${entry.key} (${result.unmatched} unmatched, ${result.skipped} skipped)`);
+        }
+        refreshPages();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        show(msg, "error");
+      } finally {
+        setImportingZoteroKey(null);
+      }
+    },
+    [workspacePath, importingZoteroKey, show, refreshPages],
   );
 
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -843,6 +867,14 @@ export function ReferenceLibrary() {
                               className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
                               OCR to Markdown
+                            </button>
+                            <button
+                              data-testid="import-zotero-btn"
+                              disabled={importingZoteroKey === entry.key}
+                              onClick={() => handleImportZotero(entry)}
+                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline disabled:opacity-50"
+                            >
+                              {importingZoteroKey === entry.key ? "Importing…" : "Zotero Annotations"}
                             </button>
                           </div>
                         ) : null}
