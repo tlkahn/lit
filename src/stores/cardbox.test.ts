@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useCardboxStore } from "./cardbox";
 import { mockInvoke } from "../test/tauri-mock";
-import type { CardboxAnnotation } from "../lib/ipc";
+import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 
 const MOCK_ANNOTATIONS: CardboxAnnotation[] = [
   {
@@ -46,11 +46,12 @@ describe("cardbox store", () => {
       activeTypes: null,
       order: [],
       links: [],
+      groups: {},
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
       if (cmd === "read_cardbox_layout")
-        return { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]] };
+        return { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {} };
       if (cmd === "write_cardbox_layout") return null;
       if (cmd === "add_cardbox_link") return null;
       if (cmd === "remove_cardbox_link") return null;
@@ -268,5 +269,113 @@ describe("cardbox store", () => {
     useCardboxStore.setState({ links: [["u1", "u2"]] });
     await useCardboxStore.getState().fetchAnnotations();
     expect(useCardboxStore.getState().links).toEqual([["u1", "u2"]]);
+  });
+
+  // --- Group round-trip tests ---
+
+  it("loadLayout stores groups from backend", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1"], collapsed: false },
+    };
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "read_cardbox_layout")
+        return { version: 3, order: ["group:g1", "u2"], links: [], groups };
+      return null;
+    });
+    await useCardboxStore.getState().loadLayout();
+    const state = useCardboxStore.getState();
+    expect(state.groups).toEqual(groups);
+    expect(state.order).toEqual(["group:g1", "u2"]);
+  });
+
+  it("saveLayout passes stored groups and uses version 3 when groups exist", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u2"],
+      links: [],
+      groups,
+    });
+    await useCardboxStore.getState().saveLayout();
+    expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
+      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups },
+    });
+  });
+
+  it("saveLayout uses version 2 when groups is empty", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    useCardboxStore.setState({
+      order: ["u1", "u2"],
+      links: [],
+      groups: {},
+    });
+    await useCardboxStore.getState().saveLayout();
+    expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
+      layout: { version: 2, order: ["u1", "u2"], links: [], groups: {} },
+    });
+  });
+
+  it("fetchAnnotations preserves group:xxx entries in order", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u2"],
+      groups,
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.order).toContain("group:g1");
+    expect(state.order).toContain("u2");
+  });
+
+  it("fetchAnnotations prunes stale members from groups", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1", "stale-uuid"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u2"],
+      groups,
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.groups.g1!.order).toEqual(["u1"]);
+  });
+
+  it("fetchAnnotations removes groups that become empty after pruning", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "Stale Group", order: ["stale-uuid"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u1", "u2"],
+      groups,
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.groups).toEqual({});
+    expect(state.order).not.toContain("group:g1");
+  });
+
+  it("loadLayout handles backend response without groups field", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "read_cardbox_layout")
+        return { version: 2, order: ["u1", "u2"], links: [] };
+      return null;
+    });
+    await useCardboxStore.getState().loadLayout();
+    const state = useCardboxStore.getState();
+    expect(state.groups).toEqual({});
   });
 });

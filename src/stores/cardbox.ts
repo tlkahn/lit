@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CardboxAnnotation } from "../lib/ipc";
+import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 import {
   listAllAnnotations,
   readCardboxLayout,
@@ -16,6 +16,7 @@ export interface CardboxStore {
   activeTypes: Set<string> | null;
   order: string[];
   links: [string, string][];
+  groups: Record<string, GroupInfo>;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -37,6 +38,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   activeTypes: null,
   order: [],
   links: [],
+  groups: {},
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -48,14 +50,30 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         const prunedLinks = s.links.filter(
           ([x, y]) => newUuids.has(x) && newUuids.has(y),
         );
+        // Prune group members against the new UUID set; drop empty groups
+        const prunedGroups: Record<string, GroupInfo> = {};
+        for (const [gid, info] of Object.entries(s.groups)) {
+          const kept = info.order.filter((id) => newUuids.has(id));
+          if (kept.length > 0) {
+            prunedGroups[gid] = { ...info, order: kept };
+          }
+        }
+        // Collect all known group IDs so we can preserve them in order
+        const groupIdSet = new Set(Object.keys(prunedGroups));
         return {
           annotations,
           loading: false,
           activeTypes: s.activeTypes === null ? types : s.activeTypes,
           links: prunedLinks,
+          groups: prunedGroups,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
-            const kept = s.order.filter((id) => newUuids.has(id));
+            // Keep entries that are either annotation UUIDs or group: refs
+            const kept = s.order.filter(
+              (id) =>
+                newUuids.has(id) ||
+                (id.startsWith("group:") && groupIdSet.has(id.slice(6))),
+            );
             const keptSet = new Set(kept);
             const added = annotations
               .filter((a) => !keptSet.has(a.uuid))
@@ -93,19 +111,26 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   loadLayout: async () => {
     try {
       const layout = await readCardboxLayout();
+      const groups = layout.groups ?? {};
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [] });
+        set({ order: layout.order, links: layout.links ?? [], groups });
       } else {
-        set({ links: layout.links ?? [] });
+        set({ links: layout.links ?? [], groups });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links } = get();
+    const { order, links, groups } = get();
+    const hasGroups = Object.keys(groups).length > 0;
     try {
-      await writeCardboxLayout({ version: 2, order, links, groups: {} });
+      await writeCardboxLayout({
+        version: hasGroups ? 3 : 2,
+        order,
+        links,
+        groups,
+      });
     } catch {
       // Ignore write failures silently
     }

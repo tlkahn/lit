@@ -31,6 +31,12 @@ impl Default for CardboxLayout {
     }
 }
 
+const GROUP_PREFIX: &str = "group:";
+
+fn group_entry_key(group_id: &str) -> String {
+    format!("{}{}", GROUP_PREFIX, group_id)
+}
+
 fn normalize_link(a: &str, b: &str) -> [String; 2] {
     if a <= b {
         [a.to_string(), b.to_string()]
@@ -56,6 +62,23 @@ fn persist_layout(lit_dir: &std::path::Path, layout: &CardboxLayout) -> Result<(
     Ok(())
 }
 
+fn with_cardbox_layout<F>(
+    window: &tauri::Window,
+    workspace_state: &State<crate::commands::workspace::WorkspaceRegistry>,
+    f: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut CardboxLayout) -> Result<(), String>,
+{
+    let root = crate::commands::workspace::get_workspace_root(workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+    f(&mut layout)?;
+    persist_layout(&lit_dir, &layout)
+}
+
 /// Remove a card UUID from wherever it currently lives (top-level order and all group orders).
 fn remove_card_from_all(layout: &mut CardboxLayout, uuid: &str) {
     layout.order.retain(|e| e != uuid);
@@ -72,6 +95,32 @@ fn do_create_group(
     card_uuids: Vec<String>,
     after_entry: Option<String>,
 ) {
+    // If the group already exists, remove its stale order entry so we don't
+    // end up with duplicate "group:xxx" entries after re-inserting below.
+    if layout.groups.contains_key(&group_id) {
+        let group_entry = group_entry_key(&group_id);
+        layout.order.retain(|e| *e != group_entry);
+    }
+
+    // Resolve the insertion position BEFORE removing cards from order.
+    // After removal, indices shift — so we find after_entry's position first,
+    // then count how many of card_uuids appear at or before that position to
+    // compute the adjusted insertion point.
+    let card_set: HashSet<&str> = card_uuids.iter().map(|s| s.as_str()).collect();
+    let insertion_index = if let Some(ref after) = after_entry {
+        if let Some(pos) = layout.order.iter().position(|e| *e == *after) {
+            let preceding_removals = layout.order[..=pos]
+                .iter()
+                .filter(|e| card_set.contains(e.as_str()))
+                .count();
+            Some(pos + 1 - preceding_removals)
+        } else {
+            None // after_entry not found — will append
+        }
+    } else {
+        None // no after_entry — will append
+    };
+
     for uuid in &card_uuids {
         remove_card_from_all(layout, uuid);
     }
@@ -80,13 +129,10 @@ fn do_create_group(
         order: card_uuids,
         collapsed: false,
     });
-    let group_entry = format!("group:{}", group_id);
-    if let Some(after) = after_entry {
-        if let Some(pos) = layout.order.iter().position(|e| *e == after) {
-            layout.order.insert(pos + 1, group_entry);
-        } else {
-            layout.order.push(group_entry);
-        }
+    let group_entry = group_entry_key(&group_id);
+    if let Some(idx) = insertion_index {
+        let clamped = idx.min(layout.order.len());
+        layout.order.insert(clamped, group_entry);
     } else {
         layout.order.push(group_entry);
     }
@@ -105,12 +151,16 @@ fn do_rename_group(layout: &mut CardboxLayout, group_id: &str, name: String) -> 
 fn do_dissolve_group(layout: &mut CardboxLayout, group_id: &str) -> Result<(), String> {
     let group = layout.groups.remove(group_id)
         .ok_or_else(|| format!("Group '{}' does not exist", group_id))?;
-    let group_entry = format!("group:{}", group_id);
+    let group_entry = group_entry_key(group_id);
     if let Some(pos) = layout.order.iter().position(|e| *e == group_entry) {
         layout.order.remove(pos);
         for (i, uuid) in group.order.into_iter().enumerate() {
             layout.order.insert(pos + i, uuid);
         }
+    } else {
+        // Corrupted layout: group existed in map but "group:xxx" missing from order.
+        // Recover by appending members to the end rather than losing them.
+        layout.order.extend(group.order);
     }
     Ok(())
 }
@@ -159,7 +209,7 @@ fn do_remove_card_from_group(
 
     if layout.groups.get(group_id).map_or(false, |g| g.order.is_empty()) {
         layout.groups.remove(group_id);
-        let group_entry = format!("group:{}", group_id);
+        let group_entry = group_entry_key(group_id);
         layout.order.retain(|e| *e != group_entry);
     }
     Ok(())
@@ -204,7 +254,7 @@ fn prune_layout(layout: &mut CardboxLayout, valid_uuids: &HashSet<&str>) {
     //   - keep "group:xxx" entries only if the group still exists
     //   - keep UUID entries only if valid AND not inside any group
     layout.order.retain(|entry| {
-        if let Some(group_id) = entry.strip_prefix("group:") {
+        if let Some(group_id) = entry.strip_prefix(GROUP_PREFIX) {
             valid_group_ids.contains(group_id)
         } else {
             valid_uuids.contains(entry.as_str()) && !grouped_uuids.contains(entry.as_str())
@@ -284,21 +334,15 @@ pub fn add_cardbox_link(
         return Err("Cannot link a card to itself".to_string());
     }
 
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    let normalized = normalize_link(&a, &b);
-    if layout.links.iter().any(|pair| *pair == normalized) {
-        return Ok(());
-    }
-
-    layout.links.push(normalized);
-    layout.version = 2;
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        let normalized = normalize_link(&a, &b);
+        if layout.links.iter().any(|pair| *pair == normalized) {
+            return Ok(());
+        }
+        layout.links.push(normalized);
+        layout.version = 2;
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -338,15 +382,10 @@ pub fn create_cardbox_group(
     card_uuids: Vec<String>,
     after_entry: Option<String>,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    do_create_group(&mut layout, group_id, name, card_uuids, after_entry);
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        do_create_group(layout, group_id, name, card_uuids, after_entry);
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -356,15 +395,9 @@ pub fn rename_cardbox_group(
     group_id: String,
     name: String,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    do_rename_group(&mut layout, &group_id, name)?;
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        do_rename_group(layout, &group_id, name)
+    })
 }
 
 #[tauri::command]
@@ -373,15 +406,9 @@ pub fn dissolve_cardbox_group(
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     group_id: String,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    do_dissolve_group(&mut layout, &group_id)?;
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        do_dissolve_group(layout, &group_id)
+    })
 }
 
 #[tauri::command]
@@ -392,15 +419,9 @@ pub fn move_card_to_group(
     target_group_id: String,
     index: Option<usize>,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    do_move_card_to_group(&mut layout, card_uuid, &target_group_id, index)?;
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        do_move_card_to_group(layout, card_uuid, &target_group_id, index)
+    })
 }
 
 #[tauri::command]
@@ -411,15 +432,9 @@ pub fn remove_card_from_group(
     group_id: String,
     top_level_index: Option<usize>,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    do_remove_card_from_group(&mut layout, card_uuid, &group_id, top_level_index)?;
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        do_remove_card_from_group(layout, card_uuid, &group_id, top_level_index)
+    })
 }
 
 #[tauri::command]
@@ -429,15 +444,9 @@ pub fn toggle_group_collapsed(
     group_id: String,
     collapsed: bool,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
-
-    do_toggle_group_collapsed(&mut layout, &group_id, collapsed)?;
-    persist_layout(&lit_dir, &layout)
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        do_toggle_group_collapsed(layout, &group_id, collapsed)
+    })
 }
 
 #[cfg(test)]
@@ -1157,6 +1166,31 @@ mod tests {
     }
 
     #[test]
+    fn create_group_after_entry_stable_when_cards_removed() {
+        // Regression: do_create_group used to find after_entry position AFTER
+        // removing card_uuids from order, causing the insertion point to shift.
+        // order=['a','b','c','d'], card_uuids=['a','c'], after_entry='b'
+        // Expected: group appears after 'b', result is ['b', 'group:g1', 'd']
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+
+        super::do_create_group(
+            &mut layout,
+            "g1".to_string(),
+            "G1".to_string(),
+            vec!["a".to_string(), "c".to_string()],
+            Some("b".to_string()),
+        );
+
+        assert_eq!(layout.order, vec!["b", "group:g1", "d"]);
+        assert_eq!(layout.groups["g1"].order, vec!["a", "c"]);
+    }
+
+    #[test]
     fn create_group_at_end_without_after() {
         let dir = create_workspace();
         let layout = super::CardboxLayout {
@@ -1239,6 +1273,31 @@ mod tests {
         let result = read_layout(dir.path());
         assert_eq!(result.order, vec!["a", "x", "y", "b"]);
         assert!(!result.groups.contains_key("g1"));
+    }
+
+    #[test]
+    fn dissolve_group_recovers_members_when_entry_missing() {
+        // Simulate corrupted layout: group exists in map but "group:g1" is missing from order.
+        let mut groups = HashMap::new();
+        groups.insert("g1".to_string(), super::GroupInfo {
+            name: "G1".to_string(),
+            order: vec!["x".into(), "y".into()],
+            collapsed: false,
+        });
+        let mut layout = super::CardboxLayout {
+            version: 3,
+            // Note: no "group:g1" entry — only plain cards
+            order: vec!["a".into(), "b".into()],
+            links: vec![],
+            groups,
+        };
+
+        super::do_dissolve_group(&mut layout, "g1").unwrap();
+
+        // Group should be removed from the map
+        assert!(!layout.groups.contains_key("g1"));
+        // Members should appear at the end of order (not lost)
+        assert_eq!(layout.order, vec!["a", "b", "x", "y"]);
     }
 
     #[test]
@@ -1382,5 +1441,46 @@ mod tests {
 
         let result2 = read_layout(dir.path());
         assert!(!result2.groups["g1"].collapsed);
+    }
+
+    #[test]
+    fn create_group_replaces_existing_group() {
+        let mut layout = super::CardboxLayout {
+            version: 1,
+            order: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            links: vec![],
+            groups: HashMap::new(),
+        };
+
+        // First creation: group g1 with cards [a, b]
+        super::do_create_group(
+            &mut layout,
+            "g1".to_string(),
+            "First".to_string(),
+            vec!["a".to_string(), "b".to_string()],
+            None,
+        );
+        assert_eq!(layout.groups["g1"].order, vec!["a", "b"]);
+        assert_eq!(layout.groups["g1"].name, "First");
+
+        // Second creation with same id but different cards [c, d]
+        super::do_create_group(
+            &mut layout,
+            "g1".to_string(),
+            "Replaced".to_string(),
+            vec!["c".to_string(), "d".to_string()],
+            None,
+        );
+
+        // Only one "group:g1" entry in order
+        let group_entries: Vec<&String> = layout.order.iter()
+            .filter(|e| *e == "group:g1")
+            .collect();
+        assert_eq!(group_entries.len(), 1, "must have exactly one group:g1 in order");
+
+        // The group has the new cards and name
+        assert_eq!(layout.groups["g1"].order, vec!["c", "d"]);
+        assert_eq!(layout.groups["g1"].name, "Replaced");
+        assert_eq!(layout.groups.len(), 1);
     }
 }
