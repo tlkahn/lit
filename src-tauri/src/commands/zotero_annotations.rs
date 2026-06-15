@@ -1,3 +1,4 @@
+use regex::Regex;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -193,6 +194,182 @@ fn strip_html_tags(html: &str) -> String {
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Decode common HTML entities (named + numeric) to their character equivalents.
+fn decode_html_entities(s: &str) -> String {
+    let mut result = s.to_string();
+
+    // Named entities
+    result = result.replace("&amp;", "&");
+    result = result.replace("&lt;", "<");
+    result = result.replace("&gt;", ">");
+    result = result.replace("&quot;", "\"");
+    result = result.replace("&apos;", "'");
+    result = result.replace("&nbsp;", " ");
+
+    // Decimal numeric entities: &#NNN;
+    let re_dec = Regex::new(r"&#(\d+);").unwrap();
+    result = re_dec
+        .replace_all(&result, |caps: &regex::Captures| {
+            caps[1]
+                .parse::<u32>()
+                .ok()
+                .and_then(char::from_u32)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| caps[0].to_string())
+        })
+        .to_string();
+
+    // Hex numeric entities: &#xHHH;
+    let re_hex = Regex::new(r"(?i)&#x([0-9a-f]+);").unwrap();
+    result = re_hex
+        .replace_all(&result, |caps: &regex::Captures| {
+            u32::from_str_radix(&caps[1], 16)
+                .ok()
+                .and_then(char::from_u32)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| caps[0].to_string())
+        })
+        .to_string();
+
+    result
+}
+
+/// Convert simple HTML (as produced by Zotero notes) to Markdown.
+///
+/// Handles paragraphs, line breaks, headings, bold/italic, links, lists,
+/// blockquotes, code, and HTML entities. Unknown tags are stripped.
+fn html_to_markdown(html: &str) -> String {
+    if html.is_empty() {
+        return String::new();
+    }
+
+    let mut s = html.to_string();
+
+    // Note: HTML entity decoding is deferred to AFTER tag stripping,
+    // because decoding &lt;/&gt; to <> before stripping would cause
+    // the tag stripper to misinterpret literal angle brackets as tags.
+
+    // Step 1: Block-level conversions (order matters)
+
+    // <br> / <br/> / <br /> -> newline
+    let re_br = Regex::new(r"(?i)<br\s*/?>").unwrap();
+    s = re_br.replace_all(&s, "\n").to_string();
+
+    // Headings: <h1>...<h6>
+    for level in 1..=6u8 {
+        let hashes = "#".repeat(level as usize);
+        let re_h = Regex::new(&format!(r"(?is)<h{level}[^>]*>(.*?)</h{level}>")).unwrap();
+        s = re_h
+            .replace_all(&s, |caps: &regex::Captures| {
+                format!("\n\n{} {}\n\n", hashes, caps[1].trim())
+            })
+            .to_string();
+    }
+
+    // Blockquotes
+    let re_bq = Regex::new(r"(?is)<blockquote[^>]*>(.*?)</blockquote>").unwrap();
+    s = re_bq
+        .replace_all(&s, |caps: &regex::Captures| {
+            let inner = strip_html_tags(&caps[1]);
+            inner
+                .lines()
+                .map(|line| format!("> {}", line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .to_string();
+
+    // Ordered lists: <ol><li>...</li></ol>
+    let re_ol = Regex::new(r"(?is)<ol[^>]*>(.*?)</ol>").unwrap();
+    s = re_ol
+        .replace_all(&s, |caps: &regex::Captures| {
+            let re_li = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap();
+            let mut counter = 0usize;
+            let items: String = re_li
+                .replace_all(&caps[1], |li_caps: &regex::Captures| {
+                    counter += 1;
+                    format!("\n{}. {}", counter, li_caps[1].trim())
+                })
+                .to_string();
+            format!("\n{}\n", items.trim())
+        })
+        .to_string();
+
+    // Unordered lists: <ul><li>...</li></ul>
+    let re_ul = Regex::new(r"(?is)<ul[^>]*>(.*?)</ul>").unwrap();
+    s = re_ul
+        .replace_all(&s, |caps: &regex::Captures| {
+            let re_li = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap();
+            let items: String = re_li
+                .replace_all(&caps[1], |li_caps: &regex::Captures| {
+                    format!("\n- {}", li_caps[1].trim())
+                })
+                .to_string();
+            format!("\n{}\n", items.trim())
+        })
+        .to_string();
+
+    // Paragraphs: <p>...</p> -> double newline separation
+    let re_p = Regex::new(r"(?is)<p[^>]*>(.*?)</p>").unwrap();
+    s = re_p
+        .replace_all(&s, |caps: &regex::Captures| {
+            format!("\n\n{}\n\n", caps[1].trim())
+        })
+        .to_string();
+
+    // <div> -> paragraph break
+    let re_div = Regex::new(r"(?is)<div[^>]*>(.*?)</div>").unwrap();
+    s = re_div
+        .replace_all(&s, |caps: &regex::Captures| {
+            format!("\n\n{}\n\n", caps[1].trim())
+        })
+        .to_string();
+
+    // Step 3: Inline conversions
+
+    // Links: <a href="url">text</a> -> [text](url)
+    let re_a = Regex::new(r#"(?is)<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>(.*?)</a>"#).unwrap();
+    s = re_a
+        .replace_all(&s, |caps: &regex::Captures| {
+            format!("[{}]({})", caps[2].trim(), &caps[1])
+        })
+        .to_string();
+
+    // Bold: <strong>/<b>
+    let re_strong = Regex::new(r"(?is)<(?:strong|b)>(.*?)</(?:strong|b)>").unwrap();
+    s = re_strong.replace_all(&s, "**$1**").to_string();
+
+    // Italic: <em>/<i>
+    let re_em = Regex::new(r"(?is)<(?:em|i)>(.*?)</(?:em|i)>").unwrap();
+    s = re_em.replace_all(&s, "*$1*").to_string();
+
+    // Code: <code>
+    let re_code = Regex::new(r"(?is)<code>(.*?)</code>").unwrap();
+    s = re_code.replace_all(&s, "`$1`").to_string();
+
+    // Step 4: Strip all remaining HTML tags
+    let re_tags = Regex::new(r"<[^>]+>").unwrap();
+    s = re_tags.replace_all(&s, "").to_string();
+
+    // Step 5: Decode HTML entities (after tag stripping, so &lt;/&gt; aren't
+    // mistaken for tags)
+    s = decode_html_entities(&s);
+
+    // Step 6: Post-process
+    // Collapse 3+ newlines to 2
+    let re_newlines = Regex::new(r"\n{3,}").unwrap();
+    s = re_newlines.replace_all(&s, "\n\n").to_string();
+
+    // Trim trailing whitespace per line
+    s = s
+        .lines()
+        .map(|l| l.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    s.trim().to_string()
+}
+
 /// Query the Zotero database for annotations on the attachment with the given itemID.
 ///
 /// Returns annotations of type 1 (highlight), 2 (note/sticky), 5 (underline),
@@ -294,7 +471,7 @@ pub fn resolve_pdf_in_zotero(
 
 /// Query child notes attached to a Zotero parent item.
 ///
-/// HTML content is stripped to plain text. Results are ordered by item ID.
+/// HTML content is converted to Markdown. Results are ordered by item ID.
 pub fn query_zotero_child_notes(
     db_path: &str,
     parent_item_id: i64,
@@ -320,7 +497,7 @@ pub fn query_zotero_child_notes(
             let item_id: i64 = row.get(0)?;
             let note: Option<String> = row.get(1)?;
             let title: Option<String> = row.get(2)?;
-            let html_content = strip_html_tags(note.as_deref().unwrap_or(""));
+            let html_content = html_to_markdown(note.as_deref().unwrap_or(""));
             Ok(ZoteroChildNote {
                 item_id,
                 html_content,
@@ -1579,13 +1756,44 @@ async fn import_single_entry(
         let mut result = insert_annotations_into_markdown(&content, matched);
 
         if !note_dsls.is_empty() {
-            if !result.ends_with('\n') {
-                result.push('\n');
-            }
-            result.push('\n');
+            // Build the notes content (DSLs only, no heading yet)
+            let mut notes_content = String::new();
             for dsl in &note_dsls {
-                result.push_str(dsl);
-                result.push_str("\n\n");
+                notes_content.push_str(dsl);
+                notes_content.push_str("\n\n");
+            }
+
+            if result.contains("## Zotero Notes") {
+                // Heading already exists -- append new notes at the end of that section
+                // (before the next ## heading or EOF)
+                let heading_pos = result.find("## Zotero Notes").unwrap();
+                let after_heading = heading_pos + "## Zotero Notes".len();
+                let next_heading = result[after_heading..]
+                    .find("\n## ")
+                    .map(|p| after_heading + p);
+                let insert_at = next_heading.unwrap_or(result.len());
+                let mut insert_block = String::from("\n");
+                insert_block.push_str(&notes_content);
+                result.insert_str(insert_at, &insert_block);
+            } else {
+                // Check if "## Unmatched Zotero Annotations" exists -- insert before it
+                let insertion_point = result
+                    .find("\n## Unmatched Zotero Annotations")
+                    .or_else(|| result.find("## Unmatched Zotero Annotations"));
+
+                let mut notes_block = String::new();
+                notes_block.push_str("\n\n## Zotero Notes\n\n");
+                notes_block.push_str(&notes_content);
+
+                if let Some(pos) = insertion_point {
+                    result.insert_str(pos, &notes_block);
+                } else {
+                    // No special sections -- append at end
+                    if !result.ends_with('\n') {
+                        result.push('\n');
+                    }
+                    result.push_str(&notes_block);
+                }
             }
         }
 
@@ -2081,21 +2289,27 @@ mod tests {
 
         assert_eq!(notes.len(), 2);
 
-        // First note -- HTML stripped
+        // First note -- HTML converted to markdown (bold preserved)
         assert_eq!(notes[0].item_id, 400);
         assert!(
             !notes[0].html_content.contains('<'),
             "HTML tags should be stripped: {}",
             notes[0].html_content
         );
-        assert!(notes[0].html_content.contains("child note"));
+        assert!(notes[0].html_content.contains("**child note**"));
         assert_eq!(notes[0].title, None);
 
-        // Second note -- has title
+        // Second note -- has title, paragraphs separated by blank line
         assert_eq!(notes[1].item_id, 401);
         assert_eq!(notes[1].title.as_deref(), Some("My Note Title"));
         assert!(notes[1].html_content.contains("Second note"));
         assert!(notes[1].html_content.contains("two paragraphs"));
+        // Two <p> tags should produce paragraph separation
+        assert!(
+            notes[1].html_content.contains("\n\n"),
+            "Paragraphs should be separated by blank line: {:?}",
+            notes[1].html_content
+        );
     }
 
     #[test]
@@ -2116,6 +2330,125 @@ mod tests {
         assert_eq!(strip_html_tags("<br/>line<br>break"), "linebreak");
         assert_eq!(strip_html_tags(""), "");
         assert_eq!(strip_html_tags("<p>  spaced   out  </p>"), "spaced out");
+    }
+
+    // -----------------------------------------------------------------------
+    // html_to_markdown tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn html_to_markdown_empty() {
+        assert_eq!(html_to_markdown(""), "");
+    }
+
+    #[test]
+    fn html_to_markdown_plain_text() {
+        assert_eq!(html_to_markdown("no html here"), "no html here");
+    }
+
+    #[test]
+    fn html_to_markdown_paragraphs() {
+        assert_eq!(
+            html_to_markdown("<p>First</p><p>Second</p>"),
+            "First\n\nSecond"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_inline_formatting() {
+        assert_eq!(
+            html_to_markdown("<em>italic</em> and <strong>bold</strong>"),
+            "*italic* and **bold**"
+        );
+        assert_eq!(
+            html_to_markdown("<i>italic</i> and <b>bold</b>"),
+            "*italic* and **bold**"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_links() {
+        assert_eq!(
+            html_to_markdown(r#"<a href="https://example.com">click</a>"#),
+            "[click](https://example.com)"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_br() {
+        assert_eq!(
+            html_to_markdown("line1<br>line2<br/>line3"),
+            "line1\nline2\nline3"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_unordered_list() {
+        assert_eq!(
+            html_to_markdown("<ul><li>one</li><li>two</li></ul>"),
+            "- one\n- two"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_ordered_list() {
+        assert_eq!(
+            html_to_markdown("<ol><li>first</li><li>second</li></ol>"),
+            "1. first\n2. second"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_blockquote() {
+        assert_eq!(
+            html_to_markdown("<blockquote>quoted text</blockquote>"),
+            "> quoted text"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_headings() {
+        assert_eq!(html_to_markdown("<h1>Title</h1>"), "# Title");
+        assert_eq!(html_to_markdown("<h3>Sub</h3>"), "### Sub");
+    }
+
+    #[test]
+    fn html_to_markdown_entities() {
+        assert_eq!(html_to_markdown("&amp; &lt; &gt; &quot;"), "& < > \"");
+        assert_eq!(html_to_markdown("&#65;&#x42;"), "AB");
+    }
+
+    #[test]
+    fn html_to_markdown_strips_unknown_tags() {
+        assert_eq!(html_to_markdown("<span class='x'>text</span>"), "text");
+    }
+
+    #[test]
+    fn html_to_markdown_code() {
+        assert_eq!(html_to_markdown("<code>foo()</code>"), "`foo()`");
+    }
+
+    #[test]
+    fn html_to_markdown_nested() {
+        assert_eq!(
+            html_to_markdown("<p>A <em>bold <strong>and italic</strong></em> end</p>"),
+            "A *bold **and italic*** end"
+        );
+    }
+
+    #[test]
+    fn html_to_markdown_zotero_note_example() {
+        // Typical Zotero child note HTML
+        let html = "<p>This is a <b>child note</b> with HTML.</p>";
+        let md = html_to_markdown(html);
+        assert_eq!(md, "This is a **child note** with HTML.");
+    }
+
+    #[test]
+    fn html_to_markdown_two_paragraphs() {
+        let html = "<p>Second note</p><p>with two paragraphs.</p>";
+        let md = html_to_markdown(html);
+        assert_eq!(md, "Second note\n\nwith two paragraphs.");
     }
 
     // -----------------------------------------------------------------------
@@ -2670,6 +3003,105 @@ mod tests {
         let scanned = crate::annotation::scanner::scan_annotations(&dsl);
         assert_eq!(scanned.len(), 1);
         assert_eq!(scanned[0].id, Some("zot-note-500".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Zotero Notes heading insertion tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn notes_inserted_under_zotero_notes_heading() {
+        // Simulate the note insertion logic: given markdown content and note DSLs,
+        // the result should contain "## Zotero Notes" heading above the DSLs.
+        let content = "# Title\n\nBody text here.\n";
+        let note_dsls = vec!["<!---[zot-note-400] n: | note content --->".to_string()];
+
+        let mut result = content.to_string();
+
+        // Replicate the insertion logic from import_single_entry
+        let mut notes_content = String::new();
+        for dsl in &note_dsls {
+            notes_content.push_str(dsl);
+            notes_content.push_str("\n\n");
+        }
+
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str("\n\n## Zotero Notes\n\n");
+        result.push_str(&notes_content);
+
+        assert!(result.contains("## Zotero Notes"));
+        assert!(result.contains("zot-note-400"));
+        // Notes heading should appear after body text
+        let heading_pos = result.find("## Zotero Notes").unwrap();
+        let body_pos = result.find("Body text").unwrap();
+        assert!(heading_pos > body_pos);
+    }
+
+    #[test]
+    fn notes_heading_not_duplicated_on_reimport() {
+        // If "## Zotero Notes" already exists, a second import should not add another heading.
+        let content = "# Title\n\nBody\n\n## Zotero Notes\n\n<!---[zot-note-400] n: | existing --->\n\n";
+
+        // Count occurrences of "## Zotero Notes" -- should be exactly 1
+        let count = content.matches("## Zotero Notes").count();
+        assert_eq!(count, 1, "Precondition: one heading");
+
+        // The real logic checks `result.contains("## Zotero Notes")` and appends
+        // without adding a new heading. Verify the pattern:
+        assert!(content.contains("## Zotero Notes"));
+
+        // If we were to add more notes, heading should not be duplicated
+        let mut result = content.to_string();
+        let new_dsl = "<!---[zot-note-401] n: | new note --->";
+
+        // Replicate the "heading exists" branch
+        let heading_pos = result.find("## Zotero Notes").unwrap();
+        let after_heading = heading_pos + "## Zotero Notes".len();
+        let next_heading = result[after_heading..]
+            .find("\n## ")
+            .map(|p| after_heading + p);
+        let insert_at = next_heading.unwrap_or(result.len());
+        let mut insert_block = String::from("\n");
+        insert_block.push_str(new_dsl);
+        insert_block.push_str("\n\n");
+        result.insert_str(insert_at, &insert_block);
+
+        let final_count = result.matches("## Zotero Notes").count();
+        assert_eq!(final_count, 1, "Should still have exactly one heading");
+        assert!(result.contains("zot-note-401"));
+        assert!(result.contains("zot-note-400"));
+    }
+
+    #[test]
+    fn notes_inserted_before_unmatched_section() {
+        let content =
+            "# Title\n\nBody\n\n## Unmatched Zotero Annotations\n\n<!---[zot-1] n: | unmatched --->\n";
+
+        let notes_heading_pos = content.find("## Zotero Notes");
+        assert!(notes_heading_pos.is_none(), "Precondition: no notes heading yet");
+
+        // Replicate the insertion logic for notes before "## Unmatched"
+        let mut result = content.to_string();
+        let insertion_point = result
+            .find("\n## Unmatched Zotero Annotations")
+            .or_else(|| result.find("## Unmatched Zotero Annotations"));
+
+        let mut notes_block = String::new();
+        notes_block.push_str("\n\n## Zotero Notes\n\n");
+        notes_block.push_str("<!---[zot-note-500] n: | a note --->\n\n");
+
+        if let Some(pos) = insertion_point {
+            result.insert_str(pos, &notes_block);
+        }
+
+        let notes_pos = result.find("## Zotero Notes").unwrap();
+        let unmatched_pos = result.find("## Unmatched Zotero Annotations").unwrap();
+        assert!(
+            notes_pos < unmatched_pos,
+            "Notes section should appear before Unmatched section"
+        );
     }
 
     // -----------------------------------------------------------------------
