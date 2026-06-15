@@ -1205,6 +1205,27 @@ export async function listAnnotations(
   });
 }
 
+// Cardbox (annotation-centered view)
+
+export interface CardboxAnnotation {
+  uuid: string;
+  annotation_type: string;
+  certainty: string;
+  body: string | null;
+  date: string | null;
+  source_page_id: string;
+  source_page_title: string;
+  source_line: number;
+  char_start: number;
+  char_end: number;
+  scope_kind: string;
+  original: string | null;
+}
+
+export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
+  return invoke<CardboxAnnotation[]>("list_all_annotations", {});
+}
+
 // Merge/Split preview commands
 
 export interface MergeInput {

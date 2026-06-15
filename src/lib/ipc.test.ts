@@ -95,6 +95,7 @@ import {
   getMarkConfig,
   searchAnnotations,
   listAnnotations,
+  listAllAnnotations,
   exportData,
   exportSubgraph,
   exportLkg,
@@ -437,6 +438,37 @@ describe("ipc", () => {
             },
           ];
         }
+        case "list_all_annotations":
+          return [
+            {
+              uuid: "cb-uuid-1",
+              annotation_type: "note",
+              certainty: "neutral",
+              body: "First note",
+              date: null,
+              source_page_id: "a.md",
+              source_page_title: "Alpha",
+              source_line: 1,
+              char_start: 0,
+              char_end: 10,
+              scope_kind: "words",
+              original: null,
+            },
+            {
+              uuid: "cb-uuid-2",
+              annotation_type: "question",
+              certainty: "tentative",
+              body: "Why?",
+              date: "2026-06-15",
+              source_page_id: "b.md",
+              source_page_title: "Beta",
+              source_line: 5,
+              char_start: 20,
+              char_end: 30,
+              scope_kind: "paragraph",
+              original: null,
+            },
+          ];
         case "export_data":
           return { exported_count: 42, destination: (args as Record<string, unknown>)?.destination ?? "" };
         case "export_subgraph":
@@ -1559,6 +1591,17 @@ describe("ipc", () => {
       annotationType: null,
       limit: null,
     });
+  });
+
+  it("listAllAnnotations returns all workspace annotations", async () => {
+    const results = await listAllAnnotations();
+    expect(results).toHaveLength(2);
+    expect(results[0]!.source_page_id).toBe("a.md");
+    expect(results[0]!.annotation_type).toBe("note");
+    expect(results[1]!.source_page_id).toBe("b.md");
+    expect(results[1]!.annotation_type).toBe("question");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_all_annotations", {});
   });
 
   it("exportData calls export_data with destination", async () => {
