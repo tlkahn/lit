@@ -3,10 +3,12 @@ import { useCallback, useRef } from "react";
 interface UseCardboxKeyboardOptions {
   onExpand: (index: number) => void;
   onNavigate: (index: number) => void;
+  onOpenLinkPicker?: () => void;
+  expandedUuid: string | null;
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, expandedUuid, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -51,6 +53,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, itemCount }: UseCardb
           onExpand(currentIndex);
         }
         return;
+      case "l":
+      case "L":
+        if (expandedUuid && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          onOpenLinkPicker?.();
+        }
+        return;
       default:
         return;
     }
@@ -59,7 +68,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, itemCount }: UseCardb
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, expandedUuid]);
 
   return { gridRef, handleKeyDown };
 }
