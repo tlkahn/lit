@@ -13,6 +13,14 @@ pub struct CardboxLayout {
     pub groups: HashMap<String, GroupInfo>,
     #[serde(default)]
     pub pinned: Vec<String>,
+    #[serde(default)]
+    pub notes: HashMap<String, CardNote>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CardNote {
+    pub body: String,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -30,6 +38,7 @@ impl Default for CardboxLayout {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         }
     }
 }
@@ -311,6 +320,7 @@ pub fn read_cardbox_layout(
         layout.pinned.retain(|uuid| valid_uuids.contains(uuid.as_str()));
         let mut seen = HashSet::new();
         layout.pinned.retain(|uuid| seen.insert(uuid.clone()));
+        layout.notes.retain(|uuid, _| valid_uuids.contains(uuid.as_str()));
         Ok(())
     })?;
 
@@ -483,6 +493,117 @@ pub fn unpin_cardbox_card(
         if layout.pinned.len() < before {
             layout.version = layout.version.max(3);
         }
+        Ok(())
+    })
+}
+
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if "/ \\ : * ? \" < > |".contains(c) { '_' } else { c })
+        .collect()
+}
+
+fn dedup_filename(root: &std::path::Path, base: &str) -> String {
+    let candidate = format!("{}.md", base);
+    if !root.join(&candidate).exists() {
+        return candidate;
+    }
+    for i in 1.. {
+        let candidate = format!("{} {}.md", base, i);
+        if !root.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+#[tauri::command]
+pub fn export_card_note(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
+    registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    app_handle: tauri::AppHandle,
+    uuid: String,
+) -> Result<String, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    let layout_path = lit_dir.join("cardbox.json");
+    let layout = load_layout_from_disk(&layout_path);
+
+    let note = layout.notes.get(&uuid)
+        .ok_or_else(|| format!("No note for card {}", uuid))?;
+
+    let ann = super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let all = gi.list_all_cardbox_annotations()?;
+        all.into_iter()
+            .find(|a| a.uuid == uuid)
+            .ok_or_else(|| crate::graph::error::GraphError::Other(
+                format!("Annotation {} not found", uuid),
+            ))
+    })?;
+
+    let base = sanitize_filename(&format!("Note on {}", ann.source_page_title));
+    let filename = dedup_filename(&root, &base);
+    let file_path = root.join(&filename);
+
+    let mut content = String::new();
+    content.push_str("---\n");
+    content.push_str(&format!("source: \"{}\"\n", ann.source_page_id));
+    content.push_str(&format!("annotation_uuid: \"{}\"\n", uuid));
+    if let Some(ref updated_at) = note.updated_at {
+        content.push_str(&format!("created: \"{}\"\n", updated_at));
+    }
+    content.push_str("---\n\n");
+
+    if let Some(ref original) = ann.original {
+        content.push_str(&format!("> {}\n\n", original));
+    }
+
+    content.push_str(&note.body);
+    content.push('\n');
+
+    std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
+    registry.record(&file_path, &content);
+
+    super::page::reindex_and_emit(&graph_state, &app_handle, &root.to_path_buf(), |gi, ann_flag| {
+        gi.add_file(&filename, ann_flag)
+    });
+
+    Ok(filename)
+}
+
+#[tauri::command]
+pub fn set_card_note(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+    body: String,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        let trimmed = body.trim().to_string();
+        if trimmed.is_empty() {
+            layout.notes.remove(&uuid);
+        } else {
+            layout.notes.insert(uuid.clone(), CardNote {
+                body: trimmed,
+                updated_at: Some(chrono::Utc::now().to_rfc3339()),
+            });
+        }
+        layout.version = layout.version.max(4);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn clear_card_note(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        layout.notes.remove(&uuid);
+        layout.version = layout.version.max(4);
         Ok(())
     })
 }
@@ -954,6 +1075,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
         let result = read_layout(dir.path());
@@ -974,6 +1096,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         let json = serde_json::to_string(&layout).unwrap();
         let deserialized: super::CardboxLayout = serde_json::from_str(&json).unwrap();
@@ -994,6 +1117,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
@@ -1016,6 +1140,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1"].iter().copied().collect();
@@ -1040,6 +1165,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-1", "uuid-2", "uuid-a"].iter().copied().collect();
@@ -1065,6 +1191,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-dup", "uuid-solo"].iter().copied().collect();
@@ -1090,6 +1217,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-1"].iter().copied().collect();
@@ -1118,6 +1246,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
@@ -1146,6 +1275,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["a", "b", "c"].iter().copied().collect();
@@ -1163,6 +1293,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
         let result = read_layout(dir.path());
@@ -1181,6 +1312,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1211,6 +1343,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1240,6 +1373,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         super::do_create_group(
@@ -1263,6 +1397,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1296,6 +1431,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1330,6 +1466,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1358,6 +1495,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         super::do_dissolve_group(&mut layout, "g1").unwrap();
@@ -1383,6 +1521,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1415,6 +1554,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1442,6 +1582,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1469,6 +1610,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1497,6 +1639,7 @@ mod tests {
             links: vec![],
             groups,
             pinned: vec![],
+            notes: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1524,6 +1667,7 @@ mod tests {
             links: vec![],
             groups: HashMap::new(),
             pinned: vec![],
+            notes: HashMap::new(),
         };
 
         // First creation: group g1 with cards [a, b]
@@ -1687,5 +1831,125 @@ mod tests {
 
         let result = read_layout(dir.path());
         assert_eq!(result, layout);
+    }
+
+    // ---- Card note tests ----
+
+    #[test]
+    fn test_set_card_note() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout::default();
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let uuid = "uuid-1".to_string();
+        let body = "My note content".to_string();
+        let trimmed = body.trim().to_string();
+        layout.notes.insert(uuid.clone(), super::CardNote {
+            body: trimmed.clone(),
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        });
+        layout.version = layout.version.max(4);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.notes.get("uuid-1").unwrap().body, "My note content");
+        assert!(result.notes.get("uuid-1").unwrap().updated_at.is_some());
+        assert_eq!(result.version, 4);
+    }
+
+    #[test]
+    fn test_set_card_note_empty_clears() {
+        let dir = create_workspace();
+        let mut layout = super::CardboxLayout::default();
+        layout.notes.insert("uuid-1".into(), super::CardNote {
+            body: "existing note".into(),
+            updated_at: None,
+        });
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let body = "   ";
+        let trimmed = body.trim().to_string();
+        if trimmed.is_empty() {
+            layout.notes.remove("uuid-1");
+        }
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(result.notes.get("uuid-1").is_none());
+    }
+
+    #[test]
+    fn test_clear_card_note() {
+        let dir = create_workspace();
+        let mut layout = super::CardboxLayout::default();
+        layout.notes.insert("uuid-1".into(), super::CardNote {
+            body: "some note".into(),
+            updated_at: Some("2024-01-01T00:00:00Z".into()),
+        });
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.notes.remove("uuid-1");
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(result.notes.is_empty());
+    }
+
+    #[test]
+    fn test_clear_card_note_idempotent() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout::default();
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.notes.remove("nonexistent-uuid");
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(result.notes.is_empty());
+    }
+
+    #[test]
+    fn test_notes_pruned_on_read() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(anns.len(), 1);
+        let real_uuid = anns[0].uuid.clone();
+
+        let mut layout = super::CardboxLayout {
+            version: 4,
+            order: vec![real_uuid.clone()],
+            ..Default::default()
+        };
+        layout.notes.insert(real_uuid.clone(), super::CardNote {
+            body: "valid note".into(),
+            updated_at: None,
+        });
+        layout.notes.insert("stale-uuid".into(), super::CardNote {
+            body: "stale note".into(),
+            updated_at: None,
+        });
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let valid_uuids: std::collections::HashSet<&str> = anns.iter().map(|a| a.uuid.as_str()).collect();
+        layout.notes.retain(|uuid, _| valid_uuids.contains(uuid.as_str()));
+
+        assert_eq!(layout.notes.len(), 1);
+        assert!(layout.notes.contains_key(&real_uuid));
+        assert!(!layout.notes.contains_key("stale-uuid"));
+    }
+
+    #[test]
+    fn test_v3_layout_deserializes_with_empty_notes() {
+        let json = r#"{"version":3,"order":["uuid-1"],"links":[],"groups":{},"pinned":["uuid-1"]}"#;
+        let layout: super::CardboxLayout = serde_json::from_str(json).unwrap();
+        assert_eq!(layout.version, 3);
+        assert!(layout.notes.is_empty());
     }
 }
