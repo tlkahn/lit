@@ -8,7 +8,7 @@ import {
 
 describe("SETTINGS_REGISTRY", () => {
   it("has 34 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(34);
+    expect(SETTINGS_REGISTRY).toHaveLength(35);
   });
 
   it("every entry has required fields defined", () => {
@@ -93,7 +93,7 @@ describe("groupByCategory", () => {
   it("returns Map with 8 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(8);
-    expect(grouped.get("Appearance")).toHaveLength(6);
+    expect(grouped.get("Appearance")).toHaveLength(7);
     expect(grouped.get("Editor")).toHaveLength(5);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
@@ -122,7 +122,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(34);
+    expect(results).toHaveLength(35);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }

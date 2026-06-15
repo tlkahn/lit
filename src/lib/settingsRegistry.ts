@@ -102,6 +102,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    label: "Graph View",
+    storeField: "graphViewEnabled",
+    jsonKey: "workbench.graphView.enabled",
+    controlType: "toggle",
+    testId: "settings-graphViewEnabled",
+    keywords: ["graph", "network", "sigma", "visualization"],
+  },
+  {
+    category: "Appearance",
     label: "Bottom Panel Position",
     storeField: "bottomPanelPosition",
     jsonKey: "workbench.bottomPanel.position",

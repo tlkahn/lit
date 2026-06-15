@@ -50,6 +50,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const saveMindmapFoldState = useWorkspaceStore((s) => s.saveMindmapFoldState);
 
   const defaultViewMode = usePreferencesStore((s) => s.defaultViewMode);
+  const graphViewEnabled = usePreferencesStore((s) => s.graphViewEnabled);
   const loaded = usePreferencesStore((s) => s.loaded);
   const [viewMode, setViewMode] = useState<ViewMode>(defaultViewMode);
 
@@ -84,12 +85,15 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   viewModeRef.current = viewMode;
   const defaultViewModeRef = useRef(defaultViewMode);
   defaultViewModeRef.current = defaultViewMode;
+  const graphViewEnabledRef = useRef(graphViewEnabled);
+  graphViewEnabledRef.current = graphViewEnabled;
   const initialSyncDone = useRef(false);
 
   useEffect(() => {
     if (loaded && !initialSyncDone.current) {
       initialSyncDone.current = true;
-      setViewMode(defaultViewModeRef.current);
+      const mode = defaultViewModeRef.current;
+      setViewMode(mode === "graph" && !graphViewEnabledRef.current ? "editor" : mode);
     }
   }, [loaded]);
 
@@ -159,7 +163,8 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setYamlDraft("");
     setYamlError(null);
     if (previousPath !== currentPanePage) {
-      setViewMode(defaultViewModeRef.current);
+      const mode = defaultViewModeRef.current;
+      setViewMode(mode === "graph" && !graphViewEnabledRef.current ? "editor" : mode);
     }
   }, [currentPanePage, saveViewState]);
 
@@ -269,6 +274,12 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }, [editingYaml, autoResizeTextarea]);
 
   useEffect(() => {
+    if (!graphViewEnabled && viewMode === "graph") {
+      setViewMode("editor");
+    }
+  }, [graphViewEnabled, viewMode]);
+
+  useEffect(() => {
     if (viewMode !== "editor") return;
     const view = getCurrentEditorView();
     if (!view) return;
@@ -302,10 +313,12 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     const setModeHandler = (e: Event) => {
       const mode = (e as CustomEvent<string>).detail;
       if (isViewMode(mode)) {
+        if (mode === "graph" && !graphViewEnabledRef.current) return;
         setViewMode(mode);
       }
     };
     const toggleGraphHandler = (e: Event) => {
+      if (!graphViewEnabledRef.current) return;
       const detail = (e as CustomEvent<{ mode?: "local" | "full" }>).detail;
       setViewMode((prev) => (prev === "graph" ? "editor" : "graph"));
       if (detail?.mode) {
@@ -407,14 +420,16 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             >
               Mindmap
             </button>
-            <button
-              onClick={() => setViewMode("graph")}
-              aria-label="Graph"
-              title="Graph (⌘3)"
-              className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
-            >
-              Graph
-            </button>
+            {graphViewEnabled && (
+              <button
+                onClick={() => setViewMode("graph")}
+                aria-label="Graph"
+                title="Graph (⌘3)"
+                className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+              >
+                Graph
+              </button>
+            )}
             <button
               onClick={() => setViewMode("cardbox")}
               aria-label="Cardbox"

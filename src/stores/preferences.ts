@@ -53,6 +53,7 @@ export interface PreferencesState {
   academicDefaultReferenceDoc: string;
   academicIndicFont: string;
   defaultViewMode: ViewMode;
+  graphViewEnabled: boolean;
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   companionSearchPath: string[];
@@ -156,6 +157,7 @@ function mapPreferences(prefs: Preferences) {
     sidebarVisible: (prefs["workbench.sideBar.visible"] as boolean) ?? true,
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
     defaultViewMode: applyDefaultViewMode(prefs["workbench.defaultViewMode"]),
+    graphViewEnabled: (prefs["workbench.graphView.enabled"] as boolean) ?? false,
     bottomPanelPosition: applyBottomPanelPosition(prefs["workbench.bottomPanel.position"]),
     foldingEnabled: prefs["editor.folding.enabled"] ?? true,
     foldingShowControls: applyFoldingShowControls(prefs["editor.folding.showFoldingControls"] ?? "mouseover"),
@@ -246,6 +248,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   sidebarVisible: true,
   sidebarLocation: "left",
   defaultViewMode: "editor",
+  graphViewEnabled: false,
   bottomPanelPosition: "bottom",
   foldingEnabled: true,
   foldingShowControls: "mouseover",
