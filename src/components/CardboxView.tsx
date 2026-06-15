@@ -129,6 +129,13 @@ export default function CardboxView() {
     [colors],
   );
 
+  const effectiveActiveColors = useMemo(() => {
+    if (activeColors === null) return null;
+    const usedSet = new Set(usedColors);
+    const pruned = new Set([...activeColors].filter((c) => usedSet.has(c)));
+    return pruned.size > 0 ? pruned : null;
+  }, [activeColors, usedColors]);
+
   // Combined filter pipeline
   const filteredAnnotations = useMemo(() => {
     const query = searchQuery.toLowerCase();
@@ -137,11 +144,10 @@ export default function CardboxView() {
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
       // Color filter (null = no filter; non-null = show only cards with a matching color tag)
-      if (activeColors !== null && activeColors.size > 0) {
+      if (effectiveActiveColors !== null) {
         const c = colors[ann.uuid];
-        if (!c || !activeColors.has(c)) return false;
+        if (!c || !effectiveActiveColors.has(c)) return false;
       }
-      if (activeColors !== null && activeColors.size === 0) return false;
       // Pinned cards bypass search filter
       if (pinnedSet.has(ann.uuid)) return true;
       // Search filter
@@ -154,7 +160,7 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes, activeColors, colors, pinnedSet]);
+  }, [annotations, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet]);
 
   // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
   const visiblePinnedUuids = useMemo(() => {
@@ -620,7 +626,7 @@ export default function CardboxView() {
                 className="h-5 w-5 rounded-full border border-border transition-opacity duration-150"
                 style={{
                   backgroundColor: `rgba(var(--chip-${color}), 0.6)`,
-                  opacity: activeColors === null || activeColors.has(color) ? 1 : 0.3,
+                  opacity: effectiveActiveColors === null || effectiveActiveColors.has(color) ? 1 : 0.3,
                 }}
                 data-testid={`color-chip-${color}`}
                 aria-label={`Filter by ${color}`}
