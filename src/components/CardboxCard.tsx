@@ -46,14 +46,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-pinned={isPinned || undefined}
     >
       {isPinned && (
-        <svg
-          className="absolute top-2 right-2 h-3.5 w-3.5 text-interactive-accent"
-          viewBox="0 0 16 16"
-          fill="currentColor"
+        <span
+          className="nerd-font absolute top-2 right-2 text-sm text-interactive-accent"
           data-testid="pin-icon"
-        >
-          <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1-.707.707l-.71-.71-3.18 3.18a3.02 3.02 0 0 1-.39 2.9c-.486.658-1.204 1.002-1.986 1.09L5.025 16.12a.5.5 0 0 1-.707-.707l3.136-3.136c.088-.782.432-1.5 1.09-1.986a3.02 3.02 0 0 1 2.9-.39l3.18-3.18-.71-.71a.5.5 0 0 1 .146-.854L9.828.722z" />
-        </svg>
+          aria-hidden="true"
+        >{'󰐃'}</span>
       )}
       {/* Original quote - always visible when present */}
       {annotation.original && (
