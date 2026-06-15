@@ -388,6 +388,8 @@ pub fn run() {
             commands::cardbox::write_cardbox_layout,
             commands::cardbox::add_cardbox_link,
             commands::cardbox::remove_cardbox_link,
+            commands::cardbox::pin_cardbox_card,
+            commands::cardbox::unpin_cardbox_card,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,
@@ -434,6 +436,7 @@ pub fn run() {
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,
             context_menu::show_graph_context_menu,
+            context_menu::show_cardbox_context_menu,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
