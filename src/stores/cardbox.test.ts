@@ -586,5 +586,44 @@ describe("cardbox store", () => {
         collapsed: true,
       });
     });
+
+    it("reorderWithinGroup swaps card positions within a group", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2", "u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("g1", "u1", "u3");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u2", "u3", "u1"]);
+    });
+
+    it("reorderWithinGroup no-ops for nonexistent group", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("missing", "u1", "u2");
+      // Original state unchanged
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u2"]);
+    });
+
+    it("reorderWithinGroup no-ops when uuid not found in group", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("g1", "u1", "u3");
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u2"]);
+    });
+
+    it("reorderWithinGroup moves card forward", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2", "u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("g1", "u3", "u1");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u3", "u1", "u2"]);
+    });
   });
 });

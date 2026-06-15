@@ -1,9 +1,12 @@
-import { memo } from "react";
+import { memo, useCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
+import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { GroupHeader } from "./GroupHeader";
-import { CardboxCard } from "./CardboxCard";
+import { SortableGroupCard } from "./SortableGroupCard";
 import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { makeGroupCardId, makeDroppableGroupId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import type { GroupInfo } from "../lib/ipc";
 
@@ -16,6 +19,7 @@ interface SortableGroupProps {
   allFilteredCount: number;
   expandedUuid: string | null;
   linkedCardsMap: Map<string, CardboxAnnotation[]>;
+  isDropTarget?: boolean;
   onToggleExpand: (uuid: string) => void;
   onNavigate: (ann: CardboxAnnotation) => void;
   onFocusCard: (uuid: string) => void;
@@ -31,6 +35,7 @@ export const SortableGroup = memo(function SortableGroup({
   allFilteredCount,
   expandedUuid,
   linkedCardsMap,
+  isDropTarget,
   onToggleExpand,
   onNavigate,
   onFocusCard,
@@ -41,11 +46,24 @@ export const SortableGroup = memo(function SortableGroup({
   const {
     attributes,
     listeners,
-    setNodeRef,
+    setNodeRef: setSortableRef,
     transform,
     transition,
     isDragging,
   } = useSortable({ id: `group:${groupId}` });
+
+  const { setNodeRef: setDroppableRef } = useDroppable({
+    id: makeDroppableGroupId(groupId),
+  });
+
+  // Merge sortable + droppable refs onto the same DOM node
+  const mergedRef = useCallback(
+    (node: HTMLElement | null) => {
+      setSortableRef(node);
+      setDroppableRef(node);
+    },
+    [setSortableRef, setDroppableRef],
+  );
 
   const { contentRef, span } = useMasonrySpan();
 
@@ -57,9 +75,11 @@ export const SortableGroup = memo(function SortableGroup({
     gridRowEnd: `span ${span}`,
   };
 
+  const groupCardIds = cards.map((ann) => makeGroupCardId(groupId, ann.uuid));
+
   return (
     <div
-      ref={setNodeRef}
+      ref={mergedRef}
       style={style}
       data-testid="cardbox-group"
       data-group-id={groupId}
@@ -67,7 +87,10 @@ export const SortableGroup = memo(function SortableGroup({
       {...listeners}
     >
       <div ref={contentRef} data-masonry-content="">
-        <div className="cardbox-group-container">
+        <div
+          className="cardbox-group-container"
+          data-drag-over={isDropTarget ? "true" : undefined}
+        >
           <GroupHeader
             name={info.name}
             cardCount={cards.length}
@@ -78,29 +101,35 @@ export const SortableGroup = memo(function SortableGroup({
           />
 
           {!info.collapsed && (
-            <div
-              className="grid"
-              style={{
-                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                gridAutoRows: "8px",
-                columnGap: "1rem",
-                padding: "0 12px 12px 12px",
-                alignItems: "start",
-              }}
+            <SortableContext
+              items={groupCardIds}
+              strategy={rectSortingStrategy}
             >
-              {cards.map((ann) => (
-                <CardboxCard
-                  key={ann.uuid}
-                  annotation={ann}
-                  expanded={expandedUuid === ann.uuid}
-                  onToggleExpand={() => onToggleExpand(ann.uuid)}
-                  onNavigate={() => onNavigate(ann)}
-                  linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
-                  onFocusCard={onFocusCard}
-                  onRemoveLink={onRemoveLink}
-                />
-              ))}
-            </div>
+              <div
+                className="grid"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                  gridAutoRows: "8px",
+                  columnGap: "1rem",
+                  padding: "0 12px 12px 12px",
+                  alignItems: "start",
+                }}
+              >
+                {cards.map((ann) => (
+                  <SortableGroupCard
+                    key={ann.uuid}
+                    groupId={groupId}
+                    annotation={ann}
+                    expanded={expandedUuid === ann.uuid}
+                    onToggleExpand={() => onToggleExpand(ann.uuid)}
+                    onNavigate={() => onNavigate(ann)}
+                    linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
+                    onFocusCard={onFocusCard}
+                    onRemoveLink={onRemoveLink}
+                  />
+                ))}
+              </div>
+            </SortableContext>
           )}
         </div>
       </div>

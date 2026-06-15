@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { arrayMove } from "@dnd-kit/sortable";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 import {
   listAllAnnotations,
@@ -40,6 +41,7 @@ export interface CardboxStore {
   moveCardToGroup: (cardUuid: string, targetGroupId: string, index?: number) => Promise<void>;
   removeCardFromGroup: (cardUuid: string, groupId: string, topLevelIndex?: number) => Promise<void>;
   toggleGroupCollapse: (groupId: string) => Promise<void>;
+  reorderWithinGroup: (groupId: string, activeUuid: string, overUuid: string) => void;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -281,5 +283,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       };
     });
     await toggleGroupCollapsed(groupId, newCollapsed);
+  },
+  reorderWithinGroup: (groupId, activeUuid, overUuid) => {
+    set((s) => {
+      const group = s.groups[groupId];
+      if (!group) return s;
+      const oldIdx = group.order.indexOf(activeUuid);
+      const newIdx = group.order.indexOf(overUuid);
+      if (oldIdx === -1 || newIdx === -1) return s;
+      const newOrder = arrayMove(group.order, oldIdx, newIdx);
+      return {
+        groups: { ...s.groups, [groupId]: { ...group, order: newOrder } },
+      };
+    });
   },
 }));
