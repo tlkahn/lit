@@ -644,6 +644,7 @@ export default function CardboxView() {
                       annotation={entry.annotation}
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
+                      colorTag={colors[entry.annotation.uuid]}
                       onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
                       onNavigate={() => handleNavigate(entry.annotation)}
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
@@ -669,6 +670,7 @@ export default function CardboxView() {
                       onRename={(name: string) => renameGroup(entry.groupId, name)}
                       onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
                       onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
+                      colors={colors}
                     />
                   ),
                 )}
@@ -681,6 +683,7 @@ export default function CardboxView() {
                     annotation={overlayAnnotation}
                     expanded={false}
                     isPinned={pinnedSet.has(overlayAnnotation.uuid)}
+                    colorTag={colors[overlayAnnotation.uuid]}
                     onToggleExpand={() => {}}
                     onNavigate={() => {}}
                   />
