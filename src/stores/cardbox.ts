@@ -166,8 +166,21 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   createGroup: async (groupId, name, cardUuids, afterEntry) => {
     set((s) => {
       const cardSet = new Set(cardUuids);
+      // Find afterEntry position BEFORE removal
+      const groupEntry = `group:${groupId}`;
+      let insertIdx: number | null = null;
+      if (afterEntry) {
+        const pos = s.order.indexOf(afterEntry);
+        if (pos >= 0) {
+          const precedingRemovals = cardUuids.filter((uuid) => {
+            const idx = s.order.indexOf(uuid);
+            return idx >= 0 && idx <= pos;
+          }).length;
+          insertIdx = pos + 1 - precedingRemovals;
+        }
+      }
       // Remove cards from top-level order and all group orders
-      let order = s.order.filter((id) => !cardSet.has(id));
+      const order = s.order.filter((id) => !cardSet.has(id));
       const groups: Record<string, GroupInfo> = {};
       for (const [gid, info] of Object.entries(s.groups)) {
         const filtered = info.order.filter((id) => !cardSet.has(id));
@@ -176,16 +189,11 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       // Create new group
       groups[groupId] = { name, order: cardUuids, collapsed: false };
       // Insert group entry into order
-      const groupEntry = `group:${groupId}`;
-      if (afterEntry) {
-        const idx = order.indexOf(afterEntry);
-        if (idx >= 0) {
-          order = [...order.slice(0, idx + 1), groupEntry, ...order.slice(idx + 1)];
-        } else {
-          order = [...order, groupEntry];
-        }
+      if (insertIdx !== null) {
+        const clamped = Math.min(insertIdx, order.length);
+        order.splice(clamped, 0, groupEntry);
       } else {
-        order = [...order, groupEntry];
+        order.push(groupEntry);
       }
       return { order, groups };
     });

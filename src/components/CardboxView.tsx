@@ -255,18 +255,25 @@ export default function CardboxView() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    // Get current visible order as UUIDs
-    const visibleIds = sortedAnnotations.map((a) => a.uuid);
-    const oldIndex = visibleIds.indexOf(active.id as string);
-    const newIndex = visibleIds.indexOf(over.id as string);
+    const activeStr = active.id as string;
+    const overStr = over.id as string;
+
+    // Phase C will handle group DnD — no-op when either end is a group
+    if (activeStr.startsWith("group:") || overStr.startsWith("group:")) return;
+
+    // Build visible IDs from renderEntries (matches SortableContext items)
+    const visibleIds = renderEntries.map((e) =>
+      e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
+    );
+    const oldIndex = visibleIds.indexOf(activeStr);
+    const newIndex = visibleIds.indexOf(overStr);
     if (oldIndex === -1 || newIndex === -1) return;
 
     // Compute new full order
     const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
-    const activeUuid = active.id as string;
 
     // Remove active from current order
-    const withoutActive = currentOrder.filter((id) => id !== activeUuid);
+    const withoutActive = currentOrder.filter((id) => id !== activeStr);
 
     // Find where to insert: after the item that's now at the target position in visible list
     const newVisibleOrder = arrayMove(visibleIds, oldIndex, newIndex);
@@ -280,10 +287,10 @@ export default function CardboxView() {
       insertAt = withoutActive.indexOf(insertAfterItem) + 1;
     }
 
-    withoutActive.splice(insertAt, 0, activeUuid);
+    withoutActive.splice(insertAt, 0, activeStr);
     setOrder(withoutActive);
     debouncedSave();
-  }, [sortedAnnotations, order, annotations, setOrder, debouncedSave]);
+  }, [renderEntries, order, annotations, setOrder, debouncedSave]);
 
   if (loading && annotations.length === 0) {
     return (
@@ -385,7 +392,7 @@ export default function CardboxView() {
                       groupId={entry.groupId}
                       info={entry.info}
                       cards={entry.cards}
-                      allFilteredCount={groups[entry.groupId]?.order.length ?? 0}
+                      allFilteredCount={groups[entry.groupId]?.order.filter(uuid => annotationMap.has(uuid)).length ?? 0}
                       expandedUuid={expandedUuid}
                       linkedCardsMap={linkedCardsMap}
                       onToggleExpand={toggleExpand}

@@ -409,6 +409,33 @@ describe("cardbox store", () => {
       expect(s.order).toEqual(["u1", "group:g1", "u2"]);
     });
 
+    it("createGroup_afterEntry_is_grouped_card inserts at correct position", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      // afterEntry is "u2" which is also one of the cards being grouped
+      await useCardboxStore.getState().createGroup("g1", "My Group", ["u2", "u3"], "u2");
+      const s = useCardboxStore.getState();
+      // u2 was at index 1 in original order; it's being removed so precedingRemovals=1
+      // insertIdx = 1 + 1 - 1 = 1; after removal order is ["u1"], so group inserts at index 1
+      expect(s.order).toEqual(["u1", "group:g1"]);
+      expect(s.groups.g1).toEqual({ name: "My Group", order: ["u2", "u3"], collapsed: false });
+    });
+
+    it("createGroup with afterEntry preceding grouped cards computes correct index", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3", "u4"],
+        groups: {},
+      });
+      // Group u1 and u3; afterEntry is u2 (not being grouped)
+      // u1 is at index 0 <= u2's index 1, so precedingRemovals=1
+      // insertIdx = 1 + 1 - 1 = 1; after removal order is ["u2", "u4"]
+      await useCardboxStore.getState().createGroup("g1", "G", ["u1", "u3"], "u2");
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u2", "group:g1", "u4"]);
+    });
+
     it("createGroup calls IPC with correct args", async () => {
       const invokeSpy = vi.fn().mockResolvedValue(null);
       mockInvoke((cmd, args) => {

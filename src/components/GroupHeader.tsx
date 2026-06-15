@@ -20,15 +20,18 @@ export const GroupHeader = memo(function GroupHeader({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const confirmedRef = useRef(false);
 
   useEffect(() => {
     if (editing) {
+      confirmedRef.current = false;
       inputRef.current?.focus();
       inputRef.current?.select();
     }
   }, [editing]);
 
   const confirmRename = useCallback(() => {
+    confirmedRef.current = true;
     const trimmed = draft.trim();
     onRename(trimmed || name);
     setEditing(false);
@@ -77,7 +80,12 @@ export const GroupHeader = memo(function GroupHeader({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
-          onBlur={cancelRename}
+          onBlur={() => {
+            if (!confirmedRef.current) {
+              cancelRename();
+            }
+            confirmedRef.current = false;
+          }}
           className="group-name-input"
           data-testid="group-name-input"
         />
