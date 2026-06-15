@@ -419,12 +419,12 @@ export default function CardboxView() {
               </div>
             </SortableContext>
             <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
-              {activeId && annotations.find((a) => a.uuid === activeId) ? (
+              {activeId && annotationMap.get(activeId) ? (
                 <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
                   <CardboxCard
-                    annotation={annotations.find((a) => a.uuid === activeId)!}
+                    annotation={annotationMap.get(activeId)!}
                     expanded={false}
-                    isPinned={pinnedSet.has(activeId!)}
+                    isPinned={pinnedSet.has(activeId)}
                     onToggleExpand={() => {}}
                     onNavigate={() => {}}
                   />
