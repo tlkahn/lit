@@ -1,8 +1,19 @@
-import { useEffect, useCallback, useMemo } from "react";
+import { useEffect, useCallback, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from "@dnd-kit/core";
+import type { DragStartEvent, DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
 import { useCardboxStore } from "../stores/cardbox";
 import { useWorkspaceStore } from "../stores/workspace";
 import { CardboxCard } from "./CardboxCard";
+import { SortableCard } from "./SortableCard";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 export default function CardboxView() {
@@ -15,7 +26,17 @@ export default function CardboxView() {
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
   const toggleType = useCardboxStore((s) => s.toggleType);
+  const order = useCardboxStore((s) => s.order);
+  const setOrder = useCardboxStore((s) => s.setOrder);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
 
   useEffect(() => {
     fetchAnnotations();
@@ -60,6 +81,55 @@ export default function CardboxView() {
       return true;
     });
   }, [annotations, searchQuery, activeTypes]);
+
+  // Sort filtered annotations by user's custom order
+  const sortedAnnotations = useMemo(() => {
+    if (order.length === 0) return filteredAnnotations;
+    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
+    return [...filteredAnnotations].sort((a, b) => {
+      const ai = orderMap.get(a.uuid) ?? Infinity;
+      const bi = orderMap.get(b.uuid) ?? Infinity;
+      return ai - bi;
+    });
+  }, [filteredAnnotations, order]);
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
+  }, []);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    // Get current visible order as UUIDs
+    const visibleIds = sortedAnnotations.map((a) => a.uuid);
+    const oldIndex = visibleIds.indexOf(active.id as string);
+    const newIndex = visibleIds.indexOf(over.id as string);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    // Compute new full order
+    const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
+    const activeUuid = active.id as string;
+
+    // Remove active from current order
+    const withoutActive = currentOrder.filter((id) => id !== activeUuid);
+
+    // Find where to insert: after the item that's now at the target position in visible list
+    const newVisibleOrder = arrayMove(visibleIds, oldIndex, newIndex);
+    // Find the item that comes before our moved item in the new visible order
+    const insertAfterItem = newIndex > 0 ? newVisibleOrder[newIndex - 1] ?? null : null;
+
+    let insertAt: number;
+    if (insertAfterItem === null) {
+      insertAt = 0;
+    } else {
+      insertAt = withoutActive.indexOf(insertAfterItem) + 1;
+    }
+
+    withoutActive.splice(insertAt, 0, activeUuid);
+    setOrder(withoutActive);
+  }, [sortedAnnotations, order, annotations, setOrder]);
 
   if (loading && annotations.length === 0) {
     return (
@@ -115,25 +185,44 @@ export default function CardboxView() {
 
       {/* Card grid */}
       <div className="flex-1 overflow-y-auto p-6" data-testid="cardbox-grid">
-        {filteredAnnotations.length === 0 ? (
+        {sortedAnnotations.length === 0 ? (
           <div className="flex h-full items-center justify-center text-text-faint" data-testid="cardbox-no-results">
             No matching annotations
           </div>
         ) : (
-          <div
-            className="grid gap-4"
-            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
           >
-            {filteredAnnotations.map((ann) => (
-              <CardboxCard
-                key={ann.uuid}
-                annotation={ann}
-                expanded={expandedUuid === ann.uuid}
-                onToggleExpand={() => toggleExpand(ann.uuid)}
-                onNavigate={() => handleNavigate(ann)}
-              />
-            ))}
-          </div>
+            <SortableContext items={sortedAnnotations.map((a) => a.uuid)} strategy={rectSortingStrategy}>
+              <div
+                className="grid gap-4"
+                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}
+              >
+                {sortedAnnotations.map((ann) => (
+                  <SortableCard
+                    key={ann.uuid}
+                    annotation={ann}
+                    expanded={expandedUuid === ann.uuid}
+                    onToggleExpand={() => toggleExpand(ann.uuid)}
+                    onNavigate={() => handleNavigate(ann)}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+            <DragOverlay>
+              {activeId ? (
+                <CardboxCard
+                  annotation={annotations.find((a) => a.uuid === activeId)!}
+                  expanded={false}
+                  onToggleExpand={() => {}}
+                  onNavigate={() => {}}
+                />
+              ) : null}
+            </DragOverlay>
+          </DndContext>
         )}
       </div>
     </div>

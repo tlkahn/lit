@@ -42,6 +42,7 @@ describe("cardbox store", () => {
       loading: false,
       searchQuery: "",
       activeTypes: new Set<string>(),
+      order: [],
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
@@ -146,5 +147,25 @@ describe("cardbox store", () => {
     await useCardboxStore.getState().fetchAnnotations();
     // activeTypes should be preserved, not reset
     expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question"]));
+  });
+
+  it("setOrder updates order array", () => {
+    useCardboxStore.getState().setOrder(["u2", "u1"]);
+    expect(useCardboxStore.getState().order).toEqual(["u2", "u1"]);
+  });
+
+  it("fetchAnnotations initializes order from annotation UUIDs on first load", async () => {
+    await useCardboxStore.getState().fetchAnnotations();
+    expect(useCardboxStore.getState().order).toEqual(["u1", "u2"]);
+  });
+
+  it("fetchAnnotations preserves existing order on refresh", async () => {
+    await useCardboxStore.getState().fetchAnnotations();
+    // Simulate user reorder
+    useCardboxStore.getState().setOrder(["u2", "u1"]);
+    // Re-fetch
+    await useCardboxStore.getState().fetchAnnotations();
+    // Order should be preserved, not reset
+    expect(useCardboxStore.getState().order).toEqual(["u2", "u1"]);
   });
 });

@@ -8,12 +8,14 @@ export interface CardboxStore {
   loading: boolean;
   searchQuery: string;
   activeTypes: Set<string>;
+  order: string[];
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
   setSearchQuery: (query: string) => void;
   toggleType: (type: string) => void;
   resetFilters: () => void;
+  setOrder: (order: string[]) => void;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -22,6 +24,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   loading: false,
   searchQuery: "",
   activeTypes: new Set<string>(),
+  order: [],
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -33,6 +36,8 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         loading: false,
         // Initialize activeTypes to all types on first load, preserve user's selection on refreshes
         activeTypes: s.activeTypes.size === 0 ? types : s.activeTypes,
+        // Initialize order from annotation UUIDs on first load, preserve on refreshes
+        order: s.order.length === 0 ? annotations.map((a) => a.uuid) : s.order,
       }));
     } catch {
       set({ loading: false });
@@ -59,4 +64,5 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       searchQuery: "",
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
     })),
+  setOrder: (order) => set({ order }),
 }));
