@@ -20,6 +20,18 @@ const baseAnnotation: CardboxAnnotation = {
 };
 
 describe("CardboxCard", () => {
+  it("sets data-annotation-type on root card element", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, annotation_type: "question" }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-annotation-type", "question");
+  });
+
   it("renders collapsed state with badge, truncated body, and source", () => {
     render(
       <CardboxCard

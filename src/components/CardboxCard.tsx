@@ -36,12 +36,13 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
       onKeyDown={handleKeyDown}
       tabIndex={0}
       data-testid="cardbox-card"
+      data-annotation-type={annotation.annotation_type}
       data-expanded={expanded}
     >
       {/* Original quote - always visible when present */}
       {annotation.original && (
         <div
-          className={`mb-2 border-l-2 border-interactive-accent bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
+          className={`mb-2 border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
           data-testid="card-original"
           dangerouslySetInnerHTML={{ __html: renderedOriginal }}
         />
