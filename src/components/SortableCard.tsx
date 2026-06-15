@@ -2,6 +2,7 @@ import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
+import { useMasonrySpan } from "../hooks/useMasonrySpan";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 interface SortableCardProps {
@@ -21,10 +22,13 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, o
     isDragging,
   } = useSortable({ id: annotation.uuid });
 
+  const { contentRef, span } = useMasonrySpan();
+
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : 1,
+    gridRowEnd: `span ${span}`,
   };
 
   return (
@@ -35,12 +39,14 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, o
       {...attributes}
       {...listeners}
     >
-      <CardboxCard
-        annotation={annotation}
-        expanded={expanded}
-        onToggleExpand={onToggleExpand}
-        onNavigate={onNavigate}
-      />
+      <div ref={contentRef} data-masonry-content="">
+        <CardboxCard
+          annotation={annotation}
+          expanded={expanded}
+          onToggleExpand={onToggleExpand}
+          onNavigate={onNavigate}
+        />
+      </div>
     </div>
   );
 });

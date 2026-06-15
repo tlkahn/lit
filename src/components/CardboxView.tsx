@@ -228,8 +228,13 @@ export default function CardboxView() {
             <SortableContext items={sortedAnnotations.map((a) => a.uuid)} strategy={rectSortingStrategy}>
               <div
                 ref={gridRef}
-                className="grid gap-4"
-                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}
+                className="grid"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                  gridAutoRows: "8px",
+                  columnGap: "1rem",
+                  alignItems: "start",
+                }}
                 onKeyDown={handleGridKeyDown}
               >
                 {sortedAnnotations.map((ann) => (
