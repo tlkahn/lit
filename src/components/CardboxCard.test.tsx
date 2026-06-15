@@ -285,4 +285,121 @@ describe("CardboxCard", () => {
     fireEvent.click(link);
     expect(onToggle).not.toHaveBeenCalled();
   });
+
+  // --- Card linking tests ---
+
+  const linkedCards: CardboxAnnotation[] = [
+    { ...baseAnnotation, uuid: "linked-1", annotation_type: "note", body: "First linked card body" },
+    { ...baseAnnotation, uuid: "linked-2", annotation_type: "question", body: "Second linked card body" },
+  ];
+
+  it("shows link badge when links > 0", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        linkedCards={linkedCards}
+      />,
+    );
+    const badge = screen.getByTestId("card-link-count");
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent("2");
+  });
+
+  it("hides link badge when no links", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        linkedCards={[]}
+      />,
+    );
+    expect(screen.queryByTestId("card-link-count")).not.toBeInTheDocument();
+  });
+
+  it("shows linked card previews when expanded", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        linkedCards={linkedCards}
+      />,
+    );
+    expect(screen.getByTestId("card-linked-section")).toBeInTheDocument();
+    const previews = screen.getAllByTestId("linked-card-preview");
+    expect(previews).toHaveLength(2);
+  });
+
+  it("hides linked section when collapsed", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        linkedCards={linkedCards}
+      />,
+    );
+    // The linked section is inside the grid-collapse area with opacity:0 / 0fr rows
+    expect(screen.getByTestId("card-linked-section")).not.toBeVisible();
+  });
+
+  it("remove button calls onRemoveLink", () => {
+    const onRemoveLink = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        linkedCards={linkedCards}
+        onRemoveLink={onRemoveLink}
+      />,
+    );
+    const removeButtons = screen.getAllByTestId("remove-link-button");
+    fireEvent.click(removeButtons[0]!);
+    expect(onRemoveLink).toHaveBeenCalledWith("linked-1");
+  });
+
+  it("clicking preview calls onFocusCard", () => {
+    const onFocusCard = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        linkedCards={linkedCards}
+        onFocusCard={onFocusCard}
+      />,
+    );
+    const previews = screen.getAllByTestId("linked-card-preview");
+    fireEvent.click(previews[0]!);
+    expect(onFocusCard).toHaveBeenCalledWith("linked-1");
+  });
+
+  it("remove click does not toggle expand", () => {
+    const onToggle = vi.fn();
+    const onRemoveLink = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+        linkedCards={linkedCards}
+        onRemoveLink={onRemoveLink}
+      />,
+    );
+    const removeButtons = screen.getAllByTestId("remove-link-button");
+    fireEvent.click(removeButtons[0]!);
+    expect(onRemoveLink).toHaveBeenCalledOnce();
+    expect(onToggle).not.toHaveBeenCalled();
+  });
 });

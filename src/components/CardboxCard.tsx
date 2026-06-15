@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, memo } from "react";
-import { TYPE_ICON, certaintyMark } from "../editor/livePreview/annotationConstants";
+import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
@@ -8,9 +8,12 @@ interface CardboxCardProps {
   expanded: boolean;
   onToggleExpand: () => void;
   onNavigate: () => void;
+  linkedCards?: CardboxAnnotation[];
+  onFocusCard?: (uuid: string) => void;
+  onRemoveLink?: (targetUuid: string) => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -36,6 +39,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
       onKeyDown={handleKeyDown}
       tabIndex={0}
       data-testid="cardbox-card"
+      data-uuid={annotation.uuid}
       data-annotation-type={annotation.annotation_type}
       data-expanded={expanded}
     >
@@ -76,6 +80,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
         <span className="text-text-faint" data-testid="card-source">
           {annotation.source_page_title}
         </span>
+        {linkedCards && linkedCards.length > 0 && (
+          <span className="text-text-faint" data-testid="card-link-count">
+            &middot;{linkedCards.length}
+          </span>
+        )}
       </div>
 
       {/* Expanded content */}
@@ -103,6 +112,41 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
             >
               Open in document
             </button>
+            {linkedCards && linkedCards.length > 0 && (
+              <div data-testid="card-linked-section">
+                <div className="mt-2 text-[10px] font-semibold uppercase text-text-muted">Linked</div>
+                <div className="mt-1 max-h-32 space-y-1 overflow-y-auto">
+                  {linkedCards.map((card) => (
+                    <div
+                      key={card.uuid}
+                      className="group flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-xs hover:bg-bg-hover"
+                      data-testid="linked-card-preview"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onFocusCard?.(card.uuid);
+                      }}
+                    >
+                      <span className="shrink-0 text-[10px]">
+                        {TYPE_ICON[card.annotation_type as AnnotationType] ?? "…"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-text-muted">
+                        {truncateBody(card.body ?? card.original, 60)}
+                      </span>
+                      <button
+                        className="shrink-0 text-text-faint opacity-0 hover:text-text-normal group-hover:opacity-100"
+                        data-testid="remove-link-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveLink?.(card.uuid);
+                        }}
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

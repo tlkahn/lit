@@ -10,9 +10,12 @@ interface SortableCardProps {
   expanded: boolean;
   onToggleExpand: () => void;
   onNavigate: () => void;
+  linkedCards?: CardboxAnnotation[];
+  onFocusCard?: (uuid: string) => void;
+  onRemoveLink?: (targetUuid: string) => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, onToggleExpand, onNavigate }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -45,6 +48,9 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, o
           expanded={expanded}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}
+          linkedCards={linkedCards}
+          onFocusCard={onFocusCard}
+          onRemoveLink={onRemoveLink}
         />
       </div>
     </div>
