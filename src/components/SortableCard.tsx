@@ -20,14 +20,20 @@ export function SortableCard({ annotation, expanded, onToggleExpand, onNavigate 
     isDragging,
   } = useSortable({ id: annotation.uuid });
 
-  const style = {
+  const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
+    transition: transition ?? "transform 200ms ease-out",
+    opacity: isDragging ? 0.4 : 1,
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={isDragging ? "rounded-lg border-2 border-dashed border-border" : ""}
+      {...attributes}
+      {...listeners}
+    >
       <CardboxCard
         annotation={annotation}
         expanded={expanded}

@@ -243,14 +243,16 @@ export default function CardboxView() {
                 ))}
               </div>
             </SortableContext>
-            <DragOverlay>
+            <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
               {activeId && annotations.find((a) => a.uuid === activeId) ? (
-                <CardboxCard
-                  annotation={annotations.find((a) => a.uuid === activeId)!}
-                  expanded={false}
-                  onToggleExpand={() => {}}
-                  onNavigate={() => {}}
-                />
+                <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
+                  <CardboxCard
+                    annotation={annotations.find((a) => a.uuid === activeId)!}
+                    expanded={false}
+                    onToggleExpand={() => {}}
+                    onNavigate={() => {}}
+                  />
+                </div>
               ) : null}
             </DragOverlay>
           </DndContext>

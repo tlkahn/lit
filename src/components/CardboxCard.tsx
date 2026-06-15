@@ -63,36 +63,38 @@ export function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }
 
       {/* Expanded content */}
       <div
-        className="overflow-hidden transition-all duration-200 ease-out"
+        className="grid transition-all duration-200 ease-out"
         style={{
-          maxHeight: expanded ? "2000px" : "0",
+          gridTemplateRows: expanded ? "1fr" : "0fr",
           opacity: expanded ? 1 : 0,
         }}
       >
-        <div className="mt-3 space-y-2">
-          {annotation.original && (
-            <div
-              className="border-l-2 border-interactive-accent bg-bg-secondary px-3 py-1 text-xs text-text-muted"
-              data-testid="card-original"
+        <div className="overflow-hidden">
+          <div className="mt-3 space-y-2">
+            {annotation.original && (
+              <div
+                className="border-l-2 border-interactive-accent bg-bg-secondary px-3 py-1 text-xs text-text-muted"
+                data-testid="card-original"
+              >
+                {annotation.original}
+              </div>
+            )}
+            {annotation.date && (
+              <div className="text-xs text-text-faint" data-testid="card-date">
+                {annotation.date}
+              </div>
+            )}
+            <button
+              className="text-xs text-text-accent underline hover:no-underline"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate();
+              }}
+              data-testid="card-navigate"
             >
-              {annotation.original}
-            </div>
-          )}
-          {annotation.date && (
-            <div className="text-xs text-text-faint" data-testid="card-date">
-              {annotation.date}
-            </div>
-          )}
-          <button
-            className="text-xs text-text-accent underline hover:no-underline"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNavigate();
-            }}
-            data-testid="card-navigate"
-          >
-            Open in document
-          </button>
+              Open in document
+            </button>
+          </div>
         </div>
       </div>
     </div>
