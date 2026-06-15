@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
@@ -10,7 +11,7 @@ interface SortableCardProps {
   onNavigate: () => void;
 }
 
-export function SortableCard({ annotation, expanded, onToggleExpand, onNavigate }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, onToggleExpand, onNavigate }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -22,7 +23,7 @@ export function SortableCard({ annotation, expanded, onToggleExpand, onNavigate 
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition: transition ?? "transform 200ms ease-out",
+    transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : 1,
   };
 
@@ -42,4 +43,4 @@ export function SortableCard({ annotation, expanded, onToggleExpand, onNavigate 
       />
     </div>
   );
-}
+});
