@@ -17,6 +17,7 @@ import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
 import { SortableGroup } from "./SortableGroup";
 import { LinkPicker } from "./LinkPicker";
+import { GroupPicker } from "./GroupPicker";
 import { makeCardboxCollision } from "../lib/cardboxCollision";
 import { parseActiveId, parseOverId } from "../lib/dndIds";
 import type { ParsedActiveId } from "../lib/dndIds";
@@ -60,6 +61,7 @@ export default function CardboxView() {
 
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+  const [groupPickerCardUuid, setGroupPickerCardUuid] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -318,19 +320,12 @@ export default function CardboxView() {
     onAddToGroup: (cardUuid) => {
       const groupIds = Object.keys(groups);
       if (groupIds.length === 0) return;
-      // Pick the group with the fewest cards (heuristic until a picker is built)
-      let bestId = groupIds[0]!;
-      let bestCount = groups[bestId]?.order.length ?? Infinity;
-      for (const gid of groupIds) {
-        const count = groups[gid]?.order.length ?? Infinity;
-        if (count < bestCount) {
-          bestId = gid;
-          bestCount = count;
-        }
+      if (groupIds.length === 1) {
+        moveCardToGroup(cardUuid, groupIds[0]!);
+        debouncedSave();
+        return;
       }
-      moveCardToGroup(cardUuid, bestId);
-      debouncedSave();
-      // TODO: Phase D polish — show group picker when multiple groups exist
+      setGroupPickerCardUuid(cardUuid);
     },
     onRemoveFromGroup: (cardUuid, groupId) => {
       removeCardFromGroup(cardUuid, groupId);
@@ -515,6 +510,17 @@ export default function CardboxView() {
     ],
   );
 
+  const handleGroupPickerSelect = useCallback(
+    (groupId: string) => {
+      if (groupPickerCardUuid) {
+        moveCardToGroup(groupPickerCardUuid, groupId);
+        debouncedSave();
+      }
+      setGroupPickerCardUuid(null);
+    },
+    [groupPickerCardUuid, moveCardToGroup, debouncedSave],
+  );
+
   // ---------- Drag overlay helpers ----------
 
   /** Look up annotation for overlay rendering, supports both top-level and ingroup IDs. */
@@ -684,6 +690,13 @@ export default function CardboxView() {
         existingLinks={existingLinksForExpanded}
         onSelect={handleLinkSelect}
         onClose={() => setLinkPickerOpen(false)}
+      />
+
+      <GroupPicker
+        open={groupPickerCardUuid !== null}
+        groups={groups}
+        onSelect={handleGroupPickerSelect}
+        onClose={() => setGroupPickerCardUuid(null)}
       />
     </div>
   );
