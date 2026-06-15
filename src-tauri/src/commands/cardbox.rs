@@ -124,7 +124,7 @@ pub fn add_cardbox_link(
     }
 
     layout.links.push(normalized);
-    layout.version = 2;
+    layout.version = layout.version.max(2);
     persist_layout(&lit_dir, &layout)
 }
 
@@ -174,7 +174,7 @@ pub fn pin_cardbox_card(
     }
 
     layout.pinned.push(uuid);
-    layout.version = 3;
+    layout.version = layout.version.max(3);
     persist_layout(&lit_dir, &layout)
 }
 
