@@ -55,7 +55,17 @@ fn open_zotero_db(db_path: &str) -> Result<Connection, String> {
         format!("file:{}?mode=ro", uri_path),
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
     )
-    .map_err(|e| format!("Failed to open Zotero database at '{}': {}", db_path, e))
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("database is locked") || msg.contains("SQLITE_BUSY") {
+            format!(
+                "Zotero database is locked — close Zotero or wait a moment and retry ({})",
+                db_path
+            )
+        } else {
+            format!("Failed to open Zotero database at '{}': {}", db_path, e)
+        }
+    })
 }
 
 /// Strip HTML tags from a string, collapsing whitespace.
@@ -631,13 +641,26 @@ pub async fn import_zotero_annotations(
     let threshold = zotero_match_threshold(&prefs);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
 
+    // Pre-check: Zotero database file exists
+    if !std::path::Path::new(&db_path).exists() {
+        return Err(format!(
+            "Zotero database not found at '{}'. Set the path in Preferences → zotero.databasePath",
+            db_path
+        ));
+    }
+
     // Find companion markdown
     let companion_rel = crate::commands::workspace::find_companion(
         &pdf_rel_path,
         &root,
         &search_paths,
     )
-    .ok_or_else(|| format!("no companion markdown found for '{}'", pdf_rel_path))?;
+    .ok_or_else(|| {
+        format!(
+            "No companion markdown found for '{}'. Run OCR first to create one.",
+            pdf_rel_path
+        )
+    })?;
     let companion_abs = root.join(&companion_rel);
 
     // Extract PDF filename for Zotero lookup
