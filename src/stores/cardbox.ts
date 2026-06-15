@@ -377,7 +377,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     set((s) => {
       const trimmed = body.trim();
       if (!trimmed) {
-        const { [uuid]: _, ...rest } = s.notes;
+        const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
         return { notes: rest };
       }
       return {
@@ -388,7 +388,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   },
   clearNote: async (uuid) => {
     set((s) => {
-      const { [uuid]: _, ...rest } = s.notes;
+      const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
       return { notes: rest };
     });
     await clearCardNote(uuid);

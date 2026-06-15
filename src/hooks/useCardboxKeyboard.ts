@@ -5,11 +5,12 @@ interface UseCardboxKeyboardOptions {
   onNavigate: (index: number) => void;
   onOpenLinkPicker?: () => void;
   onTogglePin?: (index: number) => void;
+  onToggleNote?: () => void;
   expandedUuid: string | null;
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, expandedUuid, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, expandedUuid, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -68,6 +69,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
           onTogglePin?.(currentIndex);
         }
         return;
+      case "n":
+      case "N":
+        if (expandedUuid && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          onToggleNote?.();
+        }
+        return;
       default:
         return;
     }
@@ -76,7 +84,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, expandedUuid]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, expandedUuid]);
 
   return { gridRef, handleKeyDown };
 }

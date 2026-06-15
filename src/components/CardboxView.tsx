@@ -11,6 +11,7 @@ import type { DragStartEvent, DragEndEvent, DragOverEvent } from "@dnd-kit/core"
 import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
 import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { useCardboxStore } from "../stores/cardbox";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { CardboxCard } from "./CardboxCard";
@@ -61,6 +62,9 @@ export default function CardboxView() {
   const pinned = useCardboxStore((s) => s.pinned);
   const pinCard = useCardboxStore((s) => s.pinCard);
   const unpinCard = useCardboxStore((s) => s.unpinCard);
+  const notes = useCardboxStore((s) => s.notes);
+  const setNote = useCardboxStore((s) => s.setNote);
+  const exportNote = useCardboxStore((s) => s.exportNote);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -130,7 +134,7 @@ export default function CardboxView() {
       if (pinnedSet.has(ann.uuid)) return true;
       // Search filter
       if (query) {
-        const searchable = [ann.body, ann.original, ann.source_page_title]
+        const searchable = [ann.body, ann.original, ann.source_page_title, notes[ann.uuid]?.body]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -138,7 +142,7 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes, pinnedSet]);
+  }, [annotations, searchQuery, activeTypes, pinnedSet, notes]);
 
   // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
   const visiblePinnedUuids = useMemo(() => {
@@ -203,6 +207,33 @@ export default function CardboxView() {
     return map;
   }, [linkMap, annotationMap]);
 
+  const notesMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const [uuid, note] of Object.entries(notes)) {
+      map[uuid] = note.body;
+    }
+    return map;
+  }, [notes]);
+
+  const handleSetNote = useCallback(
+    (uuid: string, body: string) => {
+      setNote(uuid, body);
+    },
+    [setNote],
+  );
+
+  const handleExportNote = useCallback(
+    async (uuid: string) => {
+      try {
+        const path = await exportNote(uuid);
+        useStatusMessageStore.getState().show(`Note exported to ${path}`);
+      } catch {
+        useStatusMessageStore.getState().show("Failed to export note", "error");
+      }
+    },
+    [exportNote],
+  );
+
   const handleRemoveLink = useCallback(
     (targetUuid: string) => {
       if (expandedUuid) removeLink(expandedUuid, targetUuid);
@@ -240,6 +271,15 @@ export default function CardboxView() {
         } else {
           pinCard(ann.uuid);
         }
+      }
+    },
+    onToggleNote: () => {
+      if (!expandedUuid) return;
+      const card = gridRef.current?.querySelector(`[data-uuid="${expandedUuid}"]`);
+      if (!card) return;
+      const textarea = card.querySelector<HTMLTextAreaElement>('[data-testid="card-note-textarea"]');
+      if (textarea) {
+        textarea.focus();
       }
     },
     expandedUuid,
@@ -636,6 +676,9 @@ export default function CardboxView() {
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
                       onFocusCard={handleFocusCard}
                       onRemoveLink={handleRemoveLink}
+                      note={notesMap[entry.annotation.uuid]}
+                      onSetNote={(body: string) => handleSetNote(entry.annotation.uuid, body)}
+                      onExportNote={() => handleExportNote(entry.annotation.uuid)}
                       onContextMenu={(e) => handleCardContextMenu(entry.annotation.uuid, e)}
                     />
                   ) : (
@@ -652,6 +695,9 @@ export default function CardboxView() {
                       onNavigate={handleNavigate}
                       onFocusCard={handleFocusCard}
                       onRemoveLink={handleRemoveLink}
+                      notesMap={notes}
+                      onSetNote={handleSetNote}
+                      onExportNote={handleExportNote}
                       onToggleCollapse={() => toggleGroupCollapse(entry.groupId)}
                       onRename={(name: string) => renameGroup(entry.groupId, name)}
                       onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
