@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::sync::Mutex;
-use tauri::menu::{ContextMenu, Menu, MenuItem};
+use tauri::menu::{ContextMenu, Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager, Wry};
 
 pub const CTX_TRASH_RESTORE: &str = "ctx_trash_restore";
@@ -54,6 +54,16 @@ pub const EVENT_CTX_CARDBOX_DISSOLVE_GROUP: &str = "context-menu://cardbox/disso
 pub const EVENT_CTX_CARDBOX_RENAME_GROUP: &str = "context-menu://cardbox/rename-group";
 pub const EVENT_CTX_CARDBOX_PIN: &str = "context-menu://cardbox/pin";
 pub const EVENT_CTX_CARDBOX_UNPIN: &str = "context-menu://cardbox/unpin";
+
+pub const CTX_CARDBOX_COLOR_PREFIX: &str = "ctx_cardbox_color_";
+pub const CTX_CARDBOX_COLOR_BLUE: &str = "ctx_cardbox_color_blue";
+pub const CTX_CARDBOX_COLOR_ORANGE: &str = "ctx_cardbox_color_orange";
+pub const CTX_CARDBOX_COLOR_GREEN: &str = "ctx_cardbox_color_green";
+pub const CTX_CARDBOX_COLOR_PURPLE: &str = "ctx_cardbox_color_purple";
+pub const CTX_CARDBOX_COLOR_PINK: &str = "ctx_cardbox_color_pink";
+pub const CTX_CARDBOX_COLOR_CYAN: &str = "ctx_cardbox_color_cyan";
+pub const CTX_CARDBOX_COLOR_NONE: &str = "ctx_cardbox_color_none";
+pub const EVENT_CTX_CARDBOX_SET_COLOR: &str = "context-menu://cardbox/set-color";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
@@ -120,6 +130,11 @@ pub struct MenuItemSpec {
     pub enabled: bool,
 }
 
+pub enum MenuEntry {
+    Item(MenuItemSpec),
+    Submenu { label: String, items: Vec<MenuItemSpec> },
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SidebarContextPayload {
     pub relative_path: String,
@@ -140,6 +155,7 @@ pub struct GraphContextPayload {
 pub struct CardboxContextPayload {
     pub card_uuid: Option<String>,
     pub group_id: Option<String>,
+    pub color: Option<String>,
 }
 
 pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
@@ -276,47 +292,92 @@ pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
     items
 }
 
-pub fn cardbox_menu_items(ctx: &CardboxMenuContext) -> Vec<MenuItemSpec> {
+const CARDBOX_COLORS: &[(&str, &str, &str)] = &[
+    (CTX_CARDBOX_COLOR_BLUE, "blue", "Blue"),
+    (CTX_CARDBOX_COLOR_ORANGE, "orange", "Orange"),
+    (CTX_CARDBOX_COLOR_GREEN, "green", "Green"),
+    (CTX_CARDBOX_COLOR_PURPLE, "purple", "Purple"),
+    (CTX_CARDBOX_COLOR_PINK, "pink", "Pink"),
+    (CTX_CARDBOX_COLOR_CYAN, "cyan", "Cyan"),
+    (CTX_CARDBOX_COLOR_NONE, "none", "None"),
+];
+
+fn color_submenu_items(current_color: Option<&str>) -> Vec<MenuItemSpec> {
+    CARDBOX_COLORS
+        .iter()
+        .map(|(id, value, display)| {
+            let is_active = match current_color {
+                Some(c) => c == *value,
+                None => *value == "none",
+            };
+            let label = if is_active {
+                format!("\u{2713} {}", display)
+            } else {
+                display.to_string()
+            };
+            MenuItemSpec {
+                id,
+                label,
+                enabled: true,
+            }
+        })
+        .collect()
+}
+
+fn wrap_flat(specs: Vec<MenuItemSpec>) -> Vec<MenuEntry> {
+    specs.into_iter().map(MenuEntry::Item).collect()
+}
+
+pub fn cardbox_menu_items(ctx: &CardboxMenuContext, current_color: Option<&str>) -> Vec<MenuEntry> {
     let mut items = Vec::new();
     if ctx.is_group_header {
-        items.push(MenuItemSpec {
+        items.push(MenuEntry::Item(MenuItemSpec {
             id: CTX_CARDBOX_RENAME_GROUP,
             label: "Rename Group".into(),
             enabled: true,
-        });
-        items.push(MenuItemSpec {
+        }));
+        items.push(MenuEntry::Item(MenuItemSpec {
             id: CTX_CARDBOX_DISSOLVE_GROUP,
             label: "Dissolve Group".into(),
             enabled: true,
-        });
+        }));
+        // NO color submenu for group headers
     } else if ctx.is_grouped {
-        items.push(MenuItemSpec {
+        items.push(MenuEntry::Item(MenuItemSpec {
             id: CTX_CARDBOX_REMOVE_FROM_GROUP,
             label: "Remove from Group".into(),
             enabled: true,
-        });
-        items.push(MenuItemSpec {
+        }));
+        items.push(MenuEntry::Item(MenuItemSpec {
             id: if ctx.is_pinned { CTX_CARDBOX_UNPIN } else { CTX_CARDBOX_PIN },
             label: if ctx.is_pinned { "Unpin".into() } else { "Pin".into() },
             enabled: true,
+        }));
+        items.push(MenuEntry::Submenu {
+            label: "Color".into(),
+            items: color_submenu_items(current_color),
         });
     } else {
-        items.push(MenuItemSpec {
+        items.push(MenuEntry::Item(MenuItemSpec {
             id: CTX_CARDBOX_NEW_GROUP,
             label: "New Group".into(),
             enabled: true,
-        });
+        }));
         if ctx.has_groups {
-            items.push(MenuItemSpec {
+            items.push(MenuEntry::Item(MenuItemSpec {
                 id: CTX_CARDBOX_ADD_TO_GROUP,
                 label: "Add to Group\u{2026}".into(),
                 enabled: true,
-            });
+            }));
         }
-        items.push(MenuItemSpec {
+        items.push(MenuEntry::Item(MenuItemSpec {
             id: if ctx.is_pinned { CTX_CARDBOX_UNPIN } else { CTX_CARDBOX_PIN },
             label: if ctx.is_pinned { "Unpin".into() } else { "Pin".into() },
             enabled: true,
+        }));
+        items.push(MenuEntry::Submenu {
+            label: "Color".into(),
+            items: color_submenu_items(current_color),
         });
     }
     items
@@ -366,6 +427,7 @@ pub fn dispatch_cardbox_action(
     let payload = CardboxContextPayload {
         card_uuid,
         group_id,
+        color: None,
     };
     let event = match action {
         ContextMenuAction::CardboxNewGroup => EVENT_CTX_CARDBOX_NEW_GROUP,
@@ -419,17 +481,34 @@ impl Default for PendingContextMenu {
 }
 
 fn show_popup_menu(
-    specs: &[MenuItemSpec],
+    entries: &[MenuEntry],
     window: &tauri::Window<Wry>,
 ) -> Result<(), String> {
     let app = window.app_handle();
-    let items: Vec<MenuItem<Wry>> = specs
-        .iter()
-        .map(|s| MenuItem::with_id(app, s.id, &s.label, s.enabled, None::<&str>))
-        .collect::<Result<_, _>>()
-        .map_err(|e| e.to_string())?;
+    let mut menu_items: Vec<Box<dyn tauri::menu::IsMenuItem<Wry>>> = Vec::new();
+    for entry in entries {
+        match entry {
+            MenuEntry::Item(s) => {
+                let item = MenuItem::with_id(app, s.id, &s.label, s.enabled, None::<&str>)
+                    .map_err(|e| e.to_string())?;
+                menu_items.push(Box::new(item));
+            }
+            MenuEntry::Submenu { label, items } => {
+                let sub_items: Vec<MenuItem<Wry>> = items
+                    .iter()
+                    .map(|s| MenuItem::with_id(app, s.id, &s.label, s.enabled, None::<&str>))
+                    .collect::<Result<_, _>>()
+                    .map_err(|e| e.to_string())?;
+                let sub_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
+                    sub_items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<Wry>).collect();
+                let submenu = Submenu::with_items(app, label, true, &sub_refs)
+                    .map_err(|e| e.to_string())?;
+                menu_items.push(Box::new(submenu));
+            }
+        }
+    }
     let item_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
-        items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<Wry>).collect();
+        menu_items.iter().map(|i| i.as_ref()).collect();
     let menu = Menu::with_items(app, &item_refs).map_err(|e| e.to_string())?;
     menu.popup(window.clone()).map_err(|e| e.to_string())?;
     Ok(())
@@ -444,8 +523,8 @@ pub fn show_trash_context_menu(
     *pending.0.lock().unwrap() = Some(ContextMenuContext::Trash {
         trash_name,
     });
-    let specs = trash_menu_items();
-    show_popup_menu(&specs, &window)
+    let entries = wrap_flat(trash_menu_items());
+    show_popup_menu(&entries, &window)
 }
 
 #[tauri::command]
@@ -457,11 +536,36 @@ pub fn show_sidebar_context_menu(
     *pending.0.lock().unwrap() = Some(ContextMenuContext::Sidebar {
         relative_path,
     });
-    let specs = sidebar_menu_items();
-    show_popup_menu(&specs, &window)
+    let entries = wrap_flat(sidebar_menu_items());
+    show_popup_menu(&entries, &window)
 }
 
 pub fn handle_context_menu_event(app: &tauri::AppHandle, menu_id: &str) {
+    // --- Color submenu: prefix-based dispatch ---
+    if menu_id.starts_with(CTX_CARDBOX_COLOR_PREFIX) {
+        let color_name = &menu_id[CTX_CARDBOX_COLOR_PREFIX.len()..];
+        let pending: tauri::State<PendingContextMenu> = app.state();
+        let context = pending.0.lock().unwrap().take();
+        if let Some(ContextMenuContext::Cardbox { card_uuid, group_id }) = context {
+            let color = if color_name == "none" {
+                None
+            } else {
+                Some(color_name.to_string())
+            };
+            let payload = CardboxContextPayload {
+                card_uuid,
+                group_id,
+                color,
+            };
+            let windows = app.webview_windows();
+            for window in windows.values() {
+                let _ = window.emit(EVENT_CTX_CARDBOX_SET_COLOR, &payload);
+            }
+        }
+        return;
+    }
+
+    // --- Existing enum-based dispatch ---
     let action = match ContextMenuAction::from_id(menu_id) {
         Some(a) => a,
         None => return,
@@ -532,8 +636,8 @@ pub fn show_graph_context_menu(
         has_export,
         is_shadow,
     };
-    let specs = graph_menu_items(&ctx);
-    show_popup_menu(&specs, &window)
+    let entries = wrap_flat(graph_menu_items(&ctx));
+    show_popup_menu(&entries, &window)
 }
 
 #[tauri::command]
@@ -544,8 +648,8 @@ pub fn show_mindmap_context_menu(
     pending: tauri::State<PendingContextMenu>,
 ) -> Result<(), String> {
     *pending.0.lock().unwrap() = Some(ContextMenuContext::Mindmap { node_id });
-    let specs = mindmap_menu_items(has_export);
-    show_popup_menu(&specs, &window)
+    let entries = wrap_flat(mindmap_menu_items(has_export));
+    show_popup_menu(&entries, &window)
 }
 
 #[tauri::command]
@@ -556,6 +660,7 @@ pub fn show_cardbox_context_menu(
     is_group_header: bool,
     has_groups: bool,
     is_pinned: bool,
+    current_color: Option<String>,
     window: tauri::Window,
     pending: tauri::State<PendingContextMenu>,
 ) -> Result<(), String> {
@@ -569,8 +674,8 @@ pub fn show_cardbox_context_menu(
         has_groups,
         is_pinned,
     };
-    let specs = cardbox_menu_items(&ctx);
-    show_popup_menu(&specs, &window)
+    let entries = cardbox_menu_items(&ctx, current_color.as_deref());
+    show_popup_menu(&entries, &window)
 }
 
 #[cfg(test)]
@@ -1443,6 +1548,20 @@ mod tests {
         }
     }
 
+    fn flat_items(entries: &[MenuEntry]) -> Vec<&MenuItemSpec> {
+        entries.iter().filter_map(|e| match e {
+            MenuEntry::Item(s) => Some(s),
+            _ => None,
+        }).collect()
+    }
+
+    fn find_submenu<'a>(entries: &'a [MenuEntry], label: &str) -> Option<&'a Vec<MenuItemSpec>> {
+        entries.iter().find_map(|e| match e {
+            MenuEntry::Submenu { label: l, items } if l == label => Some(items),
+            _ => None,
+        })
+    }
+
     #[test]
     fn cardbox_menu_items_ungrouped_card_without_groups() {
         let ctx = CardboxMenuContext {
@@ -1451,11 +1570,14 @@ mod tests {
             has_groups: false,
             is_pinned: false,
         };
-        let items = cardbox_menu_items(&ctx);
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, CTX_CARDBOX_NEW_GROUP);
         assert_eq!(items[0].label, "New Group");
         assert!(items[0].enabled);
+        // Should have a Color submenu
+        assert!(find_submenu(&entries, "Color").is_some());
     }
 
     #[test]
@@ -1466,7 +1588,8 @@ mod tests {
             has_groups: true,
             is_pinned: false,
         };
-        let items = cardbox_menu_items(&ctx);
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].id, CTX_CARDBOX_NEW_GROUP);
         assert_eq!(items[0].label, "New Group");
@@ -1474,6 +1597,8 @@ mod tests {
         assert_eq!(items[1].id, CTX_CARDBOX_ADD_TO_GROUP);
         assert_eq!(items[1].label, "Add to Group\u{2026}");
         assert!(items[1].enabled);
+        // Should have a Color submenu
+        assert!(find_submenu(&entries, "Color").is_some());
     }
 
     #[test]
@@ -1484,11 +1609,14 @@ mod tests {
             has_groups: true,
             is_pinned: false,
         };
-        let items = cardbox_menu_items(&ctx);
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, CTX_CARDBOX_REMOVE_FROM_GROUP);
         assert_eq!(items[0].label, "Remove from Group");
         assert!(items[0].enabled);
+        // Should have a Color submenu
+        assert!(find_submenu(&entries, "Color").is_some());
     }
 
     #[test]
@@ -1499,7 +1627,8 @@ mod tests {
             has_groups: true,
             is_pinned: false,
         };
-        let items = cardbox_menu_items(&ctx);
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, CTX_CARDBOX_RENAME_GROUP);
         assert_eq!(items[0].label, "Rename Group");
@@ -1507,6 +1636,8 @@ mod tests {
         assert_eq!(items[1].id, CTX_CARDBOX_DISSOLVE_GROUP);
         assert_eq!(items[1].label, "Dissolve Group");
         assert!(items[1].enabled);
+        // Group headers should NOT have a Color submenu
+        assert!(find_submenu(&entries, "Color").is_none());
     }
 
     #[test]
@@ -1565,17 +1696,141 @@ mod tests {
         let payload = CardboxContextPayload {
             card_uuid: Some("abc".to_string()),
             group_id: Some("grp-1".to_string()),
+            color: None,
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["card_uuid"], "abc");
         assert_eq!(json["group_id"], "grp-1");
+        assert!(json["color"].is_null());
 
         let payload_none = CardboxContextPayload {
             card_uuid: None,
             group_id: None,
+            color: None,
         };
         let json_none = serde_json::to_value(&payload_none).unwrap();
         assert!(json_none["card_uuid"].is_null());
         assert!(json_none["group_id"].is_null());
+        assert!(json_none["color"].is_null());
+    }
+
+    #[test]
+    fn cardbox_context_payload_serializes_with_color() {
+        let payload = CardboxContextPayload {
+            card_uuid: Some("abc".to_string()),
+            group_id: None,
+            color: Some("blue".to_string()),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["card_uuid"], "abc");
+        assert!(json["group_id"].is_null());
+        assert_eq!(json["color"], "blue");
+    }
+
+    // --- Color submenu tests ---
+
+    #[test]
+    fn color_submenu_items_none_current_checks_none_option() {
+        let items = color_submenu_items(None);
+        assert_eq!(items.len(), 7);
+        // "None" should have a checkmark
+        let none_item = items.iter().find(|i| i.id == CTX_CARDBOX_COLOR_NONE).unwrap();
+        assert!(none_item.label.starts_with('\u{2713}'));
+        // Other items should not
+        let blue_item = items.iter().find(|i| i.id == CTX_CARDBOX_COLOR_BLUE).unwrap();
+        assert!(!blue_item.label.starts_with('\u{2713}'));
+    }
+
+    #[test]
+    fn color_submenu_items_blue_current_checks_blue() {
+        let items = color_submenu_items(Some("blue"));
+        let blue_item = items.iter().find(|i| i.id == CTX_CARDBOX_COLOR_BLUE).unwrap();
+        assert!(blue_item.label.starts_with('\u{2713}'));
+        let none_item = items.iter().find(|i| i.id == CTX_CARDBOX_COLOR_NONE).unwrap();
+        assert!(!none_item.label.starts_with('\u{2713}'));
+    }
+
+    #[test]
+    fn color_submenu_items_has_all_seven_colors() {
+        let items = color_submenu_items(None);
+        let ids: Vec<&str> = items.iter().map(|i| i.id).collect();
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_BLUE));
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_ORANGE));
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_GREEN));
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_PURPLE));
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_PINK));
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_CYAN));
+        assert!(ids.contains(&CTX_CARDBOX_COLOR_NONE));
+    }
+
+    #[test]
+    fn color_id_prefix_stripping() {
+        let id = CTX_CARDBOX_COLOR_BLUE;
+        assert!(id.starts_with(CTX_CARDBOX_COLOR_PREFIX));
+        let color_name = &id[CTX_CARDBOX_COLOR_PREFIX.len()..];
+        assert_eq!(color_name, "blue");
+    }
+
+    #[test]
+    fn color_none_id_prefix_stripping() {
+        let id = CTX_CARDBOX_COLOR_NONE;
+        assert!(id.starts_with(CTX_CARDBOX_COLOR_PREFIX));
+        let color_name = &id[CTX_CARDBOX_COLOR_PREFIX.len()..];
+        assert_eq!(color_name, "none");
+    }
+
+    #[test]
+    fn cardbox_menu_ungrouped_color_submenu_has_seven_items() {
+        let ctx = CardboxMenuContext {
+            is_grouped: false,
+            is_group_header: false,
+            has_groups: false,
+            is_pinned: false,
+        };
+        let entries = cardbox_menu_items(&ctx, None);
+        let sub = find_submenu(&entries, "Color").expect("Color submenu missing");
+        assert_eq!(sub.len(), 7);
+    }
+
+    #[test]
+    fn cardbox_menu_grouped_color_submenu_has_seven_items() {
+        let ctx = CardboxMenuContext {
+            is_grouped: true,
+            is_group_header: false,
+            has_groups: true,
+            is_pinned: false,
+        };
+        let entries = cardbox_menu_items(&ctx, Some("green"));
+        let sub = find_submenu(&entries, "Color").expect("Color submenu missing");
+        assert_eq!(sub.len(), 7);
+        let green = sub.iter().find(|i| i.id == CTX_CARDBOX_COLOR_GREEN).unwrap();
+        assert!(green.label.starts_with('\u{2713}'));
+    }
+
+    #[test]
+    fn cardbox_color_ids_do_not_collide_with_other_ids() {
+        let color_ids = [
+            CTX_CARDBOX_COLOR_BLUE,
+            CTX_CARDBOX_COLOR_ORANGE,
+            CTX_CARDBOX_COLOR_GREEN,
+            CTX_CARDBOX_COLOR_PURPLE,
+            CTX_CARDBOX_COLOR_PINK,
+            CTX_CARDBOX_COLOR_CYAN,
+            CTX_CARDBOX_COLOR_NONE,
+        ];
+        let other_ids = [
+            CTX_CARDBOX_NEW_GROUP,
+            CTX_CARDBOX_ADD_TO_GROUP,
+            CTX_CARDBOX_REMOVE_FROM_GROUP,
+            CTX_CARDBOX_DISSOLVE_GROUP,
+            CTX_CARDBOX_RENAME_GROUP,
+            CTX_CARDBOX_PIN,
+            CTX_CARDBOX_UNPIN,
+        ];
+        for cid in &color_ids {
+            for oid in &other_ids {
+                assert_ne!(cid, oid, "Color ID {cid} collides with cardbox ID {oid}");
+            }
+        }
     }
 }
