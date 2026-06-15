@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 20;
 
@@ -1538,6 +1538,35 @@ impl Store {
                     char_end: row.get(8)?,
                     scope_kind: row.get(9)?,
                     scope_value: row.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn list_all_cardbox_annotations(&self) -> Result<Vec<CardboxAnnotation>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.uuid, a.annotation_type, a.certainty, a.body, a.date,
+                    a.node_id, n.title, a.source_line, a.char_start, a.char_end, a.scope_kind
+             FROM annotations a
+             JOIN nodes n ON n.id = a.node_id
+             ORDER BY a.node_id, a.char_start",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(CardboxAnnotation {
+                    uuid: row.get(0)?,
+                    annotation_type: row.get(1)?,
+                    certainty: row.get(2)?,
+                    body: row.get(3)?,
+                    date: row.get(4)?,
+                    source_page_id: row.get(5)?,
+                    source_page_title: row.get(6)?,
+                    source_line: row.get(7)?,
+                    char_start: row.get(8)?,
+                    char_end: row.get(9)?,
+                    scope_kind: row.get(10)?,
+                    original: None,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -5604,5 +5633,59 @@ mod tests {
             ).unwrap();
             assert_eq!(count, 0, "table {} should be empty after future-schema reset", table);
         }
+    }
+
+    // --- Cardbox annotations ---
+
+    #[test]
+    fn list_all_cardbox_annotations_empty() {
+        let store = Store::open_memory().unwrap();
+        let results = store.list_all_cardbox_annotations().unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn list_all_cardbox_annotations_returns_all() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
+        let anns_a = vec![IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+        }];
+        let anns_b = vec![IndexableAnnotation {
+            annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
+            date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
+        }];
+        store.upsert_annotations("a.md", &anns_a).unwrap();
+        store.upsert_annotations("b.md", &anns_b).unwrap();
+        let results = store.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].source_page_id, "a.md");
+        assert_eq!(results[0].source_page_title, "Alpha");
+        assert_eq!(results[0].uuid, "u1");
+        assert_eq!(results[0].annotation_type, "note");
+        assert!(results[0].original.is_none());
+        assert_eq!(results[1].source_page_id, "b.md");
+        assert_eq!(results[1].source_page_title, "Beta");
+    }
+
+    #[test]
+    fn list_all_cardbox_annotations_excludes_orphans() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let anns = vec![IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+        }];
+        store.upsert_annotations("a.md", &anns).unwrap();
+        // Insert an orphan annotation directly via SQL (node "orphan.md" doesn't exist in nodes)
+        store.conn.execute(
+            "INSERT INTO annotations (node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            rusqlite::params!["orphan.md", "note", "neutral", "orphan body", rusqlite::types::Null, 1, 0, 5, "words", "1", "u-orphan"],
+        ).unwrap();
+        let results = store.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 1, "orphan annotation should be excluded by JOIN");
+        assert_eq!(results[0].uuid, "u1");
     }
 }

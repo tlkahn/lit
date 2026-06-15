@@ -383,6 +383,7 @@ pub fn run() {
             commands::annotation::annotation_find_uuid,
             commands::annotation::migrate_annotations,
             commands::annotation::get_mark_config,
+            commands::cardbox::list_all_annotations,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,

@@ -1213,6 +1213,11 @@ impl GraphIndex {
         store.find_annotation_uuid(node_id, annotation_type, body, char_start_hint)
     }
 
+    pub fn list_all_cardbox_annotations(&self) -> Result<Vec<super::types::CardboxAnnotation>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_all_cardbox_annotations()
+    }
+
     pub fn top_by_pagerank(&self, n: usize) -> Result<Vec<(String, f64)>, GraphError> {
         let scores = self.pagerank()?;
         let mut pairs: Vec<(String, f64)> = scores.into_iter().collect();

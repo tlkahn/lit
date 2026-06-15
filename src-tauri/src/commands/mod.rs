@@ -2,6 +2,7 @@ pub mod annotation;
 pub mod app_info;
 pub mod bib;
 pub mod bib_import;
+pub mod cardbox;
 pub mod cli;
 pub mod credential;
 pub mod crossref;
