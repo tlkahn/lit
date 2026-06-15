@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, memo } from "react";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
@@ -9,7 +9,7 @@ interface CardboxCardProps {
   onNavigate: () => void;
 }
 
-export function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -99,4 +99,4 @@ export function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate }
       </div>
     </div>
   );
-}
+});
