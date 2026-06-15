@@ -143,6 +143,14 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
                     {ann.date}
                   </span>
                 )}
+                {ann.uuid?.startsWith("zot-") && (
+                  <span
+                    className="shrink-0 rounded bg-bg-hover px-1 py-0.5 text-[10px] text-text-faint"
+                    data-testid={`annotation-zotero-${i}`}
+                  >
+                    via Zotero
+                  </span>
+                )}
                 <span className="truncate text-text-muted" data-testid={`annotation-body-${i}`}>
                   {truncateBody(ann.body)}
                 </span>

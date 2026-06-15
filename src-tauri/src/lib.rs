@@ -427,6 +427,8 @@ pub fn run() {
             commands::ocr::check_ocr_target_exists,
             commands::zotero_annotations::import_zotero_annotations,
             commands::zotero_annotations::import_zotero_all,
+            commands::zotero_annotations::check_zotero_annotations_available,
+            commands::zotero_annotations::preview_zotero_import,
             context_menu::show_trash_context_menu,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,

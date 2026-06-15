@@ -1003,6 +1003,189 @@ fn build_paragraphs_ocr(lines: &[&str]) -> Vec<(String, usize)> {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5.2: Match-with-metadata for preview
+// ---------------------------------------------------------------------------
+
+/// Metadata about how a match was found, used by the preview command.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MatchMetadata {
+    pub line_idx: usize,
+    pub match_type: String,
+    pub confidence: f64,
+}
+
+/// Like `find_match_line_scoped` but returns rich metadata about the match.
+/// Tries the same pipeline (exact -> fuzzy -> windowed -> OCR) and records
+/// which stage succeeded plus the score.
+pub fn find_match_line_scoped_with_metadata(
+    needle: &str,
+    lines: &[&str],
+    threshold: f64,
+    page_label: Option<&str>,
+    page_ranges: &[PageRange],
+) -> Option<MatchMetadata> {
+    let ocr_needle = ocr_normalize(needle);
+    if ocr_needle.is_empty() {
+        return None;
+    }
+
+    let ocr_lines: Vec<String> = lines.iter().map(|l| ocr_normalize(l)).collect();
+    let ocr_line_refs: Vec<&str> = ocr_lines.iter().map(|s| s.as_str()).collect();
+
+    let scope = page_label.and_then(|pl| page_scoped_line_range(pl, page_ranges));
+
+    // Try scoped search first
+    if let Some((start, end)) = scope {
+        let end = end.min(ocr_line_refs.len().saturating_sub(1));
+        if start <= end {
+            let scoped_lines = &ocr_line_refs[start..=end];
+            if let Some(meta) = find_match_with_metadata_inner(&ocr_needle, scoped_lines, threshold) {
+                return Some(MatchMetadata {
+                    line_idx: start + meta.line_idx,
+                    match_type: meta.match_type,
+                    confidence: meta.confidence,
+                });
+            }
+        }
+    }
+
+    // Fall back to full-document search
+    find_match_with_metadata_inner(&ocr_needle, &ocr_line_refs, threshold)
+}
+
+/// Inner function that tries the matching pipeline and returns metadata.
+fn find_match_with_metadata_inner(
+    needle: &str,
+    lines: &[&str],
+    threshold: f64,
+) -> Option<MatchMetadata> {
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() {
+        return None;
+    }
+
+    // 1. Exact substring match
+    if let Some(line_idx) = find_exact_match(needle, lines) {
+        return Some(MatchMetadata {
+            line_idx,
+            match_type: "exact".to_string(),
+            confidence: 1.0,
+        });
+    }
+
+    // 2. Fuzzy: single-paragraph
+    let paragraphs = build_paragraphs(lines);
+    if let Some((line_idx, score)) = find_fuzzy_match_with_score(needle, &paragraphs, threshold) {
+        return Some(MatchMetadata {
+            line_idx,
+            match_type: "fuzzy".to_string(),
+            confidence: score,
+        });
+    }
+
+    // 3. Windowed fuzzy
+    if let Some((line_idx, score)) = find_fuzzy_match_windowed_with_score(needle, &paragraphs, threshold) {
+        return Some(MatchMetadata {
+            line_idx,
+            match_type: "fuzzy_windowed".to_string(),
+            confidence: score,
+        });
+    }
+
+    // 4. OCR-enhanced paragraph matching with hyphen-rejoin
+    let ocr_paragraphs = build_paragraphs_ocr(lines);
+    if let Some((line_idx, score)) = find_fuzzy_match_with_score(needle, &ocr_paragraphs, threshold) {
+        return Some(MatchMetadata {
+            line_idx,
+            match_type: "fuzzy_ocr".to_string(),
+            confidence: score,
+        });
+    }
+
+    if let Some((line_idx, score)) = find_fuzzy_match_windowed_with_score(needle, &ocr_paragraphs, threshold) {
+        return Some(MatchMetadata {
+            line_idx,
+            match_type: "fuzzy_ocr_windowed".to_string(),
+            confidence: score,
+        });
+    }
+
+    None
+}
+
+/// Like `find_fuzzy_match` but also returns the score.
+fn find_fuzzy_match_with_score(
+    needle: &str,
+    paragraphs: &[(String, usize)],
+    threshold: f64,
+) -> Option<(usize, f64)> {
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() {
+        return None;
+    }
+
+    let mut best_score: f64 = 0.0;
+    let mut best_line: Option<usize> = None;
+
+    for (para_text, last_line) in paragraphs {
+        if para_text.is_empty() {
+            continue;
+        }
+        let score = fuzzy_score(&norm_needle, para_text);
+        if score > best_score {
+            best_score = score;
+            best_line = Some(*last_line);
+        }
+    }
+
+    if best_score >= threshold {
+        best_line.map(|l| (l, best_score))
+    } else {
+        None
+    }
+}
+
+/// Like `find_fuzzy_match_windowed` but also returns the score.
+fn find_fuzzy_match_windowed_with_score(
+    needle: &str,
+    paragraphs: &[(String, usize)],
+    threshold: f64,
+) -> Option<(usize, f64)> {
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() || paragraphs.len() < 2 {
+        return None;
+    }
+
+    let mut best_score: f64 = 0.0;
+    let mut best_line: Option<usize> = None;
+
+    let max_window = 3.min(paragraphs.len());
+    for window_size in 2..=max_window {
+        for start in 0..=(paragraphs.len() - window_size) {
+            let end = start + window_size - 1;
+            let joined: String = paragraphs[start..=end]
+                .iter()
+                .map(|(t, _)| t.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let score = fuzzy_score(&norm_needle, &joined);
+
+            if score > best_score {
+                best_score = score;
+                best_line = Some(paragraphs[end].1);
+            }
+        }
+    }
+
+    if best_score >= threshold {
+        best_line.map(|l| (l, best_score))
+    } else {
+        None
+    }
+}
+
 /// Read the fuzzy-match threshold from preferences.
 /// Key: `zotero.matchThreshold`. Default: 0.65.
 pub fn zotero_match_threshold(prefs: &crate::preferences::Preferences) -> f64 {
@@ -1882,6 +2065,322 @@ pub async fn import_zotero_annotations(
     write_manifest(&root, &updated_manifest)?;
 
     Ok(outcome.result)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5.1b: Zotero availability check
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZoteroAvailability {
+    pub available: usize,
+    pub imported: usize,
+}
+
+#[tauri::command]
+pub async fn check_zotero_annotations_available(
+    key: String,
+    workspace_path: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<ZoteroAvailability, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    let pdf_rel_path = {
+        let store = gi.store();
+        let entry = crate::bib::db::get_bib_item(&store.conn, &key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("entry '{}' not found", key))?;
+        entry
+            .file
+            .filter(|f| !f.is_empty())
+            .ok_or_else(|| format!("entry '{}' has no linked PDF", key))?
+    };
+
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let db_path = zotero_db_path(&prefs);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+
+    if !std::path::Path::new(&db_path).exists() {
+        return Err(format!(
+            "Zotero database not found at '{}'",
+            db_path
+        ));
+    }
+
+    let key_owned = key.clone();
+    let root_owned = root.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let pdf_path_obj = std::path::Path::new(&pdf_rel_path);
+        let pdf_stem = pdf_path_obj
+            .file_stem()
+            .ok_or_else(|| "invalid PDF path".to_string())?
+            .to_str()
+            .ok_or_else(|| "invalid PDF stem".to_string())?;
+
+        let (att_id, parent_id) = resolve_pdf_in_zotero(&db_path, pdf_stem)?
+            .ok_or_else(|| format!("PDF not found in Zotero database"))?;
+
+        let annotations = query_zotero_for_pdf(&db_path, att_id)?;
+        let child_notes = query_zotero_child_notes(&db_path, parent_id)?;
+
+        let total_available = annotations.len() + child_notes.len();
+
+        // Count already-imported: check companion markdown + manifest
+        let mut imported_count = 0;
+
+        let companion_rel = crate::commands::workspace::find_companion(
+            &pdf_rel_path,
+            &root_owned,
+            &search_paths,
+        );
+
+        let mut existing_ids = HashSet::new();
+        if let Some(ref rel) = companion_rel {
+            let companion_abs = root_owned.join(rel);
+            if let Ok(content) = std::fs::read_to_string(&companion_abs) {
+                existing_ids = existing_zotero_ids(&content);
+            }
+        }
+
+        let manifest = read_manifest(&root_owned);
+        let manifest_ids: HashSet<String> = manifest
+            .entries
+            .get(&key_owned)
+            .map(|e| e.imported_ids.iter().cloned().collect())
+            .unwrap_or_default();
+
+        for ann in &annotations {
+            let zot_id = format!("zot-{}", ann.item_id);
+            if existing_ids.contains(&zot_id) || manifest_ids.contains(&zot_id) {
+                imported_count += 1;
+            }
+        }
+        for note in &child_notes {
+            let zot_id = format!("zot-note-{}", note.item_id);
+            if existing_ids.contains(&zot_id) || manifest_ids.contains(&zot_id) {
+                imported_count += 1;
+            }
+        }
+
+        Ok(ZoteroAvailability {
+            available: total_available,
+            imported: imported_count,
+        })
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))?
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5.2: Preview and dry-run
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewAnnotation {
+    pub text: Option<String>,
+    pub comment: Option<String>,
+    pub match_type: String,
+    pub confidence: f64,
+    pub target_line: Option<usize>,
+    pub page_label: Option<String>,
+    pub ann_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportPreview {
+    pub annotations: Vec<PreviewAnnotation>,
+    pub total: usize,
+    pub matched: usize,
+    pub unmatched: usize,
+    pub already_imported: usize,
+}
+
+#[tauri::command]
+pub async fn preview_zotero_import(
+    key: String,
+    workspace_path: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<ImportPreview, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    let pdf_rel_path = {
+        let store = gi.store();
+        let entry = crate::bib::db::get_bib_item(&store.conn, &key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("entry '{}' not found", key))?;
+        entry
+            .file
+            .filter(|f| !f.is_empty())
+            .ok_or_else(|| format!("entry '{}' has no linked PDF", key))?
+    };
+
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let db_path = zotero_db_path(&prefs);
+    let threshold = zotero_match_threshold(&prefs);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+
+    if !std::path::Path::new(&db_path).exists() {
+        return Err(format!(
+            "Zotero database not found at '{}'. Set the path in Preferences -> zotero.databasePath",
+            db_path
+        ));
+    }
+
+    let key_owned = key.clone();
+    let root_owned = root.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let pdf_path_obj = std::path::Path::new(&pdf_rel_path);
+        let pdf_filename = pdf_path_obj
+            .file_name()
+            .ok_or_else(|| "invalid PDF path".to_string())?
+            .to_str()
+            .ok_or_else(|| "invalid PDF filename".to_string())?;
+        let pdf_stem = pdf_path_obj
+            .file_stem()
+            .ok_or_else(|| "invalid PDF path".to_string())?
+            .to_str()
+            .ok_or_else(|| "invalid PDF stem".to_string())?;
+
+        let (att_id, parent_id) = resolve_pdf_in_zotero(&db_path, pdf_stem)?
+            .ok_or_else(|| format!("PDF '{}' not found in Zotero database", pdf_filename))?;
+
+        let annotations = query_zotero_for_pdf(&db_path, att_id)?;
+        let child_notes = query_zotero_child_notes(&db_path, parent_id)?;
+
+        // Determine already-imported IDs
+        let companion_rel = crate::commands::workspace::find_companion(
+            &pdf_rel_path,
+            &root_owned,
+            &search_paths,
+        );
+
+        let content = match companion_rel {
+            Some(ref rel) => {
+                let companion_abs = root_owned.join(rel);
+                std::fs::read_to_string(&companion_abs)
+                    .map_err(|e| format!("failed to read companion: {}", e))?
+            }
+            None => {
+                return Err(format!(
+                    "No companion markdown found for '{}'. Run OCR first to create one.",
+                    pdf_rel_path
+                ));
+            }
+        };
+
+        let existing_ids = existing_zotero_ids(&content);
+        let manifest = read_manifest(&root_owned);
+        let manifest_ids: HashSet<String> = manifest
+            .entries
+            .get(&key_owned)
+            .map(|e| e.imported_ids.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let page_ranges = find_page_ranges(&lines);
+
+        let mut preview_annotations = Vec::new();
+        let mut matched_count = 0;
+        let mut unmatched_count = 0;
+        let mut already_imported = 0;
+
+        for ann in &annotations {
+            let zot_id = format!("zot-{}", ann.item_id);
+            if existing_ids.contains(&zot_id) || manifest_ids.contains(&zot_id) {
+                already_imported += 1;
+                continue;
+            }
+
+            let type_name = ann_type_name(ann.ann_type).to_string();
+            let matchable_text = if ann.ann_type == 2 || ann.ann_type == 6 {
+                None
+            } else {
+                ann.text.as_deref().filter(|t| !t.is_empty())
+            };
+
+            if let Some(text) = matchable_text {
+                if let Some(meta) = find_match_line_scoped_with_metadata(
+                    text,
+                    &lines,
+                    threshold,
+                    ann.page_label.as_deref(),
+                    &page_ranges,
+                ) {
+                    matched_count += 1;
+                    preview_annotations.push(PreviewAnnotation {
+                        text: ann.text.clone(),
+                        comment: ann.comment.clone(),
+                        match_type: meta.match_type,
+                        confidence: meta.confidence,
+                        target_line: Some(meta.line_idx),
+                        page_label: ann.page_label.clone(),
+                        ann_type: type_name,
+                    });
+                } else {
+                    unmatched_count += 1;
+                    preview_annotations.push(PreviewAnnotation {
+                        text: ann.text.clone(),
+                        comment: ann.comment.clone(),
+                        match_type: "unmatched".to_string(),
+                        confidence: 0.0,
+                        target_line: None,
+                        page_label: ann.page_label.clone(),
+                        ann_type: type_name,
+                    });
+                }
+            } else {
+                // Notes and freetext without matchable text are "unmatched"
+                unmatched_count += 1;
+                preview_annotations.push(PreviewAnnotation {
+                    text: ann.text.clone(),
+                    comment: ann.comment.clone(),
+                    match_type: "unmatched".to_string(),
+                    confidence: 0.0,
+                    target_line: None,
+                    page_label: ann.page_label.clone(),
+                    ann_type: type_name,
+                });
+            }
+        }
+
+        // Child notes are always "notes" and will be appended
+        for note in &child_notes {
+            let zot_id = format!("zot-note-{}", note.item_id);
+            if existing_ids.contains(&zot_id) || manifest_ids.contains(&zot_id) {
+                already_imported += 1;
+                continue;
+            }
+            preview_annotations.push(PreviewAnnotation {
+                text: None,
+                comment: Some(note.html_content.chars().take(200).collect()),
+                match_type: "child_note".to_string(),
+                confidence: 1.0,
+                target_line: None,
+                page_label: None,
+                ann_type: "note".to_string(),
+            });
+        }
+
+        let total = preview_annotations.len() + already_imported;
+
+        Ok(ImportPreview {
+            annotations: preview_annotations,
+            total,
+            matched: matched_count,
+            unmatched: unmatched_count,
+            already_imported,
+        })
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))?
 }
 
 // ---------------------------------------------------------------------------
@@ -4743,5 +5242,159 @@ Some text
         let manifest: ZoteroSyncManifest = serde_json::from_str(json).unwrap();
         assert_eq!(manifest.last_import.as_deref(), Some("2024-01-01T00:00:00Z"));
         assert!(manifest.entries.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5.1b: ZoteroAvailability serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_zotero_availability_serialization() {
+        let avail = ZoteroAvailability {
+            available: 12,
+            imported: 5,
+        };
+        let json = serde_json::to_value(&avail).unwrap();
+        assert_eq!(json["available"], 12);
+        assert_eq!(json["imported"], 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5.2: Preview types and match-with-metadata
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_preview_annotation_serialization() {
+        let ann = PreviewAnnotation {
+            text: Some("highlighted text".to_string()),
+            comment: None,
+            match_type: "exact".to_string(),
+            confidence: 1.0,
+            target_line: Some(42),
+            page_label: Some("5".to_string()),
+            ann_type: "highlight".to_string(),
+        };
+        let json = serde_json::to_value(&ann).unwrap();
+        assert_eq!(json["text"], "highlighted text");
+        assert!(json["comment"].is_null());
+        assert_eq!(json["match_type"], "exact");
+        assert_eq!(json["confidence"], 1.0);
+        assert_eq!(json["target_line"], 42);
+        assert_eq!(json["page_label"], "5");
+        assert_eq!(json["ann_type"], "highlight");
+    }
+
+    #[test]
+    fn test_import_preview_serialization() {
+        let preview = ImportPreview {
+            annotations: vec![
+                PreviewAnnotation {
+                    text: Some("text".to_string()),
+                    comment: None,
+                    match_type: "exact".to_string(),
+                    confidence: 1.0,
+                    target_line: Some(10),
+                    page_label: None,
+                    ann_type: "highlight".to_string(),
+                },
+            ],
+            total: 5,
+            matched: 3,
+            unmatched: 1,
+            already_imported: 1,
+        };
+        let json = serde_json::to_value(&preview).unwrap();
+        assert_eq!(json["total"], 5);
+        assert_eq!(json["matched"], 3);
+        assert_eq!(json["unmatched"], 1);
+        assert_eq!(json["already_imported"], 1);
+        assert_eq!(json["annotations"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_match_metadata_serialization() {
+        let meta = MatchMetadata {
+            line_idx: 42,
+            match_type: "fuzzy".to_string(),
+            confidence: 0.85,
+        };
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["line_idx"], 42);
+        assert_eq!(json["match_type"], "fuzzy");
+        assert_eq!(json["confidence"], 0.85);
+    }
+
+    #[test]
+    fn test_match_with_metadata_exact() {
+        let lines = vec!["The quick brown fox jumps over the lazy dog"];
+        let result = find_match_line_scoped_with_metadata(
+            "brown fox", &lines, 0.65, None, &[],
+        );
+        assert!(result.is_some());
+        let meta = result.unwrap();
+        assert_eq!(meta.match_type, "exact");
+        assert_eq!(meta.confidence, 1.0);
+        assert_eq!(meta.line_idx, 0);
+    }
+
+    #[test]
+    fn test_match_with_metadata_fuzzy() {
+        let lines = vec![
+            "The quick brown fox jumps over the lazy dog",
+            "",
+            "A completely different paragraph about something else",
+        ];
+        // A needle close to the first paragraph but not exact
+        let result = find_match_line_scoped_with_metadata(
+            "quick brown fox jumps over lazy dog", &lines, 0.5, None, &[],
+        );
+        assert!(result.is_some());
+        let meta = result.unwrap();
+        // Should be either exact or fuzzy (depends on normalization)
+        assert!(
+            meta.match_type == "exact" || meta.match_type == "fuzzy",
+            "Expected exact or fuzzy, got: {}",
+            meta.match_type
+        );
+        assert!(meta.confidence >= 0.5);
+    }
+
+    #[test]
+    fn test_match_with_metadata_empty_needle() {
+        let lines = vec!["some text"];
+        let result = find_match_line_scoped_with_metadata(
+            "", &lines, 0.65, None, &[],
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_with_metadata_no_match() {
+        let lines = vec!["The quick brown fox"];
+        let result = find_match_line_scoped_with_metadata(
+            "completely unrelated text about quantum physics", &lines, 0.9, None, &[],
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_with_metadata_scoped_to_page() {
+        let lines = vec![
+            "<!-- Page 1 - 0 images -->",
+            "First page content about biology",
+            "",
+            "<!-- Page 2 - 0 images -->",
+            "Second page content about chemistry",
+            "",
+            "<!-- Page 3 - 0 images -->",
+            "Third page content about physics",
+        ];
+        let page_ranges = find_page_ranges(&lines);
+        let result = find_match_line_scoped_with_metadata(
+            "content about chemistry", &lines, 0.65, Some("2"), &page_ranges,
+        );
+        assert!(result.is_some());
+        let meta = result.unwrap();
+        assert_eq!(meta.line_idx, 4);
     }
 }

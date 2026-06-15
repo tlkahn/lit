@@ -287,6 +287,38 @@ describe("AnnotationPanel", () => {
     expect(screen.getByTestId("annotation-entry-0").classList.contains("bg-bg-secondary")).toBe(false);
   });
 
+  it("shows 'via Zotero' label when uuid starts with zot-", () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "zotero ann", uuid: "zot-301" }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    const badge = screen.getByTestId("annotation-zotero-0");
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toBe("via Zotero");
+  });
+
+  it("does not show 'via Zotero' label for non-zot uuid", () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "normal ann", uuid: "abc-123" }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    expect(screen.queryByTestId("annotation-zotero-0")).not.toBeInTheDocument();
+  });
+
+  it("does not show 'via Zotero' label when uuid is null", () => {
+    const annotations = [
+      makeAnnotation({ char_start: 0, char_end: 10, body: "no uuid" }),
+    ];
+    editorView = setupEditorView("a".repeat(20), annotations);
+    render(<AnnotationPanel pageId="test.md" />);
+
+    expect(screen.queryByTestId("annotation-zotero-0")).not.toBeInTheDocument();
+  });
+
   it("editor mousedown clears highlight", () => {
     const annotations = [
       makeAnnotation({ char_start: 0, char_end: 10, body: "first" }),

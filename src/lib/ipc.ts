@@ -588,6 +588,47 @@ export async function importZoteroAll(
   return invoke<BatchImportResult>("import_zotero_all", { workspacePath });
 }
 
+// Zotero availability check
+
+export interface ZoteroAvailability {
+  available: number;
+  imported: number;
+}
+
+export async function checkZoteroAnnotationsAvailable(
+  key: string,
+  workspacePath: string,
+): Promise<ZoteroAvailability> {
+  return invoke<ZoteroAvailability>("check_zotero_annotations_available", { key, workspacePath });
+}
+
+// Zotero import preview
+
+export interface PreviewAnnotation {
+  text: string | null;
+  comment: string | null;
+  matchType: string;
+  confidence: number;
+  targetLine: number | null;
+  pageLabel: string | null;
+  annType: string;
+}
+
+export interface ImportPreview {
+  annotations: PreviewAnnotation[];
+  total: number;
+  matched: number;
+  unmatched: number;
+  alreadyImported: number;
+}
+
+export async function previewZoteroImport(
+  key: string,
+  workspacePath: string,
+): Promise<ImportPreview> {
+  return invoke<ImportPreview>("preview_zotero_import", { key, workspacePath });
+}
+
 // PDF recognition
 
 export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";

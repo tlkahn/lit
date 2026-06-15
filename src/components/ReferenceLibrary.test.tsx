@@ -2787,4 +2787,214 @@ describe("ReferenceLibrary", () => {
       expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument();
     });
   });
+
+  describe("Zotero preview and availability", () => {
+    const sandersonWithFile: BibEntry = {
+      ...sanderson,
+      doi: "10.1000/xyz",
+      file: "assets/pdf/sanderson2009.pdf",
+    };
+
+    function setupMockWithZotero(
+      fixtureOverride: BibEntry[],
+      overrides: {
+        previewZoteroImport?: (cmd: string, args: unknown) => unknown;
+        checkAvailability?: (cmd: string, args: unknown) => unknown;
+        importZotero?: (cmd: string, args: unknown) => unknown;
+      } = {},
+    ) {
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixtureOverride;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "preview_zotero_import") {
+          if (overrides.previewZoteroImport) return overrides.previewZoteroImport(cmd, args as unknown);
+          return {
+            annotations: [
+              { text: "highlighted text", comment: null, matchType: "exact", confidence: 1.0, targetLine: 42, pageLabel: "5", annType: "highlight" },
+              { text: null, comment: "sticky note", matchType: "unmatched", confidence: 0.0, targetLine: null, pageLabel: "3", annType: "note" },
+            ],
+            total: 5,
+            matched: 2,
+            unmatched: 1,
+            alreadyImported: 2,
+          };
+        }
+        if (cmd === "check_zotero_annotations_available") {
+          if (overrides.checkAvailability) return overrides.checkAvailability(cmd, args as unknown);
+          return { available: 10, imported: 3 };
+        }
+        if (cmd === "import_zotero_annotations") {
+          if (overrides.importZotero) return overrides.importZotero(cmd, args as unknown);
+          return { inserted: 3, unmatched: 1, skipped: 2, llmPlaced: 0, modified: 0 };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+    }
+
+    it("clicking Zotero Annotations triggers preview, shows panel", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("import-zotero-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("zotero-preview-panel")).toBeInTheDocument();
+      });
+      expect(screen.getByText(/5 annotations/)).toBeInTheDocument();
+      expect(screen.getByText(/2 matched/)).toBeInTheDocument();
+      expect(screen.getByText(/2 already imported/)).toBeInTheDocument();
+    });
+
+    it("preview panel confirm button triggers import", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("import-zotero-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("zotero-preview-panel")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("preview-confirm-btn"));
+
+      await waitFor(() => {
+        const importCall = invokedCommands.find((c) => c.cmd === "import_zotero_annotations");
+        expect(importCall).toBeTruthy();
+      });
+    });
+
+    it("preview panel cancel button clears preview", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("import-zotero-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("zotero-preview-panel")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("preview-cancel-btn"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("zotero-preview-panel")).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows 'N new' badge when availability has new annotations", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("zotero-availability-badge")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("zotero-availability-badge").textContent).toBe("7 new");
+    });
+
+    it("shows 'synced' badge when all annotations are imported", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture, {
+        checkAvailability: () => ({ available: 5, imported: 5 }),
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("zotero-availability-badge")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("zotero-availability-badge").textContent).toBe("synced");
+    });
+
+    it("shows no badge when no annotations available", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture, {
+        checkAvailability: () => ({ available: 0, imported: 0 }),
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      // Wait for availability check to complete, then verify no badge
+      await waitFor(() => {
+        const availCall = invokedCommands.find((c) => c.cmd === "check_zotero_annotations_available");
+        expect(availCall).toBeTruthy();
+      });
+      expect(screen.queryByTestId("zotero-availability-badge")).not.toBeInTheDocument();
+    });
+
+    it("short-circuits when preview reports 0 total annotations", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture, {
+        previewZoteroImport: () => ({
+          annotations: [],
+          total: 0,
+          matched: 0,
+          unmatched: 0,
+          alreadyImported: 0,
+        }),
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("import-zotero-btn"));
+
+      await waitFor(() => {
+        const previewCall = invokedCommands.find((c) => c.cmd === "preview_zotero_import");
+        expect(previewCall).toBeTruthy();
+      });
+      // No preview panel should appear for 0 total
+      expect(screen.queryByTestId("zotero-preview-panel")).not.toBeInTheDocument();
+    });
+
+    it("short-circuits when all annotations already imported", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithZotero(fixture, {
+        previewZoteroImport: () => ({
+          annotations: [],
+          total: 5,
+          matched: 0,
+          unmatched: 0,
+          alreadyImported: 5,
+        }),
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("import-zotero-btn"));
+
+      await waitFor(() => {
+        const previewCall = invokedCommands.find((c) => c.cmd === "preview_zotero_import");
+        expect(previewCall).toBeTruthy();
+      });
+      // No preview panel should appear when all already imported
+      expect(screen.queryByTestId("zotero-preview-panel")).not.toBeInTheDocument();
+    });
+  });
 });

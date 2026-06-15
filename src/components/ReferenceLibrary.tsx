@@ -20,10 +20,14 @@ import {
   downloadEntryPdf,
   linkEntryPdf,
   importZoteroAnnotations,
+  checkZoteroAnnotationsAvailable,
+  previewZoteroImport,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
   type FileEvent,
+  type ZoteroAvailability,
+  type ImportPreview,
 } from "../lib/ipc";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
@@ -161,6 +165,10 @@ export function ReferenceLibrary() {
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [importingZoteroKey, setImportingZoteroKey] = useState<string | null>(null);
+  const [previewingZoteroKey, setPreviewingZoteroKey] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<ImportPreview | null>(null);
+  const [previewEntryKey, setPreviewEntryKey] = useState<string | null>(null);
+  const [zoteroAvailability, setZoteroAvailability] = useState<Record<string, ZoteroAvailability | null>>({});
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
@@ -325,7 +333,31 @@ export function ReferenceLibrary() {
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
+    setPreviewData(null);
+    setPreviewEntryKey(null);
   }, []);
+
+  // Lazy-fetch Zotero availability when an entry with a PDF is expanded
+  useEffect(() => {
+    if (!expandedKey || !workspacePath) return;
+    const entry = filtered.find((e) => `${e.bib_file ?? ""}:${e.key}` === expandedKey);
+    if (!entry?.file) return;
+    if (zoteroAvailability[entry.key] !== undefined) return;
+
+    let cancelled = false;
+    checkZoteroAnnotationsAvailable(entry.key, workspacePath)
+      .then((result) => {
+        if (!cancelled) {
+          setZoteroAvailability((prev) => ({ ...prev, [entry.key]: result }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setZoteroAvailability((prev) => ({ ...prev, [entry.key]: null }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, [expandedKey, workspacePath, filtered, zoteroAvailability]);
 
   const copyCitation = useCallback(
     (key: string) => {
@@ -447,19 +479,53 @@ export function ReferenceLibrary() {
 
   const handleImportZotero = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || importingZoteroKey) return;
-      setImportingZoteroKey(entry.key);
+      if (!workspacePath || previewingZoteroKey || importingZoteroKey) return;
+      setPreviewingZoteroKey(entry.key);
       try {
-        const result = await importZoteroAnnotations(entry.key, workspacePath);
-        if (result.inserted === 0 && result.skipped === 0) {
+        const preview = await previewZoteroImport(entry.key, workspacePath);
+        if (preview.total === 0) {
           show(`No annotations found in Zotero for @${entry.key}`);
-        } else if (result.inserted === 0 && result.skipped > 0) {
+          return;
+        }
+        if (preview.total === preview.alreadyImported) {
           show(`All annotations already imported for @${entry.key}`);
+          return;
+        }
+        setPreviewData(preview);
+        setPreviewEntryKey(entry.key);
+      } catch (err) {
+        show(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setPreviewingZoteroKey(null);
+      }
+    },
+    [workspacePath, previewingZoteroKey, importingZoteroKey, show],
+  );
+
+  const confirmImportZotero = useCallback(
+    async () => {
+      if (!workspacePath || !previewEntryKey || importingZoteroKey) return;
+      setImportingZoteroKey(previewEntryKey);
+      setPreviewData(null);
+      const entryKey = previewEntryKey;
+      setPreviewEntryKey(null);
+      try {
+        const result = await importZoteroAnnotations(entryKey, workspacePath);
+        if (result.inserted === 0 && result.skipped === 0) {
+          show(`No annotations found in Zotero for @${entryKey}`);
+        } else if (result.inserted === 0 && result.skipped > 0) {
+          show(`All annotations already imported for @${entryKey}`);
         } else {
           const llmInfo = result.llmPlaced > 0 ? `, ${result.llmPlaced} placed by LLM` : "";
           const modifiedInfo = result.modified > 0 ? `, ${result.modified} modified` : "";
-          show(`Imported ${result.inserted} annotations for @${entry.key} (${result.unmatched} unmatched${llmInfo}${modifiedInfo}, ${result.skipped} skipped)`);
+          show(`Imported ${result.inserted} annotations for @${entryKey} (${result.unmatched} unmatched${llmInfo}${modifiedInfo}, ${result.skipped} skipped)`);
         }
+        // Invalidate availability cache for this entry
+        setZoteroAvailability((prev) => {
+          const next = { ...prev };
+          delete next[entryKey];
+          return next;
+        });
         refreshPages();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -468,7 +534,7 @@ export function ReferenceLibrary() {
         setImportingZoteroKey(null);
       }
     },
-    [workspacePath, importingZoteroKey, show, refreshPages],
+    [workspacePath, previewEntryKey, importingZoteroKey, show, refreshPages],
   );
 
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -856,31 +922,102 @@ export function ReferenceLibrary() {
                           </div>
                         ) : null}
                         {entry.file ? (
-                          <div className="mt-2 flex gap-2">
-                            <button
-                              data-testid="open-pdf-btn"
-                              onClick={() => selectPage(entry.file!)}
-                              title={entry.file}
-                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
-                            >
-                              Open PDF
-                            </button>
-                            <button
-                              data-testid="ocr-btn"
-                              onClick={() => { if (workspacePath) setOcrEntry(entry); }}
-                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
-                            >
-                              OCR to Markdown
-                            </button>
-                            <button
-                              data-testid="import-zotero-btn"
-                              disabled={importingZoteroKey === entry.key}
-                              onClick={() => handleImportZotero(entry)}
-                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline disabled:opacity-50"
-                            >
-                              {importingZoteroKey === entry.key ? "Importing…" : "Zotero Annotations"}
-                            </button>
-                          </div>
+                          <>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                data-testid="open-pdf-btn"
+                                onClick={() => selectPage(entry.file!)}
+                                title={entry.file}
+                                className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                              >
+                                Open PDF
+                              </button>
+                              <button
+                                data-testid="ocr-btn"
+                                onClick={() => { if (workspacePath) setOcrEntry(entry); }}
+                                className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                              >
+                                OCR to Markdown
+                              </button>
+                              <button
+                                data-testid="import-zotero-btn"
+                                disabled={importingZoteroKey === entry.key || previewingZoteroKey === entry.key}
+                                onClick={() => handleImportZotero(entry)}
+                                className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline disabled:opacity-50"
+                              >
+                                {importingZoteroKey === entry.key
+                                  ? "Importing…"
+                                  : previewingZoteroKey === entry.key
+                                    ? "Previewing…"
+                                    : "Zotero Annotations"}
+                              </button>
+                              {(() => {
+                                const avail = zoteroAvailability[entry.key];
+                                if (!avail || avail.available === 0) return null;
+                                const newCount = avail.available - avail.imported;
+                                if (newCount > 0) {
+                                  return (
+                                    <span
+                                      data-testid="zotero-availability-badge"
+                                      className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent"
+                                    >
+                                      {newCount} new
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span
+                                    data-testid="zotero-availability-badge"
+                                    className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-faint"
+                                  >
+                                    synced
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                            {previewData && previewEntryKey === entry.key && (
+                              <div
+                                data-testid="zotero-preview-panel"
+                                className="mt-2 rounded border border-border bg-bg-secondary p-2 text-xs"
+                              >
+                                <div className="font-medium text-text-normal">
+                                  {previewData.total} annotations ({previewData.matched} matched, {previewData.unmatched} unmatched)
+                                </div>
+                                {previewData.alreadyImported > 0 && (
+                                  <div className="text-text-faint">{previewData.alreadyImported} already imported</div>
+                                )}
+                                <details className="mt-1">
+                                  <summary className="cursor-pointer text-text-muted">Details</summary>
+                                  <ul className="mt-1 space-y-0.5">
+                                    {previewData.annotations.map((a, i) => (
+                                      <li key={i} data-testid={`preview-annotation-${i}`}>
+                                        <span className={a.matchType === "unmatched" ? "text-text-error" : "text-text-normal"}>
+                                          [{a.matchType}{a.confidence > 0 && a.matchType !== "unmatched" ? ` ${Math.round(a.confidence * 100)}%` : ""}] {a.text?.slice(0, 60) || a.comment?.slice(0, 60) || "(empty)"}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </details>
+                                <div className="mt-2 flex gap-2">
+                                  <button
+                                    data-testid="preview-confirm-btn"
+                                    onClick={confirmImportZotero}
+                                    disabled={importingZoteroKey !== null}
+                                    className="rounded bg-interactive-accent px-2 py-0.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                                  >
+                                    Import
+                                  </button>
+                                  <button
+                                    data-testid="preview-cancel-btn"
+                                    onClick={() => { setPreviewData(null); setPreviewEntryKey(null); }}
+                                    className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </>
                         ) : null}
                         <div className="mt-2 flex gap-2">
                           <button

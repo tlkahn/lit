@@ -128,6 +128,10 @@ import {
   annotationFindUuid,
   detectPandoc,
   exportDocument,
+  importZoteroAnnotations,
+  importZoteroAll,
+  checkZoteroAnnotationsAvailable,
+  previewZoteroImport,
   type SecretStoreStatus,
   autoUnlockSecretStore,
   migrateSecretStore,
@@ -771,6 +775,22 @@ describe("ipc", () => {
         }
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
+        case "import_zotero_annotations":
+          return { inserted: 5, unmatched: 1, skipped: 2, llm_placed: 0, modified: 0 };
+        case "import_zotero_all":
+          return { entriesProcessed: 3, totalInserted: 10, totalUnmatched: 2, totalSkipped: 5, totalLlmPlaced: 0, totalModified: 0, errors: [] };
+        case "check_zotero_annotations_available":
+          return { available: 10, imported: 3 };
+        case "preview_zotero_import":
+          return {
+            annotations: [
+              { text: "highlighted text", comment: null, matchType: "exact", confidence: 1.0, targetLine: 42, pageLabel: "5", annType: "highlight" },
+            ],
+            total: 5,
+            matched: 3,
+            unmatched: 1,
+            alreadyImported: 1,
+          };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2429,6 +2449,58 @@ describe("ipc", () => {
       notePath: "Note.md",
       workspacePath: "/workspace",
       skipNoteRewrite: true,
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Zotero annotation import
+  // -----------------------------------------------------------------------
+
+  it("importZoteroAnnotations invokes import_zotero_annotations", async () => {
+    const result = await importZoteroAnnotations("smith2024", "/workspace");
+    expect(result.inserted).toBe(5);
+    expect(result.unmatched).toBe(1);
+    expect(result.skipped).toBe(2);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("import_zotero_annotations", {
+      key: "smith2024",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("importZoteroAll invokes import_zotero_all", async () => {
+    const result = await importZoteroAll("/workspace");
+    expect(result.entriesProcessed).toBe(3);
+    expect(result.totalInserted).toBe(10);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("import_zotero_all", {
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("checkZoteroAnnotationsAvailable invokes check_zotero_annotations_available", async () => {
+    const result = await checkZoteroAnnotationsAvailable("smith2024", "/workspace");
+    expect(result.available).toBe(10);
+    expect(result.imported).toBe(3);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("check_zotero_annotations_available", {
+      key: "smith2024",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("previewZoteroImport invokes preview_zotero_import", async () => {
+    const result = await previewZoteroImport("smith2024", "/workspace");
+    expect(result.total).toBe(5);
+    expect(result.matched).toBe(3);
+    expect(result.unmatched).toBe(1);
+    expect(result.alreadyImported).toBe(1);
+    expect(result.annotations).toHaveLength(1);
+    expect(result.annotations[0]!.matchType).toBe("exact");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("preview_zotero_import", {
+      key: "smith2024",
+      workspacePath: "/workspace",
     });
   });
 
