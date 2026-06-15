@@ -110,6 +110,7 @@ export function ensureCommandsRegistered() {
     id: "app.showGraphView",
     label: "Show Graph View",
     keywords: ["graph", "network", "visualize"],
+    when: () => usePreferencesStore.getState().graphViewEnabled,
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "graph" }));
     },
@@ -126,7 +127,7 @@ export function ensureCommandsRegistered() {
     id: "app.showLocalGraph",
     label: "Show Local Graph",
     keywords: ["graph", "local", "neighborhood"],
-    when: () => useWorkspaceStore.getState().currentPagePath != null,
+    when: () => usePreferencesStore.getState().graphViewEnabled && useWorkspaceStore.getState().currentPagePath != null,
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
     },

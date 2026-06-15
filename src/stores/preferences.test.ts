@@ -851,6 +851,74 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().neighborsDepth).toBe(0);
   });
 
+  // --- Graph View ---
+
+  it("defaults graphViewEnabled to false", () => {
+    const state = usePreferencesStore.getState();
+    expect(state.graphViewEnabled).toBe(false);
+  });
+
+  it("maps workbench.graphView.enabled: true from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "workbench.graphView.enabled": true,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().graphViewEnabled).toBe(true);
+  });
+
+  it("defaults graphViewEnabled to false when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().graphViewEnabled).toBe(false);
+  });
+
+  it("updates graphViewEnabled on preferences://changed event", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().graphViewEnabled).toBe(false);
+
+    emitMockEvent("preferences://changed", {
+      "workbench.colorTheme": null,
+      "workbench.darkMode": "auto",
+      "workbench.sideBar.location": "left",
+      "workbench.graphView.enabled": true,
+    });
+
+    expect(usePreferencesStore.getState().graphViewEnabled).toBe(true);
+  });
+
   // --- Academic Export fields ---
 
   it("defaults academicPandocPath to empty string", () => {

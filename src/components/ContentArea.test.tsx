@@ -89,7 +89,7 @@ beforeEach(() => {
     root: { type: "leaf", id: "test-pane", pagePath: null },
     focusedPaneId: "test-pane",
   });
-  usePreferencesStore.setState({ defaultViewMode: "editor" });
+  usePreferencesStore.setState({ defaultViewMode: "editor", graphViewEnabled: false });
   resetRegistry();
   resetEditorViewRef();
 
@@ -967,6 +967,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("Graph toggle button exists", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -974,7 +975,17 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
+  it("Graph toggle button is hidden when graphViewEnabled is false", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Graph" })).not.toBeInTheDocument();
+  });
+
   it("clicking Graph button shows graph view", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -987,6 +998,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("clicking Editor button from graph view unmounts graph wrapper", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1003,6 +1015,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("dispatching lit:toggle-graph-view when in editor switches to graph", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1016,7 +1029,20 @@ describe("ContentArea menu://open-in-external-editor", () => {
     });
   });
 
+  it("dispatching lit:toggle-graph-view when disabled is a no-op", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-graph-view"));
+    });
+    expect(screen.queryByTestId("graph-view-wrapper")).not.toBeInTheDocument();
+  });
+
   it("dispatching lit:toggle-graph-view when already in graph unmounts graph wrapper", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1037,6 +1063,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("lit:toggle-graph-view with detail.mode='local' passes initialMode to GraphView", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1054,6 +1081,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("toggling off graph and re-entering retains last mode (conditional mount)", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1087,6 +1115,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("graph-view-wrapper is removed from DOM after switching to editor (conditional mount)", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1115,6 +1144,7 @@ describe("ContentArea menu://open-in-external-editor", () => {
   });
 
   it("Escape in graph view unmounts graph wrapper (via onExit)", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     render(<ContentArea />);
     await waitFor(() => {
@@ -1337,6 +1367,7 @@ describe("ContentArea export network wiring", () => {
   });
 
   it("GraphView receives onExportNetwork prop (wrapper renders)", async () => {
+    usePreferencesStore.setState({ graphViewEnabled: true });
     setPage("Hello.md");
     const user = userEvent.setup();
     render(<ContentArea />);
