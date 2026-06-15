@@ -138,6 +138,46 @@ export function useTrashContextMenu(handlers: TrashContextMenuHandlers) {
   }, []);
 }
 
+export async function showCardboxContextMenu(uuid: string, isPinned: boolean): Promise<void> {
+  return invoke<void>("show_cardbox_context_menu", { uuid, isPinned });
+}
+
+interface CardboxContextPayload {
+  uuid: string;
+}
+
+interface CardboxContextMenuHandlers {
+  onPin: (uuid: string) => void;
+  onUnpin: (uuid: string) => void;
+}
+
+export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: Array<Promise<() => void>> = [];
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/pin", (event) => {
+        if (!cancelled) handlersRef.current.onPin(event.payload.uuid);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/unpin", (event) => {
+        if (!cancelled) handlersRef.current.onUnpin(event.payload.uuid);
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+      for (const p of unlisteners) p.then((u) => u());
+    };
+  }, []);
+}
+
 interface GraphContextMenuArgs {
   nodeId: string;
   nodeIds: string[];

@@ -9,6 +9,8 @@ pub struct CardboxLayout {
     pub order: Vec<String>,
     #[serde(default)]
     pub links: Vec<[String; 2]>,
+    #[serde(default)]
+    pub pinned: Vec<String>,
 }
 
 fn normalize_link(a: &str, b: &str) -> [String; 2] {
@@ -22,8 +24,8 @@ fn normalize_link(a: &str, b: &str) -> [String; 2] {
 fn load_layout_from_disk(layout_path: &std::path::Path) -> CardboxLayout {
     match std::fs::read_to_string(layout_path) {
         Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout { version: 1, order: vec![], links: vec![] }),
-        Err(_) => CardboxLayout { version: 1, order: vec![], links: vec![] },
+            .unwrap_or(CardboxLayout { version: 1, order: vec![], links: vec![], pinned: vec![] }),
+        Err(_) => CardboxLayout { version: 1, order: vec![], links: vec![], pinned: vec![] },
     }
 }
 
@@ -77,6 +79,9 @@ pub fn read_cardbox_layout(
         layout.links.retain(|pair| {
             valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
         });
+        layout.pinned.retain(|uuid| valid_uuids.contains(uuid.as_str()));
+        let mut seen = HashSet::new();
+        layout.pinned.retain(|uuid| seen.insert(uuid.clone()));
         Ok(())
     })?;
 
@@ -119,7 +124,7 @@ pub fn add_cardbox_link(
     }
 
     layout.links.push(normalized);
-    layout.version = 2;
+    layout.version = layout.version.max(2);
     persist_layout(&lit_dir, &layout)
 }
 
@@ -145,6 +150,54 @@ pub fn remove_cardbox_link(
     layout.links.retain(|pair| *pair != normalized);
 
     if layout.links.len() == before {
+        return Ok(());
+    }
+
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn pin_cardbox_card(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    if layout.pinned.contains(&uuid) {
+        return Ok(());
+    }
+
+    layout.pinned.push(uuid);
+    layout.version = layout.version.max(3);
+    persist_layout(&lit_dir, &layout)
+}
+
+#[tauri::command]
+pub fn unpin_cardbox_card(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    let layout_path = lit_dir.join("cardbox.json");
+
+    if !layout_path.exists() {
+        return Ok(());
+    }
+
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    let before = layout.pinned.len();
+    layout.pinned.retain(|u| *u != uuid);
+
+    if layout.pinned.len() == before {
         return Ok(());
     }
 
@@ -220,10 +273,10 @@ mod tests {
         // Simulate reading: no file should return empty layout
         let layout = match std::fs::read_to_string(&layout_path) {
             Ok(content) => serde_json::from_str::<super::CardboxLayout>(&content)
-                .unwrap_or(super::CardboxLayout { version: 1, order: vec![], links: vec![] }),
-            Err(_) => super::CardboxLayout { version: 1, order: vec![], links: vec![] },
+                .unwrap_or(super::CardboxLayout { version: 1, order: vec![], links: vec![], pinned: vec![] }),
+            Err(_) => super::CardboxLayout { version: 1, order: vec![], links: vec![], pinned: vec![] },
         };
-        assert_eq!(layout, super::CardboxLayout { version: 1, order: vec![], links: vec![] });
+        assert_eq!(layout, super::CardboxLayout { version: 1, order: vec![], links: vec![], pinned: vec![] });
     }
 
     #[test]
@@ -236,6 +289,7 @@ mod tests {
             version: 1,
             order: vec!["uuid-1".into(), "uuid-2".into(), "uuid-3".into()],
             links: vec![],
+            pinned: vec![],
         };
 
         // Write
@@ -269,6 +323,7 @@ mod tests {
             version: 1,
             order: vec!["stale-uuid".into(), real_uuid.clone()],
             links: vec![],
+            pinned: vec![],
         };
         std::fs::write(
             lit_dir.join("cardbox.json"),
@@ -294,7 +349,7 @@ mod tests {
         assert!(!lit_dir.exists());
 
         std::fs::create_dir_all(&lit_dir).unwrap();
-        let layout = super::CardboxLayout { version: 1, order: vec!["a".into()], links: vec![] };
+        let layout = super::CardboxLayout { version: 1, order: vec!["a".into()], links: vec![], pinned: vec![] };
         let content = serde_json::to_string_pretty(&layout).unwrap();
         std::fs::write(lit_dir.join("cardbox.json"), &content).unwrap();
 
@@ -367,6 +422,7 @@ mod tests {
             version: 1,
             order: vec![],
             links: vec![],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -389,6 +445,7 @@ mod tests {
             version: 2,
             order: vec![],
             links: vec![normalized.clone()],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -409,6 +466,7 @@ mod tests {
             version: 1,
             order: vec![],
             links: vec![],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -439,6 +497,7 @@ mod tests {
             version: 2,
             order: vec![],
             links: vec![normalized.clone()],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -457,6 +516,7 @@ mod tests {
             version: 2,
             order: vec![],
             links: vec![super::normalize_link("uuid-a", "uuid-b")],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -485,6 +545,7 @@ mod tests {
                 super::normalize_link(&uuid_a, &uuid_b),
                 super::normalize_link(&uuid_a, "stale-uuid"),
             ],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -513,6 +574,7 @@ mod tests {
             version: 2,
             order: vec![uuid_a.clone(), uuid_b.clone()],
             links: vec![link.clone()],
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -548,6 +610,140 @@ mod tests {
             links: vec![
                 super::normalize_link("uuid-1", "uuid-2"),
             ],
+            pinned: vec![],
+        };
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result, layout);
+    }
+
+    #[test]
+    fn pin_adds_to_pinned() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec![],
+            links: vec![],
+            pinned: vec![],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.pinned.push("uuid-x".into());
+        layout.version = 3;
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned, vec!["uuid-x"]);
+        assert_eq!(result.version, 3);
+    }
+
+    #[test]
+    fn pin_idempotent() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec![],
+            links: vec![],
+            pinned: vec!["uuid-x".into()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        if !layout.pinned.contains(&"uuid-x".to_string()) {
+            layout.pinned.push("uuid-x".into());
+        }
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned.len(), 1);
+    }
+
+    #[test]
+    fn unpin_removes() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec![],
+            links: vec![],
+            pinned: vec!["uuid-x".into(), "uuid-y".into()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.pinned.retain(|u| u != "uuid-x");
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned, vec!["uuid-y"]);
+    }
+
+    #[test]
+    fn unpin_nonexistent_noop() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec![],
+            links: vec![],
+            pinned: vec!["uuid-x".into()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let layout = read_layout(dir.path());
+        let before = layout.pinned.len();
+        let mut pinned = layout.pinned.clone();
+        pinned.retain(|u| u != "uuid-z");
+        assert_eq!(pinned.len(), before);
+    }
+
+    #[test]
+    fn read_layout_prunes_stale_pinned() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(anns.len(), 1);
+        let real_uuid = anns[0].uuid.clone();
+
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec![real_uuid.clone()],
+            links: vec![],
+            pinned: vec!["stale-uuid".into(), real_uuid.clone()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let valid_uuids: std::collections::HashSet<&str> = anns.iter().map(|a| a.uuid.as_str()).collect();
+        layout.pinned.retain(|u| valid_uuids.contains(u.as_str()));
+
+        assert_eq!(layout.pinned, vec![real_uuid]);
+    }
+
+    #[test]
+    fn v2_file_reads_with_empty_pinned() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        let v2_json = r#"{"version":2,"order":["uuid-1"],"links":[]}"#;
+        std::fs::write(lit_dir.join("cardbox.json"), v2_json).unwrap();
+
+        let layout: super::CardboxLayout = serde_json::from_str(v2_json).unwrap();
+        assert_eq!(layout.version, 2);
+        assert_eq!(layout.order, vec!["uuid-1"]);
+        assert!(layout.links.is_empty());
+        assert!(layout.pinned.is_empty());
+    }
+
+    #[test]
+    fn write_v3_roundtrip() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["uuid-1".into(), "uuid-2".into()],
+            links: vec![super::normalize_link("uuid-1", "uuid-2")],
+            pinned: vec!["uuid-1".into()],
         };
         write_layout(dir.path(), &layout);
 

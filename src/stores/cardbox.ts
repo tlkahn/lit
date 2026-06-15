@@ -6,6 +6,8 @@ import {
   writeCardboxLayout,
   addCardboxLink,
   removeCardboxLink,
+  pinCardboxCard,
+  unpinCardboxCard,
 } from "../lib/ipc";
 
 export interface CardboxStore {
@@ -16,6 +18,7 @@ export interface CardboxStore {
   activeTypes: Set<string> | null;
   order: string[];
   links: [string, string][];
+  pinned: string[];
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -27,6 +30,9 @@ export interface CardboxStore {
   saveLayout: () => Promise<void>;
   addLink: (a: string, b: string) => Promise<void>;
   removeLink: (a: string, b: string) => Promise<void>;
+  pinCard: (uuid: string) => Promise<void>;
+  unpinCard: (uuid: string) => Promise<void>;
+  setPinned: (pinned: string[]) => void;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -37,6 +43,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   activeTypes: null,
   order: [],
   links: [],
+  pinned: [],
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -48,11 +55,13 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         const prunedLinks = s.links.filter(
           ([x, y]) => newUuids.has(x) && newUuids.has(y),
         );
+        const prunedPinned = s.pinned.filter((id) => newUuids.has(id));
         return {
           annotations,
           loading: false,
           activeTypes: s.activeTypes === null ? types : s.activeTypes,
           links: prunedLinks,
+          pinned: prunedPinned,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
             const kept = s.order.filter((id) => newUuids.has(id));
@@ -94,18 +103,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     try {
       const layout = await readCardboxLayout();
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [] });
+        set({ order: layout.order, links: layout.links ?? [], pinned: layout.pinned ?? [] });
       } else {
-        set({ links: layout.links ?? [] });
+        set({ links: layout.links ?? [], pinned: layout.pinned ?? [] });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links } = get();
+    const { order, links, pinned } = get();
     try {
-      await writeCardboxLayout({ version: 2, order, links });
+      await writeCardboxLayout({ version: 3, order, links, pinned });
     } catch {
       // Ignore write failures silently
     }
@@ -126,4 +135,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }));
     await removeCardboxLink(a, b);
   },
+  pinCard: async (uuid) => {
+    set((s) => {
+      if (s.pinned.includes(uuid)) return s;
+      return { pinned: [...s.pinned, uuid] };
+    });
+    await pinCardboxCard(uuid);
+  },
+  unpinCard: async (uuid) => {
+    set((s) => ({
+      pinned: s.pinned.filter((id) => id !== uuid),
+    }));
+    await unpinCardboxCard(uuid);
+  },
+  setPinned: (pinned) => set({ pinned }),
 }));

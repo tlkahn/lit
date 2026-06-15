@@ -39,6 +39,12 @@ pub const EVENT_CTX_GRAPH_EXPORT_NETWORK: &str = "context-menu://graph/export-ne
 pub const EVENT_CTX_GRAPH_FETCH_DETAILS: &str = "context-menu://graph/fetch-details";
 pub const EVENT_CTX_GRAPH_CREATE_NOTE: &str = "context-menu://graph/create-note";
 
+pub const CTX_CARDBOX_PIN: &str = "ctx_cardbox_pin";
+pub const CTX_CARDBOX_UNPIN: &str = "ctx_cardbox_unpin";
+
+pub const EVENT_CTX_CARDBOX_PIN: &str = "context-menu://cardbox/pin";
+pub const EVENT_CTX_CARDBOX_UNPIN: &str = "context-menu://cardbox/unpin";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
     TrashRestore,
@@ -55,6 +61,8 @@ pub enum ContextMenuAction {
     GraphExportNetwork,
     GraphFetchDetails,
     GraphCreateNote,
+    CardboxPin,
+    CardboxUnpin,
 }
 
 impl ContextMenuAction {
@@ -74,6 +82,8 @@ impl ContextMenuAction {
             CTX_GRAPH_EXPORT_NETWORK => Some(Self::GraphExportNetwork),
             CTX_GRAPH_FETCH_DETAILS => Some(Self::GraphFetchDetails),
             CTX_GRAPH_CREATE_NOTE => Some(Self::GraphCreateNote),
+            CTX_CARDBOX_PIN => Some(Self::CardboxPin),
+            CTX_CARDBOX_UNPIN => Some(Self::CardboxUnpin),
             _ => None,
         }
     }
@@ -104,6 +114,11 @@ pub struct MindmapContextPayload {
 pub struct GraphContextPayload {
     pub node_id: String,
     pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CardboxContextPayload {
+    pub uuid: String,
 }
 
 pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
@@ -233,6 +248,29 @@ pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
     items
 }
 
+pub fn cardbox_menu_items(is_pinned: bool) -> Vec<MenuItemSpec> {
+    vec![MenuItemSpec {
+        id: if is_pinned { CTX_CARDBOX_UNPIN } else { CTX_CARDBOX_PIN },
+        label: if is_pinned { "Unpin".into() } else { "Pin".into() },
+        enabled: true,
+    }]
+}
+
+pub fn dispatch_cardbox_action(
+    action: ContextMenuAction,
+    uuid: &str,
+) -> (&'static str, CardboxContextPayload) {
+    let payload = CardboxContextPayload {
+        uuid: uuid.to_string(),
+    };
+    let event = match action {
+        ContextMenuAction::CardboxPin => EVENT_CTX_CARDBOX_PIN,
+        ContextMenuAction::CardboxUnpin => EVENT_CTX_CARDBOX_UNPIN,
+        _ => unreachable!("dispatch_cardbox_action called with non-cardbox action"),
+    };
+    (event, payload)
+}
+
 pub fn dispatch_mindmap_action(
     action: ContextMenuAction,
     node_id: &str,
@@ -296,6 +334,7 @@ pub enum ContextMenuContext {
     Sidebar { relative_path: String },
     Mindmap { node_id: String },
     Graph { node_id: String, node_ids: Vec<String> },
+    Cardbox { uuid: String },
 }
 
 pub struct PendingContextMenu(pub Mutex<Option<ContextMenuContext>>);
@@ -389,6 +428,13 @@ pub fn handle_context_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let _ = window.emit(event_name, &payload);
             }
         }
+        ContextMenuContext::Cardbox { uuid } => {
+            let (event_name, payload) = dispatch_cardbox_action(action, &uuid);
+            let windows = app.webview_windows();
+            for window in windows.values() {
+                let _ = window.emit(event_name, &payload);
+            }
+        }
     }
 }
 
@@ -426,6 +472,18 @@ pub fn show_mindmap_context_menu(
 ) -> Result<(), String> {
     *pending.0.lock().unwrap() = Some(ContextMenuContext::Mindmap { node_id });
     let specs = mindmap_menu_items(has_export);
+    show_popup_menu(&specs, &window)
+}
+
+#[tauri::command]
+pub fn show_cardbox_context_menu(
+    uuid: String,
+    is_pinned: bool,
+    window: tauri::Window,
+    pending: tauri::State<PendingContextMenu>,
+) -> Result<(), String> {
+    *pending.0.lock().unwrap() = Some(ContextMenuContext::Cardbox { uuid });
+    let specs = cardbox_menu_items(is_pinned);
     show_popup_menu(&specs, &window)
 }
 
@@ -1169,6 +1227,128 @@ mod tests {
         );
         assert_eq!(event, EVENT_CTX_GRAPH_CREATE_NOTE);
         assert_eq!(payload.node_id, "bib:jones2023");
+    }
+
+    // --- Phase 1B: Cardbox pin/unpin context menu ---
+
+    #[test]
+    fn cardbox_context_menu_ids_are_defined() {
+        assert_eq!(CTX_CARDBOX_PIN, "ctx_cardbox_pin");
+        assert_eq!(CTX_CARDBOX_UNPIN, "ctx_cardbox_unpin");
+    }
+
+    #[test]
+    fn cardbox_event_constants_are_defined() {
+        assert_eq!(EVENT_CTX_CARDBOX_PIN, "context-menu://cardbox/pin");
+        assert_eq!(EVENT_CTX_CARDBOX_UNPIN, "context-menu://cardbox/unpin");
+    }
+
+    #[test]
+    fn from_id_maps_cardbox_ids() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_PIN),
+            Some(ContextMenuAction::CardboxPin)
+        );
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_UNPIN),
+            Some(ContextMenuAction::CardboxUnpin)
+        );
+    }
+
+    #[test]
+    fn cardbox_ids_do_not_collide_with_app_menu_ids() {
+        use crate::menu;
+        let app_menu_ids = [
+            menu::MENU_ID_OPEN_WORKSPACE,
+            menu::MENU_ID_INSTALL_CLI,
+            menu::MENU_ID_OPEN_PREFERENCES,
+            menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
+            menu::MENU_ID_CLOSE,
+            menu::MENU_ID_EXPORT_MARKDOWN,
+            menu::MENU_ID_BUY_LICENSE,
+            menu::MENU_ID_ENTER_LICENSE_KEY,
+            menu::MENU_ID_LICENSE_INFO,
+            menu::MENU_ID_ABOUT,
+        ];
+        let cardbox_ids = [CTX_CARDBOX_PIN, CTX_CARDBOX_UNPIN];
+        for cid in &cardbox_ids {
+            for aid in &app_menu_ids {
+                assert_ne!(cid, aid, "Cardbox ID {cid} collides with app menu ID {aid}");
+            }
+        }
+    }
+
+    #[test]
+    fn cardbox_ids_do_not_collide_with_other_context_menu_ids() {
+        let other_ids = [
+            CTX_TRASH_RESTORE, CTX_TRASH_PURGE,
+            CTX_SIDEBAR_RENAME, CTX_SIDEBAR_EXTERNAL_EDITOR,
+            CTX_SIDEBAR_EXPORT_NETWORK, CTX_SIDEBAR_TRASH,
+            CTX_MINDMAP_EDIT, CTX_MINDMAP_EXPORT_NETWORK,
+            CTX_GRAPH_MERGE, CTX_GRAPH_SPLIT, CTX_GRAPH_DELETE,
+            CTX_GRAPH_EXPORT_NETWORK, CTX_GRAPH_FETCH_DETAILS,
+            CTX_GRAPH_CREATE_NOTE,
+        ];
+        let cardbox_ids = [CTX_CARDBOX_PIN, CTX_CARDBOX_UNPIN];
+        for cid in &cardbox_ids {
+            for oid in &other_ids {
+                assert_ne!(cid, oid, "Cardbox ID {cid} collides with context menu ID {oid}");
+            }
+        }
+    }
+
+    #[test]
+    fn cardbox_menu_items_unpinned_returns_pin() {
+        let items = cardbox_menu_items(false);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, CTX_CARDBOX_PIN);
+        assert_eq!(items[0].label, "Pin");
+        assert!(items[0].enabled);
+    }
+
+    #[test]
+    fn cardbox_menu_items_pinned_returns_unpin() {
+        let items = cardbox_menu_items(true);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, CTX_CARDBOX_UNPIN);
+        assert_eq!(items[0].label, "Unpin");
+        assert!(items[0].enabled);
+    }
+
+    #[test]
+    fn dispatch_cardbox_pin_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_cardbox_action(ContextMenuAction::CardboxPin, "abc-123");
+        assert_eq!(event, EVENT_CTX_CARDBOX_PIN);
+        assert_eq!(payload.uuid, "abc-123");
+    }
+
+    #[test]
+    fn dispatch_cardbox_unpin_returns_correct_event_and_payload() {
+        let (event, payload) = dispatch_cardbox_action(ContextMenuAction::CardboxUnpin, "def-456");
+        assert_eq!(event, EVENT_CTX_CARDBOX_UNPIN);
+        assert_eq!(payload.uuid, "def-456");
+    }
+
+    #[test]
+    fn cardbox_context_payload_serializes_correctly() {
+        let payload = CardboxContextPayload {
+            uuid: "abc-123".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["uuid"], "abc-123");
+    }
+
+    #[test]
+    fn context_menu_context_cardbox_variant_stores_uuid() {
+        let ctx = ContextMenuContext::Cardbox {
+            uuid: "test-uuid".to_string(),
+        };
+        match ctx {
+            ContextMenuContext::Cardbox { uuid } => {
+                assert_eq!(uuid, "test-uuid");
+            }
+            _ => panic!("Expected Cardbox variant"),
+        }
     }
 
     #[test]

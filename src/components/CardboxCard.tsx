@@ -6,6 +6,7 @@ import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
+  isPinned?: boolean;
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
@@ -13,7 +14,7 @@ interface CardboxCardProps {
   onRemoveLink?: (targetUuid: string) => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -34,7 +35,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
   return (
     <div
       ref={cardRef}
-      className="cursor-pointer rounded-lg border border-border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none"
+      className={`relative cursor-pointer rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}`}
       onClick={onToggleExpand}
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -42,7 +43,18 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
       data-uuid={annotation.uuid}
       data-annotation-type={annotation.annotation_type}
       data-expanded={expanded}
+      data-pinned={isPinned || undefined}
     >
+      {isPinned && (
+        <svg
+          className="absolute top-2 right-2 h-3.5 w-3.5 text-interactive-accent"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          data-testid="pin-icon"
+        >
+          <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1-.707.707l-.71-.71-3.18 3.18a3.02 3.02 0 0 1-.39 2.9c-.486.658-1.204 1.002-1.986 1.09L5.025 16.12a.5.5 0 0 1-.707-.707l3.136-3.136c.088-.782.432-1.5 1.09-1.986a3.02 3.02 0 0 1 2.9-.39l3.18-3.18-.71-.71a.5.5 0 0 1 .146-.854L9.828.722z" />
+        </svg>
+      )}
       {/* Original quote - always visible when present */}
       {annotation.original && (
         <div

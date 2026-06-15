@@ -13,6 +13,7 @@ import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortab
 import { useCardboxStore } from "../stores/cardbox";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
+import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
 import { LinkPicker } from "./LinkPicker";
@@ -37,6 +38,10 @@ export default function CardboxView() {
   const links = useCardboxStore((s) => s.links);
   const addLink = useCardboxStore((s) => s.addLink);
   const removeLink = useCardboxStore((s) => s.removeLink);
+  const pinned = useCardboxStore((s) => s.pinned);
+  const pinCard = useCardboxStore((s) => s.pinCard);
+  const unpinCard = useCardboxStore((s) => s.unpinCard);
+  const setPinned = useCardboxStore((s) => s.setPinned);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -47,6 +52,8 @@ export default function CardboxView() {
       activationConstraint: { distance: 8 },
     }),
   );
+
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
 
   useEffect(() => {
     fetchAnnotations().then(() => loadLayout());
@@ -93,6 +100,8 @@ export default function CardboxView() {
       // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
+      // Pinned cards bypass search filter
+      if (pinnedSet.has(ann.uuid)) return true;
       // Search filter
       if (query) {
         const searchable = [ann.body, ann.original, ann.source_page_title]
@@ -103,18 +112,33 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes]);
+  }, [annotations, searchQuery, activeTypes, pinnedSet]);
 
-  // Sort filtered annotations by user's custom order
+  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
+  const visiblePinnedUuids = useMemo(() => {
+    const filteredSet = new Set(filteredAnnotations.map((a) => a.uuid));
+    return pinned.filter((uuid) => filteredSet.has(uuid));
+  }, [filteredAnnotations, pinned]);
+
+  const visiblePinnedCount = visiblePinnedUuids.length;
+
+  // Sort filtered annotations: pinned first (in pinned-array order), then unpinned (in user order)
   const sortedAnnotations = useMemo(() => {
-    if (order.length === 0) return filteredAnnotations;
+    const annMap = new Map(filteredAnnotations.map((a) => [a.uuid, a]));
+    const pinnedSection = visiblePinnedUuids
+      .map((uuid) => annMap.get(uuid)!)
+      .filter(Boolean);
+    const pinnedUuids = new Set(visiblePinnedUuids);
+    const unpinnedFiltered = filteredAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
+    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
     const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
-    return [...filteredAnnotations].sort((a, b) => {
+    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
       const ai = orderMap.get(a.uuid) ?? Infinity;
       const bi = orderMap.get(b.uuid) ?? Infinity;
       return ai - bi;
     });
-  }, [filteredAnnotations, order]);
+    return [...pinnedSection, ...unpinnedSorted];
+  }, [filteredAnnotations, order, visiblePinnedUuids]);
 
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -173,8 +197,23 @@ export default function CardboxView() {
       if (ann) handleNavigate(ann);
     },
     onOpenLinkPicker: () => setLinkPickerOpen(true),
+    onTogglePin: (index) => {
+      const ann = sortedAnnotations[index];
+      if (ann) {
+        if (pinnedSet.has(ann.uuid)) {
+          unpinCard(ann.uuid);
+        } else {
+          pinCard(ann.uuid);
+        }
+      }
+    },
     expandedUuid,
     itemCount: sortedAnnotations.length,
+  });
+
+  useCardboxContextMenu({
+    onPin: pinCard,
+    onUnpin: unpinCard,
   });
 
   const handleFocusCard = useCallback(
@@ -193,6 +232,17 @@ export default function CardboxView() {
     [toggleExpand, gridRef],
   );
 
+  const handleCardContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const card = (e.target as HTMLElement).closest<HTMLElement>("[data-uuid]");
+      if (!card) return;
+      const uuid = card.dataset.uuid!;
+      showCardboxContextMenu(uuid, pinnedSet.has(uuid));
+    },
+    [pinnedSet],
+  );
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(event.active.id as string);
   }, []);
@@ -202,35 +252,78 @@ export default function CardboxView() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    // Get current visible order as UUIDs
     const visibleIds = sortedAnnotations.map((a) => a.uuid);
     const oldIndex = visibleIds.indexOf(active.id as string);
     const newIndex = visibleIds.indexOf(over.id as string);
     if (oldIndex === -1 || newIndex === -1) return;
 
-    // Compute new full order
-    const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
     const activeUuid = active.id as string;
+    const wasInPinned = oldIndex < visiblePinnedCount;
+    const nowInPinned = newIndex < visiblePinnedCount;
 
-    // Remove active from current order
-    const withoutActive = currentOrder.filter((id) => id !== activeUuid);
+    const mergePinnedOrder = (reorderedVisible: string[]) => {
+      const visibleSet = new Set(visiblePinnedUuids);
+      const fullPinned: string[] = [];
+      let vi = 0;
+      for (const uuid of pinned) {
+        if (visibleSet.has(uuid)) {
+          fullPinned.push(reorderedVisible[vi++]!);
+        } else {
+          fullPinned.push(uuid);
+        }
+      }
+      while (vi < reorderedVisible.length) {
+        fullPinned.push(reorderedVisible[vi++]!);
+      }
+      return fullPinned;
+    };
 
-    // Find where to insert: after the item that's now at the target position in visible list
-    const newVisibleOrder = arrayMove(visibleIds, oldIndex, newIndex);
-    // Find the item that comes before our moved item in the new visible order
-    const insertAfterItem = newIndex > 0 ? newVisibleOrder[newIndex - 1] ?? null : null;
-
-    let insertAt: number;
-    if (insertAfterItem === null) {
-      insertAt = 0;
+    if (wasInPinned && nowInPinned) {
+      const oldPinIdx = visiblePinnedUuids.indexOf(activeUuid);
+      const reordered = arrayMove(visiblePinnedUuids, oldPinIdx, newIndex);
+      setPinned(mergePinnedOrder(reordered));
+      debouncedSave();
+    } else if (!wasInPinned && !nowInPinned) {
+      const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
+      const withoutActive = currentOrder.filter((id) => id !== activeUuid);
+      const unpinnedIds = visibleIds.slice(visiblePinnedCount);
+      const unpinnedOldIdx = oldIndex - visiblePinnedCount;
+      const unpinnedNewIdx = newIndex - visiblePinnedCount;
+      const newUnpinnedOrder = arrayMove(unpinnedIds, unpinnedOldIdx, unpinnedNewIdx);
+      const insertAfterItem = unpinnedNewIdx > 0 ? newUnpinnedOrder[unpinnedNewIdx - 1] ?? null : null;
+      let insertAt: number;
+      if (insertAfterItem === null) {
+        insertAt = 0;
+      } else {
+        insertAt = withoutActive.indexOf(insertAfterItem) + 1;
+      }
+      withoutActive.splice(insertAt, 0, activeUuid);
+      setOrder(withoutActive);
+      debouncedSave();
+    } else if (!wasInPinned && nowInPinned) {
+      const newVisible = [...visiblePinnedUuids];
+      newVisible.splice(newIndex, 0, activeUuid);
+      setPinned(mergePinnedOrder(newVisible));
+      debouncedSave();
     } else {
-      insertAt = withoutActive.indexOf(insertAfterItem) + 1;
+      // Pinned -> unpinned: unpin and insert at drop position
+      const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
+      const withoutActive = currentOrder.filter((id) => id !== activeUuid);
+      const unpinnedIds = visibleIds.slice(visiblePinnedCount);
+      const unpinnedNewIdx = newIndex - visiblePinnedCount;
+      const insertAfterItem = unpinnedNewIdx > 0 ? unpinnedIds[unpinnedNewIdx - 1] ?? null : null;
+      let insertAt: number;
+      if (insertAfterItem === null) {
+        insertAt = 0;
+      } else {
+        insertAt = withoutActive.indexOf(insertAfterItem) + 1;
+      }
+      withoutActive.splice(insertAt, 0, activeUuid);
+      setOrder(withoutActive);
+      unpinCard(activeUuid);
+      debouncedSave();
     }
-
-    withoutActive.splice(insertAt, 0, activeUuid);
-    setOrder(withoutActive);
-    debouncedSave();
-  }, [sortedAnnotations, order, annotations, setOrder, debouncedSave]);
+  }, [sortedAnnotations, visiblePinnedCount, visiblePinnedUuids, pinned, order, annotations, setOrder, setPinned, unpinCard, debouncedSave]);
 
   if (loading && annotations.length === 0) {
     return (
@@ -314,8 +407,10 @@ export default function CardboxView() {
                     key={ann.uuid}
                     annotation={ann}
                     expanded={expandedUuid === ann.uuid}
+                    isPinned={pinnedSet.has(ann.uuid)}
                     onToggleExpand={() => toggleExpand(ann.uuid)}
                     onNavigate={() => handleNavigate(ann)}
+                    onContextMenu={handleCardContextMenu}
                     linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
                     onFocusCard={handleFocusCard}
                     onRemoveLink={handleRemoveLink}
@@ -324,11 +419,12 @@ export default function CardboxView() {
               </div>
             </SortableContext>
             <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
-              {activeId && annotations.find((a) => a.uuid === activeId) ? (
+              {activeId && annotationMap.get(activeId) ? (
                 <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
                   <CardboxCard
-                    annotation={annotations.find((a) => a.uuid === activeId)!}
+                    annotation={annotationMap.get(activeId)!}
                     expanded={false}
+                    isPinned={pinnedSet.has(activeId)}
                     onToggleExpand={() => {}}
                     onNavigate={() => {}}
                   />
