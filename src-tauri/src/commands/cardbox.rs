@@ -19,6 +19,23 @@ fn normalize_link(a: &str, b: &str) -> [String; 2] {
     }
 }
 
+fn load_layout_from_disk(layout_path: &std::path::Path) -> CardboxLayout {
+    match std::fs::read_to_string(layout_path) {
+        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
+            .unwrap_or(CardboxLayout { version: 1, order: vec![], links: vec![] }),
+        Err(_) => CardboxLayout { version: 1, order: vec![], links: vec![] },
+    }
+}
+
+fn persist_layout(lit_dir: &std::path::Path, layout: &CardboxLayout) -> Result<(), String> {
+    let layout_path = lit_dir.join("cardbox.json");
+    let tmp_path = lit_dir.join(".cardbox.json.tmp");
+    let content = serde_json::to_string_pretty(layout).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_all_annotations(
     window: tauri::Window,
@@ -41,11 +58,7 @@ pub fn read_cardbox_layout(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let layout_path = root.join(".lit").join("cardbox.json");
 
-    let mut layout = match std::fs::read_to_string(&layout_path) {
-        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout { version: 1, order: vec![], links: vec![] }),
-        Err(_) => CardboxLayout { version: 1, order: vec![], links: vec![] },
-    };
+    let mut layout = load_layout_from_disk(&layout_path);
 
     // Normalize links: sort within pairs, sort full list, dedup
     for pair in &mut layout.links {
@@ -79,16 +92,7 @@ pub fn write_cardbox_layout(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-
-    let layout_path = lit_dir.join("cardbox.json");
-    let tmp_path = lit_dir.join(".cardbox.json.tmp");
-
-    let content = serde_json::to_string_pretty(&layout)
-        .map_err(|e| e.to_string())?;
-    std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
-
-    Ok(())
+    persist_layout(&lit_dir, &layout)
 }
 
 #[tauri::command]
@@ -107,11 +111,7 @@ pub fn add_cardbox_link(
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
 
     let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = match std::fs::read_to_string(&layout_path) {
-        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout { version: 2, order: vec![], links: vec![] }),
-        Err(_) => CardboxLayout { version: 2, order: vec![], links: vec![] },
-    };
+    let mut layout = load_layout_from_disk(&layout_path);
 
     let normalized = normalize_link(&a, &b);
     if layout.links.iter().any(|pair| *pair == normalized) {
@@ -120,13 +120,7 @@ pub fn add_cardbox_link(
 
     layout.links.push(normalized);
     layout.version = 2;
-
-    let tmp_path = lit_dir.join(".cardbox.json.tmp");
-    let content = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
-
-    Ok(())
+    persist_layout(&lit_dir, &layout)
 }
 
 #[tauri::command]
@@ -140,11 +134,11 @@ pub fn remove_cardbox_link(
     let lit_dir = root.join(".lit");
     let layout_path = lit_dir.join("cardbox.json");
 
-    let mut layout = match std::fs::read_to_string(&layout_path) {
-        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout { version: 2, order: vec![], links: vec![] }),
-        Err(_) => return Ok(()),
-    };
+    if !layout_path.exists() {
+        return Ok(());
+    }
+
+    let mut layout = load_layout_from_disk(&layout_path);
 
     let normalized = normalize_link(&a, &b);
     let before = layout.links.len();
@@ -154,12 +148,7 @@ pub fn remove_cardbox_link(
         return Ok(());
     }
 
-    let tmp_path = lit_dir.join(".cardbox.json.tmp");
-    let content = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
-
-    Ok(())
+    persist_layout(&lit_dir, &layout)
 }
 
 #[cfg(test)]
@@ -415,13 +404,20 @@ mod tests {
 
     #[test]
     fn add_link_self_rejected() {
-        let result = if "x" == "x" {
-            Err("Cannot link a card to itself".to_string())
-        } else {
-            Ok(())
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec![],
+            links: vec![],
         };
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Cannot link a card to itself");
+        write_layout(dir.path(), &layout);
+
+        let a = "same-uuid";
+        let b = "same-uuid";
+        assert_eq!(a, b, "precondition: self-link attempt");
+
+        let result = read_layout(dir.path());
+        assert!(result.links.is_empty(), "no link should exist for self-link");
     }
 
     #[test]

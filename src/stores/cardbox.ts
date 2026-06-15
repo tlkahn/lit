@@ -111,6 +111,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }
   },
   addLink: async (a, b) => {
+    if (a === b) return;
     const norm: [string, string] = a <= b ? [a, b] : [b, a];
     set((s) => {
       if (s.links.some(([x, y]) => x === norm[0] && y === norm[1])) return s;
