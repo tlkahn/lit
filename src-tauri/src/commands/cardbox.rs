@@ -1775,12 +1775,16 @@ mod tests {
 
     #[test]
     fn set_card_color_invalid_rejected() {
-        // Verify that VALID_COLORS doesn't contain "red"
+        assert_eq!(super::VALID_COLORS.len(), 6);
+        assert!(super::VALID_COLORS.contains(&"blue"));
+        assert!(super::VALID_COLORS.contains(&"orange"));
+        assert!(super::VALID_COLORS.contains(&"green"));
+        assert!(super::VALID_COLORS.contains(&"purple"));
+        assert!(super::VALID_COLORS.contains(&"pink"));
+        assert!(super::VALID_COLORS.contains(&"cyan"));
         assert!(!super::VALID_COLORS.contains(&"red"));
-        // Verify that valid colors are accepted
-        for c in super::VALID_COLORS {
-            assert!(super::VALID_COLORS.contains(c));
-        }
+        assert!(!super::VALID_COLORS.contains(&"yellow"));
+        assert!(!super::VALID_COLORS.contains(&""));
     }
 
     #[test]
