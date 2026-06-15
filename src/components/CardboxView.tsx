@@ -179,12 +179,16 @@ export default function CardboxView() {
 
   const handleFocusCard = useCallback(
     (uuid: string) => {
-      const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
-      if (!el) return;
       toggleExpand(uuid);
-      requestAnimationFrame(() => {
-        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      });
+      setTimeout(() => {
+        const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.remove("card-focus-highlight");
+        void (el as HTMLElement).offsetWidth;
+        el.classList.add("card-focus-highlight");
+        el.addEventListener("animationend", () => el.classList.remove("card-focus-highlight"), { once: true });
+      }, 250);
     },
     [toggleExpand, gridRef],
   );

@@ -113,7 +113,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
               Open in document
             </button>
             {linkedCards && linkedCards.length > 0 && (
-              <div data-testid="card-linked-section">
+              <div
+                data-testid="card-linked-section"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div className="mt-2 text-[10px] font-semibold uppercase text-text-muted">Linked</div>
                 <div className="mt-1 max-h-32 space-y-1 overflow-y-auto">
                   {linkedCards.map((card) => (

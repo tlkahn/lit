@@ -32,6 +32,8 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, o
     transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : 1,
     gridRowEnd: `span ${span}`,
+    zIndex: expanded ? 10 : undefined,
+    position: expanded ? "relative" : undefined,
   };
 
   return (
