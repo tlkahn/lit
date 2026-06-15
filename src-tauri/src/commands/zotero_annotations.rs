@@ -204,6 +204,175 @@ pub fn zotero_db_path(prefs: &crate::preferences::Preferences) -> String {
         .unwrap_or_else(|| crate::cli::expand_tilde("~/Zotero/zotero.sqlite"))
 }
 
+// ---------------------------------------------------------------------------
+// Phase 1.2: Text matching engine
+// ---------------------------------------------------------------------------
+
+/// Collapse all whitespace runs to a single space, trim, and lowercase.
+pub fn normalize(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Search for `needle` as an exact normalized substring across all lines joined.
+/// Returns the 0-based line index where the match ENDS (insertion point).
+/// Returns `None` if the needle is not found.
+pub fn find_exact_match(needle: &str, lines: &[&str]) -> Option<usize> {
+    let mut joined = String::new();
+    let mut line_starts: Vec<(usize, usize)> = Vec::with_capacity(lines.len());
+
+    let mut pos: usize = 0;
+    for (i, line) in lines.iter().enumerate() {
+        if !joined.is_empty() {
+            joined.push(' ');
+            pos += 1;
+        }
+        line_starts.push((pos, i));
+        let nl = normalize(line);
+        joined.push_str(&nl);
+        pos += nl.len();
+    }
+
+    let norm_needle = normalize(needle);
+    let idx = joined.find(&norm_needle)?;
+    let end = idx + norm_needle.len();
+
+    let mut result = 0;
+    for &(start, li) in &line_starts {
+        if start <= end {
+            result = li;
+        } else {
+            break;
+        }
+    }
+    Some(result)
+}
+
+/// Group consecutive non-blank lines into paragraphs.
+/// Returns a vec of (normalized_paragraph_text, last_line_index).
+/// Blank lines (whitespace-only) act as paragraph separators.
+pub fn build_paragraphs(lines: &[&str]) -> Vec<(String, usize)> {
+    let mut paragraphs: Vec<(String, usize)> = Vec::new();
+    let mut current_parts: Vec<String> = Vec::new();
+    let mut last_line_idx: usize = 0;
+
+    for (i, line) in lines.iter().enumerate() {
+        let nl = normalize(line);
+        if nl.is_empty() {
+            if !current_parts.is_empty() {
+                let text = current_parts.join(" ");
+                paragraphs.push((text, last_line_idx));
+                current_parts.clear();
+            }
+        } else {
+            current_parts.push(nl);
+            last_line_idx = i;
+        }
+    }
+    if !current_parts.is_empty() {
+        let text = current_parts.join(" ");
+        paragraphs.push((text, last_line_idx));
+    }
+
+    paragraphs
+}
+
+/// Compute the length of the longest common substring between `a` and `b`
+/// using a standard DP approach with O(min(|a|,|b|)) space.
+fn lcs_length(a: &str, b: &str) -> usize {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+
+    // Ensure `b` is the shorter side for memory efficiency.
+    let (a, b) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+
+    let cols = b.len();
+    let mut prev = vec![0usize; cols + 1];
+    let mut curr = vec![0usize; cols + 1];
+    let mut max_len: usize = 0;
+
+    for &ai in a.iter() {
+        for (j, &bj) in b.iter().enumerate() {
+            if ai == bj {
+                curr[j + 1] = prev[j] + 1;
+                if curr[j + 1] > max_len {
+                    max_len = curr[j + 1];
+                }
+            } else {
+                curr[j + 1] = 0;
+            }
+        }
+        std::mem::swap(&mut prev, &mut curr);
+        curr.iter_mut().for_each(|x| *x = 0);
+    }
+    max_len
+}
+
+/// Score each paragraph against the needle using longest-common-substring ratio.
+/// LCS ratio = lcs_length / max(len(needle), len(paragraph)).
+/// Returns the `last_line_index` of the best-matching paragraph if its score >= threshold.
+pub fn find_fuzzy_match(
+    needle: &str,
+    paragraphs: &[(String, usize)],
+    threshold: f64,
+) -> Option<usize> {
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() {
+        return None;
+    }
+
+    let mut best_score: f64 = 0.0;
+    let mut best_line: Option<usize> = None;
+
+    for (para_text, last_line) in paragraphs {
+        let max_len = norm_needle.len().max(para_text.len());
+        if max_len == 0 {
+            continue;
+        }
+        let lcs = lcs_length(&norm_needle, para_text);
+        let score = lcs as f64 / max_len as f64;
+        if score > best_score {
+            best_score = score;
+            best_line = Some(*last_line);
+        }
+    }
+
+    if best_score >= threshold {
+        best_line
+    } else {
+        None
+    }
+}
+
+/// Find the line index where `needle` best matches within `lines`.
+/// Tries exact substring match first, falls back to fuzzy paragraph matching.
+/// Returns `None` if the needle is empty or no match meets the threshold.
+pub fn find_match_line(needle: &str, lines: &[&str], threshold: f64) -> Option<usize> {
+    let norm_needle = normalize(needle);
+    if norm_needle.is_empty() {
+        return None;
+    }
+
+    if let Some(line_idx) = find_exact_match(needle, lines) {
+        return Some(line_idx);
+    }
+
+    let paragraphs = build_paragraphs(lines);
+    find_fuzzy_match(needle, &paragraphs, threshold)
+}
+
+/// Read the fuzzy-match threshold from preferences.
+/// Key: `zotero.matchThreshold`. Default: 0.65.
+pub fn zotero_match_threshold(prefs: &crate::preferences::Preferences) -> f64 {
+    prefs
+        .extra
+        .get("zotero.matchThreshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.65)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,5 +704,288 @@ mod tests {
             zotero_db_path(&prefs),
             format!("{}/CustomZotero/zotero.sqlite", home)
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // normalize tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_normalize_collapses_whitespace() {
+        assert_eq!(normalize("  hello   world  "), "hello world");
+    }
+
+    #[test]
+    fn test_normalize_lowercases() {
+        assert_eq!(normalize("Hello World"), "hello world");
+    }
+
+    #[test]
+    fn test_normalize_handles_newlines() {
+        assert_eq!(normalize("line1\nline2\tline3"), "line1 line2 line3");
+    }
+
+    #[test]
+    fn test_normalize_empty_string() {
+        assert_eq!(normalize(""), "");
+    }
+
+    #[test]
+    fn test_normalize_whitespace_only() {
+        assert_eq!(normalize("   \t\n  "), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // find_exact_match tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_exact_match_single_line() {
+        let lines = vec!["The quick brown fox jumps over the lazy dog"];
+        assert_eq!(find_exact_match("brown fox", &lines), Some(0));
+    }
+
+    #[test]
+    fn test_exact_match_spans_lines() {
+        let lines = vec!["end of first", "start of second"];
+        assert_eq!(find_exact_match("first start", &lines), Some(1));
+    }
+
+    #[test]
+    fn test_exact_match_returns_end_line() {
+        let lines = vec!["aaa bbb", "ccc ddd", "eee fff"];
+        // "bbb ccc ddd eee" spans lines 0-2, ends in line 2
+        assert_eq!(find_exact_match("bbb ccc ddd eee", &lines), Some(2));
+    }
+
+    #[test]
+    fn test_exact_match_not_found() {
+        let lines = vec!["hello world"];
+        assert_eq!(find_exact_match("goodbye", &lines), None);
+    }
+
+    #[test]
+    fn test_exact_match_whitespace_normalized() {
+        let lines = vec!["word   one    two"];
+        assert_eq!(find_exact_match("one  two", &lines), Some(0));
+    }
+
+    #[test]
+    fn test_exact_match_case_insensitive() {
+        let lines = vec!["The Quick Brown Fox"];
+        assert_eq!(find_exact_match("quick brown", &lines), Some(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_paragraphs tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_paragraphs_basic() {
+        let lines = vec!["para one a", "para one b", "", "para two a"];
+        let paras = build_paragraphs(&lines);
+        assert_eq!(paras.len(), 2);
+        assert_eq!(paras[0].0, "para one a para one b");
+        assert_eq!(paras[0].1, 1);
+        assert_eq!(paras[1].0, "para two a");
+        assert_eq!(paras[1].1, 3);
+    }
+
+    #[test]
+    fn test_build_paragraphs_single() {
+        let lines = vec!["line one", "line two", "line three"];
+        let paras = build_paragraphs(&lines);
+        assert_eq!(paras.len(), 1);
+        assert_eq!(paras[0].0, "line one line two line three");
+        assert_eq!(paras[0].1, 2);
+    }
+
+    #[test]
+    fn test_build_paragraphs_empty() {
+        let lines: Vec<&str> = vec![];
+        let paras = build_paragraphs(&lines);
+        assert_eq!(paras.len(), 0);
+    }
+
+    #[test]
+    fn test_build_paragraphs_all_blank() {
+        let lines = vec!["", "  ", "\t"];
+        let paras = build_paragraphs(&lines);
+        assert_eq!(paras.len(), 0);
+    }
+
+    #[test]
+    fn test_build_paragraphs_leading_trailing_blanks() {
+        let lines = vec!["", "", "content", ""];
+        let paras = build_paragraphs(&lines);
+        assert_eq!(paras.len(), 1);
+        assert_eq!(paras[0].0, "content");
+        assert_eq!(paras[0].1, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // lcs_length tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lcs_length_identical() {
+        assert_eq!(lcs_length("abcdef", "abcdef"), 6);
+    }
+
+    #[test]
+    fn test_lcs_length_partial() {
+        // Longest common substring of "abcdef" and "xbcdey" is "bcde" (length 4)
+        assert_eq!(lcs_length("abcdef", "xbcdey"), 4);
+    }
+
+    #[test]
+    fn test_lcs_length_no_common() {
+        assert_eq!(lcs_length("abc", "xyz"), 0);
+    }
+
+    #[test]
+    fn test_lcs_length_empty() {
+        assert_eq!(lcs_length("", "abc"), 0);
+        assert_eq!(lcs_length("abc", ""), 0);
+        assert_eq!(lcs_length("", ""), 0);
+    }
+
+    #[test]
+    fn test_lcs_length_one_is_substring() {
+        assert_eq!(lcs_length("the quick brown fox", "quick brown"), 11);
+    }
+
+    // -----------------------------------------------------------------------
+    // find_fuzzy_match tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_fuzzy_match_above_threshold() {
+        let paragraphs = vec![
+            ("the quick brown fox jumps over the lazy dog".to_string(), 2),
+            ("something completely different".to_string(), 5),
+        ];
+        let result = find_fuzzy_match("quick brown fox jumps over", &paragraphs, 0.5);
+        assert_eq!(result, Some(2));
+    }
+
+    #[test]
+    fn test_fuzzy_match_below_threshold() {
+        let paragraphs = vec![("the quick brown fox".to_string(), 2)];
+        let result =
+            find_fuzzy_match("completely unrelated text here", &paragraphs, 0.65);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fuzzy_match_best_paragraph() {
+        let paragraphs = vec![
+            ("introduction to machine learning".to_string(), 3),
+            (
+                "deep learning neural networks for image recognition".to_string(),
+                7,
+            ),
+            (
+                "machine learning algorithms and applications".to_string(),
+                12,
+            ),
+        ];
+        let result = find_fuzzy_match("machine learning algorithms", &paragraphs, 0.5);
+        assert_eq!(result, Some(12));
+    }
+
+    #[test]
+    fn test_fuzzy_match_empty_needle() {
+        let paragraphs = vec![("some text".to_string(), 0)];
+        assert_eq!(find_fuzzy_match("", &paragraphs, 0.65), None);
+        assert_eq!(find_fuzzy_match("   ", &paragraphs, 0.65), None);
+    }
+
+    #[test]
+    fn test_fuzzy_match_empty_paragraphs() {
+        let paragraphs: Vec<(String, usize)> = vec![];
+        assert_eq!(find_fuzzy_match("some needle", &paragraphs, 0.65), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // find_match_line tests (integration)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_find_match_line_exact_preferred() {
+        let lines = vec![
+            "The quick brown fox",
+            "jumps over the lazy dog",
+            "",
+            "A completely different paragraph",
+        ];
+        assert_eq!(
+            find_match_line("brown fox jumps over", &lines, 0.65),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_find_match_line_fuzzy_fallback() {
+        let lines = vec![
+            "The quikc brownn fox",
+            "jumps over the lazy dog",
+            "",
+            "Something else entirely",
+        ];
+        // Typos prevent exact match, but fuzzy should match first paragraph
+        let result =
+            find_match_line("quick brown fox jumps over the lazy", &lines, 0.4);
+        assert_eq!(result, Some(1));
+    }
+
+    #[test]
+    fn test_find_match_line_empty_needle() {
+        let lines = vec!["hello world"];
+        assert_eq!(find_match_line("", &lines, 0.65), None);
+        assert_eq!(find_match_line("   ", &lines, 0.65), None);
+    }
+
+    #[test]
+    fn test_find_match_line_no_match() {
+        let lines = vec!["alpha beta gamma", "", "delta epsilon zeta"];
+        assert_eq!(
+            find_match_line(
+                "completely unrelated content that shares no substring",
+                &lines,
+                0.65
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_find_match_line_single_line_doc() {
+        let lines = vec!["the only line in the document"];
+        assert_eq!(find_match_line("only line", &lines, 0.65), Some(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // zotero_match_threshold tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_zotero_match_threshold_default() {
+        let prefs = crate::preferences::Preferences::default();
+        assert!((zotero_match_threshold(&prefs) - 0.65).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_zotero_match_threshold_custom() {
+        let json = r#"{"zotero.matchThreshold": 0.8}"#;
+        let prefs: crate::preferences::Preferences = serde_json::from_str(json).unwrap();
+        assert!((zotero_match_threshold(&prefs) - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_zotero_match_threshold_ignores_non_numeric() {
+        let json = r#"{"zotero.matchThreshold": "not a number"}"#;
+        let prefs: crate::preferences::Preferences = serde_json::from_str(json).unwrap();
+        assert!((zotero_match_threshold(&prefs) - 0.65).abs() < f64::EPSILON);
     }
 }
