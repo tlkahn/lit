@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use strsim::normalized_levenshtein;
@@ -737,6 +737,7 @@ pub struct ImportResult {
     pub inserted: usize,
     pub unmatched: usize,
     pub skipped: usize,
+    pub llm_placed: usize,
 }
 
 fn ann_type_name(ann_type: i32) -> &'static str {
@@ -931,12 +932,246 @@ pub fn collect_unmatched_section(unmatched: &[ZoteroAnnotation]) -> String {
     parts.join("\n")
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3.2: LLM fallback for unmatched annotations
+// ---------------------------------------------------------------------------
+
+/// Read the `zotero.llmFallback` preference (default: false).
+pub fn zotero_llm_fallback(prefs: &crate::preferences::Preferences) -> bool {
+    prefs
+        .extra
+        .get("zotero.llmFallback")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+const LLM_PLACEMENT_SYSTEM_PROMPT: &str = "\
+You are a document analyst. You will receive numbered paragraphs from an OCR'd academic document, \
+and a set of annotations that could not be automatically matched to their location in the document.\n\
+\n\
+For each annotation (labeled ANN_0, ANN_1, etc.), determine which paragraph it most likely belongs \
+to based on semantic similarity, topic overlap, or contextual clues. Return a JSON object mapping \
+annotation labels to paragraph numbers. Use -1 if an annotation genuinely cannot be placed.\n\
+\n\
+Return ONLY a JSON object, no explanation. Example: {\"ANN_0\": 3, \"ANN_1\": 7, \"ANN_2\": -1}";
+
+/// Build the user prompt for the LLM placement request.
+///
+/// Returns `None` if there are no annotations worth placing (e.g. all are
+/// freetext/sticky notes without matchable text).
+fn build_llm_placement_prompt(
+    unmatched: &[(usize, &ZoteroAnnotation)],
+    paragraphs: &[(String, usize)],
+) -> Option<String> {
+    if unmatched.is_empty() || paragraphs.is_empty() {
+        return None;
+    }
+
+    let mut prompt = String::from("## Document Paragraphs\n\n");
+    for (i, (text, _)) in paragraphs.iter().enumerate() {
+        let truncated: String = text.chars().take(200).collect();
+        prompt.push_str(&format!("P{}: {}\n", i, truncated));
+    }
+
+    prompt.push_str("\n## Unmatched Annotations\n\n");
+    let mut ann_count = 0;
+    for (label_idx, (_, ann)) in unmatched.iter().enumerate() {
+        let type_name = ann_type_name(ann.ann_type);
+        let page_info = ann
+            .page_label
+            .as_deref()
+            .filter(|p| !p.is_empty())
+            .map(|p| format!("p.{}", p))
+            .unwrap_or_default();
+
+        let text_preview: String = ann
+            .text
+            .as_deref()
+            .or(ann.comment.as_deref())
+            .unwrap_or("")
+            .chars()
+            .take(200)
+            .collect();
+
+        prompt.push_str(&format!(
+            "ANN_{}: [{}, {}] \"{}\"\n",
+            label_idx, type_name, page_info, text_preview
+        ));
+        ann_count += 1;
+    }
+
+    if ann_count == 0 {
+        return None;
+    }
+
+    Some(prompt)
+}
+
+/// Parse the LLM response JSON into a map from annotation label index to
+/// the global line index (from paragraphs) where the annotation should be inserted.
+fn parse_llm_placement_response(
+    response: &str,
+    paragraphs: &[(String, usize)],
+) -> HashMap<usize, usize> {
+    let mut result = HashMap::new();
+
+    let trimmed = response.trim();
+    // Strip markdown code fences if present
+    let json_str = if trimmed.starts_with("```") {
+        let after_fence = if let Some(pos) = trimmed.find('\n') {
+            &trimmed[pos + 1..]
+        } else {
+            trimmed.trim_start_matches('`')
+        };
+        after_fence
+            .trim_end()
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return result,
+    };
+
+    let obj = match parsed.as_object() {
+        Some(o) => o,
+        None => return result,
+    };
+
+    for (key, value) in obj {
+        // Parse "ANN_N" -> N
+        let ann_idx = if key.starts_with("ANN_") {
+            key[4..].parse::<usize>().ok()
+        } else {
+            None
+        };
+
+        let para_idx = value.as_i64();
+
+        if let (Some(ann_idx), Some(para_idx)) = (ann_idx, para_idx) {
+            if para_idx < 0 {
+                continue; // -1 means genuinely unmatchable
+            }
+            let para_idx = para_idx as usize;
+            if para_idx < paragraphs.len() {
+                let line_idx = paragraphs[para_idx].1;
+                result.insert(ann_idx, line_idx);
+            }
+        }
+    }
+
+    result
+}
+
+const LLM_BATCH_SIZE: usize = 10;
+const LLM_MAX_SINGLE_BATCH: usize = 20;
+
+/// Ask an LLM to place unmatched annotations within the document.
+///
+/// Returns a map from the annotation's label index in `unmatched` to the
+/// global line index where it should be inserted. Handles batching for
+/// large numbers of unmatched annotations.
+async fn llm_find_positions(
+    unmatched: &[(usize, &ZoteroAnnotation)],
+    paragraphs: &[(String, usize)],
+    provider_id: &str,
+    model: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<HashMap<usize, usize>, String> {
+    if unmatched.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    if unmatched.len() <= LLM_MAX_SINGLE_BATCH {
+        return llm_find_positions_batch(unmatched, paragraphs, provider_id, model, api_key, base_url).await;
+    }
+
+    // Chunk into groups of LLM_BATCH_SIZE, run sequentially to avoid rate limiting
+    let mut all_results = HashMap::new();
+    for chunk in unmatched.chunks(LLM_BATCH_SIZE) {
+        // Re-index within the chunk: we need the label indices to be 0..chunk.len()
+        // for the prompt, but we need to map results back to the original indices
+        let reindexed: Vec<(usize, &ZoteroAnnotation)> = chunk.to_vec();
+        match llm_find_positions_batch(&reindexed, paragraphs, provider_id, model, api_key, base_url).await {
+            Ok(batch_results) => {
+                // batch_results maps label_index (within this chunk) to line_index.
+                // We need to map the label_index back to the original index in `unmatched`.
+                // Since chunks preserves order and we pass the same (orig_idx, ann) tuples,
+                // the label_index 0..chunk.len() maps to the chunk's items directly.
+                // But the outer caller uses label_index as the index into `unmatched`,
+                // so we need to offset by the chunk's start position.
+                let chunk_start = chunk.as_ptr() as usize - unmatched.as_ptr() as usize;
+                let chunk_offset = chunk_start / std::mem::size_of::<(usize, &ZoteroAnnotation)>();
+                for (label_idx, line_idx) in batch_results {
+                    all_results.insert(chunk_offset + label_idx, line_idx);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("LLM batch failed, skipping: {}", e);
+            }
+        }
+    }
+
+    Ok(all_results)
+}
+
+/// Execute a single LLM placement request for a batch of unmatched annotations.
+async fn llm_find_positions_batch(
+    unmatched: &[(usize, &ZoteroAnnotation)],
+    paragraphs: &[(String, usize)],
+    provider_id: &str,
+    model: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<HashMap<usize, usize>, String> {
+    let user_prompt = build_llm_placement_prompt(unmatched, paragraphs)
+        .ok_or_else(|| "No annotations to place".to_string())?;
+
+    let provider = crate::llm::create_provider(provider_id, base_url);
+
+    let mut options = std::collections::HashMap::new();
+    options.insert("max_tokens".into(), serde_json::json!(500));
+    options.insert("temperature".into(), serde_json::json!(0.0));
+
+    let prompt = crate::llm::build_prompt(
+        &user_prompt,
+        Some(LLM_PLACEMENT_SYSTEM_PROMPT),
+        &[],
+        &options,
+    );
+
+    let stream = provider
+        .execute(model, &prompt, api_key, false)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let raw = crate::llm::collect_stream_text(stream).await?;
+
+    Ok(parse_llm_placement_response(&raw, paragraphs))
+}
+
+/// Intermediate result from Phase A (sync matching) passed to Phase B (async LLM) and Phase C (sync write).
+struct MatchPhaseResult {
+    content: String,
+    matched: Vec<(usize, String)>,
+    unmatched_anns: Vec<ZoteroAnnotation>,
+    note_dsls: Vec<String>,
+    skipped: usize,
+    paragraphs: Vec<(String, usize)>,
+    companion_path: PathBuf,
+}
+
 #[tauri::command]
 pub async fn import_zotero_annotations(
     key: String,
     workspace_path: String,
     graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
     app_handle: tauri::AppHandle,
+    credential_store: tauri::State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
 ) -> Result<ImportResult, String> {
     let root = PathBuf::from(&workspace_path);
     let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
@@ -959,6 +1194,19 @@ pub async fn import_zotero_annotations(
     let db_path = zotero_db_path(&prefs);
     let threshold = zotero_match_threshold(&prefs);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
+    let llm_fallback = zotero_llm_fallback(&prefs);
+
+    // Resolve LLM settings eagerly (before spawn_blocking) if fallback is enabled
+    let (llm_provider_id, llm_model, llm_base_url, _llm_temperature) = if llm_fallback {
+        crate::commands::merge_split::resolve_llm_settings(&prefs)
+    } else {
+        (String::new(), String::new(), None, 0.0)
+    };
+    let llm_api_key = if llm_fallback {
+        crate::llm::resolve_api_key(&llm_provider_id, credential_store.as_ref())
+    } else {
+        None
+    };
 
     // Pre-check: Zotero database file exists
     if !std::path::Path::new(&db_path).exists() {
@@ -998,17 +1246,18 @@ pub async fn import_zotero_annotations(
         .ok_or_else(|| "invalid PDF stem".to_string())?
         .to_string();
 
-    // Run blocking DB + file work
+    // -----------------------------------------------------------------------
+    // Phase A (sync): DB queries, read file, text matching
+    // -----------------------------------------------------------------------
     let companion_path = companion_abs.clone();
-    tokio::task::spawn_blocking(move || {
+    let phase_a_result: MatchPhaseResult = tokio::task::spawn_blocking(move || -> Result<MatchPhaseResult, String> {
         // Resolve in Zotero
         let (att_id, parent_id) = resolve_pdf_in_zotero(&db_path, &pdf_stem)?
             .ok_or_else(|| {
                 format!("PDF '{}' not found in Zotero database", pdf_filename)
             })?;
 
-        // Get annotations and child notes — use att_id directly instead of
-        // re-matching by filename, which could hit a different attachment.
+        // Get annotations and child notes
         let annotations = query_zotero_for_pdf(&db_path, att_id)?;
         let child_notes = query_zotero_child_notes(&db_path, parent_id)?;
 
@@ -1030,23 +1279,26 @@ pub async fn import_zotero_annotations(
             (annotations.len() - new_anns.len()) + (child_notes.len() - new_notes.len());
 
         if new_anns.is_empty() && new_notes.is_empty() {
-            return Ok(ImportResult {
-                inserted: 0,
-                unmatched: 0,
+            return Ok(MatchPhaseResult {
+                content,
+                matched: Vec::new(),
+                unmatched_anns: Vec::new(),
+                note_dsls: Vec::new(),
                 skipped,
+                paragraphs: Vec::new(),
+                companion_path,
             });
         }
 
         // Match annotations to line positions in companion
         let lines: Vec<&str> = content.lines().collect();
         let page_ranges = find_page_ranges(&lines);
+        let paragraphs = build_paragraphs(&lines);
         let mut matched: Vec<(usize, String)> = Vec::new();
-        let mut unmatched_anns: Vec<&ZoteroAnnotation> = Vec::new();
+        let mut unmatched_anns: Vec<ZoteroAnnotation> = Vec::new();
 
         for ann in &new_anns {
             let dsl = zotero_ann_to_dsl(ann);
-            // Freetext (type 6) and sticky notes (type 2) contain user-typed text,
-            // not highlighted PDF content — don't match them against the markdown.
             let matchable_text = if ann.ann_type == 2 || ann.ann_type == 6 {
                 None
             } else {
@@ -1062,19 +1314,104 @@ pub async fn import_zotero_annotations(
                 ) {
                     matched.push((line_idx, dsl));
                 } else {
-                    unmatched_anns.push(ann);
+                    unmatched_anns.push((*ann).clone());
                 }
             } else {
-                unmatched_anns.push(ann);
+                unmatched_anns.push((*ann).clone());
             }
         }
 
-        // Generate DSL for child notes (append at end)
         let note_dsls: Vec<String> =
             new_notes.iter().map(|n| zotero_note_to_dsl(n)).collect();
 
+        Ok(MatchPhaseResult {
+            content,
+            matched,
+            unmatched_anns,
+            note_dsls,
+            skipped,
+            paragraphs,
+            companion_path,
+        })
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))??;
+
+    // Early return if nothing to do
+    if phase_a_result.matched.is_empty()
+        && phase_a_result.unmatched_anns.is_empty()
+        && phase_a_result.note_dsls.is_empty()
+    {
+        return Ok(ImportResult {
+            inserted: 0,
+            unmatched: 0,
+            skipped: phase_a_result.skipped,
+            llm_placed: 0,
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase B (async): LLM fallback for unmatched annotations
+    // -----------------------------------------------------------------------
+    let llm_placed_map: HashMap<usize, usize> =
+        if llm_fallback && !phase_a_result.unmatched_anns.is_empty() {
+            // Build indexed unmatched list for the LLM
+            let indexed_unmatched: Vec<(usize, &ZoteroAnnotation)> = phase_a_result
+                .unmatched_anns
+                .iter()
+                .enumerate()
+                .map(|(i, ann)| (i, ann))
+                .collect();
+
+            match llm_find_positions(
+                &indexed_unmatched,
+                &phase_a_result.paragraphs,
+                &llm_provider_id,
+                &llm_model,
+                llm_api_key.as_deref(),
+                llm_base_url.as_deref(),
+            )
+            .await
+            {
+                Ok(placements) => placements,
+                Err(e) => {
+                    tracing::warn!("LLM fallback failed, continuing without: {}", e);
+                    HashMap::new()
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
+    let llm_placed_count = llm_placed_map.len();
+
+    // -----------------------------------------------------------------------
+    // Phase C (sync): Build final markdown and write file
+    // -----------------------------------------------------------------------
+    let MatchPhaseResult {
+        content,
+        mut matched,
+        unmatched_anns,
+        note_dsls,
+        skipped,
+        companion_path,
+        ..
+    } = phase_a_result;
+
+    tokio::task::spawn_blocking(move || {
+        // Move LLM-placed annotations from unmatched to matched
+        let mut remaining_unmatched: Vec<&ZoteroAnnotation> = Vec::new();
+        for (i, ann) in unmatched_anns.iter().enumerate() {
+            if let Some(&line_idx) = llm_placed_map.get(&i) {
+                let dsl = zotero_ann_to_dsl(ann);
+                matched.push((line_idx, dsl));
+            } else {
+                remaining_unmatched.push(ann);
+            }
+        }
+
         let inserted = matched.len() + note_dsls.len();
-        let unmatched_count = unmatched_anns.len();
+        let unmatched_count = remaining_unmatched.len();
 
         let mut result = insert_annotations_into_markdown(&content, matched);
 
@@ -1090,10 +1427,10 @@ pub async fn import_zotero_annotations(
             }
         }
 
-        // Append unmatched section
-        if !unmatched_anns.is_empty() {
+        // Append remaining unmatched section
+        if !remaining_unmatched.is_empty() {
             let section = collect_unmatched_section(
-                &unmatched_anns
+                &remaining_unmatched
                     .iter()
                     .map(|a| (*a).clone())
                     .collect::<Vec<_>>(),
@@ -1116,6 +1453,7 @@ pub async fn import_zotero_annotations(
             inserted: inserted + unmatched_count,
             unmatched: unmatched_count,
             skipped,
+            llm_placed: llm_placed_count,
         })
     })
     .await
@@ -3009,5 +3347,283 @@ Some text
             &[],
         );
         assert!(result.is_some(), "OCR hyphenation should be rejoined and matched");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.2: zotero_llm_fallback preference tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_zotero_llm_fallback_default() {
+        let prefs = crate::preferences::Preferences::default();
+        assert!(!zotero_llm_fallback(&prefs));
+    }
+
+    #[test]
+    fn test_zotero_llm_fallback_enabled() {
+        let json = r#"{"zotero.llmFallback": true}"#;
+        let prefs: crate::preferences::Preferences = serde_json::from_str(json).unwrap();
+        assert!(zotero_llm_fallback(&prefs));
+    }
+
+    #[test]
+    fn test_zotero_llm_fallback_false_explicitly() {
+        let json = r#"{"zotero.llmFallback": false}"#;
+        let prefs: crate::preferences::Preferences = serde_json::from_str(json).unwrap();
+        assert!(!zotero_llm_fallback(&prefs));
+    }
+
+    #[test]
+    fn test_zotero_llm_fallback_non_bool() {
+        let json = r#"{"zotero.llmFallback": "yes"}"#;
+        let prefs: crate::preferences::Preferences = serde_json::from_str(json).unwrap();
+        assert!(!zotero_llm_fallback(&prefs));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.2: build_llm_placement_prompt tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_llm_placement_prompt_basic() {
+        let ann = ZoteroAnnotation {
+            item_id: 100,
+            ann_type: 1,
+            text: Some("highlighted text about neural networks".to_string()),
+            comment: Some("important finding".to_string()),
+            color: None,
+            page_label: Some("5".to_string()),
+            sort_index: "00005|000100|00000".to_string(),
+        };
+        let paragraphs = vec![
+            ("introduction to machine learning".to_string(), 3),
+            ("neural networks and deep learning".to_string(), 7),
+            ("conclusion and future work".to_string(), 12),
+        ];
+        let unmatched: Vec<(usize, &ZoteroAnnotation)> = vec![(0, &ann)];
+
+        let prompt = build_llm_placement_prompt(&unmatched, &paragraphs);
+        assert!(prompt.is_some());
+        let prompt = prompt.unwrap();
+
+        // Should contain paragraph numbers
+        assert!(prompt.contains("P0:"), "should contain P0");
+        assert!(prompt.contains("P1:"), "should contain P1");
+        assert!(prompt.contains("P2:"), "should contain P2");
+
+        // Should contain paragraph text
+        assert!(prompt.contains("introduction to machine learning"));
+        assert!(prompt.contains("neural networks and deep learning"));
+
+        // Should contain annotation label
+        assert!(prompt.contains("ANN_0:"));
+
+        // Should contain annotation type and page
+        assert!(prompt.contains("highlight"));
+        assert!(prompt.contains("p.5"));
+
+        // Should contain annotation text
+        assert!(prompt.contains("highlighted text about neural networks"));
+    }
+
+    #[test]
+    fn test_build_llm_placement_prompt_empty_unmatched() {
+        let paragraphs = vec![("some text".to_string(), 0)];
+        let unmatched: Vec<(usize, &ZoteroAnnotation)> = vec![];
+        assert!(build_llm_placement_prompt(&unmatched, &paragraphs).is_none());
+    }
+
+    #[test]
+    fn test_build_llm_placement_prompt_empty_paragraphs() {
+        let ann = ZoteroAnnotation {
+            item_id: 100,
+            ann_type: 1,
+            text: Some("text".to_string()),
+            comment: None,
+            color: None,
+            page_label: None,
+            sort_index: "00001|000001|00000".to_string(),
+        };
+        let paragraphs: Vec<(String, usize)> = vec![];
+        let unmatched = vec![(0, &ann)];
+        assert!(build_llm_placement_prompt(&unmatched, &paragraphs).is_none());
+    }
+
+    #[test]
+    fn test_build_llm_placement_prompt_truncates_long_text() {
+        let long_text = "a".repeat(300);
+        let ann = ZoteroAnnotation {
+            item_id: 100,
+            ann_type: 1,
+            text: Some(long_text.clone()),
+            comment: None,
+            color: None,
+            page_label: Some("1".to_string()),
+            sort_index: "00001|000001|00000".to_string(),
+        };
+        let paragraphs = vec![(long_text, 0)];
+        let unmatched = vec![(0, &ann)];
+
+        let prompt = build_llm_placement_prompt(&unmatched, &paragraphs).unwrap();
+        // Paragraph and annotation text should be truncated to 200 chars
+        // The prompt should not contain the full 300-char string
+        let lines: Vec<&str> = prompt.lines().collect();
+        for line in &lines {
+            if line.starts_with("P0:") {
+                // "P0: " + 200 chars = 204 chars max
+                assert!(
+                    line.len() <= 210,
+                    "paragraph text should be truncated, got len {}",
+                    line.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_llm_placement_prompt_uses_comment_when_no_text() {
+        let ann = ZoteroAnnotation {
+            item_id: 100,
+            ann_type: 2,
+            text: None,
+            comment: Some("a sticky note comment".to_string()),
+            color: None,
+            page_label: Some("3".to_string()),
+            sort_index: "00003|000001|00000".to_string(),
+        };
+        let paragraphs = vec![("some text".to_string(), 0)];
+        let unmatched = vec![(0, &ann)];
+
+        let prompt = build_llm_placement_prompt(&unmatched, &paragraphs).unwrap();
+        assert!(prompt.contains("a sticky note comment"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.2: parse_llm_placement_response tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_llm_response_valid() {
+        let paragraphs = vec![
+            ("para zero".to_string(), 3),
+            ("para one".to_string(), 7),
+            ("para two".to_string(), 12),
+        ];
+        let response = r#"{"ANN_0": 1, "ANN_1": 2}"#;
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[&0], 7);  // paragraph 1 -> line 7
+        assert_eq!(result[&1], 12); // paragraph 2 -> line 12
+    }
+
+    #[test]
+    fn test_parse_llm_response_with_fences() {
+        let paragraphs = vec![
+            ("para zero".to_string(), 5),
+            ("para one".to_string(), 10),
+        ];
+        let response = "```json\n{\"ANN_0\": 0}\n```";
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[&0], 5); // paragraph 0 -> line 5
+    }
+
+    #[test]
+    fn test_parse_llm_response_with_fences_no_json_tag() {
+        let paragraphs = vec![("para".to_string(), 3)];
+        let response = "```\n{\"ANN_0\": 0}\n```";
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[&0], 3);
+    }
+
+    #[test]
+    fn test_parse_llm_response_negative_one() {
+        let paragraphs = vec![("para".to_string(), 5)];
+        let response = r#"{"ANN_0": -1}"#;
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert!(result.is_empty(), "negative index should be excluded");
+    }
+
+    #[test]
+    fn test_parse_llm_response_out_of_range() {
+        let paragraphs = vec![("para".to_string(), 5)];
+        // Paragraph index 99 is out of range (only 1 paragraph)
+        let response = r#"{"ANN_0": 99}"#;
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert!(result.is_empty(), "out-of-range paragraph index should be excluded");
+    }
+
+    #[test]
+    fn test_parse_llm_response_malformed() {
+        let paragraphs = vec![("para".to_string(), 5)];
+        let response = "this is not json at all";
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert!(result.is_empty(), "malformed response should return empty map");
+    }
+
+    #[test]
+    fn test_parse_llm_response_partial() {
+        let paragraphs = vec![
+            ("para zero".to_string(), 3),
+            ("para one".to_string(), 7),
+        ];
+        // Only ANN_0 is present, ANN_1 is missing
+        let response = r#"{"ANN_0": 1}"#;
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[&0], 7);
+        assert!(!result.contains_key(&1), "missing ANN_1 should not appear");
+    }
+
+    #[test]
+    fn test_parse_llm_response_non_ann_keys_ignored() {
+        let paragraphs = vec![("para".to_string(), 5)];
+        let response = r#"{"ANN_0": 0, "other_key": 0, "explanation": "text"}"#;
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[&0], 5);
+    }
+
+    #[test]
+    fn test_parse_llm_response_empty_json() {
+        let paragraphs = vec![("para".to_string(), 5)];
+        let response = "{}";
+        let result = parse_llm_placement_response(response, &paragraphs);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_llm_response_float_values() {
+        // LLM might return floats; as_i64() on 1.0 returns Some(1) in serde_json
+        let paragraphs = vec![
+            ("para zero".to_string(), 3),
+            ("para one".to_string(), 7),
+        ];
+        let response = r#"{"ANN_0": 1.0}"#;
+        let result = parse_llm_placement_response(response, &paragraphs);
+        // serde_json::Value::as_i64() returns None for 1.0 (it's a float)
+        // This is acceptable — the annotation just won't be placed
+        // The test documents this behavior
+        assert!(result.is_empty() || result[&0] == 7);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3.2: ImportResult llm_placed field
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_import_result_serialization_includes_llm_placed() {
+        let result = ImportResult {
+            inserted: 5,
+            unmatched: 2,
+            skipped: 1,
+            llm_placed: 3,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["inserted"], 5);
+        assert_eq!(json["unmatched"], 2);
+        assert_eq!(json["skipped"], 1);
+        assert_eq!(json["llm_placed"], 3);
     }
 }

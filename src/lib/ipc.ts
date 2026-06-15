@@ -559,6 +559,7 @@ export interface ImportZoteroResult {
   inserted: number;
   unmatched: number;
   skipped: number;
+  llmPlaced: number;
 }
 
 export async function importZoteroAnnotations(

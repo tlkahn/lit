@@ -456,7 +456,8 @@ export function ReferenceLibrary() {
         } else if (result.inserted === 0 && result.skipped > 0) {
           show(`All annotations already imported for @${entry.key}`);
         } else {
-          show(`Imported ${result.inserted} annotations for @${entry.key} (${result.unmatched} unmatched, ${result.skipped} skipped)`);
+          const llmInfo = result.llmPlaced > 0 ? `, ${result.llmPlaced} placed by LLM` : "";
+          show(`Imported ${result.inserted} annotations for @${entry.key} (${result.unmatched} unmatched${llmInfo}, ${result.skipped} skipped)`);
         }
         refreshPages();
       } catch (err) {

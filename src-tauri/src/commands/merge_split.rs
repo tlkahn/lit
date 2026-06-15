@@ -161,7 +161,7 @@ pub(crate) async fn suggest_title_inner(
 /// before that write fires. Empty-string values are filtered throughout.
 ///
 /// Returns `(provider_id, model, base_url, temperature)`.
-fn resolve_llm_settings(
+pub(crate) fn resolve_llm_settings(
     prefs: &crate::preferences::Preferences,
 ) -> (String, String, Option<String>, f64) {
     let provider_obj = prefs.extra.get("llm.provider");
