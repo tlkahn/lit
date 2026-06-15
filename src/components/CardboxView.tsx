@@ -70,6 +70,7 @@ export default function CardboxView() {
   const colors = useCardboxStore((s) => s.colors);
   const setCardColor = useCardboxStore((s) => s.setCardColor);
   const clearCardColor = useCardboxStore((s) => s.clearCardColor);
+  const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -166,47 +167,6 @@ export default function CardboxView() {
     });
   }, [annotations, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet, notes]);
 
-  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
-  const visiblePinnedUuids = useMemo(() => {
-    const filteredSet = new Set(filteredAnnotations.map((a) => a.uuid));
-    return pinned.filter((uuid) => filteredSet.has(uuid));
-  }, [filteredAnnotations, pinned]);
-
-  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
-  const sortedAnnotations = useMemo(() => {
-    const annMap = new Map(filteredAnnotations.map((a) => [a.uuid, a]));
-    const pinnedSection = visiblePinnedUuids
-      .map((uuid) => annMap.get(uuid)!)
-      .filter(Boolean);
-    const pinnedUuids = new Set(visiblePinnedUuids);
-    const unpinnedFiltered = filteredAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
-    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
-    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
-    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
-      const ai = orderMap.get(a.uuid) ?? Infinity;
-      const bi = orderMap.get(b.uuid) ?? Infinity;
-      return ai - bi;
-    });
-    return [...pinnedSection, ...unpinnedSorted];
-  }, [filteredAnnotations, order, visiblePinnedUuids]);
-
-  // Build filtered UUID set for quick membership tests
-  const filteredUuidSet = useMemo(
-    () => new Set(filteredAnnotations.map((a) => a.uuid)),
-    [filteredAnnotations],
-  );
-
-  const annotationMap = useMemo(() => {
-    const map = new Map<string, CardboxAnnotation>();
-    for (const ann of annotations) map.set(ann.uuid, ann);
-    return map;
-  }, [annotations]);
-
-  const renderEntries = useMemo(
-    () => buildRenderEntries(order, groups, annotationMap, filteredUuidSet, filteredAnnotations, pinned),
-    [order, groups, annotationMap, filteredUuidSet, filteredAnnotations, pinned],
-  );
-
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const [a, b] of links) {
@@ -217,6 +177,68 @@ export default function CardboxView() {
     }
     return map;
   }, [links]);
+
+  const connectionsUuidSet = useMemo(() => {
+    if (!connectionsForUuid) return null;
+    const uuidSet = new Set<string>();
+    uuidSet.add(connectionsForUuid);
+    const linked = linkMap.get(connectionsForUuid);
+    if (linked) for (const uuid of linked) uuidSet.add(uuid);
+    for (const group of Object.values(groups)) {
+      if (group.order.includes(connectionsForUuid)) {
+        for (const uuid of group.order) uuidSet.add(uuid);
+      }
+    }
+    return uuidSet;
+  }, [connectionsForUuid, linkMap, groups]);
+
+  const effectiveAnnotations = useMemo(
+    () => connectionsUuidSet
+      ? filteredAnnotations.filter((a) => connectionsUuidSet.has(a.uuid))
+      : filteredAnnotations,
+    [filteredAnnotations, connectionsUuidSet],
+  );
+
+  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
+  const visiblePinnedUuids = useMemo(() => {
+    const filteredSet = new Set(effectiveAnnotations.map((a) => a.uuid));
+    return pinned.filter((uuid) => filteredSet.has(uuid));
+  }, [effectiveAnnotations, pinned]);
+
+  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
+  const sortedAnnotations = useMemo(() => {
+    const annMap = new Map(effectiveAnnotations.map((a) => [a.uuid, a]));
+    const pinnedSection = visiblePinnedUuids
+      .map((uuid) => annMap.get(uuid)!)
+      .filter(Boolean);
+    const pinnedUuids = new Set(visiblePinnedUuids);
+    const unpinnedFiltered = effectiveAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
+    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
+    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
+    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
+      const ai = orderMap.get(a.uuid) ?? Infinity;
+      const bi = orderMap.get(b.uuid) ?? Infinity;
+      return ai - bi;
+    });
+    return [...pinnedSection, ...unpinnedSorted];
+  }, [effectiveAnnotations, order, visiblePinnedUuids]);
+
+  // Build filtered UUID set for quick membership tests
+  const filteredUuidSet = useMemo(
+    () => new Set(effectiveAnnotations.map((a) => a.uuid)),
+    [effectiveAnnotations],
+  );
+
+  const annotationMap = useMemo(() => {
+    const map = new Map<string, CardboxAnnotation>();
+    for (const ann of annotations) map.set(ann.uuid, ann);
+    return map;
+  }, [annotations]);
+
+  const renderEntries = useMemo(
+    () => buildRenderEntries(order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned),
+    [order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned],
+  );
 
   const linkedCardsMap = useMemo(() => {
     const map = new Map<string, CardboxAnnotation[]>();
