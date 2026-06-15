@@ -1235,6 +1235,7 @@ export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
 export interface CardboxLayout {
   version: number;
   order: string[];
+  links: [string, string][];
 }
 
 export async function readCardboxLayout(): Promise<CardboxLayout> {
@@ -1243,6 +1244,14 @@ export async function readCardboxLayout(): Promise<CardboxLayout> {
 
 export async function writeCardboxLayout(layout: CardboxLayout): Promise<void> {
   return invoke<void>("write_cardbox_layout", { layout });
+}
+
+export async function addCardboxLink(a: string, b: string): Promise<void> {
+  return invoke<void>("add_cardbox_link", { a, b });
+}
+
+export async function removeCardboxLink(a: string, b: string): Promise<void> {
+  return invoke<void>("remove_cardbox_link", { a, b });
 }
 
 // Merge/Split preview commands

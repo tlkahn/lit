@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useCardboxStore } from "./cardbox";
 import { mockInvoke } from "../test/tauri-mock";
 import type { CardboxAnnotation } from "../lib/ipc";
@@ -45,9 +45,15 @@ describe("cardbox store", () => {
       searchQuery: "",
       activeTypes: null,
       order: [],
+      links: [],
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "read_cardbox_layout")
+        return { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]] };
+      if (cmd === "write_cardbox_layout") return null;
+      if (cmd === "add_cardbox_link") return null;
+      if (cmd === "remove_cardbox_link") return null;
       return null;
     });
   });
@@ -123,13 +129,17 @@ describe("cardbox store", () => {
   it("toggleType removes a type from activeTypes", () => {
     useCardboxStore.setState({ activeTypes: new Set(["note", "question"]) });
     useCardboxStore.getState().toggleType("note");
-    expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question"]));
+    expect(useCardboxStore.getState().activeTypes).toEqual(
+      new Set(["question"]),
+    );
   });
 
   it("toggleType adds a type back to activeTypes", () => {
     useCardboxStore.setState({ activeTypes: new Set(["question"]) });
     useCardboxStore.getState().toggleType("note");
-    expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question", "note"]));
+    expect(useCardboxStore.getState().activeTypes).toEqual(
+      new Set(["question", "note"]),
+    );
   });
 
   it("resetFilters clears searchQuery and sets activeTypes to all", async () => {
@@ -148,7 +158,9 @@ describe("cardbox store", () => {
     // Re-fetch (simulates graph-updated refresh)
     await useCardboxStore.getState().fetchAnnotations();
     // activeTypes should be preserved, not reset
-    expect(useCardboxStore.getState().activeTypes).toEqual(new Set(["question"]));
+    expect(useCardboxStore.getState().activeTypes).toEqual(
+      new Set(["question"]),
+    );
   });
 
   it("setOrder updates order array", () => {
@@ -169,5 +181,92 @@ describe("cardbox store", () => {
     await useCardboxStore.getState().fetchAnnotations();
     // Order should be preserved, not reset
     expect(useCardboxStore.getState().order).toEqual(["u2", "u1"]);
+  });
+
+  // --- Link tests ---
+
+  it("loadLayout populates links", async () => {
+    await useCardboxStore.getState().loadLayout();
+    const state = useCardboxStore.getState();
+    expect(state.links).toEqual([["u1", "u2"]]);
+  });
+
+  it("addLink updates local state", async () => {
+    await useCardboxStore.getState().addLink("u2", "u1");
+    const state = useCardboxStore.getState();
+    expect(state.links).toEqual([["u1", "u2"]]);
+  });
+
+  it("addLink prevents duplicates", async () => {
+    await useCardboxStore.getState().addLink("u1", "u2");
+    await useCardboxStore.getState().addLink("u2", "u1");
+    const state = useCardboxStore.getState();
+    expect(state.links).toHaveLength(1);
+  });
+
+  it("addLink calls IPC", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    await useCardboxStore.getState().addLink("u1", "u2");
+    expect(invokeSpy).toHaveBeenCalledWith("add_cardbox_link", {
+      a: "u1",
+      b: "u2",
+    });
+  });
+
+  it("removeLink updates local state", async () => {
+    useCardboxStore.setState({ links: [["u1", "u2"]] });
+    await useCardboxStore.getState().removeLink("u1", "u2");
+    expect(useCardboxStore.getState().links).toEqual([]);
+  });
+
+  it("removeLink calls IPC", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    useCardboxStore.setState({ links: [["u1", "u2"]] });
+    await useCardboxStore.getState().removeLink("u1", "u2");
+    expect(invokeSpy).toHaveBeenCalledWith("remove_cardbox_link", {
+      a: "u1",
+      b: "u2",
+    });
+  });
+
+  it("saveLayout includes links", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    useCardboxStore.setState({
+      order: ["u1", "u2"],
+      links: [["u1", "u2"]],
+    });
+    await useCardboxStore.getState().saveLayout();
+    expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
+      layout: { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]] },
+    });
+  });
+
+  it("fetchAnnotations prunes stale links", async () => {
+    useCardboxStore.setState({
+      links: [
+        ["u1", "u2"],
+        ["u1", "stale-uuid"],
+      ],
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    expect(useCardboxStore.getState().links).toEqual([["u1", "u2"]]);
+  });
+
+  it("links survive annotation refresh", async () => {
+    useCardboxStore.setState({ links: [["u1", "u2"]] });
+    await useCardboxStore.getState().fetchAnnotations();
+    expect(useCardboxStore.getState().links).toEqual([["u1", "u2"]]);
   });
 });
