@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { arrayMove } from "@dnd-kit/sortable";
-import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
+import type { CardboxAnnotation, GroupInfo, CardNote } from "../lib/ipc";
 import {
   listAllAnnotations,
   readCardboxLayout,
@@ -15,6 +15,9 @@ import {
   toggleGroupCollapsed,
   pinCardboxCard,
   unpinCardboxCard,
+  setCardNote,
+  clearCardNote,
+  exportCardNote,
 } from "../lib/ipc";
 
 export interface CardboxStore {
@@ -27,6 +30,7 @@ export interface CardboxStore {
   links: [string, string][];
   groups: Record<string, GroupInfo>;
   pinned: string[];
+  notes: Record<string, CardNote>;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -49,6 +53,9 @@ export interface CardboxStore {
   pinCard: (uuid: string) => Promise<void>;
   unpinCard: (uuid: string) => Promise<void>;
   setPinned: (pinned: string[]) => void;
+  setNote: (uuid: string, body: string) => Promise<void>;
+  clearNote: (uuid: string) => Promise<void>;
+  exportNote: (uuid: string) => Promise<string>;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -61,6 +68,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   links: [],
   groups: {},
   pinned: [],
+  notes: {},
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -136,17 +144,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     try {
       const layout = await readCardboxLayout();
       const groups = layout.groups ?? {};
+      const notes = layout.notes ?? {};
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [] });
+        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes });
       } else {
-        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [] });
+        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links, groups, pinned } = get();
+    const { order, links, groups, pinned, notes } = get();
     const hasGroups = Object.keys(groups).length > 0;
     try {
       await writeCardboxLayout({
@@ -155,6 +164,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         links,
         groups,
         pinned,
+        notes,
       });
     } catch {
       // Ignore write failures silently
@@ -358,4 +368,27 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await unpinCardboxCard(uuid);
   },
   setPinned: (pinned) => set({ pinned }),
+  setNote: async (uuid, body) => {
+    set((s) => {
+      const trimmed = body.trim();
+      if (!trimmed) {
+        const { [uuid]: _, ...rest } = s.notes;
+        return { notes: rest };
+      }
+      return {
+        notes: { ...s.notes, [uuid]: { body, updated_at: new Date().toISOString() } },
+      };
+    });
+    await setCardNote(uuid, body);
+  },
+  clearNote: async (uuid) => {
+    set((s) => {
+      const { [uuid]: _, ...rest } = s.notes;
+      return { notes: rest };
+    });
+    await clearCardNote(uuid);
+  },
+  exportNote: async (uuid) => {
+    return exportCardNote(uuid);
+  },
 }));
