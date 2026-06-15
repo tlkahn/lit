@@ -144,6 +144,7 @@ export function ReferenceLibrary() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const refreshPages = useWorkspaceStore((s) => s.refreshPages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const show = useStatusMessageStore((s) => s.show);
   const [entries, setEntries] = useState<BibEntry[]>([]);
@@ -914,6 +915,7 @@ export function ReferenceLibrary() {
             const key = ocrEntry.key;
             setOcrEntry(null);
             show("OCR complete for @" + key);
+            refreshPages();
             selectPage(path);
           }}
         />

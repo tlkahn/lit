@@ -2746,6 +2746,27 @@ describe("ReferenceLibrary", () => {
       expect(selectPage).toHaveBeenCalledWith("ocr/sanderson2009.md");
     });
 
+    it("successful OCR calls refreshPages so the sidebar updates", async () => {
+      const user = userEvent.setup();
+      const refreshPages = vi.fn();
+      const selectPage = vi.fn();
+      useWorkspaceStore.setState({ selectPage, refreshPages });
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("ocr-btn"));
+      await waitFor(() => expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ocr-start-btn"));
+
+      await waitFor(() => {
+        expect(refreshPages).toHaveBeenCalled();
+      });
+      expect(selectPage).toHaveBeenCalledWith("ocr/sanderson2009.md");
+    });
+
     it("OCR error shows error in dialog", async () => {
       const user = userEvent.setup();
       fixture = [sandersonWithFile];
