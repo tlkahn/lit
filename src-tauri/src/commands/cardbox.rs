@@ -80,7 +80,8 @@ pub fn read_cardbox_layout(
             valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
         });
         layout.pinned.retain(|uuid| valid_uuids.contains(uuid.as_str()));
-        layout.pinned.dedup();
+        let mut seen = HashSet::new();
+        layout.pinned.retain(|uuid| seen.insert(uuid.clone()));
         Ok(())
     })?;
 
