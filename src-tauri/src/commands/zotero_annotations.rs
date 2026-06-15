@@ -1,5 +1,8 @@
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ZoteroAnnotation {
@@ -371,6 +374,352 @@ pub fn zotero_match_threshold(prefs: &crate::preferences::Preferences) -> f64 {
         .get("zotero.matchThreshold")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.65)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1.3: Annotation generation, insertion, and Tauri command
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub inserted: usize,
+    pub unmatched: usize,
+    pub skipped: usize,
+}
+
+fn ann_type_name(ann_type: i32) -> &'static str {
+    match ann_type {
+        1 => "highlight",
+        2 => "note",
+        5 => "underline",
+        6 => "freetext",
+        _ => "annotation",
+    }
+}
+
+fn truncate_anchor(text: &str, max_len: usize) -> String {
+    let trimmed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if trimmed.len() <= max_len {
+        return trimmed;
+    }
+    let truncated = &trimmed[..max_len];
+    match truncated.rfind(' ') {
+        Some(pos) => format!("{}\u{2026}", &truncated[..pos]),
+        None => format!("{}\u{2026}", truncated),
+    }
+}
+
+fn escape_anchor(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Generate a Lit annotation DSL string for a single Zotero annotation.
+pub fn zotero_ann_to_dsl(ann: &ZoteroAnnotation) -> String {
+    let uuid = format!("zot-{}", ann.item_id);
+    let type_name = ann_type_name(ann.ann_type);
+
+    // Build page prefix
+    let page_prefix = match ann.page_label.as_deref() {
+        Some(p) if !p.is_empty() => format!("p. {} \u{2014} {}", p, type_name),
+        _ => type_name.to_string(),
+    };
+
+    // Build body
+    let body = match ann.comment.as_deref() {
+        Some(c) if !c.is_empty() => format!("{}: {}", page_prefix, c),
+        _ => page_prefix,
+    };
+
+    // Build scope anchor
+    let anchor = ann
+        .text
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .map(|t| truncate_anchor(t, 60));
+
+    // Build compact form candidate
+    let scope_part = match &anchor {
+        Some(a) => format!(r#" ^"{}""#, escape_anchor(a)),
+        None => String::new(),
+    };
+
+    let compact = format!("<!---[{}] n:{} | {} --->", uuid, scope_part, body);
+
+    if compact.len() <= 120 {
+        compact
+    } else {
+        let mut lines = vec![format!("<!---[{}]", uuid), "n:".to_string()];
+        if let Some(a) = &anchor {
+            lines.push(format!(r#"^"{}""#, escape_anchor(a)));
+        }
+        lines.push("---".to_string());
+        lines.push(body);
+        lines.push("--->".to_string());
+        lines.join("\n")
+    }
+}
+
+/// Generate a Lit annotation DSL string for a Zotero child note.
+pub fn zotero_note_to_dsl(note: &ZoteroChildNote) -> String {
+    let uuid = format!("zot-note-{}", note.item_id);
+    let body = match note.title.as_deref() {
+        Some(t) if !t.is_empty() => format!("{}: {}", t, note.html_content),
+        _ => note.html_content.clone(),
+    };
+
+    let compact = format!("<!---[{}] n: | {} --->", uuid, body);
+
+    if compact.len() <= 120 {
+        compact
+    } else {
+        format!("<!---[{}]\nn:\n---\n{}\n--->", uuid, body)
+    }
+}
+
+/// Extract all existing Zotero annotation IDs from markdown content.
+///
+/// Scans for `<!---[zot-...]` patterns and returns the set of IDs found
+/// (e.g. `zot-301`, `zot-note-400`).
+pub fn existing_zotero_ids(content: &str) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let mut search_from = 0;
+    while let Some(start) = content[search_from..].find("<!---[zot-") {
+        let abs_start = search_from + start + 6; // skip "<!---["
+        if let Some(end) = content[abs_start..].find(']') {
+            let id = &content[abs_start..abs_start + end];
+            if !id.is_empty() {
+                ids.insert(id.to_string());
+            }
+            search_from = abs_start + end;
+        } else {
+            break;
+        }
+    }
+    ids
+}
+
+/// Detect the line index of YAML frontmatter closing delimiter.
+///
+/// Returns `Some(line_index)` of the closing `---` if the file starts
+/// with a `---` line. Returns `None` if there is no frontmatter.
+fn detect_frontmatter_end(lines: &[String]) -> Option<usize> {
+    if lines.first().map(|l| l.trim()) != Some("---") {
+        return None;
+    }
+    for (i, line) in lines.iter().enumerate().skip(1) {
+        if line.trim() == "---" {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Insert annotation DSL strings into markdown content at specified line positions.
+///
+/// Each entry in `annotations_with_positions` is `(line_index, dsl_string)`.
+/// Insertions happen after the target line. YAML frontmatter is respected:
+/// insertions targeting lines inside frontmatter are clamped to after it.
+pub fn insert_annotations_into_markdown(
+    content: &str,
+    mut annotations_with_positions: Vec<(usize, String)>,
+) -> String {
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    let trailing_newline = content.ends_with('\n');
+
+    let frontmatter_end = detect_frontmatter_end(&lines);
+
+    // Sort descending by line_index for bottom-up insertion
+    annotations_with_positions.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (line_idx, dsl) in annotations_with_positions {
+        // Clamp: never insert inside frontmatter
+        let insert_after = line_idx.max(frontmatter_end.unwrap_or(0));
+        let pos = (insert_after + 1).min(lines.len());
+        lines.insert(pos, String::new());
+        lines.insert(pos + 1, dsl);
+    }
+
+    let mut result = lines.join("\n");
+    if trailing_newline && !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
+/// Format a collection of unmatched annotations into a markdown section.
+pub fn collect_unmatched_section(unmatched: &[ZoteroAnnotation]) -> String {
+    let mut parts = vec![
+        "## Unmatched Zotero Annotations".to_string(),
+        String::new(),
+    ];
+    for ann in unmatched {
+        parts.push(zotero_ann_to_dsl(ann));
+        parts.push(String::new());
+    }
+    parts.join("\n")
+}
+
+#[tauri::command]
+pub async fn import_zotero_annotations(
+    key: String,
+    workspace_path: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<ImportResult, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = crate::commands::page::lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    // Get bib entry and its PDF file path
+    let pdf_rel_path = {
+        let store = gi.store();
+        let entry = crate::bib::db::get_bib_item(&store.conn, &key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("entry '{}' not found", key))?;
+        entry
+            .file
+            .filter(|f| !f.is_empty())
+            .ok_or_else(|| format!("entry '{}' has no linked PDF", key))?
+    };
+
+    // Read preferences
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let db_path = zotero_db_path(&prefs);
+    let threshold = zotero_match_threshold(&prefs);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+
+    // Find companion markdown
+    let companion_rel = crate::commands::workspace::find_companion(
+        &pdf_rel_path,
+        &root,
+        &search_paths,
+    )
+    .ok_or_else(|| format!("no companion markdown found for '{}'", pdf_rel_path))?;
+    let companion_abs = root.join(&companion_rel);
+
+    // Extract PDF filename for Zotero lookup
+    let pdf_path_obj = std::path::Path::new(&pdf_rel_path);
+    let pdf_filename = pdf_path_obj
+        .file_name()
+        .ok_or_else(|| "invalid PDF path".to_string())?
+        .to_str()
+        .ok_or_else(|| "invalid PDF filename".to_string())?
+        .to_string();
+
+    let pdf_stem = pdf_path_obj
+        .file_stem()
+        .ok_or_else(|| "invalid PDF path".to_string())?
+        .to_str()
+        .ok_or_else(|| "invalid PDF stem".to_string())?
+        .to_string();
+
+    // Run blocking DB + file work
+    let companion_path = companion_abs.clone();
+    tokio::task::spawn_blocking(move || {
+        // Resolve in Zotero
+        let (_att_id, parent_id) = resolve_pdf_in_zotero(&db_path, &pdf_stem)?
+            .ok_or_else(|| {
+                format!("PDF '{}' not found in Zotero database", pdf_filename)
+            })?;
+
+        // Get annotations and child notes
+        let annotations = query_zotero_for_pdf(&db_path, &pdf_filename)?;
+        let child_notes = query_zotero_child_notes(&db_path, parent_id)?;
+
+        // Read companion content
+        let content = std::fs::read_to_string(&companion_path)
+            .map_err(|e| format!("failed to read companion: {}", e))?;
+
+        // Dedup
+        let existing_ids = existing_zotero_ids(&content);
+        let new_anns: Vec<&ZoteroAnnotation> = annotations
+            .iter()
+            .filter(|a| !existing_ids.contains(&format!("zot-{}", a.item_id)))
+            .collect();
+        let new_notes: Vec<&ZoteroChildNote> = child_notes
+            .iter()
+            .filter(|n| !existing_ids.contains(&format!("zot-note-{}", n.item_id)))
+            .collect();
+        let skipped =
+            (annotations.len() - new_anns.len()) + (child_notes.len() - new_notes.len());
+
+        if new_anns.is_empty() && new_notes.is_empty() {
+            return Ok(ImportResult {
+                inserted: 0,
+                unmatched: 0,
+                skipped,
+            });
+        }
+
+        // Match annotations to line positions in companion
+        let lines: Vec<&str> = content.lines().collect();
+        let mut matched: Vec<(usize, String)> = Vec::new();
+        let mut unmatched_anns: Vec<&ZoteroAnnotation> = Vec::new();
+
+        for ann in &new_anns {
+            let dsl = zotero_ann_to_dsl(ann);
+            if let Some(text) = ann.text.as_deref().filter(|t| !t.is_empty()) {
+                if let Some(line_idx) = find_match_line(text, &lines, threshold) {
+                    matched.push((line_idx, dsl));
+                } else {
+                    unmatched_anns.push(ann);
+                }
+            } else {
+                unmatched_anns.push(ann);
+            }
+        }
+
+        // Generate DSL for child notes (append at end)
+        let note_dsls: Vec<String> =
+            new_notes.iter().map(|n| zotero_note_to_dsl(n)).collect();
+
+        let inserted = matched.len() + note_dsls.len();
+        let unmatched_count = unmatched_anns.len();
+
+        let mut result = insert_annotations_into_markdown(&content, matched);
+
+        // Append child notes at end
+        if !note_dsls.is_empty() {
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push('\n');
+            for dsl in &note_dsls {
+                result.push_str(dsl);
+                result.push_str("\n\n");
+            }
+        }
+
+        // Append unmatched section
+        if !unmatched_anns.is_empty() {
+            let section = collect_unmatched_section(
+                &unmatched_anns
+                    .iter()
+                    .map(|a| (*a).clone())
+                    .collect::<Vec<_>>(),
+            );
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push('\n');
+            result.push_str(&section);
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+        }
+
+        // Write back
+        std::fs::write(&companion_path, &result)
+            .map_err(|e| format!("failed to write companion: {}", e))?;
+
+        Ok(ImportResult {
+            inserted: inserted + unmatched_count,
+            unmatched: unmatched_count,
+            skipped,
+        })
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))?
 }
 
 #[cfg(test)]
@@ -987,5 +1336,409 @@ mod tests {
         let json = r#"{"zotero.matchThreshold": "not a number"}"#;
         let prefs: crate::preferences::Preferences = serde_json::from_str(json).unwrap();
         assert!((zotero_match_threshold(&prefs) - 0.65).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // ann_type_name tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ann_type_name_known_types() {
+        assert_eq!(ann_type_name(1), "highlight");
+        assert_eq!(ann_type_name(2), "note");
+        assert_eq!(ann_type_name(5), "underline");
+        assert_eq!(ann_type_name(6), "freetext");
+    }
+
+    #[test]
+    fn ann_type_name_unknown_type() {
+        assert_eq!(ann_type_name(99), "annotation");
+    }
+
+    // -----------------------------------------------------------------------
+    // truncate_anchor tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn truncate_anchor_short_text() {
+        assert_eq!(truncate_anchor("short text", 60), "short text");
+    }
+
+    #[test]
+    fn truncate_anchor_exact_60() {
+        let text = "a".repeat(60);
+        assert_eq!(truncate_anchor(&text, 60), text);
+    }
+
+    #[test]
+    fn truncate_anchor_long_text_breaks_at_space() {
+        let text = "the quick brown fox jumps over the lazy dog and keeps running far away into the distance";
+        let result = truncate_anchor(text, 60);
+        assert!(result.ends_with('\u{2026}'));
+        assert!(!result.contains("distance"));
+        // The text before the ellipsis should be <= 60 chars
+        let before_ellipsis = &result[..result.len() - '\u{2026}'.len_utf8()];
+        assert!(before_ellipsis.len() <= 60);
+    }
+
+    #[test]
+    fn truncate_anchor_normalizes_whitespace() {
+        let text = "  hello   world  ";
+        assert_eq!(truncate_anchor(text, 60), "hello world");
+    }
+
+    // -----------------------------------------------------------------------
+    // escape_anchor tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn escape_anchor_no_specials() {
+        assert_eq!(escape_anchor("hello world"), "hello world");
+    }
+
+    #[test]
+    fn escape_anchor_quotes() {
+        assert_eq!(
+            escape_anchor(r#"a "quoted" word"#),
+            r#"a \"quoted\" word"#
+        );
+    }
+
+    #[test]
+    fn escape_anchor_backslash() {
+        assert_eq!(escape_anchor(r"back\slash"), r"back\\slash");
+    }
+
+    // -----------------------------------------------------------------------
+    // zotero_ann_to_dsl tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dsl_highlight_with_comment() {
+        let ann = ZoteroAnnotation {
+            item_id: 301,
+            ann_type: 1,
+            text: Some("highlighted text one".to_string()),
+            comment: Some("my comment".to_string()),
+            color: Some("#ffd400".to_string()),
+            page_label: Some("5".to_string()),
+            sort_index: "00005|000100|00000".to_string(),
+        };
+        let dsl = zotero_ann_to_dsl(&ann);
+        assert!(dsl.contains("[zot-301]"));
+        assert!(dsl.contains("n:"));
+        assert!(dsl.contains(r#"^"highlighted text one""#));
+        assert!(dsl.contains("p. 5"));
+        assert!(dsl.contains("highlight"));
+        assert!(dsl.contains("my comment"));
+    }
+
+    #[test]
+    fn dsl_highlight_without_comment() {
+        let ann = ZoteroAnnotation {
+            item_id: 305,
+            ann_type: 1,
+            text: Some("highlighted text on page one".to_string()),
+            comment: None,
+            color: Some("#ffd400".to_string()),
+            page_label: Some("1".to_string()),
+            sort_index: "00001|000020|00000".to_string(),
+        };
+        let dsl = zotero_ann_to_dsl(&ann);
+        assert!(dsl.contains("[zot-305]"));
+        assert!(dsl.contains(r#"^"highlighted text on page one""#));
+        assert!(dsl.contains("p. 1"));
+        assert!(dsl.contains("highlight"));
+        // Body should end with just the type name, no colon after it
+        assert!(dsl.contains("highlight --->") || dsl.contains("highlight\n"));
+    }
+
+    #[test]
+    fn dsl_sticky_note_no_text() {
+        let ann = ZoteroAnnotation {
+            item_id: 302,
+            ann_type: 2,
+            text: None,
+            comment: Some("sticky note text".to_string()),
+            color: Some("#ff6666".to_string()),
+            page_label: Some("3".to_string()),
+            sort_index: "00003|000050|00000".to_string(),
+        };
+        let dsl = zotero_ann_to_dsl(&ann);
+        assert!(dsl.contains("[zot-302]"));
+        assert!(dsl.contains("n:"));
+        assert!(!dsl.contains(r#"^""#)); // no anchor scope
+        assert!(dsl.contains("p. 3"));
+        assert!(dsl.contains("note"));
+        assert!(dsl.contains("sticky note text"));
+    }
+
+    #[test]
+    fn dsl_long_text_uses_block_form() {
+        let long_text = "This is a very long highlighted text that exceeds the normal threshold for compact annotations and should cause block form to be used instead of compact form";
+        let ann = ZoteroAnnotation {
+            item_id: 999,
+            ann_type: 1,
+            text: Some(long_text.to_string()),
+            comment: Some("A very detailed comment about this highlight that makes the total length quite substantial".to_string()),
+            color: None,
+            page_label: Some("42".to_string()),
+            sort_index: "00042|000100|00000".to_string(),
+        };
+        let dsl = zotero_ann_to_dsl(&ann);
+        assert!(dsl.contains("<!---[zot-999]"));
+        assert!(dsl.contains('\n')); // block form
+        assert!(dsl.contains("--->"));
+    }
+
+    #[test]
+    fn dsl_parseable_by_annotation_scanner() {
+        let ann = ZoteroAnnotation {
+            item_id: 100,
+            ann_type: 1,
+            text: Some("test text".to_string()),
+            comment: Some("a comment".to_string()),
+            color: None,
+            page_label: Some("1".to_string()),
+            sort_index: "00001|000001|00000".to_string(),
+        };
+        let dsl = zotero_ann_to_dsl(&ann);
+        let scanned = crate::annotation::scanner::scan_annotations(&dsl);
+        assert_eq!(
+            scanned.len(),
+            1,
+            "DSL should parse as exactly one annotation: {}",
+            dsl
+        );
+        assert_eq!(scanned[0].id, Some("zot-100".to_string()));
+    }
+
+    #[test]
+    fn dsl_block_form_parseable_by_scanner() {
+        let long_text = "A very long highlighted passage that goes on and on to ensure the compact form exceeds the 120 char limit and triggers block formatting";
+        let ann = ZoteroAnnotation {
+            item_id: 777,
+            ann_type: 1,
+            text: Some(long_text.to_string()),
+            comment: Some("detailed comment about this passage".to_string()),
+            color: None,
+            page_label: Some("10".to_string()),
+            sort_index: "00010|000050|00000".to_string(),
+        };
+        let dsl = zotero_ann_to_dsl(&ann);
+        assert!(dsl.contains('\n'), "should be block form");
+        let scanned = crate::annotation::scanner::scan_annotations(&dsl);
+        assert_eq!(
+            scanned.len(),
+            1,
+            "Block-form DSL should parse as exactly one annotation: {}",
+            dsl
+        );
+        assert_eq!(scanned[0].id, Some("zot-777".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // zotero_note_to_dsl tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn note_dsl_without_title() {
+        let note = ZoteroChildNote {
+            item_id: 400,
+            html_content: "plain text content".to_string(),
+            title: None,
+        };
+        let dsl = zotero_note_to_dsl(&note);
+        assert!(dsl.contains("[zot-note-400]"));
+        assert!(dsl.contains("n:"));
+        assert!(dsl.contains("plain text content"));
+    }
+
+    #[test]
+    fn note_dsl_with_title() {
+        let note = ZoteroChildNote {
+            item_id: 401,
+            html_content: "note body".to_string(),
+            title: Some("My Title".to_string()),
+        };
+        let dsl = zotero_note_to_dsl(&note);
+        assert!(dsl.contains("[zot-note-401]"));
+        assert!(dsl.contains("My Title: note body"));
+    }
+
+    #[test]
+    fn note_dsl_parseable() {
+        let note = ZoteroChildNote {
+            item_id: 500,
+            html_content: "test content".to_string(),
+            title: None,
+        };
+        let dsl = zotero_note_to_dsl(&note);
+        let scanned = crate::annotation::scanner::scan_annotations(&dsl);
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].id, Some("zot-note-500".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // existing_zotero_ids tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn existing_ids_empty_content() {
+        let ids = existing_zotero_ids("");
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn existing_ids_no_zotero_annotations() {
+        let content = "# Title\n\nSome text\n\n<!---[abc-123] n: | a note --->";
+        let ids = existing_zotero_ids(content);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn existing_ids_finds_annotation_ids() {
+        let content = r#"# Title
+
+<!---[zot-301] n: ^"text" | comment --->
+
+Some text
+
+<!---[zot-note-400] n: | note content --->
+"#;
+        let ids = existing_zotero_ids(content);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("zot-301"));
+        assert!(ids.contains("zot-note-400"));
+    }
+
+    #[test]
+    fn existing_ids_handles_block_form() {
+        let content = "<!---[zot-999]\nn:\n---\nbody\n--->";
+        let ids = existing_zotero_ids(content);
+        assert!(ids.contains("zot-999"));
+    }
+
+    #[test]
+    fn existing_ids_ignores_non_zotero() {
+        let content = "<!---[abc-123] n: | body --->\n<!---[zot-42] n: | body --->";
+        let ids = existing_zotero_ids(content);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains("zot-42"));
+    }
+
+    // -----------------------------------------------------------------------
+    // detect_frontmatter_end tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detect_frontmatter_end_present() {
+        let lines = vec![
+            "---".to_string(),
+            "title: Test".to_string(),
+            "---".to_string(),
+            "body".to_string(),
+        ];
+        assert_eq!(detect_frontmatter_end(&lines), Some(2));
+    }
+
+    #[test]
+    fn detect_frontmatter_end_absent() {
+        let lines = vec!["# Title".to_string(), "body".to_string()];
+        assert_eq!(detect_frontmatter_end(&lines), None);
+    }
+
+    #[test]
+    fn detect_frontmatter_end_no_closing() {
+        let lines = vec![
+            "---".to_string(),
+            "title: Test".to_string(),
+            "body".to_string(),
+        ];
+        assert_eq!(detect_frontmatter_end(&lines), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // insert_annotations_into_markdown tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn insert_after_target_line() {
+        let content = "line 0\nline 1\nline 2\nline 3\n";
+        let annotations = vec![(1, "<!---[zot-1] n: | ann --->".to_string())];
+        let result = insert_annotations_into_markdown(content, annotations);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0], "line 0");
+        assert_eq!(lines[1], "line 1");
+        assert_eq!(lines[2], ""); // blank separator
+        assert_eq!(lines[3], "<!---[zot-1] n: | ann --->");
+        assert_eq!(lines[4], "line 2");
+    }
+
+    #[test]
+    fn insert_multiple_preserves_order() {
+        let content = "line 0\nline 1\nline 2\n";
+        let annotations = vec![
+            (0, "<!---[zot-1] n: | first --->".to_string()),
+            (2, "<!---[zot-2] n: | second --->".to_string()),
+        ];
+        let result = insert_annotations_into_markdown(content, annotations);
+        assert!(result.contains("first"));
+        assert!(result.contains("second"));
+        let pos1 = result.find("first").unwrap();
+        let pos2 = result.find("second").unwrap();
+        assert!(pos1 < pos2);
+    }
+
+    #[test]
+    fn insert_respects_frontmatter() {
+        let content = "---\ntitle: Test\n---\nline 3\nline 4\n";
+        // Try to insert at line 0 (inside frontmatter) -- should be clamped to after frontmatter
+        let annotations = vec![(0, "<!---[zot-1] n: | ann --->".to_string())];
+        let result = insert_annotations_into_markdown(content, annotations);
+        let lines: Vec<&str> = result.lines().collect();
+        // Frontmatter should be intact
+        assert_eq!(lines[0], "---");
+        assert_eq!(lines[1], "title: Test");
+        assert_eq!(lines[2], "---");
+        // Annotation should appear after frontmatter (line 2 = closing ---),
+        // so the inserted blank + annotation should be at lines 3 and 4
+        assert_eq!(lines[3], "");
+        assert_eq!(lines[4], "<!---[zot-1] n: | ann --->");
+        assert_eq!(lines[5], "line 3");
+    }
+
+    #[test]
+    fn insert_empty_annotations_returns_unchanged() {
+        let content = "# Title\n\nBody text\n";
+        let result = insert_annotations_into_markdown(content, vec![]);
+        assert_eq!(result, content);
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_unmatched_section tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unmatched_section_format() {
+        let anns = vec![ZoteroAnnotation {
+            item_id: 10,
+            ann_type: 2,
+            text: None,
+            comment: Some("a note".to_string()),
+            color: None,
+            page_label: Some("1".to_string()),
+            sort_index: "00001|000001|00000".to_string(),
+        }];
+        let section = collect_unmatched_section(&anns);
+        assert!(section.starts_with("## Unmatched Zotero Annotations"));
+        assert!(section.contains("[zot-10]"));
+        assert!(section.contains("a note"));
+    }
+
+    #[test]
+    fn unmatched_section_empty() {
+        let section = collect_unmatched_section(&[]);
+        assert!(section.starts_with("## Unmatched Zotero Annotations"));
     }
 }

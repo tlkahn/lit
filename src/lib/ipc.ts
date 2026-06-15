@@ -553,6 +553,21 @@ export async function checkOcrTargetExists(
   return invoke<boolean>("check_ocr_target_exists", { key, workspacePath });
 }
 
+// Zotero annotation import
+
+export interface ImportZoteroResult {
+  inserted: number;
+  unmatched: number;
+  skipped: number;
+}
+
+export async function importZoteroAnnotations(
+  key: string,
+  workspacePath: string,
+): Promise<ImportZoteroResult> {
+  return invoke<ImportZoteroResult>("import_zotero_annotations", { key, workspacePath });
+}
+
 // PDF recognition
 
 export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";
