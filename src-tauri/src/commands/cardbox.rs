@@ -7,6 +7,16 @@ use tauri::State;
 pub struct CardboxLayout {
     pub version: u32,
     pub order: Vec<String>,
+    #[serde(default)]
+    pub links: Vec<[String; 2]>,
+}
+
+fn normalize_link(a: &str, b: &str) -> [String; 2] {
+    if a <= b {
+        [a.to_string(), b.to_string()]
+    } else {
+        [b.to_string(), a.to_string()]
+    }
 }
 
 #[tauri::command]
@@ -33,15 +43,27 @@ pub fn read_cardbox_layout(
 
     let mut layout = match std::fs::read_to_string(&layout_path) {
         Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout { version: 1, order: vec![] }),
-        Err(_) => CardboxLayout { version: 1, order: vec![] },
+            .unwrap_or(CardboxLayout { version: 1, order: vec![], links: vec![] }),
+        Err(_) => CardboxLayout { version: 1, order: vec![], links: vec![] },
     };
+
+    // Normalize links: sort within pairs, sort full list, dedup
+    for pair in &mut layout.links {
+        if pair[0] > pair[1] {
+            pair.swap(0, 1);
+        }
+    }
+    layout.links.sort();
+    layout.links.dedup();
 
     // Prune stale UUIDs
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let all_anns = gi.list_all_cardbox_annotations()?;
         let valid_uuids: HashSet<&str> = all_anns.iter().map(|a| a.uuid.as_str()).collect();
         layout.order.retain(|uuid| valid_uuids.contains(uuid.as_str()));
+        layout.links.retain(|pair| {
+            valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
+        });
         Ok(())
     })?;
 
@@ -63,6 +85,77 @@ pub fn write_cardbox_layout(
 
     let content = serde_json::to_string_pretty(&layout)
         .map_err(|e| e.to_string())?;
+    std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_cardbox_link(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    a: String,
+    b: String,
+) -> Result<(), String> {
+    if a == b {
+        return Err("Cannot link a card to itself".to_string());
+    }
+
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = match std::fs::read_to_string(&layout_path) {
+        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
+            .unwrap_or(CardboxLayout { version: 2, order: vec![], links: vec![] }),
+        Err(_) => CardboxLayout { version: 2, order: vec![], links: vec![] },
+    };
+
+    let normalized = normalize_link(&a, &b);
+    if layout.links.iter().any(|pair| *pair == normalized) {
+        return Ok(());
+    }
+
+    layout.links.push(normalized);
+    layout.version = 2;
+
+    let tmp_path = lit_dir.join(".cardbox.json.tmp");
+    let content = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_cardbox_link(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    a: String,
+    b: String,
+) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    let layout_path = lit_dir.join("cardbox.json");
+
+    let mut layout = match std::fs::read_to_string(&layout_path) {
+        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
+            .unwrap_or(CardboxLayout { version: 2, order: vec![], links: vec![] }),
+        Err(_) => return Ok(()),
+    };
+
+    let normalized = normalize_link(&a, &b);
+    let before = layout.links.len();
+    layout.links.retain(|pair| *pair != normalized);
+
+    if layout.links.len() == before {
+        return Ok(());
+    }
+
+    let tmp_path = lit_dir.join(".cardbox.json.tmp");
+    let content = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
     std::fs::write(&tmp_path, &content).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp_path, &layout_path).map_err(|e| e.to_string())?;
 
@@ -138,10 +231,10 @@ mod tests {
         // Simulate reading: no file should return empty layout
         let layout = match std::fs::read_to_string(&layout_path) {
             Ok(content) => serde_json::from_str::<super::CardboxLayout>(&content)
-                .unwrap_or(super::CardboxLayout { version: 1, order: vec![] }),
-            Err(_) => super::CardboxLayout { version: 1, order: vec![] },
+                .unwrap_or(super::CardboxLayout { version: 1, order: vec![], links: vec![] }),
+            Err(_) => super::CardboxLayout { version: 1, order: vec![], links: vec![] },
         };
-        assert_eq!(layout, super::CardboxLayout { version: 1, order: vec![] });
+        assert_eq!(layout, super::CardboxLayout { version: 1, order: vec![], links: vec![] });
     }
 
     #[test]
@@ -153,6 +246,7 @@ mod tests {
         let layout = super::CardboxLayout {
             version: 1,
             order: vec!["uuid-1".into(), "uuid-2".into(), "uuid-3".into()],
+            links: vec![],
         };
 
         // Write
@@ -185,6 +279,7 @@ mod tests {
         let layout = super::CardboxLayout {
             version: 1,
             order: vec!["stale-uuid".into(), real_uuid.clone()],
+            links: vec![],
         };
         std::fs::write(
             lit_dir.join("cardbox.json"),
@@ -210,7 +305,7 @@ mod tests {
         assert!(!lit_dir.exists());
 
         std::fs::create_dir_all(&lit_dir).unwrap();
-        let layout = super::CardboxLayout { version: 1, order: vec!["a".into()] };
+        let layout = super::CardboxLayout { version: 1, order: vec!["a".into()], links: vec![] };
         let content = serde_json::to_string_pretty(&layout).unwrap();
         std::fs::write(lit_dir.join("cardbox.json"), &content).unwrap();
 
@@ -262,5 +357,205 @@ mod tests {
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].original.as_deref(), Some("text"));
+    }
+
+    fn write_layout(root: &std::path::Path, layout: &super::CardboxLayout) {
+        let lit_dir = root.join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        let content = serde_json::to_string_pretty(layout).unwrap();
+        std::fs::write(lit_dir.join("cardbox.json"), &content).unwrap();
+    }
+
+    fn read_layout(root: &std::path::Path) -> super::CardboxLayout {
+        let content = std::fs::read_to_string(root.join(".lit").join("cardbox.json")).unwrap();
+        serde_json::from_str(&content).unwrap()
+    }
+
+    #[test]
+    fn add_link_creates_pair() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 1,
+            order: vec![],
+            links: vec![],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let normalized = super::normalize_link("uuid-a", "uuid-b");
+        layout.links.push(normalized.clone());
+        layout.version = 2;
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.links, vec![normalized]);
+        assert_eq!(result.version, 2);
+    }
+
+    #[test]
+    fn add_link_idempotent() {
+        let dir = create_workspace();
+        let normalized = super::normalize_link("uuid-a", "uuid-b");
+        let layout = super::CardboxLayout {
+            version: 2,
+            order: vec![],
+            links: vec![normalized.clone()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        if !layout.links.iter().any(|p| *p == normalized) {
+            layout.links.push(normalized.clone());
+        }
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.links.len(), 1);
+    }
+
+    #[test]
+    fn add_link_self_rejected() {
+        let result = if "x" == "x" {
+            Err("Cannot link a card to itself".to_string())
+        } else {
+            Ok(())
+        };
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Cannot link a card to itself");
+    }
+
+    #[test]
+    fn add_link_normalization() {
+        let pair_ab = super::normalize_link("b", "a");
+        assert_eq!(pair_ab, ["a".to_string(), "b".to_string()]);
+
+        let pair_ba = super::normalize_link("a", "b");
+        assert_eq!(pair_ba, ["a".to_string(), "b".to_string()]);
+
+        assert_eq!(pair_ab, pair_ba);
+    }
+
+    #[test]
+    fn remove_link_removes_pair() {
+        let dir = create_workspace();
+        let normalized = super::normalize_link("uuid-a", "uuid-b");
+        let layout = super::CardboxLayout {
+            version: 2,
+            order: vec![],
+            links: vec![normalized.clone()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.links.retain(|p| *p != normalized);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(result.links.is_empty());
+    }
+
+    #[test]
+    fn remove_link_nonexistent_noop() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 2,
+            order: vec![],
+            links: vec![super::normalize_link("uuid-a", "uuid-b")],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let target = super::normalize_link("uuid-x", "uuid-y");
+        let before = layout.links.len();
+        layout.links.retain(|p| *p != target);
+        assert_eq!(layout.links.len(), before);
+    }
+
+    #[test]
+    fn read_layout_prunes_stale_links() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
+        write_md(dir.path(), "b.md", "<!--- n: _ | note2 --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(anns.len(), 2);
+        let uuid_a = anns[0].uuid.clone();
+        let uuid_b = anns[1].uuid.clone();
+
+        let layout = super::CardboxLayout {
+            version: 2,
+            order: vec![uuid_a.clone(), uuid_b.clone()],
+            links: vec![
+                super::normalize_link(&uuid_a, &uuid_b),
+                super::normalize_link(&uuid_a, "stale-uuid"),
+            ],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let valid_uuids: std::collections::HashSet<&str> = anns.iter().map(|a| a.uuid.as_str()).collect();
+        layout.links.retain(|pair| {
+            valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
+        });
+
+        assert_eq!(layout.links.len(), 1);
+        assert_eq!(layout.links[0], super::normalize_link(&uuid_a, &uuid_b));
+    }
+
+    #[test]
+    fn read_layout_preserves_valid_links() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
+        write_md(dir.path(), "b.md", "<!--- n: _ | note2 --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        let uuid_a = anns[0].uuid.clone();
+        let uuid_b = anns[1].uuid.clone();
+
+        let link = super::normalize_link(&uuid_a, &uuid_b);
+        let layout = super::CardboxLayout {
+            version: 2,
+            order: vec![uuid_a.clone(), uuid_b.clone()],
+            links: vec![link.clone()],
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let valid_uuids: std::collections::HashSet<&str> = anns.iter().map(|a| a.uuid.as_str()).collect();
+        layout.links.retain(|pair| {
+            valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
+        });
+
+        assert_eq!(layout.links, vec![link]);
+    }
+
+    #[test]
+    fn v1_file_reads_with_empty_links() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        let v1_json = r#"{"version":1,"order":["uuid-1","uuid-2"]}"#;
+        std::fs::write(lit_dir.join("cardbox.json"), v1_json).unwrap();
+
+        let layout: super::CardboxLayout = serde_json::from_str(v1_json).unwrap();
+        assert_eq!(layout.version, 1);
+        assert_eq!(layout.order, vec!["uuid-1", "uuid-2"]);
+        assert!(layout.links.is_empty());
+    }
+
+    #[test]
+    fn write_v2_roundtrip() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 2,
+            order: vec!["uuid-1".into(), "uuid-2".into()],
+            links: vec![
+                super::normalize_link("uuid-1", "uuid-2"),
+            ],
+        };
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result, layout);
     }
 }
