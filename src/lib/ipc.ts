@@ -1231,6 +1231,19 @@ export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
   return invoke<CardboxAnnotation[]>("list_all_annotations", {});
 }
 
+export interface CardboxLayout {
+  version: number;
+  order: string[];
+}
+
+export async function readCardboxLayout(): Promise<CardboxLayout> {
+  return invoke<CardboxLayout>("read_cardbox_layout", {});
+}
+
+export async function writeCardboxLayout(layout: CardboxLayout): Promise<void> {
+  return invoke<void>("write_cardbox_layout", { layout });
+}
+
 // Merge/Split preview commands
 
 export interface MergeInput {

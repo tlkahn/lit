@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { CardboxAnnotation } from "../lib/ipc";
-import { listAllAnnotations } from "../lib/ipc";
+import { listAllAnnotations, readCardboxLayout, writeCardboxLayout } from "../lib/ipc";
 
 export interface CardboxStore {
   annotations: CardboxAnnotation[];
@@ -16,6 +16,8 @@ export interface CardboxStore {
   toggleType: (type: string) => void;
   resetFilters: () => void;
   setOrder: (order: string[]) => void;
+  loadLayout: () => Promise<void>;
+  saveLayout: () => Promise<void>;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -65,4 +67,22 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
     })),
   setOrder: (order) => set({ order }),
+  loadLayout: async () => {
+    try {
+      const layout = await readCardboxLayout();
+      if (layout.order.length > 0) {
+        set({ order: layout.order });
+      }
+    } catch {
+      // Ignore — use default order from annotations
+    }
+  },
+  saveLayout: async () => {
+    const { order } = get();
+    try {
+      await writeCardboxLayout({ version: 1, order });
+    } catch {
+      // Ignore write failures silently
+    }
+  },
 }));

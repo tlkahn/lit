@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo, useState } from "react";
+import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   DndContext,
@@ -28,6 +28,8 @@ export default function CardboxView() {
   const toggleType = useCardboxStore((s) => s.toggleType);
   const order = useCardboxStore((s) => s.order);
   const setOrder = useCardboxStore((s) => s.setOrder);
+  const loadLayout = useCardboxStore((s) => s.loadLayout);
+  const saveLayout = useCardboxStore((s) => s.saveLayout);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -39,8 +41,15 @@ export default function CardboxView() {
   );
 
   useEffect(() => {
-    fetchAnnotations();
-  }, [fetchAnnotations]);
+    fetchAnnotations().then(() => loadLayout());
+  }, [fetchAnnotations, loadLayout]);
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => saveLayout(), 500);
+  }, [saveLayout]);
+  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +138,8 @@ export default function CardboxView() {
 
     withoutActive.splice(insertAt, 0, activeUuid);
     setOrder(withoutActive);
-  }, [sortedAnnotations, order, annotations, setOrder]);
+    debouncedSave();
+  }, [sortedAnnotations, order, annotations, setOrder, debouncedSave]);
 
   if (loading && annotations.length === 0) {
     return (
