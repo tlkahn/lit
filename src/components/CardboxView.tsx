@@ -15,7 +15,10 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
+import { LinkPicker } from "./LinkPicker";
 import type { CardboxAnnotation } from "../lib/ipc";
+
+const EMPTY_LINKED: CardboxAnnotation[] = [];
 
 export default function CardboxView() {
   const annotations = useCardboxStore((s) => s.annotations);
@@ -31,9 +34,13 @@ export default function CardboxView() {
   const setOrder = useCardboxStore((s) => s.setOrder);
   const loadLayout = useCardboxStore((s) => s.loadLayout);
   const saveLayout = useCardboxStore((s) => s.saveLayout);
+  const links = useCardboxStore((s) => s.links);
+  const addLink = useCardboxStore((s) => s.addLink);
+  const removeLink = useCardboxStore((s) => s.removeLink);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -109,6 +116,53 @@ export default function CardboxView() {
     });
   }, [filteredAnnotations, order]);
 
+  const linkMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [a, b] of links) {
+      if (!map.has(a)) map.set(a, []);
+      if (!map.has(b)) map.set(b, []);
+      map.get(a)!.push(b);
+      map.get(b)!.push(a);
+    }
+    return map;
+  }, [links]);
+
+  const annotationMap = useMemo(() => {
+    const map = new Map<string, CardboxAnnotation>();
+    for (const ann of annotations) map.set(ann.uuid, ann);
+    return map;
+  }, [annotations]);
+
+  const linkedCardsMap = useMemo(() => {
+    const map = new Map<string, CardboxAnnotation[]>();
+    for (const [uuid, linkedUuids] of linkMap) {
+      const resolved = linkedUuids
+        .map((id) => annotationMap.get(id))
+        .filter((a): a is CardboxAnnotation => a !== undefined);
+      if (resolved.length > 0) map.set(uuid, resolved);
+    }
+    return map;
+  }, [linkMap, annotationMap]);
+
+  const handleRemoveLink = useCallback(
+    (targetUuid: string) => {
+      if (expandedUuid) removeLink(expandedUuid, targetUuid);
+    },
+    [expandedUuid, removeLink],
+  );
+
+  const handleLinkSelect = useCallback(
+    (targetUuid: string) => {
+      if (expandedUuid) addLink(expandedUuid, targetUuid);
+    },
+    [expandedUuid, addLink],
+  );
+
+  const existingLinksForExpanded = useMemo(() => {
+    if (!expandedUuid) return [];
+    return linkMap.get(expandedUuid) ?? [];
+  }, [expandedUuid, linkMap]);
+
   const { gridRef, handleKeyDown: handleGridKeyDown } = useCardboxKeyboard({
     onExpand: (index) => {
       const ann = sortedAnnotations[index];
@@ -118,8 +172,26 @@ export default function CardboxView() {
       const ann = sortedAnnotations[index];
       if (ann) handleNavigate(ann);
     },
+    onOpenLinkPicker: () => setLinkPickerOpen(true),
+    expandedUuid,
     itemCount: sortedAnnotations.length,
   });
+
+  const handleFocusCard = useCallback(
+    (uuid: string) => {
+      toggleExpand(uuid);
+      setTimeout(() => {
+        const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.remove("card-focus-highlight");
+        void (el as HTMLElement).offsetWidth;
+        el.classList.add("card-focus-highlight");
+        el.addEventListener("animationend", () => el.classList.remove("card-focus-highlight"), { once: true });
+      }, 250);
+    },
+    [toggleExpand, gridRef],
+  );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(event.active.id as string);
@@ -244,6 +316,9 @@ export default function CardboxView() {
                     expanded={expandedUuid === ann.uuid}
                     onToggleExpand={() => toggleExpand(ann.uuid)}
                     onNavigate={() => handleNavigate(ann)}
+                    linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
+                    onFocusCard={handleFocusCard}
+                    onRemoveLink={handleRemoveLink}
                   />
                 ))}
               </div>
@@ -263,6 +338,15 @@ export default function CardboxView() {
           </DndContext>
         )}
       </div>
+
+      <LinkPicker
+        open={linkPickerOpen}
+        sourceUuid={expandedUuid ?? ""}
+        annotations={annotations}
+        existingLinks={existingLinksForExpanded}
+        onSelect={handleLinkSelect}
+        onClose={() => setLinkPickerOpen(false)}
+      />
     </div>
   );
 }

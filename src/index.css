@@ -46,6 +46,17 @@
   outline-offset: -2px;
 }
 
+@keyframes card-focus-ring {
+  0%   { box-shadow: 0 0 0 0px var(--interactive-accent); opacity: 0; }
+  15%  { box-shadow: 0 0 0 2px var(--interactive-accent); opacity: 1; }
+  50%  { box-shadow: 0 0 0 4px var(--interactive-accent); opacity: 0.5; }
+  100% { box-shadow: 0 0 0 2px transparent; opacity: 1; }
+}
+
+.card-focus-highlight {
+  animation: card-focus-ring 1.5s ease-out forwards;
+}
+
 html, body, #root {
   height: 100%;
   overflow: hidden;

@@ -386,6 +386,8 @@ pub fn run() {
             commands::cardbox::list_all_annotations,
             commands::cardbox::read_cardbox_layout,
             commands::cardbox::write_cardbox_layout,
+            commands::cardbox::add_cardbox_link,
+            commands::cardbox::remove_cardbox_link,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,
