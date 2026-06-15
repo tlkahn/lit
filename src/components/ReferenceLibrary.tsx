@@ -639,7 +639,7 @@ export function ReferenceLibrary() {
       if (item?.kind === "header") return item.letter;
     }
     return "";
-  }, [virtualItems, sectionedItems]);
+  }, [virtualItems[0]?.index, sectionedItems]);
 
   return (
     <div
