@@ -215,8 +215,24 @@ export default function CardboxView() {
         entries.push({ kind: "card", annotation: ann });
       }
     }
-    return entries;
-  }, [order, groups, annotationMap, filteredUuidSet, filteredAnnotations]);
+    // Pinned cards float to the top, in pinned-array order
+    if (pinnedSet.size === 0) return entries;
+    const pinnedEntries: RenderEntry[] = [];
+    const rest: RenderEntry[] = [];
+    const pinnedCardUuids = new Set<string>();
+    for (const uuid of pinned) {
+      const ann = annotationMap.get(uuid);
+      if (ann && filteredUuidSet.has(ann.uuid)) {
+        pinnedEntries.push({ kind: "card", annotation: ann });
+        pinnedCardUuids.add(uuid);
+      }
+    }
+    for (const entry of entries) {
+      if (entry.kind === "card" && pinnedCardUuids.has(entry.annotation.uuid)) continue;
+      rest.push(entry);
+    }
+    return [...pinnedEntries, ...rest];
+  }, [order, groups, annotationMap, filteredUuidSet, filteredAnnotations, pinnedSet, pinned]);
 
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
