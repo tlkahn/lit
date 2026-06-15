@@ -134,6 +134,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
                       </span>
                       <button
                         className="shrink-0 text-text-faint opacity-0 hover:text-text-normal group-hover:opacity-100"
+                        aria-label="Remove link"
                         data-testid="remove-link-button"
                         onClick={(e) => {
                           e.stopPropagation();

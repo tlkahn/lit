@@ -122,6 +122,9 @@ export function LinkPicker({
     >
       <div
         className="flex max-h-[60vh] w-[560px] flex-col overflow-hidden rounded-lg bg-bg-primary shadow-lg"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Link picker"
         data-testid="link-picker-panel"
       >
         <div className="flex items-center border-b border-bg-hover">
