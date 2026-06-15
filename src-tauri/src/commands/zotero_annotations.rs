@@ -3,8 +3,15 @@ use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use strsim::normalized_levenshtein;
+
+macro_rules! lazy_regex {
+    ($pattern:expr) => {{
+        static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new($pattern).unwrap());
+        &*RE
+    }};
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ZoteroAnnotation {
@@ -24,13 +31,7 @@ pub struct ZoteroChildNote {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ZoteroPdfRecord {
-    pub filename: String,
-    pub parent_title: Option<String>,
-    pub annotations: Vec<ZoteroAnnotation>,
-    pub child_notes: Vec<ZoteroChildNote>,
-}
+
 
 // ---------------------------------------------------------------------------
 // Phase 4.2: Sync manifest — incremental import tracking
@@ -207,7 +208,7 @@ fn decode_html_entities(s: &str) -> String {
     result = result.replace("&nbsp;", " ");
 
     // Decimal numeric entities: &#NNN;
-    let re_dec = Regex::new(r"&#(\d+);").unwrap();
+    let re_dec = lazy_regex!(r"&#(\d+);");
     result = re_dec
         .replace_all(&result, |caps: &regex::Captures| {
             caps[1]
@@ -220,7 +221,7 @@ fn decode_html_entities(s: &str) -> String {
         .to_string();
 
     // Hex numeric entities: &#xHHH;
-    let re_hex = Regex::new(r"(?i)&#x([0-9a-f]+);").unwrap();
+    let re_hex = lazy_regex!(r"(?i)&#x([0-9a-f]+);");
     result = re_hex
         .replace_all(&result, |caps: &regex::Captures| {
             u32::from_str_radix(&caps[1], 16)
@@ -252,13 +253,18 @@ fn html_to_markdown(html: &str) -> String {
     // Step 1: Block-level conversions (order matters)
 
     // <br> / <br/> / <br /> -> newline
-    let re_br = Regex::new(r"(?i)<br\s*/?>").unwrap();
-    s = re_br.replace_all(&s, "\n").to_string();
+    s = lazy_regex!(r"(?i)<br\s*/?>").replace_all(&s, "\n").to_string();
 
     // Headings: <h1>...<h6>
-    for level in 1..=6u8 {
-        let hashes = "#".repeat(level as usize);
-        let re_h = Regex::new(&format!(r"(?is)<h{level}[^>]*>(.*?)</h{level}>")).unwrap();
+    static H_REGEXES: LazyLock<[(Regex, &str); 6]> = LazyLock::new(|| [
+        (Regex::new(r"(?is)<h1[^>]*>(.*?)</h1>").unwrap(), "#"),
+        (Regex::new(r"(?is)<h2[^>]*>(.*?)</h2>").unwrap(), "##"),
+        (Regex::new(r"(?is)<h3[^>]*>(.*?)</h3>").unwrap(), "###"),
+        (Regex::new(r"(?is)<h4[^>]*>(.*?)</h4>").unwrap(), "####"),
+        (Regex::new(r"(?is)<h5[^>]*>(.*?)</h5>").unwrap(), "#####"),
+        (Regex::new(r"(?is)<h6[^>]*>(.*?)</h6>").unwrap(), "######"),
+    ]);
+    for (re_h, hashes) in H_REGEXES.iter() {
         s = re_h
             .replace_all(&s, |caps: &regex::Captures| {
                 format!("\n\n{} {}\n\n", hashes, caps[1].trim())
@@ -267,7 +273,7 @@ fn html_to_markdown(html: &str) -> String {
     }
 
     // Blockquotes
-    let re_bq = Regex::new(r"(?is)<blockquote[^>]*>(.*?)</blockquote>").unwrap();
+    let re_bq = lazy_regex!(r"(?is)<blockquote[^>]*>(.*?)</blockquote>");
     s = re_bq
         .replace_all(&s, |caps: &regex::Captures| {
             let inner = strip_html_tags(&caps[1]);
@@ -280,10 +286,9 @@ fn html_to_markdown(html: &str) -> String {
         .to_string();
 
     // Ordered lists: <ol><li>...</li></ol>
-    let re_ol = Regex::new(r"(?is)<ol[^>]*>(.*?)</ol>").unwrap();
-    s = re_ol
+    s = lazy_regex!(r"(?is)<ol[^>]*>(.*?)</ol>")
         .replace_all(&s, |caps: &regex::Captures| {
-            let re_li = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap();
+            let re_li = lazy_regex!(r"(?is)<li[^>]*>(.*?)</li>");
             let mut counter = 0usize;
             let items: String = re_li
                 .replace_all(&caps[1], |li_caps: &regex::Captures| {
@@ -296,10 +301,9 @@ fn html_to_markdown(html: &str) -> String {
         .to_string();
 
     // Unordered lists: <ul><li>...</li></ul>
-    let re_ul = Regex::new(r"(?is)<ul[^>]*>(.*?)</ul>").unwrap();
-    s = re_ul
+    s = lazy_regex!(r"(?is)<ul[^>]*>(.*?)</ul>")
         .replace_all(&s, |caps: &regex::Captures| {
-            let re_li = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap();
+            let re_li = lazy_regex!(r"(?is)<li[^>]*>(.*?)</li>");
             let items: String = re_li
                 .replace_all(&caps[1], |li_caps: &regex::Captures| {
                     format!("\n- {}", li_caps[1].trim())
@@ -310,16 +314,14 @@ fn html_to_markdown(html: &str) -> String {
         .to_string();
 
     // Paragraphs: <p>...</p> -> double newline separation
-    let re_p = Regex::new(r"(?is)<p[^>]*>(.*?)</p>").unwrap();
-    s = re_p
+    s = lazy_regex!(r"(?is)<p[^>]*>(.*?)</p>")
         .replace_all(&s, |caps: &regex::Captures| {
             format!("\n\n{}\n\n", caps[1].trim())
         })
         .to_string();
 
     // <div> -> paragraph break
-    let re_div = Regex::new(r"(?is)<div[^>]*>(.*?)</div>").unwrap();
-    s = re_div
+    s = lazy_regex!(r"(?is)<div[^>]*>(.*?)</div>")
         .replace_all(&s, |caps: &regex::Captures| {
             format!("\n\n{}\n\n", caps[1].trim())
         })
@@ -328,28 +330,23 @@ fn html_to_markdown(html: &str) -> String {
     // Step 3: Inline conversions
 
     // Links: <a href="url">text</a> -> [text](url)
-    let re_a = Regex::new(r#"(?is)<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>(.*?)</a>"#).unwrap();
-    s = re_a
+    s = lazy_regex!(r#"(?is)<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>(.*?)</a>"#)
         .replace_all(&s, |caps: &regex::Captures| {
             format!("[{}]({})", caps[2].trim(), &caps[1])
         })
         .to_string();
 
     // Bold: <strong>/<b>
-    let re_strong = Regex::new(r"(?is)<(?:strong|b)>(.*?)</(?:strong|b)>").unwrap();
-    s = re_strong.replace_all(&s, "**$1**").to_string();
+    s = lazy_regex!(r"(?is)<(?:strong|b)>(.*?)</(?:strong|b)>").replace_all(&s, "**$1**").to_string();
 
     // Italic: <em>/<i>
-    let re_em = Regex::new(r"(?is)<(?:em|i)>(.*?)</(?:em|i)>").unwrap();
-    s = re_em.replace_all(&s, "*$1*").to_string();
+    s = lazy_regex!(r"(?is)<(?:em|i)>(.*?)</(?:em|i)>").replace_all(&s, "*$1*").to_string();
 
     // Code: <code>
-    let re_code = Regex::new(r"(?is)<code>(.*?)</code>").unwrap();
-    s = re_code.replace_all(&s, "`$1`").to_string();
+    s = lazy_regex!(r"(?is)<code>(.*?)</code>").replace_all(&s, "`$1`").to_string();
 
     // Step 4: Strip all remaining HTML tags
-    let re_tags = Regex::new(r"<[^>]+>").unwrap();
-    s = re_tags.replace_all(&s, "").to_string();
+    s = lazy_regex!(r"<[^>]+>").replace_all(&s, "").to_string();
 
     // Step 5: Decode HTML entities (after tag stripping, so &lt;/&gt; aren't
     // mistaken for tags)
@@ -357,8 +354,7 @@ fn html_to_markdown(html: &str) -> String {
 
     // Step 6: Post-process
     // Collapse 3+ newlines to 2
-    let re_newlines = Regex::new(r"\n{3,}").unwrap();
-    s = re_newlines.replace_all(&s, "\n\n").to_string();
+    s = lazy_regex!(r"\n{3,}").replace_all(&s, "\n\n").to_string();
 
     // Trim trailing whitespace per line
     s = s
