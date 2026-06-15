@@ -260,7 +260,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [] },
+      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [], colors: {} },
     });
   });
 
@@ -315,7 +315,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [] },
+      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [], colors: {} },
     });
   });
 
@@ -332,7 +332,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [] },
+      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [], colors: {} },
     });
   });
 
