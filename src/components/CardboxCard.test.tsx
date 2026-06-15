@@ -169,7 +169,20 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-date")).not.toBeInTheDocument();
   });
 
-  it("truncates long body in collapsed state", () => {
+  it("renders markdown HTML in expanded body", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, body: "**bold** text" }}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const body = screen.getByTestId("card-body");
+    expect(body.innerHTML).toContain("<strong>bold</strong>");
+  });
+
+  it("uses line-clamp in collapsed state instead of character truncation", () => {
     const longBody = "A".repeat(200);
     render(
       <CardboxCard
@@ -179,8 +192,35 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    const bodyText = screen.getByTestId("card-body").textContent!;
-    expect(bodyText.length).toBeLessThan(200);
-    expect(bodyText).toContain("…");
+    const body = screen.getByTestId("card-body");
+    expect(body.className).toContain("line-clamp-3");
+  });
+
+  it("does not apply line-clamp when expanded", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, body: "A".repeat(200) }}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const body = screen.getByTestId("card-body");
+    expect(body.className).not.toContain("line-clamp-3");
+  });
+
+  it("does not toggle expand when clicking a markdown link", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, body: "[link](https://example.com)" }}
+        expanded={true}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    const link = screen.getByTestId("card-body").querySelector("a")!;
+    fireEvent.click(link);
+    expect(onToggle).not.toHaveBeenCalled();
   });
 });

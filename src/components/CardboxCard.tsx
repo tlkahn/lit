@@ -1,5 +1,6 @@
-import { useCallback, useRef, memo } from "react";
-import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
+import { useCallback, useMemo, useRef, memo } from "react";
+import { TYPE_ICON, certaintyMark } from "../editor/livePreview/annotationConstants";
+import { renderMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
 interface CardboxCardProps {
@@ -23,8 +24,8 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
   );
 
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
-
   const certainty = certaintyMark(annotation.certainty);
+  const renderedBody = useMemo(() => renderMarkdown(annotation.body ?? ""), [annotation.body]);
 
   return (
     <div
@@ -45,9 +46,14 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, onT
         >
           {icon}
         </span>
-        <span className="min-w-0 flex-1 text-sm text-text-normal" data-testid="card-body">
-          {expanded ? annotation.body : truncateBody(annotation.body, 120)}
-        </span>
+        <div
+          className={`prose prose-sm min-w-0 flex-1 text-sm${expanded ? "" : " line-clamp-3"}`}
+          data-testid="card-body"
+          dangerouslySetInnerHTML={{ __html: renderedBody }}
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
+          }}
+        />
       </div>
 
       <div className="mt-2 flex items-center gap-2 text-xs">

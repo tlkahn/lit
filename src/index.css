@@ -165,3 +165,6 @@ select:disabled {
   max-width: 100%;
   height: auto;
 }
+
+[data-testid="cardbox-card"] .prose > :first-child { margin-top: 0; }
+[data-testid="cardbox-card"] .prose > :last-child { margin-bottom: 0; }
