@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences, setPreference, deleteApiKey, hasApiKey } from "../lib/ipc";
+import { getPreferences, setPreference, deleteApiKey, hasApiKey, isViewMode } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
@@ -80,8 +80,7 @@ function applyBottomPanelPosition(val: unknown): BottomPanelPosition {
 }
 
 function applyDefaultViewMode(val: unknown): ViewMode {
-  if (val === "editor" || val === "mindmap" || val === "graph") return val;
-  return "editor";
+  return isViewMode(val) ? val : "editor";
 }
 
 function applyDarkMode(val: unknown): DarkModePref {

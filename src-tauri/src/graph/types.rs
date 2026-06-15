@@ -191,6 +191,23 @@ pub struct FullAnnotationRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CardboxAnnotation {
+    pub uuid: String,
+    pub annotation_type: String,
+    pub certainty: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+    pub source_page_id: String,
+    pub source_page_title: String,
+    pub source_line: u32,
+    pub char_start: usize,
+    pub char_end: usize,
+    pub scope_kind: String,
+    pub scope_value: String,
+    pub original: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TagSearchResult {
     pub tag: String,
     pub count: i64,
@@ -562,5 +579,27 @@ mod tests {
         let json_str = serde_json::to_string(&rec).expect("serialize");
         let back: FullAnnotationRecord = serde_json::from_str(&json_str).expect("deserialize");
         assert_eq!(back, rec);
+    }
+
+    #[test]
+    fn cardbox_annotation_round_trips() {
+        let ann = CardboxAnnotation {
+            uuid: "550e8400-e29b-41d4-a716-446655440000".into(),
+            annotation_type: "note".into(),
+            certainty: "neutral".into(),
+            body: Some("Silk Road flourished".into()),
+            date: Some("2026-06-15".into()),
+            source_page_id: "a.md".into(),
+            source_page_title: "Alpha".into(),
+            source_line: 3,
+            char_start: 10,
+            char_end: 30,
+            scope_kind: "words".into(),
+            scope_value: "2".into(),
+            original: None,
+        };
+        let json_str = serde_json::to_string(&ann).expect("serialize");
+        let back: CardboxAnnotation = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(back, ann);
     }
 }

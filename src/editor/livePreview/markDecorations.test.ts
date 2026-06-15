@@ -186,6 +186,37 @@ describe("markDecorationField", () => {
     expect(ranges(tr.state.field(markDecorationField))).toEqual([[0, 5]]);
   });
 
+  it("doc change that collapses a mark to zero-width prunes it", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [markDecorationField],
+    });
+    const tr1 = state.update({
+      effects: setMarkDecorations.of([{ from: 2, to: 5, code: "hl" }]),
+    });
+    expect(ranges(tr1.state.field(markDecorationField))).toEqual([[2, 5]]);
+    const tr2 = tr1.state.update({ changes: { from: 2, to: 5 } });
+    expect(tr2.state.field(markDecorationField)).toBe(Decoration.none);
+  });
+
+  it("doc change that partially collapses keeps surviving marks", () => {
+    const state = EditorState.create({
+      doc: "hello world extra",
+      extensions: [markDecorationField],
+    });
+    const tr1 = state.update({
+      effects: setMarkDecorations.of([
+        { from: 2, to: 5, code: "hl" },
+        { from: 6, to: 11, code: "nb" },
+      ]),
+    });
+    expect(ranges(tr1.state.field(markDecorationField))).toEqual([[2, 5], [6, 11]]);
+    const tr2 = tr1.state.update({ changes: { from: 2, to: 5 } });
+    const result = ranges(tr2.state.field(markDecorationField));
+    expect(result.length).toBe(1);
+    expect(result[0]![0]).toBeLessThan(result[0]![1]);
+  });
+
   it("emits cm-mark-{code} even for an unrecognized code (class derived from mark)", () => {
     const parent = document.createElement("div");
     const view = new EditorView({

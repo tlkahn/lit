@@ -165,3 +165,29 @@ select:disabled {
   max-width: 100%;
   height: auto;
 }
+
+[data-testid="cardbox-card"] .prose > :first-child { margin-top: 0; }
+[data-testid="cardbox-card"] .prose > :last-child { margin-bottom: 0; }
+
+/* Cardbox card annotation-type colors */
+[data-testid="cardbox-card"][data-annotation-type="note"]        { --ann-color: 68, 138, 255; }
+[data-testid="cardbox-card"][data-annotation-type="question"]    { --ann-color: 255, 145, 0; }
+[data-testid="cardbox-card"][data-annotation-type="todo"]        { --ann-color: 0, 200, 83; }
+[data-testid="cardbox-card"][data-annotation-type="crossref"]    { --ann-color: 156, 39, 176; }
+[data-testid="cardbox-card"][data-annotation-type="apparatus"]   { --ann-color: 233, 30, 99; }
+[data-testid="cardbox-card"][data-annotation-type="translation"] { --ann-color: 0, 188, 212; }
+[data-testid="cardbox-card"][data-annotation-type="llm"]         { --ann-color: 255, 193, 7; }
+[data-testid="cardbox-card"][data-annotation-type="thread"]      { --ann-color: 171, 71, 188; }
+[data-testid="cardbox-card"][data-annotation-type="mark"]        { --ann-color: 120, 120, 120; }
+[data-testid="cardbox-card"][data-annotation-type="bare"]        { --ann-color: 158, 158, 158; }
+
+[data-testid="cardbox-card"][data-annotation-type] {
+  border-left: 4px solid rgba(var(--ann-color), 0.6);
+}
+[data-testid="cardbox-card"][data-annotation-type] [data-testid="card-type-badge"] {
+  background: rgba(var(--ann-color), 0.15);
+  color: rgb(var(--ann-color));
+}
+[data-testid="cardbox-card"][data-annotation-type] [data-testid="card-original"] {
+  border-left-color: rgba(var(--ann-color), 0.6);
+}

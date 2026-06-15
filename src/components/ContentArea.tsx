@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
-import { writePage, parseRawYaml, type ViewMode } from "../lib/ipc";
+import { writePage, parseRawYaml, isViewMode, type ViewMode } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { extractHeadings } from "../lib/headings";
@@ -18,9 +18,11 @@ import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 import { useAppKeybindings } from "../hooks/useAppKeybindings";
+import { CardboxErrorBoundary } from "./CardboxErrorBoundary";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
+const LazyCardboxView = lazy(() => import("./CardboxView"));
 
 const EMPTY_FM: Record<string, unknown> = {};
 
@@ -299,7 +301,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   useEffect(() => {
     const setModeHandler = (e: Event) => {
       const mode = (e as CustomEvent<string>).detail;
-      if (mode === "editor" || mode === "mindmap" || mode === "graph") {
+      if (isViewMode(mode)) {
         setViewMode(mode);
       }
     };
@@ -413,6 +415,14 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             >
               Graph
             </button>
+            <button
+              onClick={() => setViewMode("cardbox")}
+              aria-label="Cardbox"
+              title="Cardbox (⌘4)"
+              className={`rounded px-2 py-0.5 text-xs ${viewMode === "cardbox" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+            >
+              Cardbox
+            </button>
           </div>
         </div>
         {showFrontmatter && (
@@ -451,7 +461,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
           )
         )}
       </div>)}
-      <PaneContainer style={viewMode !== "editor" && focusedFileType === "markdown" ? { display: "none" } : undefined} />
+      <PaneContainer style={viewMode === "cardbox" || (viewMode !== "editor" && focusedFileType === "markdown") ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
           data-testid="mindmap-view"
@@ -542,6 +552,15 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               onExportNetwork={(nodeId) => onExportNetwork?.(nodeId)}
             />
           </Suspense>
+        </div>
+      )}
+      {viewMode === "cardbox" && (
+        <div data-testid="cardbox-view-wrapper" className="flex-1 min-h-0 overflow-hidden">
+          <CardboxErrorBoundary>
+            <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
+              <LazyCardboxView />
+            </Suspense>
+          </CardboxErrorBoundary>
         </div>
       )}
       {renderBottomPanel && <BottomPanel pageId={currentPanePage ?? undefined} />}

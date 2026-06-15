@@ -449,6 +449,12 @@ fn resolve_asymmetric(
     Some((start, end))
 }
 
+pub fn extract_text_for_range(content: &str, range: &ScopeRange) -> String {
+    let byte_start = utf16_to_byte(content, range.start);
+    let byte_end = utf16_to_byte(content, range.end);
+    content[byte_start..byte_end].to_string()
+}
+
 pub fn resolve_scope_range_with_mode(
     content: &str,
     char_start: usize,
@@ -1044,5 +1050,21 @@ mod tests {
         let char_start = utf16_len(&content[..content.find("<!---").unwrap()]);
         let result = resolve_scope_range(content, char_start, &Scope::Sentence(1), "en");
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn extract_text_for_range_ascii() {
+        assert_eq!(
+            extract_text_for_range("hello world", &ScopeRange { start: 6, end: 11 }),
+            "world"
+        );
+    }
+
+    #[test]
+    fn extract_text_for_range_cjk() {
+        assert_eq!(
+            extract_text_for_range("你好世界", &ScopeRange { start: 0, end: 2 }),
+            "你好"
+        );
     }
 }

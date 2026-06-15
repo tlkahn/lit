@@ -57,7 +57,9 @@ export async function handleAnnotationHover(
   if (getGen(view) !== generation) return;
   if (!range) return;
 
-  dispatchScopeHighlight(view, range.start, range.end);
+  if (range.start < range.end) {
+    dispatchScopeHighlight(view, range.start, range.end);
+  }
 }
 
 export function handleAnnotationLeave(view: EditorView): void {

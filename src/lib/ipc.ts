@@ -197,7 +197,12 @@ export async function getMenuShortcuts(): Promise<KeyBinding[]> {
 
 export type DarkModePref = "light" | "dark" | "auto";
 
-export type ViewMode = "editor" | "mindmap" | "graph";
+export const VIEW_MODES = ["editor", "mindmap", "graph", "cardbox"] as const;
+export type ViewMode = (typeof VIEW_MODES)[number];
+
+export function isViewMode(value: unknown): value is ViewMode {
+  return VIEW_MODES.includes(value as ViewMode);
+}
 
 export interface Preferences {
   "workbench.colorTheme": string | null;
@@ -1203,6 +1208,41 @@ export async function listAnnotations(
     annotationType: annotationType ?? null,
     limit: limit ?? null,
   });
+}
+
+// Cardbox (annotation-centered view)
+
+export interface CardboxAnnotation {
+  uuid: string;
+  annotation_type: string;
+  certainty: string;
+  body: string | null;
+  date: string | null;
+  source_page_id: string;
+  source_page_title: string;
+  source_line: number;
+  char_start: number;
+  char_end: number;
+  scope_kind: string;
+  scope_value: string;
+  original: string | null;
+}
+
+export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
+  return invoke<CardboxAnnotation[]>("list_all_annotations", {});
+}
+
+export interface CardboxLayout {
+  version: number;
+  order: string[];
+}
+
+export async function readCardboxLayout(): Promise<CardboxLayout> {
+  return invoke<CardboxLayout>("read_cardbox_layout", {});
+}
+
+export async function writeCardboxLayout(layout: CardboxLayout): Promise<void> {
+  return invoke<void>("write_cardbox_layout", { layout });
 }
 
 // Merge/Split preview commands
