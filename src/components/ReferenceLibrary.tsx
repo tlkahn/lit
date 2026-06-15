@@ -33,13 +33,8 @@ import { OcrDialog } from "./OcrDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { doiHref } from "../lib/urlUtils";
-
-function lastName(entry: BibEntry): string {
-  const first = entry.authors[0] ?? "";
-  const comma = first.indexOf(",");
-  const name = comma >= 0 ? first.slice(0, comma).trim() : first.trim();
-  return name || first;
-}
+import { lastName, buildSectionedList } from "../lib/sectionedList";
+import { AlphabetStrip } from "./AlphabetStrip";
 
 function combinedText(entry: BibEntry): string {
   return [
@@ -321,6 +316,11 @@ export function ReferenceLibrary() {
     [sorted, deferredSearch],
   );
 
+  const { items: sectionedItems, letterSet } = useMemo(
+    () => buildSectionedList(filtered),
+    [filtered],
+  );
+
   const toggleExpand = useCallback((key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
   }, []);
@@ -525,21 +525,52 @@ export function ReferenceLibrary() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
     () =>
-      filtered.findIndex(
-        (e) => `${e.bib_file ?? ""}:${e.key}` === expandedKey,
+      sectionedItems.findIndex(
+        (item) =>
+          item.kind === "entry" &&
+          `${item.entry.bib_file ?? ""}:${item.entry.key}` === expandedKey,
       ),
-    [filtered, expandedKey],
+    [sectionedItems, expandedKey],
   );
   const virtualizer = useVirtualizer({
-    count: filtered.length,
+    count: sectionedItems.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => (index === expandedIndex ? 260 : 36),
+    estimateSize: (index) => {
+      const item = sectionedItems[index];
+      if (!item || item.kind === "header") return 24;
+      return index === expandedIndex ? 260 : 36;
+    },
     overscan: 10,
   });
 
   useEffect(() => {
     virtualizer.measure();
   }, [virtualizer, expandedIndex]);
+
+  const letterToIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < sectionedItems.length; i++) {
+      const item = sectionedItems[i];
+      if (item!.kind === "header") map.set(item!.letter, i);
+    }
+    return map;
+  }, [sectionedItems]);
+
+  const handleLetterClick = useCallback(
+    (letter: string) => {
+      const index = letterToIndex.get(letter);
+      if (index != null) virtualizer.scrollToIndex(index, { align: "start", behavior: "smooth" });
+    },
+    [letterToIndex, virtualizer],
+  );
+
+  const handleLetterDrag = useCallback(
+    (letter: string) => {
+      const index = letterToIndex.get(letter);
+      if (index != null) virtualizer.scrollToIndex(index, { align: "start" });
+    },
+    [letterToIndex, virtualizer],
+  );
 
   // Why the local copy? The hook's droppedPdfPath is cleared immediately after
   // being consumed so that dropping the *same* file path a second time still
@@ -602,6 +633,17 @@ export function ReferenceLibrary() {
     />
   );
 
+  const virtualItems = virtualizer.getVirtualItems();
+  const activeLetter = (() => {
+    if (virtualItems.length === 0) return "";
+    const topIndex = virtualItems[0]!.index;
+    for (let i = topIndex; i >= 0; i--) {
+      const item = sectionedItems[i];
+      if (item?.kind === "header") return item.letter;
+    }
+    return "";
+  })();
+
   return (
     <div
       ref={dropPdf.panelRef}
@@ -627,15 +669,45 @@ export function ReferenceLibrary() {
             {addButton}
             {importPdfButton}
           </div>
+          <div className="relative flex flex-1 overflow-hidden">
           <div
             ref={scrollRef}
             data-testid="reference-library-list"
             data-virtual-scroll
-            className="flex-1 overflow-y-auto overscroll-contain px-1"
+            className="flex-1 overflow-y-auto overscroll-contain px-1 pr-5"
           >
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
-                const entry = filtered[virtualRow.index]!;
+                const item = sectionedItems[virtualRow.index];
+                if (!item) return null;
+
+                if (item.kind === "header") {
+                  return (
+                    <div
+                      key={`header-${item.letter}`}
+                      data-index={virtualRow.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                    >
+                      <div
+                        data-testid="section-header"
+                        role="heading"
+                        aria-level={2}
+                        className="bg-bg-secondary px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-text-faint"
+                      >
+                        {item.letter}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const entry = item.entry;
                 const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
                 const isExpanded = expandedKey === entryId;
                 const tags = entry.tags ?? [];
@@ -901,6 +973,14 @@ export function ReferenceLibrary() {
                 );
               })}
             </div>
+          </div>
+          <AlphabetStrip
+            letterSet={letterSet}
+            activeLetter={activeLetter}
+            onLetterClick={handleLetterClick}
+            onLetterDrag={handleLetterDrag}
+            visible={filtered.length >= 30}
+          />
           </div>
         </>
       )}

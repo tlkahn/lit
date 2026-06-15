@@ -2787,4 +2787,165 @@ describe("ReferenceLibrary", () => {
       expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument();
     });
   });
+
+  describe("Alphabet strip", () => {
+    function padFixture() {
+      const extra: BibEntry[] = [];
+      for (let i = 0; i < 30; i++) {
+        extra.push({
+          key: `filler${i}`,
+          authors: [`Filler${i}, Person`],
+          title: `Filler entry ${i}`,
+          year: "2020",
+          entry_type: "article",
+          line_number: 1,
+          bib_file: "/workspace/refs.bib",
+        });
+      }
+      fixture = [sanderson, flood, abrams, ...extra];
+    }
+
+    it("renders the alphabet strip when entries >= 30", async () => {
+      padFixture();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      expect(screen.getByTestId("alphabet-strip")).toBeInTheDocument();
+    });
+
+    it("hides the alphabet strip when entries < 30", async () => {
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      expect(screen.queryByTestId("alphabet-strip")).not.toBeInTheDocument();
+    });
+
+    it("does not render alphabet strip when no entries (empty state)", async () => {
+      fixture = [];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText(/No references found/i)).toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId("alphabet-strip")).not.toBeInTheDocument();
+    });
+
+    it("letters present in data are enabled, others disabled", async () => {
+      padFixture();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const letters = screen.getAllByTestId("alphabet-letter");
+      const enabled = letters
+        .filter((el) => !(el as HTMLButtonElement).disabled)
+        .map((el) => el.getAttribute("data-letter"));
+      expect(enabled).toEqual(["A", "F", "S"]);
+    });
+
+    it("clicking an enabled letter does not throw", async () => {
+      padFixture();
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const sButton = screen
+        .getAllByTestId("alphabet-letter")
+        .find((el) => el.getAttribute("data-letter") === "S")!;
+      await expect(user.click(sButton)).resolves.not.toThrow();
+    });
+
+    it("search narrowing hides the strip when results fall below threshold", async () => {
+      padFixture();
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      expect(screen.getByTestId("alphabet-strip")).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText("Search references"), "Sanderson");
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("alphabet-strip")).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Section headers", () => {
+    it("renders alphabetical section headers above each letter group", async () => {
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const headers = screen.getAllByTestId("section-header");
+      const letters = headers.map((h) => h.textContent);
+      expect(letters).toEqual(["A", "F", "S"]);
+    });
+
+    it("renders section headers in correct order relative to entries", async () => {
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const list = screen.getByTestId("reference-library-list");
+      const headerA = screen.getAllByTestId("section-header").find((h) => h.textContent === "A")!;
+      const entryAbrams = screen.getAllByTestId("reference-entry-title").find((e) => e.textContent === "Aardvark")!;
+      expect(list.compareDocumentPosition(headerA) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
+      expect(headerA.compareDocumentPosition(entryAbrams) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("search narrows section headers to matching groups only", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.type(screen.getByLabelText("Search references"), "Sanderson");
+
+      await waitFor(() => {
+        const headers = screen.getAllByTestId("section-header");
+        expect(headers).toHaveLength(1);
+        expect(headers[0]!.textContent).toBe("S");
+      });
+    });
+
+    it("clicking a section header does not expand any entry", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const headerA = screen.getAllByTestId("section-header").find((h) => h.textContent === "A")!;
+      await user.click(headerA);
+
+      expect(screen.queryByText("A long abstract about Saivism.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Copy citation/i })).not.toBeInTheDocument();
+    });
+
+    it("expanding an entry still works with section headers present", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument();
+      expect(screen.getByText("Journal of Indology")).toBeInTheDocument();
+    });
+
+    it("single letter group shows one header", async () => {
+      fixture = [sanderson];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const headers = screen.getAllByTestId("section-header");
+      expect(headers).toHaveLength(1);
+      expect(headers[0]!.textContent).toBe("S");
+    });
+
+    it("entries under the same letter share a single header", async () => {
+      fixture = [
+        { ...sanderson, key: "smith2020", authors: ["Smith, Alice"], title: "Smith Paper" },
+        sanderson,
+      ];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper")).toBeInTheDocument());
+
+      const headers = screen.getAllByTestId("section-header");
+      expect(headers).toHaveLength(1);
+      expect(headers[0]!.textContent).toBe("S");
+      expect(screen.getAllByTestId("reference-entry-title")).toHaveLength(2);
+    });
+  });
 });
