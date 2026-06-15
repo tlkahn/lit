@@ -16,6 +16,9 @@ interface SortableGroupCardProps {
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  note?: string;
+  onSetNote?: (body: string) => void;
+  onExportNote?: () => void;
 }
 
 export const SortableGroupCard = memo(function SortableGroupCard({
@@ -28,6 +31,9 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   onFocusCard,
   onRemoveLink,
   onContextMenu,
+  note,
+  onSetNote,
+  onExportNote,
 }: SortableGroupCardProps) {
   const {
     attributes,
@@ -67,6 +73,9 @@ export const SortableGroupCard = memo(function SortableGroupCard({
           linkedCards={linkedCards}
           onFocusCard={onFocusCard}
           onRemoveLink={onRemoveLink}
+          note={note}
+          onSetNote={onSetNote}
+          onExportNote={onExportNote}
         />
       </div>
     </div>

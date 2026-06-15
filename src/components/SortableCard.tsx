@@ -15,9 +15,12 @@ interface SortableCardProps {
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  note?: string;
+  onSetNote?: (body: string) => void;
+  onExportNote?: () => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu, note, onSetNote, onExportNote }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -57,6 +60,9 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, i
           linkedCards={linkedCards}
           onFocusCard={onFocusCard}
           onRemoveLink={onRemoveLink}
+          note={note}
+          onSetNote={onSetNote}
+          onExportNote={onExportNote}
         />
       </div>
     </div>
