@@ -8,6 +8,7 @@ import type { CardboxAnnotation } from "../lib/ipc";
 interface SortableCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
+  isPinned?: boolean;
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
@@ -16,7 +17,7 @@ interface SortableCardProps {
   onContextMenu?: (e: React.MouseEvent) => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -50,6 +51,7 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, o
         <CardboxCard
           annotation={annotation}
           expanded={expanded}
+          isPinned={isPinned}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}
           linkedCards={linkedCards}

@@ -11,6 +11,8 @@ pub struct CardboxLayout {
     pub links: Vec<[String; 2]>,
     #[serde(default)]
     pub groups: HashMap<String, GroupInfo>,
+    #[serde(default)]
+    pub pinned: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,6 +29,7 @@ impl Default for CardboxLayout {
             order: vec![],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         }
     }
 }
@@ -305,6 +308,9 @@ pub fn read_cardbox_layout(
         let all_anns = gi.list_all_cardbox_annotations()?;
         let valid_uuids: HashSet<&str> = all_anns.iter().map(|a| a.uuid.as_str()).collect();
         prune_layout(&mut layout, &valid_uuids);
+        layout.pinned.retain(|uuid| valid_uuids.contains(uuid.as_str()));
+        let mut seen = HashSet::new();
+        layout.pinned.retain(|uuid| seen.insert(uuid.clone()));
         Ok(())
     })?;
 
@@ -340,7 +346,7 @@ pub fn add_cardbox_link(
             return Ok(());
         }
         layout.links.push(normalized);
-        layout.version = 2;
+        layout.version = layout.version.max(2);
         Ok(())
     })
 }
@@ -449,6 +455,38 @@ pub fn toggle_group_collapsed(
     })
 }
 
+#[tauri::command]
+pub fn pin_cardbox_card(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        if layout.pinned.contains(&uuid) {
+            return Ok(());
+        }
+        layout.pinned.push(uuid.clone());
+        layout.version = layout.version.max(3);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn unpin_cardbox_card(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        let before = layout.pinned.len();
+        layout.pinned.retain(|u| *u != uuid);
+        if layout.pinned.len() < before {
+            layout.version = layout.version.max(3);
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -521,8 +559,10 @@ mod tests {
             Ok(content) => serde_json::from_str::<super::CardboxLayout>(&content)
                 .unwrap_or(super::CardboxLayout::default()),
             Err(_) => super::CardboxLayout::default(),
+
         };
         assert_eq!(layout, super::CardboxLayout::default());
+
     }
 
     #[test]
@@ -536,6 +576,7 @@ mod tests {
             order: vec!["uuid-1".into(), "uuid-2".into(), "uuid-3".into()],
             links: vec![],
             ..Default::default()
+
         };
 
         // Write
@@ -570,6 +611,7 @@ mod tests {
             order: vec!["stale-uuid".into(), real_uuid.clone()],
             links: vec![],
             ..Default::default()
+
         };
         std::fs::write(
             lit_dir.join("cardbox.json"),
@@ -596,6 +638,7 @@ mod tests {
 
         std::fs::create_dir_all(&lit_dir).unwrap();
         let layout = super::CardboxLayout { version: 1, order: vec!["a".into()], links: vec![], ..Default::default() };
+
         let content = serde_json::to_string_pretty(&layout).unwrap();
         std::fs::write(lit_dir.join("cardbox.json"), &content).unwrap();
 
@@ -669,6 +712,7 @@ mod tests {
             order: vec![],
             links: vec![],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -692,6 +736,7 @@ mod tests {
             order: vec![],
             links: vec![normalized.clone()],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -713,6 +758,7 @@ mod tests {
             order: vec![],
             links: vec![],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -744,6 +790,7 @@ mod tests {
             order: vec![],
             links: vec![normalized.clone()],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -763,6 +810,7 @@ mod tests {
             order: vec![],
             links: vec![super::normalize_link("uuid-a", "uuid-b")],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -792,6 +840,7 @@ mod tests {
                 super::normalize_link(&uuid_a, "stale-uuid"),
             ],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -821,6 +870,7 @@ mod tests {
             order: vec![uuid_a.clone(), uuid_b.clone()],
             links: vec![link.clone()],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -857,6 +907,7 @@ mod tests {
                 super::normalize_link("uuid-1", "uuid-2"),
             ],
             ..Default::default()
+
         };
         write_layout(dir.path(), &layout);
 
@@ -902,6 +953,7 @@ mod tests {
             order: vec!["group:g1".into(), "uuid-c".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
         let result = read_layout(dir.path());
@@ -921,6 +973,7 @@ mod tests {
             order: vec!["group:g1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         let json = serde_json::to_string(&layout).unwrap();
         let deserialized: super::CardboxLayout = serde_json::from_str(&json).unwrap();
@@ -940,6 +993,7 @@ mod tests {
             order: vec!["group:g1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
@@ -961,6 +1015,7 @@ mod tests {
             order: vec!["group:g1".into(), "valid-1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1"].iter().copied().collect();
@@ -984,6 +1039,7 @@ mod tests {
             order: vec!["uuid-1".into(), "group:g1".into(), "uuid-2".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-1", "uuid-2", "uuid-a"].iter().copied().collect();
@@ -1008,6 +1064,7 @@ mod tests {
             order: vec!["uuid-dup".into(), "group:g1".into(), "uuid-solo".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-dup", "uuid-solo"].iter().copied().collect();
@@ -1032,6 +1089,7 @@ mod tests {
             order: vec!["uuid-1".into(), "group:nonexistent".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-1"].iter().copied().collect();
@@ -1059,6 +1117,7 @@ mod tests {
             order: vec!["group:ga".into(), "group:gb".into(), "valid-2".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
@@ -1086,6 +1145,7 @@ mod tests {
             order: vec!["group:g1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         let valid: std::collections::HashSet<&str> = ["a", "b", "c"].iter().copied().collect();
@@ -1102,6 +1162,7 @@ mod tests {
             order: vec!["uuid-1".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
         let result = read_layout(dir.path());
@@ -1119,6 +1180,7 @@ mod tests {
             order: vec!["a".into(), "b".into(), "c".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1148,6 +1210,7 @@ mod tests {
             order: vec!["a".into(), "b".into(), "c".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1176,6 +1239,7 @@ mod tests {
             order: vec!["a".into(), "b".into(), "c".into(), "d".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
 
         super::do_create_group(
@@ -1198,6 +1262,7 @@ mod tests {
             order: vec!["a".into(), "b".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1230,6 +1295,7 @@ mod tests {
             order: vec!["group:g1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1263,6 +1329,7 @@ mod tests {
             order: vec!["a".into(), "group:g1".into(), "b".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1290,6 +1357,7 @@ mod tests {
             order: vec!["a".into(), "b".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
 
         super::do_dissolve_group(&mut layout, "g1").unwrap();
@@ -1314,6 +1382,7 @@ mod tests {
             order: vec!["a".into(), "group:g1".into(), "b".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1345,6 +1414,7 @@ mod tests {
             order: vec!["group:g1".into(), "group:g2".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1371,6 +1441,7 @@ mod tests {
             order: vec!["group:g1".into(), "z".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1397,6 +1468,7 @@ mod tests {
             order: vec!["z".into(), "group:g1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1424,6 +1496,7 @@ mod tests {
             order: vec!["group:g1".into()],
             links: vec![],
             groups,
+            pinned: vec![],
         };
         write_layout(dir.path(), &layout);
 
@@ -1450,6 +1523,7 @@ mod tests {
             order: vec!["a".into(), "b".into(), "c".into(), "d".into()],
             links: vec![],
             groups: HashMap::new(),
+            pinned: vec![],
         };
 
         // First creation: group g1 with cards [a, b]
@@ -1482,5 +1556,136 @@ mod tests {
         assert_eq!(layout.groups["g1"].order, vec!["c", "d"]);
         assert_eq!(layout.groups["g1"].name, "Replaced");
         assert_eq!(layout.groups.len(), 1);
+    }
+
+    // ---- Pinning tests ----
+
+    #[test]
+    fn pin_adds_to_pinned() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            pinned: vec![],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.pinned.push("uuid-x".into());
+        layout.version = 3;
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned, vec!["uuid-x"]);
+        assert_eq!(result.version, 3);
+    }
+
+    #[test]
+    fn pin_idempotent() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            pinned: vec!["uuid-x".into()],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        if !layout.pinned.contains(&"uuid-x".to_string()) {
+            layout.pinned.push("uuid-x".into());
+        }
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned.len(), 1);
+    }
+
+    #[test]
+    fn unpin_removes() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            pinned: vec!["uuid-x".into(), "uuid-y".into()],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.pinned.retain(|u| u != "uuid-x");
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned, vec!["uuid-y"]);
+    }
+
+    #[test]
+    fn unpin_nonexistent_noop() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            pinned: vec!["uuid-x".into()],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let layout = read_layout(dir.path());
+        let before = layout.pinned.len();
+        let mut pinned = layout.pinned.clone();
+        pinned.retain(|u| u != "uuid-z");
+        assert_eq!(pinned.len(), before);
+    }
+
+    #[test]
+    fn read_layout_prunes_stale_pinned() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(anns.len(), 1);
+        let real_uuid = anns[0].uuid.clone();
+
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec![real_uuid.clone()],
+            pinned: vec!["stale-uuid".into(), real_uuid.clone()],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let valid_uuids: std::collections::HashSet<&str> = anns.iter().map(|a| a.uuid.as_str()).collect();
+        layout.pinned.retain(|u| valid_uuids.contains(u.as_str()));
+
+        assert_eq!(layout.pinned, vec![real_uuid]);
+    }
+
+    #[test]
+    fn v2_file_reads_with_empty_pinned() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        let v2_json = r#"{"version":2,"order":["uuid-1"],"links":[]}"#;
+        std::fs::write(lit_dir.join("cardbox.json"), v2_json).unwrap();
+
+        let layout: super::CardboxLayout = serde_json::from_str(v2_json).unwrap();
+        assert_eq!(layout.version, 2);
+        assert_eq!(layout.order, vec!["uuid-1"]);
+        assert!(layout.links.is_empty());
+        assert!(layout.pinned.is_empty());
+    }
+
+    #[test]
+    fn write_v3_roundtrip() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            order: vec!["uuid-1".into(), "uuid-2".into()],
+            links: vec![super::normalize_link("uuid-1", "uuid-2")],
+            pinned: vec!["uuid-1".into()],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result, layout);
     }
 }

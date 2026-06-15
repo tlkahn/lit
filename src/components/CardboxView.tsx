@@ -57,6 +57,9 @@ export default function CardboxView() {
   const removeCardFromGroup = useCardboxStore((s) => s.removeCardFromGroup);
   const reorderWithinGroup = useCardboxStore((s) => s.reorderWithinGroup);
   const moveCardBetweenGroups = useCardboxStore((s) => s.moveCardBetweenGroups);
+  const pinned = useCardboxStore((s) => s.pinned);
+  const pinCard = useCardboxStore((s) => s.pinCard);
+  const unpinCard = useCardboxStore((s) => s.unpinCard);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -74,6 +77,8 @@ export default function CardboxView() {
     const sourceGroupId = dragState.parsed.type === "groupCard" ? dragState.parsed.groupId : null;
     return makeCardboxCollision(sourceGroupId);
   }, [dragState]);
+
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
 
   useEffect(() => {
     fetchAnnotations().then(() => loadLayout());
@@ -120,6 +125,8 @@ export default function CardboxView() {
       // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
+      // Pinned cards bypass search filter
+      if (pinnedSet.has(ann.uuid)) return true;
       // Search filter
       if (query) {
         const searchable = [ann.body, ann.original, ann.source_page_title]
@@ -130,18 +137,31 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes]);
+  }, [annotations, searchQuery, activeTypes, pinnedSet]);
+
+  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
+  const visiblePinnedUuids = useMemo(() => {
+    const filteredSet = new Set(filteredAnnotations.map((a) => a.uuid));
+    return pinned.filter((uuid) => filteredSet.has(uuid));
+  }, [filteredAnnotations, pinned]);
 
   // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
   const sortedAnnotations = useMemo(() => {
-    if (order.length === 0) return filteredAnnotations;
+    const annMap = new Map(filteredAnnotations.map((a) => [a.uuid, a]));
+    const pinnedSection = visiblePinnedUuids
+      .map((uuid) => annMap.get(uuid)!)
+      .filter(Boolean);
+    const pinnedUuids = new Set(visiblePinnedUuids);
+    const unpinnedFiltered = filteredAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
+    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
     const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
-    return [...filteredAnnotations].sort((a, b) => {
+    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
       const ai = orderMap.get(a.uuid) ?? Infinity;
       const bi = orderMap.get(b.uuid) ?? Infinity;
       return ai - bi;
     });
-  }, [filteredAnnotations, order]);
+    return [...pinnedSection, ...unpinnedSorted];
+  }, [filteredAnnotations, order, visiblePinnedUuids]);
 
   // Build filtered UUID set for quick membership tests
   const filteredUuidSet = useMemo(
@@ -249,6 +269,16 @@ export default function CardboxView() {
       if (ann) handleNavigate(ann);
     },
     onOpenLinkPicker: () => setLinkPickerOpen(true),
+    onTogglePin: (index) => {
+      const ann = sortedAnnotations[index];
+      if (ann) {
+        if (pinnedSet.has(ann.uuid)) {
+          unpinCard(ann.uuid);
+        } else {
+          pinCard(ann.uuid);
+        }
+      }
+    },
     expandedUuid,
     itemCount: sortedAnnotations.length,
   });
@@ -276,12 +306,13 @@ export default function CardboxView() {
       e.preventDefault();
       showCardboxContextMenu({
         cardUuid: uuid,
+        isPinned: pinnedSet.has(uuid),
         isGrouped: false,
         isGroupHeader: false,
         hasGroups: Object.keys(groups).length > 0,
       });
     },
-    [groups],
+    [groups, pinnedSet],
   );
 
   const handleGroupCardContextMenu = useCallback(
@@ -290,12 +321,13 @@ export default function CardboxView() {
       showCardboxContextMenu({
         cardUuid,
         groupId,
+        isPinned: pinnedSet.has(cardUuid),
         isGrouped: true,
         isGroupHeader: false,
         hasGroups: Object.keys(groups).length > 0,
       });
     },
-    [groups],
+    [groups, pinnedSet],
   );
 
   const handleGroupHeaderContextMenu = useCallback(
@@ -303,6 +335,7 @@ export default function CardboxView() {
       e.preventDefault();
       showCardboxContextMenu({
         groupId,
+        isPinned: false,
         isGroupHeader: true,
         isGrouped: false,
         hasGroups: Object.keys(groups).length > 0,
@@ -312,6 +345,8 @@ export default function CardboxView() {
   );
 
   useCardboxContextMenu({
+    onPin: (cardUuid) => { pinCard(cardUuid); debouncedSave(); },
+    onUnpin: (cardUuid) => { unpinCard(cardUuid); debouncedSave(); },
     onNewGroup: (cardUuid) => {
       const groupId = crypto.randomUUID();
       createGroup(groupId, "New Group", [cardUuid], cardUuid);
@@ -632,6 +667,7 @@ export default function CardboxView() {
                       key={entry.annotation.uuid}
                       annotation={entry.annotation}
                       expanded={expandedUuid === entry.annotation.uuid}
+                      isPinned={pinnedSet.has(entry.annotation.uuid)}
                       onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
                       onNavigate={() => handleNavigate(entry.annotation)}
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
@@ -668,6 +704,7 @@ export default function CardboxView() {
                   <CardboxCard
                     annotation={overlayAnnotation}
                     expanded={false}
+                    isPinned={pinnedSet.has(overlayAnnotation.uuid)}
                     onToggleExpand={() => {}}
                     onNavigate={() => {}}
                   />

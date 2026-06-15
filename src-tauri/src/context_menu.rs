@@ -44,12 +44,16 @@ pub const CTX_CARDBOX_ADD_TO_GROUP: &str = "ctx_cardbox_add_to_group";
 pub const CTX_CARDBOX_REMOVE_FROM_GROUP: &str = "ctx_cardbox_remove_from_group";
 pub const CTX_CARDBOX_DISSOLVE_GROUP: &str = "ctx_cardbox_dissolve_group";
 pub const CTX_CARDBOX_RENAME_GROUP: &str = "ctx_cardbox_rename_group";
+pub const CTX_CARDBOX_PIN: &str = "ctx_cardbox_pin";
+pub const CTX_CARDBOX_UNPIN: &str = "ctx_cardbox_unpin";
 
 pub const EVENT_CTX_CARDBOX_NEW_GROUP: &str = "context-menu://cardbox/new-group";
 pub const EVENT_CTX_CARDBOX_ADD_TO_GROUP: &str = "context-menu://cardbox/add-to-group";
 pub const EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP: &str = "context-menu://cardbox/remove-from-group";
 pub const EVENT_CTX_CARDBOX_DISSOLVE_GROUP: &str = "context-menu://cardbox/dissolve-group";
 pub const EVENT_CTX_CARDBOX_RENAME_GROUP: &str = "context-menu://cardbox/rename-group";
+pub const EVENT_CTX_CARDBOX_PIN: &str = "context-menu://cardbox/pin";
+pub const EVENT_CTX_CARDBOX_UNPIN: &str = "context-menu://cardbox/unpin";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
@@ -72,6 +76,8 @@ pub enum ContextMenuAction {
     CardboxRemoveFromGroup,
     CardboxDissolveGroup,
     CardboxRenameGroup,
+    CardboxPin,
+    CardboxUnpin,
 }
 
 impl ContextMenuAction {
@@ -96,6 +102,8 @@ impl ContextMenuAction {
             CTX_CARDBOX_REMOVE_FROM_GROUP => Some(Self::CardboxRemoveFromGroup),
             CTX_CARDBOX_DISSOLVE_GROUP => Some(Self::CardboxDissolveGroup),
             CTX_CARDBOX_RENAME_GROUP => Some(Self::CardboxRenameGroup),
+            CTX_CARDBOX_PIN => Some(Self::CardboxPin),
+            CTX_CARDBOX_UNPIN => Some(Self::CardboxUnpin),
             _ => None,
         }
     }
@@ -218,6 +226,7 @@ pub struct CardboxMenuContext {
     pub is_grouped: bool,
     pub is_group_header: bool,
     pub has_groups: bool,
+    pub is_pinned: bool,
 }
 
 pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
@@ -286,6 +295,11 @@ pub fn cardbox_menu_items(ctx: &CardboxMenuContext) -> Vec<MenuItemSpec> {
             label: "Remove from Group".into(),
             enabled: true,
         });
+        items.push(MenuItemSpec {
+            id: if ctx.is_pinned { CTX_CARDBOX_UNPIN } else { CTX_CARDBOX_PIN },
+            label: if ctx.is_pinned { "Unpin".into() } else { "Pin".into() },
+            enabled: true,
+        });
     } else {
         items.push(MenuItemSpec {
             id: CTX_CARDBOX_NEW_GROUP,
@@ -299,6 +313,11 @@ pub fn cardbox_menu_items(ctx: &CardboxMenuContext) -> Vec<MenuItemSpec> {
                 enabled: true,
             });
         }
+        items.push(MenuItemSpec {
+            id: if ctx.is_pinned { CTX_CARDBOX_UNPIN } else { CTX_CARDBOX_PIN },
+            label: if ctx.is_pinned { "Unpin".into() } else { "Pin".into() },
+            enabled: true,
+        });
     }
     items
 }
@@ -354,6 +373,8 @@ pub fn dispatch_cardbox_action(
         ContextMenuAction::CardboxRemoveFromGroup => EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP,
         ContextMenuAction::CardboxDissolveGroup => EVENT_CTX_CARDBOX_DISSOLVE_GROUP,
         ContextMenuAction::CardboxRenameGroup => EVENT_CTX_CARDBOX_RENAME_GROUP,
+        ContextMenuAction::CardboxPin => EVENT_CTX_CARDBOX_PIN,
+        ContextMenuAction::CardboxUnpin => EVENT_CTX_CARDBOX_UNPIN,
         _ => unreachable!("dispatch_cardbox_action called with non-cardbox action"),
     };
     (event, payload)
@@ -534,6 +555,7 @@ pub fn show_cardbox_context_menu(
     is_grouped: bool,
     is_group_header: bool,
     has_groups: bool,
+    is_pinned: bool,
     window: tauri::Window,
     pending: tauri::State<PendingContextMenu>,
 ) -> Result<(), String> {
@@ -545,6 +567,7 @@ pub fn show_cardbox_context_menu(
         is_grouped,
         is_group_header,
         has_groups,
+        is_pinned,
     };
     let specs = cardbox_menu_items(&ctx);
     show_popup_menu(&specs, &window)
@@ -1316,6 +1339,8 @@ mod tests {
         assert_eq!(CTX_CARDBOX_REMOVE_FROM_GROUP, "ctx_cardbox_remove_from_group");
         assert_eq!(CTX_CARDBOX_DISSOLVE_GROUP, "ctx_cardbox_dissolve_group");
         assert_eq!(CTX_CARDBOX_RENAME_GROUP, "ctx_cardbox_rename_group");
+        assert_eq!(CTX_CARDBOX_PIN, "ctx_cardbox_pin");
+        assert_eq!(CTX_CARDBOX_UNPIN, "ctx_cardbox_unpin");
     }
 
     #[test]
@@ -1325,6 +1350,8 @@ mod tests {
         assert_eq!(EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP, "context-menu://cardbox/remove-from-group");
         assert_eq!(EVENT_CTX_CARDBOX_DISSOLVE_GROUP, "context-menu://cardbox/dissolve-group");
         assert_eq!(EVENT_CTX_CARDBOX_RENAME_GROUP, "context-menu://cardbox/rename-group");
+        assert_eq!(EVENT_CTX_CARDBOX_PIN, "context-menu://cardbox/pin");
+        assert_eq!(EVENT_CTX_CARDBOX_UNPIN, "context-menu://cardbox/unpin");
     }
 
     #[test]
@@ -1372,6 +1399,8 @@ mod tests {
             CTX_CARDBOX_REMOVE_FROM_GROUP,
             CTX_CARDBOX_DISSOLVE_GROUP,
             CTX_CARDBOX_RENAME_GROUP,
+            CTX_CARDBOX_PIN,
+            CTX_CARDBOX_UNPIN,
         ];
         for cid in &cardbox_ids {
             for aid in &app_menu_ids {
@@ -1404,6 +1433,8 @@ mod tests {
             CTX_CARDBOX_REMOVE_FROM_GROUP,
             CTX_CARDBOX_DISSOLVE_GROUP,
             CTX_CARDBOX_RENAME_GROUP,
+            CTX_CARDBOX_PIN,
+            CTX_CARDBOX_UNPIN,
         ];
         for cid in &cardbox_ids {
             for oid in &other_ids {
@@ -1418,9 +1449,10 @@ mod tests {
             is_grouped: false,
             is_group_header: false,
             has_groups: false,
+            is_pinned: false,
         };
         let items = cardbox_menu_items(&ctx);
-        assert_eq!(items.len(), 1);
+        assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, CTX_CARDBOX_NEW_GROUP);
         assert_eq!(items[0].label, "New Group");
         assert!(items[0].enabled);
@@ -1432,9 +1464,10 @@ mod tests {
             is_grouped: false,
             is_group_header: false,
             has_groups: true,
+            is_pinned: false,
         };
         let items = cardbox_menu_items(&ctx);
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
         assert_eq!(items[0].id, CTX_CARDBOX_NEW_GROUP);
         assert_eq!(items[0].label, "New Group");
         assert!(items[0].enabled);
@@ -1449,9 +1482,10 @@ mod tests {
             is_grouped: true,
             is_group_header: false,
             has_groups: true,
+            is_pinned: false,
         };
         let items = cardbox_menu_items(&ctx);
-        assert_eq!(items.len(), 1);
+        assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, CTX_CARDBOX_REMOVE_FROM_GROUP);
         assert_eq!(items[0].label, "Remove from Group");
         assert!(items[0].enabled);
@@ -1463,6 +1497,7 @@ mod tests {
             is_grouped: false,
             is_group_header: true,
             has_groups: true,
+            is_pinned: false,
         };
         let items = cardbox_menu_items(&ctx);
         assert_eq!(items.len(), 2);

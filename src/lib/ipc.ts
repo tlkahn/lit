@@ -1243,6 +1243,7 @@ export interface CardboxLayout {
   order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
+  pinned: string[];
 }
 
 export async function readCardboxLayout(): Promise<CardboxLayout> {
@@ -1309,6 +1310,14 @@ export async function removeCardFromGroup(
 
 export async function toggleGroupCollapsed(groupId: string, collapsed: boolean): Promise<void> {
   return invoke<void>("toggle_group_collapsed", { groupId, collapsed });
+}
+
+export async function pinCardboxCard(uuid: string): Promise<void> {
+  return invoke<void>("pin_cardbox_card", { uuid });
+}
+
+export async function unpinCardboxCard(uuid: string): Promise<void> {
+  return invoke<void>("unpin_cardbox_card", { uuid });
 }
 
 // Merge/Split preview commands

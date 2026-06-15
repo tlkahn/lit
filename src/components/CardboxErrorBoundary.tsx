@@ -27,6 +27,7 @@ export class CardboxErrorBoundary extends Component<Props, State> {
       activeTypes: null,
       order: [],
       links: [],
+      pinned: [],
     });
     this.setState({ hasError: false });
   };

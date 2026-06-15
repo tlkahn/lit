@@ -537,6 +537,7 @@ describe("showCardboxContextMenu", () => {
     const { showCardboxContextMenu } = await import("./contextMenuIpc");
     await showCardboxContextMenu({
       cardUuid: "card-1",
+      isPinned: false,
       isGrouped: false,
       isGroupHeader: false,
       hasGroups: true,
@@ -544,6 +545,7 @@ describe("showCardboxContextMenu", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
       cardUuid: "card-1",
+      isPinned: false,
       isGrouped: false,
       isGroupHeader: false,
       hasGroups: true,
@@ -559,6 +561,7 @@ describe("showCardboxContextMenu", () => {
     await showCardboxContextMenu({
       cardUuid: "card-2",
       groupId: "group-1",
+      isPinned: false,
       isGrouped: true,
       isGroupHeader: false,
       hasGroups: true,
@@ -567,6 +570,7 @@ describe("showCardboxContextMenu", () => {
     expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
       cardUuid: "card-2",
       groupId: "group-1",
+      isPinned: false,
       isGrouped: true,
       isGroupHeader: false,
       hasGroups: true,
@@ -581,6 +585,7 @@ describe("showCardboxContextMenu", () => {
     const { showCardboxContextMenu } = await import("./contextMenuIpc");
     await showCardboxContextMenu({
       groupId: "group-1",
+      isPinned: false,
       isGroupHeader: true,
       isGrouped: false,
       hasGroups: true,
@@ -588,6 +593,7 @@ describe("showCardboxContextMenu", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
       groupId: "group-1",
+      isPinned: false,
       isGroupHeader: true,
       isGrouped: false,
       hasGroups: true,
@@ -603,6 +609,8 @@ describe("useCardboxContextMenu", () => {
 
   function makeHandlers() {
     return {
+      onPin: vi.fn(),
+      onUnpin: vi.fn(),
       onNewGroup: vi.fn(),
       onAddToGroup: vi.fn(),
       onRemoveFromGroup: vi.fn(),

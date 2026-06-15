@@ -47,11 +47,12 @@ describe("cardbox store", () => {
       order: [],
       links: [],
       groups: {},
+      pinned: [],
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
       if (cmd === "read_cardbox_layout")
-        return { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {} };
+        return { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: ["u1"] };
       if (cmd === "write_cardbox_layout") return null;
       if (cmd === "add_cardbox_link") return null;
       if (cmd === "remove_cardbox_link") return null;
@@ -61,6 +62,8 @@ describe("cardbox store", () => {
       if (cmd === "move_card_to_group") return null;
       if (cmd === "remove_card_from_group") return null;
       if (cmd === "toggle_group_collapsed") return null;
+      if (cmd === "pin_cardbox_card") return null;
+      if (cmd === "unpin_cardbox_card") return null;
       return null;
     });
   });
@@ -244,7 +247,7 @@ describe("cardbox store", () => {
     });
   });
 
-  it("saveLayout includes links", async () => {
+  it("saveLayout includes links and pinned", async () => {
     const invokeSpy = vi.fn().mockResolvedValue(null);
     mockInvoke((cmd, args) => {
       invokeSpy(cmd, args);
@@ -253,10 +256,11 @@ describe("cardbox store", () => {
     useCardboxStore.setState({
       order: ["u1", "u2"],
       links: [["u1", "u2"]],
+      pinned: [],
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 2, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {} },
+      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [] },
     });
   });
 
@@ -311,11 +315,11 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups },
+      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [] },
     });
   });
 
-  it("saveLayout uses version 2 when groups is empty", async () => {
+  it("saveLayout uses version 3 when groups is empty", async () => {
     const invokeSpy = vi.fn().mockResolvedValue(null);
     mockInvoke((cmd, args) => {
       invokeSpy(cmd, args);
@@ -328,7 +332,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 2, order: ["u1", "u2"], links: [], groups: {} },
+      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [] },
     });
   });
 
@@ -625,5 +629,58 @@ describe("cardbox store", () => {
       const s = useCardboxStore.getState();
       expect(s.groups.g1!.order).toEqual(["u3", "u1", "u2"]);
     });
+  });
+
+  // --- Pin tests ---
+
+  it("pinCard adds uuid to pinned and calls IPC", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    await useCardboxStore.getState().pinCard("u1");
+    expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
+    expect(invokeSpy).toHaveBeenCalledWith("pin_cardbox_card", { uuid: "u1" });
+  });
+
+  it("pinCard is idempotent", async () => {
+    await useCardboxStore.getState().pinCard("u1");
+    await useCardboxStore.getState().pinCard("u1");
+    expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
+  });
+
+  it("unpinCard removes uuid from pinned and calls IPC", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    useCardboxStore.setState({ pinned: ["u1", "u2"] });
+    await useCardboxStore.getState().unpinCard("u1");
+    expect(useCardboxStore.getState().pinned).toEqual(["u2"]);
+    expect(invokeSpy).toHaveBeenCalledWith("unpin_cardbox_card", { uuid: "u1" });
+  });
+
+  it("unpinCard is noop for non-pinned uuid", async () => {
+    useCardboxStore.setState({ pinned: ["u1"] });
+    await useCardboxStore.getState().unpinCard("u99");
+    expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
+  });
+
+  it("loadLayout populates pinned", async () => {
+    await useCardboxStore.getState().loadLayout();
+    expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
+  });
+
+  it("setPinned updates pinned array", () => {
+    useCardboxStore.getState().setPinned(["u2", "u1"]);
+    expect(useCardboxStore.getState().pinned).toEqual(["u2", "u1"]);
+  });
+
+  it("fetchAnnotations prunes stale pinned", async () => {
+    useCardboxStore.setState({ pinned: ["u1", "stale-uuid"] });
+    await useCardboxStore.getState().fetchAnnotations();
+    expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
   });
 });

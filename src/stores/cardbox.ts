@@ -13,6 +13,8 @@ import {
   moveCardToGroup as moveCardToGroupIpc,
   removeCardFromGroup as removeCardFromGroupIpc,
   toggleGroupCollapsed,
+  pinCardboxCard,
+  unpinCardboxCard,
 } from "../lib/ipc";
 
 export interface CardboxStore {
@@ -24,6 +26,7 @@ export interface CardboxStore {
   order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
+  pinned: string[];
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -43,6 +46,9 @@ export interface CardboxStore {
   toggleGroupCollapse: (groupId: string) => Promise<void>;
   reorderWithinGroup: (groupId: string, activeUuid: string, overUuid: string) => void;
   moveCardBetweenGroups: (cardUuid: string, sourceGroupId: string, targetGroupId: string, index?: number) => Promise<void>;
+  pinCard: (uuid: string) => Promise<void>;
+  unpinCard: (uuid: string) => Promise<void>;
+  setPinned: (pinned: string[]) => void;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -54,6 +60,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   order: [],
   links: [],
   groups: {},
+  pinned: [],
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -75,12 +82,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         }
         // Collect all known group IDs so we can preserve them in order
         const groupIdSet = new Set(Object.keys(prunedGroups));
+        const prunedPinned = s.pinned.filter((id) => newUuids.has(id));
         return {
           annotations,
           loading: false,
           activeTypes: s.activeTypes === null ? types : s.activeTypes,
           links: prunedLinks,
           groups: prunedGroups,
+          pinned: prunedPinned,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
             // Keep entries that are either annotation UUIDs or group: refs
@@ -128,23 +137,24 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const layout = await readCardboxLayout();
       const groups = layout.groups ?? {};
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [], groups });
+        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [] });
       } else {
-        set({ links: layout.links ?? [], groups });
+        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [] });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links, groups } = get();
+    const { order, links, groups, pinned } = get();
     const hasGroups = Object.keys(groups).length > 0;
     try {
       await writeCardboxLayout({
-        version: hasGroups ? 3 : 2,
+        version: Math.max(hasGroups ? 3 : 2, 3),
         order,
         links,
         groups,
+        pinned,
       });
     } catch {
       // Ignore write failures silently
@@ -334,4 +344,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await removeCardFromGroupIpc(cardUuid, sourceGroupId);
     await moveCardToGroupIpc(cardUuid, targetGroupId, index);
   },
+  pinCard: async (uuid) => {
+    set((s) => {
+      if (s.pinned.includes(uuid)) return s;
+      return { pinned: [...s.pinned, uuid] };
+    });
+    await pinCardboxCard(uuid);
+  },
+  unpinCard: async (uuid) => {
+    set((s) => ({
+      pinned: s.pinned.filter((id) => id !== uuid),
+    }));
+    await unpinCardboxCard(uuid);
+  },
+  setPinned: (pinned) => set({ pinned }),
 }));

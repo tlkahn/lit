@@ -236,6 +236,7 @@ export function useGraphContextMenu(handlers: GraphContextMenuHandlers) {
 interface CardboxContextMenuArgs {
   cardUuid?: string;
   groupId?: string;
+  isPinned: boolean;
   isGrouped: boolean;
   isGroupHeader: boolean;
   hasGroups: boolean;
@@ -251,6 +252,8 @@ interface CardboxContextPayload {
 }
 
 interface CardboxContextMenuHandlers {
+  onPin: (cardUuid: string) => void;
+  onUnpin: (cardUuid: string) => void;
   onNewGroup: (cardUuid: string) => void;
   onAddToGroup: (cardUuid: string) => void;
   onRemoveFromGroup: (cardUuid: string, groupId: string) => void;
@@ -265,6 +268,20 @@ export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
   useEffect(() => {
     let cancelled = false;
     const unlisteners: Array<Promise<() => void>> = [];
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/pin", (event) => {
+        if (!cancelled && event.payload.card_uuid)
+          handlersRef.current.onPin(event.payload.card_uuid);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/unpin", (event) => {
+        if (!cancelled && event.payload.card_uuid)
+          handlersRef.current.onUnpin(event.payload.card_uuid);
+      }),
+    );
 
     unlisteners.push(
       listen<CardboxContextPayload>("context-menu://cardbox/new-group", (event) => {

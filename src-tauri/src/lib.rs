@@ -394,6 +394,8 @@ pub fn run() {
             commands::cardbox::move_card_to_group,
             commands::cardbox::remove_card_from_group,
             commands::cardbox::toggle_group_collapsed,
+            commands::cardbox::pin_cardbox_card,
+            commands::cardbox::unpin_cardbox_card,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,
