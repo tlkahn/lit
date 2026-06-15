@@ -7,6 +7,7 @@ interface GroupHeaderProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
   onRename: (name: string) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export const GroupHeader = memo(function GroupHeader({
@@ -16,11 +17,13 @@ export const GroupHeader = memo(function GroupHeader({
   collapsed,
   onToggleCollapse,
   onRename,
+  onContextMenu,
 }: GroupHeaderProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
   const confirmedRef = useRef(false);
+  const nameRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (editing) {
@@ -29,6 +32,17 @@ export const GroupHeader = memo(function GroupHeader({
       inputRef.current?.select();
     }
   }, [editing]);
+
+  useEffect(() => {
+    const el = nameRef.current;
+    if (!el) return;
+    const handler = () => {
+      setEditing(true);
+      setDraft(name);
+    };
+    el.addEventListener("lit:start-rename", handler);
+    return () => el.removeEventListener("lit:start-rename", handler);
+  }, [name]);
 
   const confirmRename = useCallback(() => {
     confirmedRef.current = true;
@@ -61,6 +75,7 @@ export const GroupHeader = memo(function GroupHeader({
       className="cardbox-group-header"
       data-testid="group-header"
       onPointerDown={(e) => e.stopPropagation()}
+      onContextMenu={onContextMenu}
     >
       <button
         onClick={onToggleCollapse}
@@ -91,6 +106,7 @@ export const GroupHeader = memo(function GroupHeader({
         />
       ) : (
         <span
+          ref={nameRef}
           className="group-name"
           data-testid="group-name"
           onDoubleClick={() => {

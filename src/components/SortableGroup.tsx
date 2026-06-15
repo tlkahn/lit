@@ -26,6 +26,8 @@ interface SortableGroupProps {
   onRemoveLink: (targetUuid: string) => void;
   onToggleCollapse: () => void;
   onRename: (name: string) => void;
+  onCardContextMenu?: (cardUuid: string, e: React.MouseEvent) => void;
+  onHeaderContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export const SortableGroup = memo(function SortableGroup({
@@ -42,6 +44,8 @@ export const SortableGroup = memo(function SortableGroup({
   onRemoveLink,
   onToggleCollapse,
   onRename,
+  onCardContextMenu,
+  onHeaderContextMenu,
 }: SortableGroupProps) {
   const {
     attributes,
@@ -98,6 +102,7 @@ export const SortableGroup = memo(function SortableGroup({
             collapsed={info.collapsed}
             onToggleCollapse={onToggleCollapse}
             onRename={onRename}
+            onContextMenu={onHeaderContextMenu}
           />
 
           {!info.collapsed && (
@@ -126,6 +131,7 @@ export const SortableGroup = memo(function SortableGroup({
                     linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
                     onFocusCard={onFocusCard}
                     onRemoveLink={onRemoveLink}
+                    onContextMenu={(e) => onCardContextMenu?.(ann.uuid, e)}
                   />
                 ))}
               </div>

@@ -13,9 +13,10 @@ interface SortableCardProps {
   linkedCards?: CardboxAnnotation[];
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -43,6 +44,7 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, o
       className={isDragging ? "rounded-lg border-2 border-dashed border-border" : ""}
       {...attributes}
       {...listeners}
+      onContextMenu={onContextMenu}
     >
       <div ref={contentRef} data-masonry-content="">
         <CardboxCard

@@ -9,6 +9,7 @@ import {
 } from "@dnd-kit/core";
 import type { DragStartEvent, DragEndEvent, DragOverEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
+import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { useCardboxStore } from "../stores/cardbox";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
@@ -47,6 +48,8 @@ export default function CardboxView() {
   const addLink = useCardboxStore((s) => s.addLink);
   const removeLink = useCardboxStore((s) => s.removeLink);
   const groups = useCardboxStore((s) => s.groups);
+  const createGroup = useCardboxStore((s) => s.createGroup);
+  const dissolveGroup = useCardboxStore((s) => s.dissolveGroup);
   const renameGroup = useCardboxStore((s) => s.renameGroup);
   const toggleGroupCollapse = useCardboxStore((s) => s.toggleGroupCollapse);
   const moveCardToGroup = useCardboxStore((s) => s.moveCardToGroup);
@@ -256,6 +259,78 @@ export default function CardboxView() {
     },
     [toggleExpand, gridRef],
   );
+
+  // ---------- Context menu handlers ----------
+
+  const handleCardContextMenu = useCallback(
+    (uuid: string, e: React.MouseEvent) => {
+      e.preventDefault();
+      showCardboxContextMenu({
+        cardUuid: uuid,
+        isGrouped: false,
+        isGroupHeader: false,
+        hasGroups: Object.keys(groups).length > 0,
+      });
+    },
+    [groups],
+  );
+
+  const handleGroupCardContextMenu = useCallback(
+    (groupId: string, cardUuid: string, e: React.MouseEvent) => {
+      e.preventDefault();
+      showCardboxContextMenu({
+        cardUuid,
+        groupId,
+        isGrouped: true,
+        isGroupHeader: false,
+        hasGroups: Object.keys(groups).length > 0,
+      });
+    },
+    [groups],
+  );
+
+  const handleGroupHeaderContextMenu = useCallback(
+    (groupId: string, e: React.MouseEvent) => {
+      e.preventDefault();
+      showCardboxContextMenu({
+        groupId,
+        isGroupHeader: true,
+        isGrouped: false,
+        hasGroups: Object.keys(groups).length > 0,
+      });
+    },
+    [groups],
+  );
+
+  useCardboxContextMenu({
+    onNewGroup: (cardUuid) => {
+      const groupId = crypto.randomUUID();
+      createGroup(groupId, "New Group", [cardUuid], cardUuid);
+      debouncedSave();
+    },
+    onAddToGroup: (cardUuid) => {
+      const groupIds = Object.keys(groups);
+      if (groupIds.length === 1 && groupIds[0]) {
+        moveCardToGroup(cardUuid, groupIds[0]);
+        debouncedSave();
+      }
+      // TODO: Phase D polish — show group picker when multiple groups exist
+    },
+    onRemoveFromGroup: (cardUuid, groupId) => {
+      removeCardFromGroup(cardUuid, groupId);
+      debouncedSave();
+    },
+    onDissolveGroup: (groupId) => {
+      dissolveGroup(groupId);
+      debouncedSave();
+    },
+    onRenameGroup: (groupId) => {
+      const el = document.querySelector(`[data-group-id="${groupId}"] [data-testid="group-name"]`);
+      if (el) {
+        el.dispatchEvent(new CustomEvent("lit:start-rename", { bubbles: false }));
+      }
+    },
+  });
 
   // ---------- DnD event handlers ----------
 
@@ -541,6 +616,7 @@ export default function CardboxView() {
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
                       onFocusCard={handleFocusCard}
                       onRemoveLink={handleRemoveLink}
+                      onContextMenu={(e) => handleCardContextMenu(entry.annotation.uuid, e)}
                     />
                   ) : (
                     <SortableGroup
@@ -558,6 +634,8 @@ export default function CardboxView() {
                       onRemoveLink={handleRemoveLink}
                       onToggleCollapse={() => toggleGroupCollapse(entry.groupId)}
                       onRename={(name: string) => renameGroup(entry.groupId, name)}
+                      onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
+                      onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
                     />
                   ),
                 )}

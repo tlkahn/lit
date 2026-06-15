@@ -230,3 +230,80 @@ export function useGraphContextMenu(handlers: GraphContextMenuHandlers) {
     };
   }, []);
 }
+
+// --- Cardbox context menu ---
+
+interface CardboxContextMenuArgs {
+  cardUuid?: string;
+  groupId?: string;
+  isGrouped: boolean;
+  isGroupHeader: boolean;
+  hasGroups: boolean;
+}
+
+export async function showCardboxContextMenu(args: CardboxContextMenuArgs): Promise<void> {
+  return invoke<void>("show_cardbox_context_menu", { ...args });
+}
+
+interface CardboxContextPayload {
+  card_uuid: string | null;
+  group_id: string | null;
+}
+
+interface CardboxContextMenuHandlers {
+  onNewGroup: (cardUuid: string) => void;
+  onAddToGroup: (cardUuid: string) => void;
+  onRemoveFromGroup: (cardUuid: string, groupId: string) => void;
+  onDissolveGroup: (groupId: string) => void;
+  onRenameGroup: (groupId: string) => void;
+}
+
+export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
+  useEffect(() => {
+    let cancelled = false;
+    const unlisteners: Array<Promise<() => void>> = [];
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/new-group", (event) => {
+        if (!cancelled && event.payload.card_uuid)
+          handlersRef.current.onNewGroup(event.payload.card_uuid);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/add-to-group", (event) => {
+        if (!cancelled && event.payload.card_uuid)
+          handlersRef.current.onAddToGroup(event.payload.card_uuid);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/remove-from-group", (event) => {
+        if (!cancelled && event.payload.card_uuid && event.payload.group_id)
+          handlersRef.current.onRemoveFromGroup(event.payload.card_uuid, event.payload.group_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/dissolve-group", (event) => {
+        if (!cancelled && event.payload.group_id)
+          handlersRef.current.onDissolveGroup(event.payload.group_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/rename-group", (event) => {
+        if (!cancelled && event.payload.group_id)
+          handlersRef.current.onRenameGroup(event.payload.group_id);
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+      for (const p of unlisteners) p.then((u) => u());
+    };
+  }, []);
+}

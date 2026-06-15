@@ -15,6 +15,7 @@ interface SortableGroupCardProps {
   linkedCards?: CardboxAnnotation[];
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export const SortableGroupCard = memo(function SortableGroupCard({
@@ -26,6 +27,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   linkedCards,
   onFocusCard,
   onRemoveLink,
+  onContextMenu,
 }: SortableGroupCardProps) {
   const {
     attributes,
@@ -54,6 +56,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
       className={isDragging ? "rounded-lg border-2 border-dashed border-border" : ""}
       {...attributes}
       {...listeners}
+      onContextMenu={onContextMenu}
     >
       <div ref={contentRef} data-masonry-content="">
         <CardboxCard
