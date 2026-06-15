@@ -145,7 +145,7 @@ export const SortableGroup = memo(function SortableGroup({
                     note={notesMap?.[ann.uuid]?.body}
                     onSetNote={onSetNote ? (body: string) => onSetNote(ann.uuid, body) : undefined}
                     onExportNote={onExportNote ? () => onExportNote(ann.uuid) : undefined}
-                    onShowConnections={onShowConnections ? () => onShowConnections(ann.uuid) : undefined}
+                    onShowConnections={() => onShowConnections?.(ann.uuid)}
                     onContextMenu={(e) => onCardContextMenu?.(ann.uuid, e)}
                   />
                 ))}

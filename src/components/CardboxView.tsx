@@ -674,7 +674,7 @@ export default function CardboxView() {
             <div className="flex items-center gap-2" data-testid="cardbox-breadcrumb">
               <span className="text-sm text-text-muted">Connections for:</span>
               <span className="truncate text-sm font-medium text-text-normal">
-                {truncateBody(annotationMap.get(connectionsForUuid)?.body ?? annotationMap.get(connectionsForUuid)?.original ?? null)}
+                {(() => { const ann = annotationMap.get(connectionsForUuid); return truncateBody(ann?.body || ann?.original || null); })()}
               </span>
               <button
                 onClick={() => exitConnections()}
