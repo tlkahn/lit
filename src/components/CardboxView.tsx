@@ -141,17 +141,6 @@ export default function CardboxView() {
     [linkMap, annotationMap],
   );
 
-  const handleFocusCard = useCallback(
-    (uuid: string) => {
-      toggleExpand(uuid);
-      requestAnimationFrame(() => {
-        const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
-        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      });
-    },
-    [toggleExpand],
-  );
-
   const handleRemoveLink = useCallback(
     (targetUuid: string) => {
       if (expandedUuid) removeLink(expandedUuid, targetUuid);
@@ -162,7 +151,6 @@ export default function CardboxView() {
   const handleLinkSelect = useCallback(
     (targetUuid: string) => {
       if (expandedUuid) addLink(expandedUuid, targetUuid);
-      setLinkPickerOpen(false);
     },
     [expandedUuid, addLink],
   );
@@ -185,6 +173,18 @@ export default function CardboxView() {
     expandedUuid,
     itemCount: sortedAnnotations.length,
   });
+
+  const handleFocusCard = useCallback(
+    (uuid: string) => {
+      const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
+      if (!el) return;
+      toggleExpand(uuid);
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    },
+    [toggleExpand, gridRef],
+  );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(event.active.id as string);
