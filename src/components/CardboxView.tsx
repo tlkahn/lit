@@ -61,6 +61,9 @@ export default function CardboxView() {
   const pinned = useCardboxStore((s) => s.pinned);
   const pinCard = useCardboxStore((s) => s.pinCard);
   const unpinCard = useCardboxStore((s) => s.unpinCard);
+  const colors = useCardboxStore((s) => s.colors);
+  const setCardColor = useCardboxStore((s) => s.setCardColor);
+  const clearCardColor = useCardboxStore((s) => s.clearCardColor);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -269,13 +272,14 @@ export default function CardboxView() {
       e.preventDefault();
       showCardboxContextMenu({
         cardUuid: uuid,
+        currentColor: colors[uuid],
         isPinned: pinnedSet.has(uuid),
         isGrouped: false,
         isGroupHeader: false,
         hasGroups: Object.keys(groups).length > 0,
       });
     },
-    [groups, pinnedSet],
+    [groups, pinnedSet, colors],
   );
 
   const handleGroupCardContextMenu = useCallback(
@@ -284,13 +288,14 @@ export default function CardboxView() {
       showCardboxContextMenu({
         cardUuid,
         groupId,
+        currentColor: colors[cardUuid],
         isPinned: pinnedSet.has(cardUuid),
         isGrouped: true,
         isGroupHeader: false,
         hasGroups: Object.keys(groups).length > 0,
       });
     },
-    [groups, pinnedSet],
+    [groups, pinnedSet, colors],
   );
 
   const handleGroupHeaderContextMenu = useCallback(
@@ -338,6 +343,14 @@ export default function CardboxView() {
       if (el) {
         el.dispatchEvent(new CustomEvent("lit:start-rename", { bubbles: false }));
       }
+    },
+    onSetColor: (cardUuid, color) => {
+      if (color) {
+        setCardColor(cardUuid, color);
+      } else {
+        clearCardColor(cardUuid);
+      }
+      debouncedSave();
     },
   });
 
