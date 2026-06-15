@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useCardboxStore } from "./cardbox";
 import { mockInvoke } from "../test/tauri-mock";
-import type { CardboxAnnotation } from "../lib/ipc";
+import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 
 const MOCK_ANNOTATIONS: CardboxAnnotation[] = [
   {
@@ -46,15 +46,22 @@ describe("cardbox store", () => {
       activeTypes: null,
       order: [],
       links: [],
+      groups: {},
       pinned: [],
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
       if (cmd === "read_cardbox_layout")
-        return { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], pinned: ["u1"] };
+        return { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: ["u1"] };
       if (cmd === "write_cardbox_layout") return null;
       if (cmd === "add_cardbox_link") return null;
       if (cmd === "remove_cardbox_link") return null;
+      if (cmd === "create_cardbox_group") return null;
+      if (cmd === "rename_cardbox_group") return null;
+      if (cmd === "dissolve_cardbox_group") return null;
+      if (cmd === "move_card_to_group") return null;
+      if (cmd === "remove_card_from_group") return null;
+      if (cmd === "toggle_group_collapsed") return null;
       if (cmd === "pin_cardbox_card") return null;
       if (cmd === "unpin_cardbox_card") return null;
       return null;
@@ -253,7 +260,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], pinned: [] },
+      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [] },
     });
   });
 
@@ -272,6 +279,356 @@ describe("cardbox store", () => {
     useCardboxStore.setState({ links: [["u1", "u2"]] });
     await useCardboxStore.getState().fetchAnnotations();
     expect(useCardboxStore.getState().links).toEqual([["u1", "u2"]]);
+  });
+
+  // --- Group round-trip tests ---
+
+  it("loadLayout stores groups from backend", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1"], collapsed: false },
+    };
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "read_cardbox_layout")
+        return { version: 3, order: ["group:g1", "u2"], links: [], groups };
+      return null;
+    });
+    await useCardboxStore.getState().loadLayout();
+    const state = useCardboxStore.getState();
+    expect(state.groups).toEqual(groups);
+    expect(state.order).toEqual(["group:g1", "u2"]);
+  });
+
+  it("saveLayout passes stored groups and uses version 3 when groups exist", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u2"],
+      links: [],
+      groups,
+    });
+    await useCardboxStore.getState().saveLayout();
+    expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
+      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [] },
+    });
+  });
+
+  it("saveLayout uses version 3 when groups is empty", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    useCardboxStore.setState({
+      order: ["u1", "u2"],
+      links: [],
+      groups: {},
+    });
+    await useCardboxStore.getState().saveLayout();
+    expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
+      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [] },
+    });
+  });
+
+  it("fetchAnnotations preserves group:xxx entries in order", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u2"],
+      groups,
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.order).toContain("group:g1");
+    expect(state.order).toContain("u2");
+  });
+
+  it("fetchAnnotations prunes stale members from groups", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "My Group", order: ["u1", "stale-uuid"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u2"],
+      groups,
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.groups.g1!.order).toEqual(["u1"]);
+  });
+
+  it("fetchAnnotations removes groups that become empty after pruning", async () => {
+    const groups: Record<string, GroupInfo> = {
+      g1: { name: "Stale Group", order: ["stale-uuid"], collapsed: false },
+    };
+    useCardboxStore.setState({
+      order: ["group:g1", "u1", "u2"],
+      groups,
+    });
+    await useCardboxStore.getState().fetchAnnotations();
+    const state = useCardboxStore.getState();
+    expect(state.groups).toEqual({});
+    expect(state.order).not.toContain("group:g1");
+  });
+
+  it("loadLayout handles backend response without groups field", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "read_cardbox_layout")
+        return { version: 2, order: ["u1", "u2"], links: [] };
+      return null;
+    });
+    await useCardboxStore.getState().loadLayout();
+    const state = useCardboxStore.getState();
+    expect(state.groups).toEqual({});
+  });
+
+  // --- Group action tests ---
+
+  describe("group actions", () => {
+    it("createGroup moves cards into new group and adds group entry to order", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      await useCardboxStore.getState().createGroup("g1", "My Group", ["u1", "u3"]);
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u2", "group:g1"]);
+      expect(s.groups.g1).toEqual({ name: "My Group", order: ["u1", "u3"], collapsed: false });
+    });
+
+    it("createGroup with afterEntry inserts group after specified entry", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      await useCardboxStore.getState().createGroup("g1", "My Group", ["u3"], "u1");
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u1", "group:g1", "u2"]);
+    });
+
+    it("createGroup_afterEntry_is_grouped_card inserts at correct position", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      // afterEntry is "u2" which is also one of the cards being grouped
+      await useCardboxStore.getState().createGroup("g1", "My Group", ["u2", "u3"], "u2");
+      const s = useCardboxStore.getState();
+      // u2 was at index 1 in original order; it's being removed so precedingRemovals=1
+      // insertIdx = 1 + 1 - 1 = 1; after removal order is ["u1"], so group inserts at index 1
+      expect(s.order).toEqual(["u1", "group:g1"]);
+      expect(s.groups.g1).toEqual({ name: "My Group", order: ["u2", "u3"], collapsed: false });
+    });
+
+    it("createGroup with afterEntry preceding grouped cards computes correct index", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3", "u4"],
+        groups: {},
+      });
+      // Group u1 and u3; afterEntry is u2 (not being grouped)
+      // u1 is at index 0 <= u2's index 1, so precedingRemovals=1
+      // insertIdx = 1 + 1 - 1 = 1; after removal order is ["u2", "u4"]
+      await useCardboxStore.getState().createGroup("g1", "G", ["u1", "u3"], "u2");
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u2", "group:g1", "u4"]);
+    });
+
+    it("createGroup calls IPC with correct args", async () => {
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({ order: ["u1", "u2"], groups: {} });
+      await useCardboxStore.getState().createGroup("g1", "Test", ["u1"], "u2");
+      expect(invokeSpy).toHaveBeenCalledWith("create_cardbox_group", {
+        groupId: "g1",
+        name: "Test",
+        cardUuids: ["u1"],
+        afterEntry: "u2",
+      });
+    });
+
+    it("renameGroup updates the group name", async () => {
+      useCardboxStore.setState({
+        order: ["group:g1", "u2"],
+        groups: { g1: { name: "Old", order: ["u1"], collapsed: false } },
+      });
+      await useCardboxStore.getState().renameGroup("g1", "New Name");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.name).toBe("New Name");
+      expect(s.groups.g1!.order).toEqual(["u1"]);
+      expect(s.groups.g1!.collapsed).toBe(false);
+    });
+
+    it("renameGroup no-ops for nonexistent group", async () => {
+      useCardboxStore.setState({
+        order: ["u1"],
+        groups: {},
+      });
+      await useCardboxStore.getState().renameGroup("missing", "X");
+      expect(useCardboxStore.getState().groups).toEqual({});
+    });
+
+    it("dissolveGroup splices members back into order at group position", async () => {
+      useCardboxStore.setState({
+        order: ["u3", "group:g1", "u4"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      await useCardboxStore.getState().dissolveGroup("g1");
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u3", "u1", "u2", "u4"]);
+      expect(s.groups.g1).toBeUndefined();
+    });
+
+    it("dissolveGroup calls IPC with correct args", async () => {
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
+      });
+      await useCardboxStore.getState().dissolveGroup("g1");
+      expect(invokeSpy).toHaveBeenCalledWith("dissolve_cardbox_group", {
+        groupId: "g1",
+      });
+    });
+
+    it("moveCardToGroup moves card from top-level into group", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "group:g1", "u2"],
+        groups: { g1: { name: "G", order: ["u3"], collapsed: false } },
+      });
+      await useCardboxStore.getState().moveCardToGroup("u2", "g1");
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u1", "group:g1"]);
+      expect(s.groups.g1!.order).toEqual(["u3", "u2"]);
+    });
+
+    it("moveCardToGroup moves card between groups", async () => {
+      useCardboxStore.setState({
+        order: ["group:g1", "group:g2"],
+        groups: {
+          g1: { name: "G1", order: ["u1", "u2"], collapsed: false },
+          g2: { name: "G2", order: ["u3"], collapsed: false },
+        },
+      });
+      await useCardboxStore.getState().moveCardToGroup("u1", "g2", 0);
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u2"]);
+      expect(s.groups.g2!.order).toEqual(["u1", "u3"]);
+    });
+
+    it("removeCardFromGroup moves card to top-level", async () => {
+      useCardboxStore.setState({
+        order: ["group:g1", "u3"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      await useCardboxStore.getState().removeCardFromGroup("u1", "g1");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u2"]);
+      expect(s.order).toContain("u1");
+    });
+
+    it("removeCardFromGroup auto-dissolves group when last card removed", async () => {
+      useCardboxStore.setState({
+        order: ["group:g1", "u2"],
+        groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
+      });
+      await useCardboxStore.getState().removeCardFromGroup("u1", "g1");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1).toBeUndefined();
+      expect(s.order).not.toContain("group:g1");
+      expect(s.order).toContain("u1");
+    });
+
+    it("removeCardFromGroup inserts at specified topLevelIndex", async () => {
+      useCardboxStore.setState({
+        order: ["u3", "group:g1", "u4"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      await useCardboxStore.getState().removeCardFromGroup("u1", "g1", 0);
+      const s = useCardboxStore.getState();
+      expect(s.order[0]).toBe("u1");
+      expect(s.groups.g1!.order).toEqual(["u2"]);
+    });
+
+    it("toggleGroupCollapse toggles collapsed flag", async () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
+      });
+      await useCardboxStore.getState().toggleGroupCollapse("g1");
+      expect(useCardboxStore.getState().groups.g1!.collapsed).toBe(true);
+      await useCardboxStore.getState().toggleGroupCollapse("g1");
+      expect(useCardboxStore.getState().groups.g1!.collapsed).toBe(false);
+    });
+
+    it("toggleGroupCollapse calls IPC with computed boolean", async () => {
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
+      });
+      await useCardboxStore.getState().toggleGroupCollapse("g1");
+      expect(invokeSpy).toHaveBeenCalledWith("toggle_group_collapsed", {
+        groupId: "g1",
+        collapsed: true,
+      });
+    });
+
+    it("reorderWithinGroup swaps card positions within a group", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2", "u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("g1", "u1", "u3");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u2", "u3", "u1"]);
+    });
+
+    it("reorderWithinGroup no-ops for nonexistent group", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("missing", "u1", "u2");
+      // Original state unchanged
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u2"]);
+    });
+
+    it("reorderWithinGroup no-ops when uuid not found in group", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("g1", "u1", "u3");
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u2"]);
+    });
+
+    it("reorderWithinGroup moves card forward", () => {
+      useCardboxStore.setState({
+        order: ["group:g1"],
+        groups: { g1: { name: "G", order: ["u1", "u2", "u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().reorderWithinGroup("g1", "u3", "u1");
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u3", "u1", "u2"]);
+    });
   });
 
   // --- Pin tests ---

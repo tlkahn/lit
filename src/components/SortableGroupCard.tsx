@@ -3,12 +3,13 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
 import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { makeGroupCardId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 
-interface SortableCardProps {
+interface SortableGroupCardProps {
+  groupId: string;
   annotation: CardboxAnnotation;
   expanded: boolean;
-  isPinned?: boolean;
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
@@ -17,7 +18,17 @@ interface SortableCardProps {
   onContextMenu?: (e: React.MouseEvent) => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
+export const SortableGroupCard = memo(function SortableGroupCard({
+  groupId,
+  annotation,
+  expanded,
+  onToggleExpand,
+  onNavigate,
+  linkedCards,
+  onFocusCard,
+  onRemoveLink,
+  onContextMenu,
+}: SortableGroupCardProps) {
   const {
     attributes,
     listeners,
@@ -25,7 +36,7 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, i
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: annotation.uuid });
+  } = useSortable({ id: makeGroupCardId(groupId, annotation.uuid) });
 
   const { contentRef, span } = useMasonrySpan();
 
@@ -51,7 +62,6 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, i
         <CardboxCard
           annotation={annotation}
           expanded={expanded}
-          isPinned={isPinned}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}
           linkedCards={linkedCards}

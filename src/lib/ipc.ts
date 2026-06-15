@@ -1232,10 +1232,17 @@ export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
   return invoke<CardboxAnnotation[]>("list_all_annotations", {});
 }
 
+export interface GroupInfo {
+  name: string;
+  order: string[];
+  collapsed: boolean;
+}
+
 export interface CardboxLayout {
   version: number;
   order: string[];
   links: [string, string][];
+  groups: Record<string, GroupInfo>;
   pinned: string[];
 }
 
@@ -1253,6 +1260,56 @@ export async function addCardboxLink(a: string, b: string): Promise<void> {
 
 export async function removeCardboxLink(a: string, b: string): Promise<void> {
   return invoke<void>("remove_cardbox_link", { a, b });
+}
+
+export async function createCardboxGroup(
+  groupId: string,
+  name: string,
+  cardUuids: string[],
+  afterEntry?: string,
+): Promise<void> {
+  return invoke<void>("create_cardbox_group", {
+    groupId,
+    name,
+    cardUuids,
+    afterEntry: afterEntry ?? null,
+  });
+}
+
+export async function renameCardboxGroup(groupId: string, name: string): Promise<void> {
+  return invoke<void>("rename_cardbox_group", { groupId, name });
+}
+
+export async function dissolveCardboxGroup(groupId: string): Promise<void> {
+  return invoke<void>("dissolve_cardbox_group", { groupId });
+}
+
+export async function moveCardToGroup(
+  cardUuid: string,
+  targetGroupId: string,
+  index?: number,
+): Promise<void> {
+  return invoke<void>("move_card_to_group", {
+    cardUuid,
+    targetGroupId,
+    index: index ?? null,
+  });
+}
+
+export async function removeCardFromGroup(
+  cardUuid: string,
+  groupId: string,
+  topLevelIndex?: number,
+): Promise<void> {
+  return invoke<void>("remove_card_from_group", {
+    cardUuid,
+    groupId,
+    topLevelIndex: topLevelIndex ?? null,
+  });
+}
+
+export async function toggleGroupCollapsed(groupId: string, collapsed: boolean): Promise<void> {
+  return invoke<void>("toggle_group_collapsed", { groupId, collapsed });
 }
 
 export async function pinCardboxCard(uuid: string): Promise<void> {

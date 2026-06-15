@@ -527,3 +527,194 @@ describe("useSidebarContextMenu", () => {
     expect(handlers.onRename).not.toHaveBeenCalled();
   });
 });
+
+describe("showCardboxContextMenu", () => {
+  it("calls invoke with correct args for ungrouped card", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_cardbox_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showCardboxContextMenu } = await import("./contextMenuIpc");
+    await showCardboxContextMenu({
+      cardUuid: "card-1",
+      isPinned: false,
+      isGrouped: false,
+      isGroupHeader: false,
+      hasGroups: true,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
+      cardUuid: "card-1",
+      isPinned: false,
+      isGrouped: false,
+      isGroupHeader: false,
+      hasGroups: true,
+    });
+  });
+
+  it("calls invoke with correct args for grouped card", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_cardbox_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showCardboxContextMenu } = await import("./contextMenuIpc");
+    await showCardboxContextMenu({
+      cardUuid: "card-2",
+      groupId: "group-1",
+      isPinned: false,
+      isGrouped: true,
+      isGroupHeader: false,
+      hasGroups: true,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
+      cardUuid: "card-2",
+      groupId: "group-1",
+      isPinned: false,
+      isGrouped: true,
+      isGroupHeader: false,
+      hasGroups: true,
+    });
+  });
+
+  it("calls invoke with correct args for group header", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "show_cardbox_context_menu") return null;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const { showCardboxContextMenu } = await import("./contextMenuIpc");
+    await showCardboxContextMenu({
+      groupId: "group-1",
+      isPinned: false,
+      isGroupHeader: true,
+      isGrouped: false,
+      hasGroups: true,
+    });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
+      groupId: "group-1",
+      isPinned: false,
+      isGroupHeader: true,
+      isGrouped: false,
+      hasGroups: true,
+    });
+  });
+});
+
+describe("useCardboxContextMenu", () => {
+  beforeEach(() => {
+    resetListenMock();
+    mockListen();
+  });
+
+  function makeHandlers() {
+    return {
+      onPin: vi.fn(),
+      onUnpin: vi.fn(),
+      onNewGroup: vi.fn(),
+      onAddToGroup: vi.fn(),
+      onRemoveFromGroup: vi.fn(),
+      onDissolveGroup: vi.fn(),
+      onRenameGroup: vi.fn(),
+    };
+  }
+
+  it("fires onNewGroup with card_uuid on new-group event", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/new-group", { card_uuid: "card-1", group_id: null });
+
+    expect(handlers.onNewGroup).toHaveBeenCalledWith("card-1");
+    expect(handlers.onAddToGroup).not.toHaveBeenCalled();
+  });
+
+  it("fires onAddToGroup with card_uuid on add-to-group event", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/add-to-group", { card_uuid: "card-2", group_id: null });
+
+    expect(handlers.onAddToGroup).toHaveBeenCalledWith("card-2");
+    expect(handlers.onNewGroup).not.toHaveBeenCalled();
+  });
+
+  it("fires onRemoveFromGroup with card_uuid and group_id on remove-from-group event", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/remove-from-group", { card_uuid: "card-3", group_id: "group-1" });
+
+    expect(handlers.onRemoveFromGroup).toHaveBeenCalledWith("card-3", "group-1");
+  });
+
+  it("fires onDissolveGroup with group_id on dissolve-group event", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/dissolve-group", { card_uuid: null, group_id: "group-2" });
+
+    expect(handlers.onDissolveGroup).toHaveBeenCalledWith("group-2");
+  });
+
+  it("fires onRenameGroup with group_id on rename-group event", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/rename-group", { card_uuid: null, group_id: "group-3" });
+
+    expect(handlers.onRenameGroup).toHaveBeenCalledWith("group-3");
+  });
+
+  it("does not fire onNewGroup when card_uuid is null", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/new-group", { card_uuid: null, group_id: null });
+
+    expect(handlers.onNewGroup).not.toHaveBeenCalled();
+  });
+
+  it("does not fire onRemoveFromGroup when group_id is null", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/remove-from-group", { card_uuid: "card-1", group_id: null });
+
+    expect(handlers.onRemoveFromGroup).not.toHaveBeenCalled();
+  });
+
+  it("cleans up listeners on unmount", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    const { unmount } = renderHook(() => useCardboxContextMenu(handlers));
+
+    unmount();
+
+    emitMockEvent("context-menu://cardbox/new-group", { card_uuid: "card-1", group_id: null });
+    expect(handlers.onNewGroup).not.toHaveBeenCalled();
+  });
+});
