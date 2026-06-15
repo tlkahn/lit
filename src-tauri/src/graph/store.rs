@@ -1547,7 +1547,8 @@ impl Store {
     pub fn list_all_cardbox_annotations(&self) -> Result<Vec<CardboxAnnotation>, GraphError> {
         let mut stmt = self.conn.prepare(
             "SELECT a.uuid, a.annotation_type, a.certainty, a.body, a.date,
-                    a.node_id, n.title, a.source_line, a.char_start, a.char_end, a.scope_kind
+                    a.node_id, n.title, a.source_line, a.char_start, a.char_end,
+                    a.scope_kind, a.scope_value
              FROM annotations a
              JOIN nodes n ON n.id = a.node_id
              ORDER BY a.node_id, a.char_start",
@@ -1566,6 +1567,7 @@ impl Store {
                     char_start: row.get(8)?,
                     char_end: row.get(9)?,
                     scope_kind: row.get(10)?,
+                    scope_value: row.get(11)?,
                     original: None,
                 })
             })?

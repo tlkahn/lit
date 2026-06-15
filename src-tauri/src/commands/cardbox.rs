@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(a.annotation_type, "note");
         assert!(a.body.as_deref().unwrap().contains("Silk Road"));
         assert!(!a.uuid.is_empty());
-        assert!(a.original.is_none());
+        assert_eq!(a.original.as_deref(), Some("text"));
     }
 
     #[test]
@@ -219,5 +219,48 @@ mod tests {
             &std::fs::read_to_string(lit_dir.join("cardbox.json")).unwrap()
         ).unwrap();
         assert_eq!(read.order, vec!["a"]);
+    }
+
+    #[test]
+    fn cmd_original_resolved_for_sentence_scope() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "First sentence. Second sentence.<!--- n: \\s | note --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].original.as_deref(), Some("Second sentence."));
+    }
+
+    #[test]
+    fn cmd_original_none_when_file_deleted() {
+        let dir = create_workspace();
+        let file_path = dir.path().join("a.md");
+        std::fs::write(&file_path, "Some text <!--- n: _ | note --->").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        std::fs::remove_file(&file_path).unwrap();
+        let results = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].original.is_none());
+    }
+
+    #[test]
+    fn cmd_original_resolved_multiple_annotations_same_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "alpha <!--- n: _ | first ---> beta <!--- n: _ | second --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].original.as_deref(), Some("alpha"));
+        assert_eq!(results[1].original.as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn cmd_original_resolved_with_frontmatter() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Test\n---\nSome text <!--- n: _ | note --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].original.as_deref(), Some("text"));
     }
 }

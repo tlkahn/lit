@@ -1224,6 +1224,7 @@ export interface CardboxAnnotation {
   char_start: number;
   char_end: number;
   scope_kind: string;
+  scope_value: string;
   original: string | null;
 }
 

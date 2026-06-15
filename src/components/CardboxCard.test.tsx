@@ -15,6 +15,7 @@ const baseAnnotation: CardboxAnnotation = {
   char_start: 10,
   char_end: 50,
   scope_kind: "words",
+  scope_value: "1",
   original: "The original source context text here",
 };
 
@@ -48,6 +49,55 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-original")).toHaveTextContent(baseAnnotation.original!);
     expect(screen.getByTestId("card-date")).toHaveTextContent("2026-06-15");
     expect(screen.getByTestId("card-navigate")).toBeVisible();
+  });
+
+  it("shows original quote in collapsed state", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-original")).toBeInTheDocument();
+  });
+
+  it("applies line-clamp-2 to original in collapsed state", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-original").className).toContain("line-clamp-2");
+  });
+
+  it("removes line-clamp from original when expanded", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-original").className).not.toContain("line-clamp-2");
+  });
+
+  it("renders original as markdown HTML", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: "**bold** text" }}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const orig = screen.getByTestId("card-original");
+    expect(orig.innerHTML).toContain("<strong>bold</strong>");
   });
 
   it("shows certainty mark for tentative", () => {
@@ -149,7 +199,7 @@ describe("CardboxCard", () => {
     render(
       <CardboxCard
         annotation={{ ...baseAnnotation, original: null }}
-        expanded={true}
+        expanded={false}
         onToggleExpand={() => {}}
         onNavigate={() => {}}
       />,

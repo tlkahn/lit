@@ -166,6 +166,32 @@ impl Scope {
     pub fn from_str(s: &str) -> Self {
         Self::try_parse(s).unwrap_or(Self::Sentence(1))
     }
+
+    pub fn from_db(scope_kind: &str, scope_value: &str) -> Option<Self> {
+        match scope_kind {
+            "words" => scope_value.parse::<usize>().ok().map(Self::Words),
+            "sentence" => scope_value.parse::<usize>().ok().map(Self::Sentence),
+            "paragraph" => scope_value.parse::<usize>().ok().map(Self::Paragraph),
+            "page" => scope_value.parse::<usize>().ok().map(Self::Page),
+            "anchor" => Some(Self::Anchor(scope_value.to_string())),
+            "document" => Some(Self::Document),
+            "section" => Some(Self::Section),
+            k if k.starts_with("asymmetric_") => {
+                let unit = match &k["asymmetric_".len()..] {
+                    "word" => ScopeKind::Word,
+                    "sentence" => ScopeKind::Sentence,
+                    "paragraph" => ScopeKind::Paragraph,
+                    "page" => ScopeKind::Page,
+                    _ => return None,
+                };
+                let (before_s, after_s) = scope_value.split_once(':')?;
+                let before = before_s.parse::<usize>().ok()?;
+                let after = after_s.parse::<usize>().ok()?;
+                Some(Self::Asymmetric { unit, before, after })
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -650,5 +676,66 @@ mod tests {
     fn from_str_does_not_map_mark_codes() {
         assert_eq!(AnnotationType::from_str("nb"), None);
         assert_eq!(AnnotationType::from_str("mark"), None);
+    }
+
+    #[test]
+    fn scope_from_db_words() {
+        assert_eq!(Scope::from_db("words", "3"), Some(Scope::Words(3)));
+    }
+
+    #[test]
+    fn scope_from_db_sentence() {
+        assert_eq!(Scope::from_db("sentence", "1"), Some(Scope::Sentence(1)));
+    }
+
+    #[test]
+    fn scope_from_db_paragraph() {
+        assert_eq!(Scope::from_db("paragraph", "2"), Some(Scope::Paragraph(2)));
+    }
+
+    #[test]
+    fn scope_from_db_page() {
+        assert_eq!(Scope::from_db("page", "1"), Some(Scope::Page(1)));
+    }
+
+    #[test]
+    fn scope_from_db_anchor() {
+        assert_eq!(Scope::from_db("anchor", "text"), Some(Scope::Anchor("text".to_string())));
+    }
+
+    #[test]
+    fn scope_from_db_document() {
+        assert_eq!(Scope::from_db("document", ""), Some(Scope::Document));
+    }
+
+    #[test]
+    fn scope_from_db_section() {
+        assert_eq!(Scope::from_db("section", ""), Some(Scope::Section));
+    }
+
+    #[test]
+    fn scope_from_db_asymmetric_word() {
+        assert_eq!(
+            Scope::from_db("asymmetric_word", "3:1"),
+            Some(Scope::Asymmetric { unit: ScopeKind::Word, before: 3, after: 1 })
+        );
+    }
+
+    #[test]
+    fn scope_from_db_asymmetric_sentence() {
+        assert_eq!(
+            Scope::from_db("asymmetric_sentence", "0:2"),
+            Some(Scope::Asymmetric { unit: ScopeKind::Sentence, before: 0, after: 2 })
+        );
+    }
+
+    #[test]
+    fn scope_from_db_unknown() {
+        assert_eq!(Scope::from_db("unknown", "x"), None);
+    }
+
+    #[test]
+    fn scope_from_db_invalid_value() {
+        assert_eq!(Scope::from_db("words", "abc"), None);
     }
 }

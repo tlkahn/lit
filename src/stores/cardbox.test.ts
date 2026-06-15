@@ -16,6 +16,7 @@ const MOCK_ANNOTATIONS: CardboxAnnotation[] = [
     char_start: 0,
     char_end: 10,
     scope_kind: "words",
+    scope_value: "1",
     original: null,
   },
   {
@@ -30,6 +31,7 @@ const MOCK_ANNOTATIONS: CardboxAnnotation[] = [
     char_start: 20,
     char_end: 30,
     scope_kind: "paragraph",
+    scope_value: "1",
     original: null,
   },
 ];

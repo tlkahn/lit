@@ -203,6 +203,7 @@ pub struct CardboxAnnotation {
     pub char_start: usize,
     pub char_end: usize,
     pub scope_kind: String,
+    pub scope_value: String,
     pub original: Option<String>,
 }
 
@@ -594,6 +595,7 @@ mod tests {
             char_start: 10,
             char_end: 30,
             scope_kind: "words".into(),
+            scope_value: "2".into(),
             original: None,
         };
         let json_str = serde_json::to_string(&ann).expect("serialize");
