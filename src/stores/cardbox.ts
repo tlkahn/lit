@@ -37,8 +37,17 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         annotations,
         loading: false,
         activeTypes: s.activeTypes === null ? types : s.activeTypes,
-        // Initialize order from annotation UUIDs on first load, preserve on refreshes
-        order: s.order.length === 0 ? annotations.map((a) => a.uuid) : s.order,
+        // Initialize order from annotation UUIDs on first load; on refreshes,
+        // keep existing order, append new items, and remove deleted ones.
+        order: (() => {
+          if (s.order.length === 0) return annotations.map((a) => a.uuid);
+          const newUuids = new Set(annotations.map((a) => a.uuid));
+          // Keep existing order items that still exist, append new ones
+          const kept = s.order.filter((id) => newUuids.has(id));
+          const keptSet = new Set(kept);
+          const added = annotations.filter((a) => !keptSet.has(a.uuid)).map((a) => a.uuid);
+          return [...kept, ...added];
+        })(),
       }));
     } catch {
       set({ loading: false });

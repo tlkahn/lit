@@ -18,6 +18,7 @@ import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 import { useAppKeybindings } from "../hooks/useAppKeybindings";
+import { CardboxErrorBoundary } from "./CardboxErrorBoundary";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
@@ -555,9 +556,11 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
       )}
       {viewMode === "cardbox" && (
         <div data-testid="cardbox-view-wrapper" className="flex-1 min-h-0 overflow-hidden">
-          <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
-            <LazyCardboxView />
-          </Suspense>
+          <CardboxErrorBoundary>
+            <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
+              <LazyCardboxView />
+            </Suspense>
+          </CardboxErrorBoundary>
         </div>
       )}
       {renderBottomPanel && <BottomPanel pageId={currentPanePage ?? undefined} />}
