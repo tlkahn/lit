@@ -237,6 +237,22 @@ describe("AlphabetStrip", () => {
       expect(onClick).toHaveBeenCalledWith("A");
     });
 
+    it("Enter after ArrowDown activates the updated letter", () => {
+      const onClick = vi.fn();
+      render(
+        <AlphabetStrip
+          letterSet={new Set(["A", "B"])}
+          activeLetter=""
+          onLetterClick={onClick}
+        />,
+      );
+      const strip = screen.getByTestId("alphabet-strip");
+      fireEvent.focus(strip); // focusedIndex = 0 (A)
+      fireEvent.keyDown(strip, { key: "ArrowDown" }); // focusedIndex = 1 (B)
+      fireEvent.keyDown(strip, { key: "Enter" });
+      expect(onClick).toHaveBeenCalledWith("B");
+    });
+
     it("Enter on a disabled letter does not call onLetterClick", () => {
       const onClick = vi.fn();
       render(
@@ -308,7 +324,7 @@ describe("AlphabetStrip", () => {
 
   describe("drag interaction", () => {
     function mockStripRect(strip: HTMLElement, letterHeight = 16) {
-      vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
+      return vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
         top: 0,
         left: 0,
         bottom: 27 * letterHeight,
@@ -420,6 +436,27 @@ describe("AlphabetStrip", () => {
       expect(indicator.textContent).toBe("M");
     });
 
+    it("floating indicator shows snapped letter, not raw letter", () => {
+      render(
+        <AlphabetStrip
+          letterSet={new Set(["A", "M"])}
+          activeLetter=""
+          onLetterClick={() => {}}
+          onLetterDrag={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("alphabet-strip");
+      mockStripRect(strip);
+      mockPointerCapture(strip);
+
+      fireEvent(strip, pointerEvent("pointerdown", { clientY: 0, pointerId: 1 }));
+      // Drag to index 1 = "B", which is disabled. Nearest available is "A".
+      fireEvent(strip, pointerEvent("pointermove", { clientY: 1 * 16 + 8, pointerId: 1 }));
+
+      const indicator = screen.getByTestId("alphabet-float-indicator");
+      expect(indicator.textContent).toBe("A");
+    });
+
     it("floating indicator disappears on pointerUp", () => {
       render(
         <AlphabetStrip
@@ -528,6 +565,26 @@ describe("AlphabetStrip", () => {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- jsdom lacks PointerEvent APIs
       expect((strip as Record<string, any>).setPointerCapture).toHaveBeenCalledWith(42);
+    });
+
+    it("getBoundingClientRect is called once per pointermove, not twice", () => {
+      render(
+        <AlphabetStrip
+          letterSet={new Set(["A", "M"])}
+          activeLetter=""
+          onLetterClick={() => {}}
+          onLetterDrag={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("alphabet-strip");
+      const spy = mockStripRect(strip);
+      mockPointerCapture(strip);
+
+      fireEvent(strip, pointerEvent("pointerdown", { clientY: 0, pointerId: 1 }));
+      spy.mockClear();
+
+      fireEvent(strip, pointerEvent("pointermove", { clientY: 12 * 16 + 8, pointerId: 1 }));
+      expect(spy).toHaveBeenCalledTimes(1);
     });
 
     it("falls back to onLetterClick for drag when onLetterDrag not provided", () => {

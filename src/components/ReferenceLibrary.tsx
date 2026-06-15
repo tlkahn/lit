@@ -33,7 +33,7 @@ import { OcrDialog } from "./OcrDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { doiHref } from "../lib/urlUtils";
-import { lastName, buildSectionedList } from "../lib/sectionedList";
+import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
 
 function combinedText(entry: BibEntry): string {
@@ -303,6 +303,9 @@ export function ReferenceLibrary() {
 
   const sorted = useMemo(() => {
     return [...entries].sort((a, b) => {
+      const aHash = initialOf(a) === "#" ? 1 : 0;
+      const bHash = initialOf(b) === "#" ? 1 : 0;
+      if (aHash !== bHash) return aHash - bHash;
       const byName = lastName(a).localeCompare(lastName(b), undefined, {
         sensitivity: "base",
       });
@@ -316,7 +319,7 @@ export function ReferenceLibrary() {
     [sorted, deferredSearch],
   );
 
-  const { items: sectionedItems, letterSet } = useMemo(
+  const { items: sectionedItems, letterSet, letterToIndex } = useMemo(
     () => buildSectionedList(filtered),
     [filtered],
   );
@@ -547,29 +550,22 @@ export function ReferenceLibrary() {
     virtualizer.measure();
   }, [virtualizer, expandedIndex]);
 
-  const letterToIndex = useMemo(() => {
-    const map = new Map<string, number>();
-    for (let i = 0; i < sectionedItems.length; i++) {
-      const item = sectionedItems[i];
-      if (item!.kind === "header") map.set(item!.letter, i);
-    }
-    return map;
-  }, [sectionedItems]);
-
-  const handleLetterClick = useCallback(
-    (letter: string) => {
+  const scrollToLetter = useCallback(
+    (letter: string, smooth: boolean) => {
       const index = letterToIndex.get(letter);
-      if (index != null) virtualizer.scrollToIndex(index, { align: "start", behavior: "smooth" });
+      if (index != null) virtualizer.scrollToIndex(index, { align: "start", ...(smooth && { behavior: "smooth" }) });
     },
     [letterToIndex, virtualizer],
   );
 
+  const handleLetterClick = useCallback(
+    (letter: string) => scrollToLetter(letter, true),
+    [scrollToLetter],
+  );
+
   const handleLetterDrag = useCallback(
-    (letter: string) => {
-      const index = letterToIndex.get(letter);
-      if (index != null) virtualizer.scrollToIndex(index, { align: "start" });
-    },
-    [letterToIndex, virtualizer],
+    (letter: string) => scrollToLetter(letter, false),
+    [scrollToLetter],
   );
 
   // Why the local copy? The hook's droppedPdfPath is cleared immediately after
@@ -633,8 +629,9 @@ export function ReferenceLibrary() {
     />
   );
 
+  const showStrip = filtered.length >= 30;
   const virtualItems = virtualizer.getVirtualItems();
-  const activeLetter = (() => {
+  const activeLetter = useMemo(() => {
     if (virtualItems.length === 0) return "";
     const topIndex = virtualItems[0]!.index;
     for (let i = topIndex; i >= 0; i--) {
@@ -642,7 +639,7 @@ export function ReferenceLibrary() {
       if (item?.kind === "header") return item.letter;
     }
     return "";
-  })();
+  }, [virtualItems, sectionedItems]);
 
   return (
     <div
@@ -674,10 +671,10 @@ export function ReferenceLibrary() {
             ref={scrollRef}
             data-testid="reference-library-list"
             data-virtual-scroll
-            className="flex-1 overflow-y-auto overscroll-contain px-1 pr-5"
+            className={`flex-1 overflow-y-auto overscroll-contain px-1${showStrip ? " pr-5" : ""}`}
           >
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-              {virtualizer.getVirtualItems().map((virtualRow) => {
+              {virtualItems.map((virtualRow) => {
                 const item = sectionedItems[virtualRow.index];
                 if (!item) return null;
 
@@ -979,7 +976,7 @@ export function ReferenceLibrary() {
             activeLetter={activeLetter}
             onLetterClick={handleLetterClick}
             onLetterDrag={handleLetterDrag}
-            visible={filtered.length >= 30}
+            visible={showStrip}
           />
           </div>
         </>

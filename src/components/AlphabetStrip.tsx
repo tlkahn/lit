@@ -36,14 +36,14 @@ export function AlphabetStrip({
   const didDragRef = useRef(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
 
-  const letterFromY = useCallback((clientY: number): string | null => {
+  const letterFromY = useCallback((clientY: number): { letter: string; relY: number } | null => {
     const el = stripRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
     const relativeY = clientY - rect.top;
     const index = Math.floor(relativeY / (rect.height / ALPHABET.length));
     const clamped = Math.max(0, Math.min(ALPHABET.length - 1, index));
-    return ALPHABET[clamped]!;
+    return { letter: ALPHABET[clamped]!, relY: relativeY };
   }, []);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -57,15 +57,14 @@ export function AlphabetStrip({
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
     didDragRef.current = true;
-    const letter = letterFromY(e.clientY);
-    if (!letter) return;
+    const result = letterFromY(e.clientY);
+    if (!result) return;
 
-    const el = stripRef.current;
-    const relY = el ? e.clientY - el.getBoundingClientRect().top : 0;
-    setDragState({ letter, y: relY });
-
+    const { letter, relY } = result;
     const idx = ALPHABET.indexOf(letter);
     const target = nearestAvailable(idx, letterSet);
+    setDragState({ letter: target ?? letter, y: relY });
+
     if (target && target !== lastDragLetterRef.current) {
       lastDragLetterRef.current = target;
       (onLetterDrag ?? onLetterClick)(target);
@@ -98,12 +97,13 @@ export function AlphabetStrip({
       });
     } else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      const letter = ALPHABET[focusedIndex];
-      if (letter && letterSet.has(letter)) {
-        onLetterClick(letter);
-      }
+      setFocusedIndex((current) => {
+        const letter = ALPHABET[current];
+        if (letter && letterSet.has(letter)) onLetterClick(letter);
+        return current;
+      });
     }
-  }, [focusedIndex, letterSet, onLetterClick]);
+  }, [letterSet, onLetterClick]);
 
   if (!visible) return null;
 
