@@ -499,7 +499,7 @@ pub fn unpin_cardbox_card(
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if "/ \\ : * ? \" < > |".contains(c) { '_' } else { c })
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
         .collect()
 }
 
@@ -515,6 +515,10 @@ fn dedup_filename(root: &std::path::Path, base: &str) -> String {
         }
     }
     unreachable!()
+}
+
+fn escape_yaml_double_quoted(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[tauri::command]
@@ -549,15 +553,21 @@ pub fn export_card_note(
 
     let mut content = String::new();
     content.push_str("---\n");
-    content.push_str(&format!("source: \"{}\"\n", ann.source_page_id));
-    content.push_str(&format!("annotation_uuid: \"{}\"\n", uuid));
+    content.push_str(&format!("source: \"{}\"\n", escape_yaml_double_quoted(&ann.source_page_id)));
+    content.push_str(&format!("annotation_uuid: \"{}\"\n", escape_yaml_double_quoted(&uuid)));
     if let Some(ref updated_at) = note.updated_at {
-        content.push_str(&format!("created: \"{}\"\n", updated_at));
+        content.push_str(&format!("created: \"{}\"\n", escape_yaml_double_quoted(updated_at)));
     }
     content.push_str("---\n\n");
 
     if let Some(ref original) = ann.original {
-        content.push_str(&format!("> {}\n\n", original));
+        let blockquoted: String = original
+            .lines()
+            .map(|line| format!("> {}", line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        content.push_str(&blockquoted);
+        content.push_str("\n\n");
     }
 
     content.push_str(&note.body);
@@ -1951,5 +1961,82 @@ mod tests {
         let layout: super::CardboxLayout = serde_json::from_str(json).unwrap();
         assert_eq!(layout.version, 3);
         assert!(layout.notes.is_empty());
+    }
+
+    #[test]
+    fn multiline_blockquote_all_lines_prefixed() {
+        // The blockquote formatting logic extracted from export_card_note
+        let original = "First line\nSecond line\nThird line";
+        let blockquoted: String = original
+            .lines()
+            .map(|line| format!("> {}", line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let content = format!("{}\n\n", blockquoted);
+        // Every non-empty line must start with "> "
+        for line in content.trim().lines() {
+            assert!(
+                line.starts_with("> "),
+                "Line missing blockquote prefix: {:?}",
+                line
+            );
+        }
+        assert_eq!(content, "> First line\n> Second line\n> Third line\n\n");
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_spaces() {
+        // Spaces are valid in filenames and must not be replaced with underscores.
+        let result = super::sanitize_filename("Note on My Page Title");
+        assert_eq!(result, "Note on My Page Title");
+    }
+
+    #[test]
+    fn sanitize_filename_replaces_forbidden_chars() {
+        // All filesystem-forbidden characters should become underscores.
+        let result = super::sanitize_filename("a/b\\c:d*e?f\"g<h>i|j");
+        assert_eq!(result, "a_b_c_d_e_f_g_h_i_j");
+    }
+
+    #[test]
+    fn sanitize_filename_mixed_spaces_and_forbidden() {
+        // Spaces stay, forbidden chars become underscores.
+        let result = super::sanitize_filename("My File: a <test>");
+        assert_eq!(result, "My File_ a _test_");
+    }
+
+    #[test]
+    fn yaml_frontmatter_escapes_double_quotes() {
+        let source_page_id = "He said \"hello\".md";
+        let line = format!("source: \"{}\"\n", super::escape_yaml_double_quoted(source_page_id));
+        assert_eq!(line, "source: \"He said \\\"hello\\\".md\"\n");
+        // The YAML value must not contain unescaped double quotes
+        // between the outer delimiters
+        let inner = &line["source: \"".len()..line.len() - "\"\n".len()];
+        let mut prev = None;
+        for c in inner.chars() {
+            if c == '"' {
+                assert_eq!(prev, Some('\\'), "Found unescaped double quote in YAML value");
+            }
+            prev = Some(c);
+        }
+    }
+
+    #[test]
+    fn yaml_frontmatter_escapes_backslashes() {
+        let val = "path\\to\\file.md";
+        let escaped = super::escape_yaml_double_quoted(val);
+        assert_eq!(escaped, "path\\\\to\\\\file.md");
+    }
+
+    #[test]
+    fn blockquote_prefixes_every_line() {
+        let original = "First line\nSecond line\nThird line";
+        let blockquoted: String = original
+            .lines()
+            .map(|line| format!("> {}", line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(blockquoted, "> First line\n> Second line\n> Third line");
     }
 }
