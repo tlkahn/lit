@@ -230,7 +230,7 @@ describe("LinkPicker", () => {
     // Wrap to first
     fireEvent.keyDown(input, { key: "ArrowDown" });
     const results = screen.getAllByTestId("link-picker-result");
-    expect(results[0].dataset.active).toBe("true");
+    expect(results[0]!.dataset.active).toBe("true");
   });
 
   it("arrow up wraps from first to last", () => {
@@ -240,7 +240,7 @@ describe("LinkPicker", () => {
     // From first (index 0), ArrowUp wraps to last
     fireEvent.keyDown(input, { key: "ArrowUp" });
     const results = screen.getAllByTestId("link-picker-result");
-    expect(results[results.length - 1].dataset.active).toBe("true");
+    expect(results[results.length - 1]!.dataset.active).toBe("true");
   });
 
   it("clicking a result selects it and closes picker", () => {
@@ -248,7 +248,7 @@ describe("LinkPicker", () => {
     const onClose = vi.fn();
     render(<LinkPicker {...defaultProps} onSelect={onSelect} onClose={onClose} />);
     const results = screen.getAllByTestId("link-picker-result");
-    fireEvent.click(results[1]);
+    fireEvent.click(results[1]!);
     expect(onSelect).toHaveBeenCalledWith("candidate-2");
     expect(onClose).toHaveBeenCalled();
   });
@@ -267,7 +267,7 @@ describe("LinkPicker", () => {
     const newInput = screen.getByTestId("link-picker-input");
     expect((newInput as HTMLInputElement).value).toBe("");
     const results = screen.getAllByTestId("link-picker-result");
-    expect(results[0].dataset.active).toBe("true");
+    expect(results[0]!.dataset.active).toBe("true");
   });
 
   it("resets active index when query changes", () => {
@@ -277,28 +277,28 @@ describe("LinkPicker", () => {
     // Navigate down
     fireEvent.keyDown(input, { key: "ArrowDown" });
     let results = screen.getAllByTestId("link-picker-result");
-    expect(results[1].dataset.active).toBe("true");
+    expect(results[1]!.dataset.active).toBe("true");
 
     // Type a query -- active index should reset to 0
     fireEvent.change(input, { target: { value: "review" } });
     results = screen.getAllByTestId("link-picker-result");
-    expect(results[0].dataset.active).toBe("true");
+    expect(results[0]!.dataset.active).toBe("true");
   });
 
   it("displays type icon badge for each result", () => {
     render(<LinkPicker {...defaultProps} />);
     const results = screen.getAllByTestId("link-picker-result");
     // candidate-1 is "note" -> icon "N"
-    expect(results[0].textContent).toContain("N");
+    expect(results[0]!.textContent).toContain("N");
     // candidate-2 is "todo" -> icon "T"
-    expect(results[1].textContent).toContain("T");
+    expect(results[1]!.textContent).toContain("T");
   });
 
   it("displays source_page_title for each result", () => {
     render(<LinkPicker {...defaultProps} />);
     const results = screen.getAllByTestId("link-picker-result");
-    expect(results[0].textContent).toContain("History");
-    expect(results[1].textContent).toContain("Tasks");
+    expect(results[0]!.textContent).toContain("History");
+    expect(results[1]!.textContent).toContain("Tasks");
   });
 
   it("caps results at 50", () => {
