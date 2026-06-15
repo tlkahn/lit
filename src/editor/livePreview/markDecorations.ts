@@ -1,4 +1,4 @@
-import { type Extension, StateEffect, StateField } from "@codemirror/state";
+import { type Extension, type Range, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { resolveMarkScopes, type ScopeRange } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
@@ -32,7 +32,16 @@ export const markDecorationField = StateField.define<DecorationSet>({
         return Decoration.set(ranges, true);
       }
     }
-    if (tr.docChanged) return value.map(tr.changes);
+    if (tr.docChanged) {
+      const mapped = value.map(tr.changes);
+      const kept: Range<Decoration>[] = [];
+      const iter = mapped.iter();
+      while (iter.value) {
+        if (iter.from < iter.to) kept.push(iter.value.range(iter.from, iter.to));
+        iter.next();
+      }
+      return kept.length ? Decoration.set(kept, true) : Decoration.none;
+    }
     return value;
   },
   provide: (f) => EditorView.decorations.from(f),

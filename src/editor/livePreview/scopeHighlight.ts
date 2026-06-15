@@ -12,6 +12,7 @@ export const scopeHighlightField = StateField.define<DecorationSet>({
       if (e.is(setScopeHighlight)) {
         if (e.value === null) return Decoration.none;
         const { from, to } = e.value;
+        if (from >= to) return Decoration.none;
         return Decoration.set([highlightMark.range(from, to)]);
       }
     }
@@ -22,6 +23,7 @@ export const scopeHighlightField = StateField.define<DecorationSet>({
 });
 
 export function dispatchScopeHighlight(view: EditorView, from: number, to: number) {
+  if (from >= to) return;
   view.dispatch({ effects: setScopeHighlight.of({ from, to }) });
 }
 

@@ -177,6 +177,28 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
+  it("zero-width scope from IPC does not dispatch highlight", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 5, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("inverted scope from IPC does not dispatch highlight", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 8, end: 3 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
   it("hover in view A does not invalidate pending IPC for view B", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const viewA = makeView("aaaa bbbb");

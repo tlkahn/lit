@@ -92,6 +92,46 @@ describe("scopeHighlightField", () => {
     view.destroy();
   });
 
+  it("zero-width setScopeHighlight produces Decoration.none", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [scopeHighlightField],
+    });
+    const tr = state.update({ effects: setScopeHighlight.of({ from: 5, to: 5 }) });
+    expect(tr.state.field(scopeHighlightField)).toBe(Decoration.none);
+  });
+
+  it("inverted setScopeHighlight produces Decoration.none", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [scopeHighlightField],
+    });
+    const tr = state.update({ effects: setScopeHighlight.of({ from: 10, to: 3 }) });
+    expect(tr.state.field(scopeHighlightField)).toBe(Decoration.none);
+  });
+
+  it("dispatchScopeHighlight with zero-width range is a no-op", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [scopeHighlightField],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    dispatchScopeHighlight(view, 5, 5);
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("dispatchScopeHighlight with inverted range is a no-op", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [scopeHighlightField],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    dispatchScopeHighlight(view, 10, 3);
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
   it("scopeHighlightExtension renders .scope-highlight in DOM", () => {
     const parent = document.createElement("div");
     const view = new EditorView({
