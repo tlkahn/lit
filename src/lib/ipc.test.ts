@@ -133,6 +133,12 @@ import {
   autoUnlockSecretStore,
   migrateSecretStore,
   secretStoreStatus,
+  createCardboxGroup,
+  renameCardboxGroup,
+  dissolveCardboxGroup,
+  moveCardToGroup,
+  removeCardFromGroup,
+  toggleGroupCollapsed,
 } from "./ipc";
 
 const sampleMeta = {
@@ -803,6 +809,26 @@ describe("ipc", () => {
         }
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
+        case "read_cardbox_layout":
+          return { version: 2, order: ["u1", "u2"], links: [], groups: {} };
+        case "write_cardbox_layout":
+          return null;
+        case "add_cardbox_link":
+          return null;
+        case "remove_cardbox_link":
+          return null;
+        case "create_cardbox_group":
+          return null;
+        case "rename_cardbox_group":
+          return null;
+        case "dissolve_cardbox_group":
+          return null;
+        case "move_card_to_group":
+          return null;
+        case "remove_card_from_group":
+          return null;
+        case "toggle_group_collapsed":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2472,6 +2498,96 @@ describe("ipc", () => {
       notePath: "Note.md",
       workspacePath: "/workspace",
       skipNoteRewrite: true,
+    });
+  });
+
+  // ── Cardbox group IPC wrappers ────────────────────────────────
+
+  it("createCardboxGroup calls create_cardbox_group with correct args", async () => {
+    await createCardboxGroup("g1", "My Group", ["u1", "u2"], "u3");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("create_cardbox_group", {
+      groupId: "g1",
+      name: "My Group",
+      cardUuids: ["u1", "u2"],
+      afterEntry: "u3",
+    });
+  });
+
+  it("createCardboxGroup sends null afterEntry when omitted", async () => {
+    await createCardboxGroup("g1", "My Group", ["u1"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("create_cardbox_group", {
+      groupId: "g1",
+      name: "My Group",
+      cardUuids: ["u1"],
+      afterEntry: null,
+    });
+  });
+
+  it("renameCardboxGroup calls rename_cardbox_group", async () => {
+    await renameCardboxGroup("g1", "New Name");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("rename_cardbox_group", {
+      groupId: "g1",
+      name: "New Name",
+    });
+  });
+
+  it("dissolveCardboxGroup calls dissolve_cardbox_group", async () => {
+    await dissolveCardboxGroup("g1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("dissolve_cardbox_group", {
+      groupId: "g1",
+    });
+  });
+
+  it("moveCardToGroup calls move_card_to_group with correct args", async () => {
+    await moveCardToGroup("u1", "g1", 2);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("move_card_to_group", {
+      cardUuid: "u1",
+      targetGroupId: "g1",
+      index: 2,
+    });
+  });
+
+  it("moveCardToGroup sends null index when omitted", async () => {
+    await moveCardToGroup("u1", "g1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("move_card_to_group", {
+      cardUuid: "u1",
+      targetGroupId: "g1",
+      index: null,
+    });
+  });
+
+  it("removeCardFromGroup calls remove_card_from_group with correct args", async () => {
+    await removeCardFromGroup("u1", "g1", 0);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("remove_card_from_group", {
+      cardUuid: "u1",
+      groupId: "g1",
+      topLevelIndex: 0,
+    });
+  });
+
+  it("removeCardFromGroup sends null topLevelIndex when omitted", async () => {
+    await removeCardFromGroup("u1", "g1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("remove_card_from_group", {
+      cardUuid: "u1",
+      groupId: "g1",
+      topLevelIndex: null,
+    });
+  });
+
+  it("toggleGroupCollapsed calls toggle_group_collapsed", async () => {
+    await toggleGroupCollapsed("g1", true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("toggle_group_collapsed", {
+      groupId: "g1",
+      collapsed: true,
     });
   });
 

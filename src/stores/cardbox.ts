@@ -6,6 +6,12 @@ import {
   writeCardboxLayout,
   addCardboxLink,
   removeCardboxLink,
+  createCardboxGroup,
+  renameCardboxGroup,
+  dissolveCardboxGroup,
+  moveCardToGroup as moveCardToGroupIpc,
+  removeCardFromGroup as removeCardFromGroupIpc,
+  toggleGroupCollapsed,
 } from "../lib/ipc";
 
 export interface CardboxStore {
@@ -28,6 +34,12 @@ export interface CardboxStore {
   saveLayout: () => Promise<void>;
   addLink: (a: string, b: string) => Promise<void>;
   removeLink: (a: string, b: string) => Promise<void>;
+  createGroup: (groupId: string, name: string, cardUuids: string[], afterEntry?: string) => Promise<void>;
+  renameGroup: (groupId: string, name: string) => Promise<void>;
+  dissolveGroup: (groupId: string) => Promise<void>;
+  moveCardToGroup: (cardUuid: string, targetGroupId: string, index?: number) => Promise<void>;
+  removeCardFromGroup: (cardUuid: string, groupId: string, topLevelIndex?: number) => Promise<void>;
+  toggleGroupCollapse: (groupId: string) => Promise<void>;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -150,5 +162,116 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       links: s.links.filter(([x, y]) => !(x === norm[0] && y === norm[1])),
     }));
     await removeCardboxLink(a, b);
+  },
+  createGroup: async (groupId, name, cardUuids, afterEntry) => {
+    set((s) => {
+      const cardSet = new Set(cardUuids);
+      // Remove cards from top-level order and all group orders
+      let order = s.order.filter((id) => !cardSet.has(id));
+      const groups: Record<string, GroupInfo> = {};
+      for (const [gid, info] of Object.entries(s.groups)) {
+        const filtered = info.order.filter((id) => !cardSet.has(id));
+        groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
+      }
+      // Create new group
+      groups[groupId] = { name, order: cardUuids, collapsed: false };
+      // Insert group entry into order
+      const groupEntry = `group:${groupId}`;
+      if (afterEntry) {
+        const idx = order.indexOf(afterEntry);
+        if (idx >= 0) {
+          order = [...order.slice(0, idx + 1), groupEntry, ...order.slice(idx + 1)];
+        } else {
+          order = [...order, groupEntry];
+        }
+      } else {
+        order = [...order, groupEntry];
+      }
+      return { order, groups };
+    });
+    await createCardboxGroup(groupId, name, cardUuids, afterEntry);
+  },
+  renameGroup: async (groupId, name) => {
+    set((s) => {
+      if (!s.groups[groupId]) return s;
+      return { groups: { ...s.groups, [groupId]: { ...s.groups[groupId], name } } };
+    });
+    await renameCardboxGroup(groupId, name);
+  },
+  dissolveGroup: async (groupId) => {
+    set((s) => {
+      const group = s.groups[groupId];
+      if (!group) return s;
+      const members = group.order;
+      const groupEntry = `group:${groupId}`;
+      const idx = s.order.indexOf(groupEntry);
+      const remaining = Object.fromEntries(
+        Object.entries(s.groups).filter(([gid]) => gid !== groupId),
+      );
+      let order: string[];
+      if (idx >= 0) {
+        order = [...s.order.slice(0, idx), ...members, ...s.order.slice(idx + 1)];
+      } else {
+        order = [...s.order, ...members];
+      }
+      return { order, groups: remaining };
+    });
+    await dissolveCardboxGroup(groupId);
+  },
+  moveCardToGroup: async (cardUuid, targetGroupId, index) => {
+    set((s) => {
+      if (!s.groups[targetGroupId]) return s;
+      // Remove card from top-level order and all group orders
+      const order = s.order.filter((id) => id !== cardUuid);
+      const groups: Record<string, GroupInfo> = {};
+      for (const [gid, info] of Object.entries(s.groups)) {
+        const filtered = info.order.filter((id) => id !== cardUuid);
+        groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
+      }
+      // Insert into target group's order
+      const target = groups[targetGroupId]!;
+      const targetOrder = [...target.order];
+      const insertIdx = index != null ? Math.min(index, targetOrder.length) : targetOrder.length;
+      targetOrder.splice(insertIdx, 0, cardUuid);
+      groups[targetGroupId] = { name: target.name, collapsed: target.collapsed, order: targetOrder };
+      return { order, groups };
+    });
+    await moveCardToGroupIpc(cardUuid, targetGroupId, index);
+  },
+  removeCardFromGroup: async (cardUuid, groupId, topLevelIndex) => {
+    set((s) => {
+      const group = s.groups[groupId];
+      if (!group) return s;
+      const newGroupOrder = group.order.filter((id) => id !== cardUuid);
+      // Insert card into top-level order
+      const order = [...s.order];
+      const insertIdx = topLevelIndex != null ? Math.min(topLevelIndex, order.length) : order.length;
+      order.splice(insertIdx, 0, cardUuid);
+      // Auto-dissolve if group becomes empty
+      if (newGroupOrder.length === 0) {
+        const remaining = Object.fromEntries(
+          Object.entries(s.groups).filter(([gid]) => gid !== groupId),
+        );
+        const prunedOrder = order.filter((id) => id !== `group:${groupId}`);
+        return { order: prunedOrder, groups: remaining };
+      }
+      return {
+        order,
+        groups: { ...s.groups, [groupId]: { ...group, order: newGroupOrder } },
+      };
+    });
+    await removeCardFromGroupIpc(cardUuid, groupId, topLevelIndex);
+  },
+  toggleGroupCollapse: async (groupId) => {
+    let newCollapsed = false;
+    set((s) => {
+      const group = s.groups[groupId];
+      if (!group) return s;
+      newCollapsed = !group.collapsed;
+      return {
+        groups: { ...s.groups, [groupId]: { ...group, collapsed: newCollapsed } },
+      };
+    });
+    await toggleGroupCollapsed(groupId, newCollapsed);
   },
 }));
