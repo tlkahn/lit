@@ -18,6 +18,8 @@ import { SortableCard } from "./SortableCard";
 import { LinkPicker } from "./LinkPicker";
 import type { CardboxAnnotation } from "../lib/ipc";
 
+const EMPTY_LINKED: CardboxAnnotation[] = [];
+
 export default function CardboxView() {
   const annotations = useCardboxStore((s) => s.annotations);
   const expandedUuid = useCardboxStore((s) => s.expandedUuid);
@@ -131,15 +133,16 @@ export default function CardboxView() {
     return map;
   }, [annotations]);
 
-  const getLinkedCards = useCallback(
-    (uuid: string): CardboxAnnotation[] => {
-      const linkedUuids = linkMap.get(uuid) ?? [];
-      return linkedUuids
+  const linkedCardsMap = useMemo(() => {
+    const map = new Map<string, CardboxAnnotation[]>();
+    for (const [uuid, linkedUuids] of linkMap) {
+      const resolved = linkedUuids
         .map((id) => annotationMap.get(id))
         .filter((a): a is CardboxAnnotation => a !== undefined);
-    },
-    [linkMap, annotationMap],
-  );
+      if (resolved.length > 0) map.set(uuid, resolved);
+    }
+    return map;
+  }, [linkMap, annotationMap]);
 
   const handleRemoveLink = useCallback(
     (targetUuid: string) => {
@@ -309,7 +312,7 @@ export default function CardboxView() {
                     expanded={expandedUuid === ann.uuid}
                     onToggleExpand={() => toggleExpand(ann.uuid)}
                     onNavigate={() => handleNavigate(ann)}
-                    linkedCards={getLinkedCards(ann.uuid)}
+                    linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
                     onFocusCard={handleFocusCard}
                     onRemoveLink={handleRemoveLink}
                   />
