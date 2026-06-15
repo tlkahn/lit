@@ -943,6 +943,7 @@ export function ReferenceLibrary() {
                                 data-testid="import-zotero-btn"
                                 disabled={importingZoteroKey === entry.key || previewingZoteroKey === entry.key}
                                 onClick={() => handleImportZotero(entry)}
+                                title="Import annotations from Zotero. Requires Zotero with PDF annotations. Configure in Settings > Zotero."
                                 className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline disabled:opacity-50"
                               >
                                 {importingZoteroKey === entry.key

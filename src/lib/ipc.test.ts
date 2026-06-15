@@ -132,6 +132,7 @@ import {
   importZoteroAll,
   checkZoteroAnnotationsAvailable,
   previewZoteroImport,
+  testZoteroConnection,
   type SecretStoreStatus,
   autoUnlockSecretStore,
   migrateSecretStore,
@@ -775,6 +776,8 @@ describe("ipc", () => {
         }
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
+        case "test_zotero_connection":
+          return { pdfCount: 42, annotationCount: 100, dbVersion: "6.0.30" };
         case "import_zotero_annotations":
           return { inserted: 5, unmatched: 1, skipped: 2, llm_placed: 0, modified: 0 };
         case "import_zotero_all":
@@ -2501,6 +2504,25 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("preview_zotero_import", {
       key: "smith2024",
       workspacePath: "/workspace",
+    });
+  });
+
+  it("testZoteroConnection invokes test_zotero_connection", async () => {
+    const result = await testZoteroConnection("/path/to/zotero.sqlite");
+    expect(result.pdfCount).toBe(42);
+    expect(result.annotationCount).toBe(100);
+    expect(result.dbVersion).toBe("6.0.30");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("test_zotero_connection", {
+      dbPath: "/path/to/zotero.sqlite",
+    });
+  });
+
+  it("testZoteroConnection sends null dbPath when omitted", async () => {
+    await testZoteroConnection();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("test_zotero_connection", {
+      dbPath: null,
     });
   });
 

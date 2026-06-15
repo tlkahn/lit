@@ -588,6 +588,22 @@ export async function importZoteroAll(
   return invoke<BatchImportResult>("import_zotero_all", { workspacePath });
 }
 
+// Zotero connection test
+
+export interface ZoteroConnectionInfo {
+  pdfCount: number;
+  annotationCount: number;
+  dbVersion: string;
+}
+
+export async function testZoteroConnection(
+  dbPath?: string,
+): Promise<ZoteroConnectionInfo> {
+  return invoke<ZoteroConnectionInfo>("test_zotero_connection", {
+    dbPath: dbPath ?? null,
+  });
+}
+
 // Zotero availability check
 
 export interface ZoteroAvailability {

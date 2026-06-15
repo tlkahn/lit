@@ -7,6 +7,7 @@ export const CATEGORIES = [
   "Cross-references",
   "Annotations",
   "LLM",
+  "Zotero",
   "Academic Export",
   "Experimental",
   "Keyboard Shortcuts",
@@ -295,6 +296,35 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     controlType: "textarea",
     testId: "settings-llmPromptQ",
     group: "Advanced",
+  },
+  // Zotero
+  {
+    category: "Zotero",
+    label: "Zotero Settings",
+    storeField: "zoteroDatabasePath",
+    jsonKey: "zotero.databasePath",
+    controlType: "custom",
+    testId: "settings-zoteroSearch",
+    keywords: ["zotero", "database", "sqlite", "annotations", "match threshold", "llm fallback"],
+  },
+  {
+    category: "Zotero",
+    label: "Match Threshold",
+    storeField: "zoteroMatchThreshold",
+    jsonKey: "zotero.matchThreshold",
+    controlType: "slider",
+    testId: "settings-zoteroMatchThreshold",
+    min: 0,
+    max: 1,
+    step: 0.05,
+  },
+  {
+    category: "Zotero",
+    label: "LLM Fallback for Unmatched Annotations",
+    storeField: "zoteroLlmFallback",
+    jsonKey: "zotero.llmFallback",
+    controlType: "toggle",
+    testId: "settings-zoteroLlmFallback",
   },
   // Academic Export
   {

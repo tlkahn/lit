@@ -55,6 +55,9 @@ export interface PreferencesState {
   defaultViewMode: ViewMode;
   annotationPrefillLastUsed: boolean;
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
+  zoteroDatabasePath: string;
+  zoteroMatchThreshold: number;
+  zoteroLlmFallback: boolean;
   companionSearchPath: string[];
   citationNotesDir: string;
   loaded: boolean;
@@ -186,6 +189,9 @@ function mapPreferences(prefs: Preferences) {
     academicIndicFont: (prefs["academic.indicFont"] as string) ?? "",
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
+    zoteroDatabasePath: (prefs["zotero.databasePath"] as string) ?? "",
+    zoteroMatchThreshold: (prefs["zotero.matchThreshold"] as number) ?? 0.65,
+    zoteroLlmFallback: (prefs["zotero.llmFallback"] as boolean) ?? false,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
   };
@@ -276,6 +282,9 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   academicIndicFont: "",
   annotationPrefillLastUsed: false,
   annotationBuilderDefaults: null,
+  zoteroDatabasePath: "",
+  zoteroMatchThreshold: 0.65,
+  zoteroLlmFallback: false,
   companionSearchPath: ["."],
   citationNotesDir: "references",
   loaded: false,

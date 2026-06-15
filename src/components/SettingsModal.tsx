@@ -19,6 +19,7 @@ import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { AcademicExportSettings } from "./AcademicExportSettings";
 import { LlmProviderSettings } from "./LlmProviderSettings";
 import { CompanionSearchPathSettings } from "./CompanionSearchPathSettings";
+import { ZoteroSettings } from "./ZoteroSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -483,6 +484,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           <div className="space-y-3">
                             {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions, ensureUnlocked }))}
                           </div>
+                          {cat === "Zotero" && (
+                            <div className="mb-3">
+                              <ZoteroSettings />
+                            </div>
+                          )}
                           {cat === "Academic Export" && (
                             <div className="mt-3">
                               <AcademicExportSettings />

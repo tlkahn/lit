@@ -1676,7 +1676,9 @@ fn resolve_import_settings(
     // Pre-check: Zotero database file exists
     if !std::path::Path::new(&db_path).exists() {
         return Err(format!(
-            "Zotero database not found at '{}'. Set the path in Preferences -> zotero.databasePath",
+            "Zotero database not found at '{}'. \
+             Open Settings > Zotero to configure the database path, \
+             or ensure Zotero is installed with its default data directory.",
             db_path
         ));
     }
@@ -2065,6 +2067,74 @@ pub async fn import_zotero_annotations(
     write_manifest(&root, &updated_manifest)?;
 
     Ok(outcome.result)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5.3: Test Zotero connection
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZoteroConnectionInfo {
+    pub pdf_count: usize,
+    pub annotation_count: usize,
+    pub db_version: String,
+}
+
+#[tauri::command]
+pub async fn test_zotero_connection(
+    db_path: Option<String>,
+    app_handle: tauri::AppHandle,
+) -> Result<ZoteroConnectionInfo, String> {
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let resolved_path = db_path
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| crate::cli::expand_tilde(&s))
+        .unwrap_or_else(|| zotero_db_path(&prefs));
+
+    if !std::path::Path::new(&resolved_path).exists() {
+        return Err(format!(
+            "Zotero database not found at '{}'",
+            resolved_path
+        ));
+    }
+
+    let path = resolved_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = open_zotero_db(&path)?;
+
+        let pdf_count: usize = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT ia.parentItemID) FROM itemAttachments ia WHERE ia.contentType = 'application/pdf'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count PDFs: {}", e))?;
+
+        let annotation_count: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM itemAnnotations",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count annotations: {}", e))?;
+
+        let db_version: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE setting='client' AND key='lastCompatibleVersion'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        Ok(ZoteroConnectionInfo {
+            pdf_count,
+            annotation_count,
+            db_version,
+        })
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))?
 }
 
 // ---------------------------------------------------------------------------
@@ -5396,5 +5466,48 @@ Some text
         assert!(result.is_some());
         let meta = result.unwrap();
         assert_eq!(meta.line_idx, 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // test_zotero_connection SQL tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_connection_counts_pdfs_and_annotations() {
+        let (_dir, db_path) = create_test_db();
+        let conn = open_zotero_db(&db_path).unwrap();
+
+        let pdf_count: usize = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT ia.parentItemID) FROM itemAttachments ia WHERE ia.contentType = 'application/pdf'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // Test DB has one PDF attachment (itemID=200, parentItemID=100)
+        assert_eq!(pdf_count, 1);
+
+        let annotation_count: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM itemAnnotations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // Test DB has 5 annotations (types 1, 2, 3, 4, 1)
+        assert_eq!(annotation_count, 5);
+    }
+
+    #[test]
+    fn test_connection_info_serialization() {
+        let info = ZoteroConnectionInfo {
+            pdf_count: 42,
+            annotation_count: 100,
+            db_version: "6.0.30".to_string(),
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["pdfCount"], 42);
+        assert_eq!(json["annotationCount"], 100);
+        assert_eq!(json["dbVersion"], "6.0.30");
     }
 }

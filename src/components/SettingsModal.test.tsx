@@ -133,10 +133,10 @@ describe("SettingsModal", () => {
 
   // --- Structural tests ---
 
-  it("renders all seven section headings", () => {
+  it("renders all eight section headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Zotero", "Academic Export", "Experimental"]);
   });
 
   it("has a scrollable content area", () => {
@@ -987,10 +987,10 @@ describe("SettingsModal", () => {
     }
   });
 
-  it("all 7 h3 headings render with correct text", () => {
+  it("all 8 h3 headings render with correct text", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Zotero", "Academic Export", "Experimental"]);
   });
 
   // --- Search input ---
@@ -1131,14 +1131,14 @@ describe("SettingsModal", () => {
     expect(headings).toEqual(["Cross-references", "Annotations"]);
   });
 
-  it("clearing search restores all 7 headings", () => {
+  it("clearing search restores all 8 headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Zotero", "Academic Export", "Experimental"]);
   });
 
   // Cycle 6.3 — Sidebar highlights categories with matches
