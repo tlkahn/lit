@@ -16,6 +16,7 @@ function CardNoteEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cancelingRef = useRef(false);
 
   const autoResize = useCallback(() => {
     const ta = textareaRef.current;
@@ -35,6 +36,7 @@ function CardNoteEditor({
   }, [note, autoResize]);
 
   const commitDraft = useCallback(() => {
+    if (cancelingRef.current) return;
     setEditing(false);
     const trimmed = draft.trim();
     if (trimmed !== (note ?? "")) {
@@ -81,7 +83,9 @@ function CardNoteEditor({
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.stopPropagation();
+              cancelingRef.current = true;
               setEditing(false);
+              cancelingRef.current = false;
             }
           }}
           rows={3}
