@@ -31,7 +31,6 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     const tag = (document.activeElement as HTMLElement)?.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT" || (document.activeElement as HTMLElement)?.isContentEditable) return;
 
-    // Escape from connections mode — must fire before card-focus check
     if (e.key === "Escape" && connectionsActive) {
       e.preventDefault();
       onExitConnections?.();
