@@ -197,7 +197,7 @@ export async function getMenuShortcuts(): Promise<KeyBinding[]> {
 
 export type DarkModePref = "light" | "dark" | "auto";
 
-export type ViewMode = "editor" | "mindmap" | "graph";
+export type ViewMode = "editor" | "mindmap" | "graph" | "cardbox";
 
 export interface Preferences {
   "workbench.colorTheme": string | null;

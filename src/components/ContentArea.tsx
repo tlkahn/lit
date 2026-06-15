@@ -21,6 +21,7 @@ import { useAppKeybindings } from "../hooks/useAppKeybindings";
 
 const LazyMindmapView = lazy(() => import("./MindmapView"));
 const LazyGraphView = lazy(() => import("./GraphView"));
+const LazyCardboxView = lazy(() => import("./CardboxView"));
 
 const EMPTY_FM: Record<string, unknown> = {};
 
@@ -299,7 +300,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   useEffect(() => {
     const setModeHandler = (e: Event) => {
       const mode = (e as CustomEvent<string>).detail;
-      if (mode === "editor" || mode === "mindmap" || mode === "graph") {
+      if (mode === "editor" || mode === "mindmap" || mode === "graph" || mode === "cardbox") {
         setViewMode(mode);
       }
     };
@@ -413,6 +414,14 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             >
               Graph
             </button>
+            <button
+              onClick={() => setViewMode("cardbox")}
+              aria-label="Cardbox"
+              title="Cardbox (⌘4)"
+              className={`rounded px-2 py-0.5 text-xs ${viewMode === "cardbox" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+            >
+              Cardbox
+            </button>
           </div>
         </div>
         {showFrontmatter && (
@@ -451,7 +460,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
           )
         )}
       </div>)}
-      <PaneContainer style={viewMode !== "editor" && focusedFileType === "markdown" ? { display: "none" } : undefined} />
+      <PaneContainer style={viewMode === "cardbox" || (viewMode !== "editor" && focusedFileType === "markdown") ? { display: "none" } : undefined} />
       {viewMode === "mindmap" && (
         <div
           data-testid="mindmap-view"
@@ -541,6 +550,13 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               onExit={() => setViewMode("editor")}
               onExportNetwork={(nodeId) => onExportNetwork?.(nodeId)}
             />
+          </Suspense>
+        </div>
+      )}
+      {viewMode === "cardbox" && (
+        <div data-testid="cardbox-view-wrapper" className="flex-1 min-h-0 overflow-hidden">
+          <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
+            <LazyCardboxView />
           </Suspense>
         </div>
       )}

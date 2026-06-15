@@ -115,6 +115,14 @@ export function ensureCommandsRegistered() {
     },
   });
   registerCommand({
+    id: "app.showCardboxView",
+    label: "Show Cardbox View",
+    keywords: ["cardbox", "annotations", "cards", "zettelkasten"],
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "cardbox" }));
+    },
+  });
+  registerCommand({
     id: "app.showLocalGraph",
     label: "Show Local Graph",
     keywords: ["graph", "local", "neighborhood"],
