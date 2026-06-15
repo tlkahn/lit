@@ -384,6 +384,8 @@ pub fn run() {
             commands::annotation::migrate_annotations,
             commands::annotation::get_mark_config,
             commands::cardbox::list_all_annotations,
+            commands::cardbox::read_cardbox_layout,
+            commands::cardbox::write_cardbox_layout,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,
