@@ -53,8 +53,8 @@ export interface CardboxStore {
   pinCard: (uuid: string) => Promise<void>;
   unpinCard: (uuid: string) => Promise<void>;
   setPinned: (pinned: string[]) => void;
-  setCardColor: (uuid: string, color: string) => void;
-  clearCardColor: (uuid: string) => void;
+  setCardColor: (uuid: string, color: string) => Promise<void>;
+  clearCardColor: (uuid: string) => Promise<void>;
   toggleColor: (color: string) => void;
 }
 
@@ -92,6 +92,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         // Collect all known group IDs so we can preserve them in order
         const groupIdSet = new Set(Object.keys(prunedGroups));
         const prunedPinned = s.pinned.filter((id) => newUuids.has(id));
+        const prunedColors: Record<string, string> = {};
+        for (const [uuid, color] of Object.entries(s.colors)) {
+          if (newUuids.has(uuid)) prunedColors[uuid] = color;
+        }
         return {
           annotations,
           loading: false,
@@ -99,6 +103,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           links: prunedLinks,
           groups: prunedGroups,
           pinned: prunedPinned,
+          colors: prunedColors,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
             // Keep entries that are either annotation UUIDs or group: refs
@@ -370,18 +375,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await unpinCardboxCard(uuid);
   },
   setPinned: (pinned) => set({ pinned }),
-  setCardColor: (uuid, color) => {
+  setCardColor: async (uuid, color) => {
     set((s) => ({
       colors: { ...s.colors, [uuid]: color },
     }));
-    setCardColorIpc(uuid, color);
+    await setCardColorIpc(uuid, color);
   },
-  clearCardColor: (uuid) => {
+  clearCardColor: async (uuid) => {
     set((s) => {
       const { [uuid]: _, ...rest } = s.colors;
       return { colors: rest };
     });
-    clearCardColorIpc(uuid);
+    await clearCardColorIpc(uuid);
   },
   toggleColor: (color) =>
     set((s) => {

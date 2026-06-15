@@ -25,9 +25,11 @@ export class CardboxErrorBoundary extends Component<Props, State> {
       loading: false,
       searchQuery: "",
       activeTypes: null,
+      activeColors: null,
       order: [],
       links: [],
       pinned: [],
+      colors: {},
     });
     this.setState({ hasError: false });
   };
