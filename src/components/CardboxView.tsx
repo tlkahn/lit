@@ -15,8 +15,9 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
+import { SortableGroup } from "./SortableGroup";
 import { LinkPicker } from "./LinkPicker";
-import type { CardboxAnnotation } from "../lib/ipc";
+import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
 
@@ -37,6 +38,9 @@ export default function CardboxView() {
   const links = useCardboxStore((s) => s.links);
   const addLink = useCardboxStore((s) => s.addLink);
   const removeLink = useCardboxStore((s) => s.removeLink);
+  const groups = useCardboxStore((s) => s.groups);
+  const renameGroup = useCardboxStore((s) => s.renameGroup);
+  const toggleGroupCollapse = useCardboxStore((s) => s.toggleGroupCollapse);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -105,7 +109,7 @@ export default function CardboxView() {
     });
   }, [annotations, searchQuery, activeTypes]);
 
-  // Sort filtered annotations by user's custom order
+  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
   const sortedAnnotations = useMemo(() => {
     if (order.length === 0) return filteredAnnotations;
     const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
@@ -115,6 +119,61 @@ export default function CardboxView() {
       return ai - bi;
     });
   }, [filteredAnnotations, order]);
+
+  // Build filtered UUID set for quick membership tests
+  const filteredUuidSet = useMemo(
+    () => new Set(filteredAnnotations.map((a) => a.uuid)),
+    [filteredAnnotations],
+  );
+
+  const annotationMap = useMemo(() => {
+    const map = new Map<string, CardboxAnnotation>();
+    for (const ann of annotations) map.set(ann.uuid, ann);
+    return map;
+  }, [annotations]);
+
+  // Two-tier render entries: bare cards + group containers
+  type RenderEntry =
+    | { kind: "card"; annotation: CardboxAnnotation }
+    | { kind: "group"; groupId: string; info: GroupInfo; cards: CardboxAnnotation[] };
+
+  const renderEntries = useMemo((): RenderEntry[] => {
+    const entries: RenderEntry[] = [];
+    for (const entry of order) {
+      if (entry.startsWith("group:")) {
+        const gid = entry.slice(6);
+        const group = groups[gid];
+        if (!group) continue;
+        const groupAnns = group.order
+          .map((uuid) => annotationMap.get(uuid))
+          .filter((a): a is CardboxAnnotation => a !== undefined && filteredUuidSet.has(a.uuid));
+        if (groupAnns.length > 0) {
+          entries.push({ kind: "group", groupId: gid, info: group, cards: groupAnns });
+        }
+      } else {
+        const ann = annotationMap.get(entry);
+        if (ann && filteredUuidSet.has(ann.uuid)) {
+          entries.push({ kind: "card", annotation: ann });
+        }
+      }
+    }
+    // Add any filtered annotations not present in order
+    const inOrder = new Set(
+      order.flatMap((e) => {
+        if (e.startsWith("group:")) {
+          const g = groups[e.slice(6)];
+          return g ? g.order : [];
+        }
+        return [e];
+      }),
+    );
+    for (const ann of filteredAnnotations) {
+      if (!inOrder.has(ann.uuid)) {
+        entries.push({ kind: "card", annotation: ann });
+      }
+    }
+    return entries;
+  }, [order, groups, annotationMap, filteredUuidSet, filteredAnnotations]);
 
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -126,12 +185,6 @@ export default function CardboxView() {
     }
     return map;
   }, [links]);
-
-  const annotationMap = useMemo(() => {
-    const map = new Map<string, CardboxAnnotation>();
-    for (const ann of annotations) map.set(ann.uuid, ann);
-    return map;
-  }, [annotations]);
 
   const linkedCardsMap = useMemo(() => {
     const map = new Map<string, CardboxAnnotation[]>();
@@ -286,7 +339,7 @@ export default function CardboxView() {
 
       {/* Card grid */}
       <div className="flex-1 overflow-y-auto p-6" data-testid="cardbox-grid">
-        {sortedAnnotations.length === 0 ? (
+        {renderEntries.length === 0 ? (
           <div className="flex h-full items-center justify-center text-text-faint" data-testid="cardbox-no-results">
             No matching annotations
           </div>
@@ -297,7 +350,12 @@ export default function CardboxView() {
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            <SortableContext items={sortedAnnotations.map((a) => a.uuid)} strategy={rectSortingStrategy}>
+            <SortableContext
+              items={renderEntries.map((e) =>
+                e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
+              )}
+              strategy={rectSortingStrategy}
+            >
               <div
                 ref={gridRef}
                 className="grid"
@@ -309,18 +367,36 @@ export default function CardboxView() {
                 }}
                 onKeyDown={handleGridKeyDown}
               >
-                {sortedAnnotations.map((ann) => (
-                  <SortableCard
-                    key={ann.uuid}
-                    annotation={ann}
-                    expanded={expandedUuid === ann.uuid}
-                    onToggleExpand={() => toggleExpand(ann.uuid)}
-                    onNavigate={() => handleNavigate(ann)}
-                    linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
-                    onFocusCard={handleFocusCard}
-                    onRemoveLink={handleRemoveLink}
-                  />
-                ))}
+                {renderEntries.map((entry) =>
+                  entry.kind === "card" ? (
+                    <SortableCard
+                      key={entry.annotation.uuid}
+                      annotation={entry.annotation}
+                      expanded={expandedUuid === entry.annotation.uuid}
+                      onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
+                      onNavigate={() => handleNavigate(entry.annotation)}
+                      linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
+                      onFocusCard={handleFocusCard}
+                      onRemoveLink={handleRemoveLink}
+                    />
+                  ) : (
+                    <SortableGroup
+                      key={`group:${entry.groupId}`}
+                      groupId={entry.groupId}
+                      info={entry.info}
+                      cards={entry.cards}
+                      allFilteredCount={groups[entry.groupId]?.order.length ?? 0}
+                      expandedUuid={expandedUuid}
+                      linkedCardsMap={linkedCardsMap}
+                      onToggleExpand={toggleExpand}
+                      onNavigate={handleNavigate}
+                      onFocusCard={handleFocusCard}
+                      onRemoveLink={handleRemoveLink}
+                      onToggleCollapse={() => toggleGroupCollapse(entry.groupId)}
+                      onRename={(name: string) => renameGroup(entry.groupId, name)}
+                    />
+                  ),
+                )}
               </div>
             </SortableContext>
             <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
