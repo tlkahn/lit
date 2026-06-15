@@ -233,11 +233,14 @@ export default function CardboxView() {
   );
 
   const handleCardContextMenu = useCallback(
-    (uuid: string, isPinned: boolean) => (e: React.MouseEvent) => {
+    (e: React.MouseEvent) => {
       e.preventDefault();
-      showCardboxContextMenu(uuid, isPinned);
+      const card = (e.target as HTMLElement).closest<HTMLElement>("[data-uuid]");
+      if (!card) return;
+      const uuid = card.dataset.uuid!;
+      showCardboxContextMenu(uuid, pinnedSet.has(uuid));
     },
-    [],
+    [pinnedSet],
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -258,30 +261,36 @@ export default function CardboxView() {
     const wasInPinned = oldIndex < visiblePinnedCount;
     const nowInPinned = newIndex < visiblePinnedCount;
 
-    if (wasInPinned && nowInPinned) {
-      // Reorder within pinned section
-      const oldPinIdx = visiblePinnedUuids.indexOf(activeUuid);
-      const newPinIdx = newIndex;
-      const reordered = arrayMove(visiblePinnedUuids, oldPinIdx, newPinIdx);
-      // Merge back non-visible pinned items (filtered out by type)
+    const mergePinnedOrder = (reorderedVisible: string[]) => {
       const visibleSet = new Set(visiblePinnedUuids);
       const fullPinned: string[] = [];
       let vi = 0;
       for (const uuid of pinned) {
         if (visibleSet.has(uuid)) {
-          fullPinned.push(reordered[vi++]!);
+          fullPinned.push(reorderedVisible[vi++]!);
         } else {
           fullPinned.push(uuid);
         }
       }
-      setPinned(fullPinned);
+      while (vi < reorderedVisible.length) {
+        fullPinned.push(reorderedVisible[vi++]!);
+      }
+      return fullPinned;
+    };
+
+    if (wasInPinned && nowInPinned) {
+      const oldPinIdx = visiblePinnedUuids.indexOf(activeUuid);
+      const reordered = arrayMove(visiblePinnedUuids, oldPinIdx, newIndex);
+      setPinned(mergePinnedOrder(reordered));
       debouncedSave();
     } else if (!wasInPinned && !nowInPinned) {
-      // Reorder within unpinned section — same as original logic
       const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
       const withoutActive = currentOrder.filter((id) => id !== activeUuid);
-      const newVisibleOrder = arrayMove(visibleIds, oldIndex, newIndex);
-      const insertAfterItem = newIndex > 0 ? newVisibleOrder[newIndex - 1] ?? null : null;
+      const unpinnedIds = visibleIds.slice(visiblePinnedCount);
+      const unpinnedOldIdx = oldIndex - visiblePinnedCount;
+      const unpinnedNewIdx = newIndex - visiblePinnedCount;
+      const newUnpinnedOrder = arrayMove(unpinnedIds, unpinnedOldIdx, unpinnedNewIdx);
+      const insertAfterItem = unpinnedNewIdx > 0 ? newUnpinnedOrder[unpinnedNewIdx - 1] ?? null : null;
       let insertAt: number;
       if (insertAfterItem === null) {
         insertAt = 0;
@@ -292,28 +301,25 @@ export default function CardboxView() {
       setOrder(withoutActive);
       debouncedSave();
     } else if (!wasInPinned && nowInPinned) {
-      // Cross-boundary: unpinned -> pinned = pin at target position
-      const newPinned = [...visiblePinnedUuids];
-      newPinned.splice(newIndex, 0, activeUuid);
-      // Merge back non-visible pinned items
-      const visibleSet = new Set(visiblePinnedUuids);
-      const fullPinned: string[] = [];
-      let vi = 0;
-      for (const uuid of pinned) {
-        if (visibleSet.has(uuid)) {
-          fullPinned.push(newPinned[vi++]!);
-        } else {
-          fullPinned.push(uuid);
-        }
-      }
-      // Append the newly pinned card if not yet inserted (when all existing were non-visible)
-      if (!fullPinned.includes(activeUuid)) {
-        fullPinned.splice(newIndex, 0, activeUuid);
-      }
-      setPinned(fullPinned);
+      const newVisible = [...visiblePinnedUuids];
+      newVisible.splice(newIndex, 0, activeUuid);
+      setPinned(mergePinnedOrder(newVisible));
       debouncedSave();
     } else {
-      // Cross-boundary: pinned -> unpinned = unpin the card
+      // Pinned -> unpinned: unpin and insert at drop position
+      const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
+      const withoutActive = currentOrder.filter((id) => id !== activeUuid);
+      const unpinnedIds = visibleIds.slice(visiblePinnedCount);
+      const unpinnedNewIdx = newIndex - visiblePinnedCount;
+      const insertAfterItem = unpinnedNewIdx > 0 ? unpinnedIds[unpinnedNewIdx - 1] ?? null : null;
+      let insertAt: number;
+      if (insertAfterItem === null) {
+        insertAt = 0;
+      } else {
+        insertAt = withoutActive.indexOf(insertAfterItem) + 1;
+      }
+      withoutActive.splice(insertAt, 0, activeUuid);
+      setOrder(withoutActive);
       unpinCard(activeUuid);
       debouncedSave();
     }
@@ -404,7 +410,7 @@ export default function CardboxView() {
                     isPinned={pinnedSet.has(ann.uuid)}
                     onToggleExpand={() => toggleExpand(ann.uuid)}
                     onNavigate={() => handleNavigate(ann)}
-                    onContextMenu={handleCardContextMenu(ann.uuid, pinnedSet.has(ann.uuid))}
+                    onContextMenu={handleCardContextMenu}
                     linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
                     onFocusCard={handleFocusCard}
                     onRemoveLink={handleRemoveLink}
