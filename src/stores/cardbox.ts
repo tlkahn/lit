@@ -31,6 +31,7 @@ export interface CardboxStore {
   groups: Record<string, GroupInfo>;
   pinned: string[];
   notes: Record<string, CardNote>;
+  layoutVersion: number;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -69,6 +70,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   groups: {},
   pinned: [],
   notes: {},
+  layoutVersion: 3,
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -151,20 +153,19 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const groups = layout.groups ?? {};
       const notes = layout.notes ?? {};
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes });
+        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version });
       } else {
-        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes });
+        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links, groups, pinned, notes } = get();
-    const hasGroups = Object.keys(groups).length > 0;
+    const { order, links, groups, pinned, notes, layoutVersion } = get();
     try {
       await writeCardboxLayout({
-        version: Math.max(hasGroups ? 3 : 2, 3),
+        version: Math.max(layoutVersion, 3),
         order,
         links,
         groups,

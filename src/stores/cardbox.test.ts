@@ -48,6 +48,7 @@ describe("cardbox store", () => {
       links: [],
       groups: {},
       pinned: [],
+      notes: {},
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;

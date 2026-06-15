@@ -26,6 +26,7 @@ function CardNoteEditor({
   }, []);
 
   const startEditing = useCallback(() => {
+    cancelingRef.current = false;
     setDraft(note ?? "");
     setEditing(true);
     // Auto-focus + resize after mount
@@ -85,7 +86,6 @@ function CardNoteEditor({
               e.stopPropagation();
               cancelingRef.current = true;
               setEditing(false);
-              cancelingRef.current = false;
             }
           }}
           rows={3}

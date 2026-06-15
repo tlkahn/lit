@@ -280,6 +280,13 @@ export default function CardboxView() {
       const textarea = card.querySelector<HTMLTextAreaElement>('[data-testid="card-note-textarea"]');
       if (textarea) {
         textarea.focus();
+        return;
+      }
+      const trigger =
+        card.querySelector<HTMLButtonElement>('[data-testid="card-note-add"]') ??
+        card.querySelector<HTMLButtonElement>('[data-testid="card-note-edit"]');
+      if (trigger) {
+        trigger.click();
       }
     },
     expandedUuid,
