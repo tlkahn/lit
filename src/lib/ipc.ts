@@ -1236,6 +1236,7 @@ export interface CardboxLayout {
   version: number;
   order: string[];
   links: [string, string][];
+  pinned: string[];
 }
 
 export async function readCardboxLayout(): Promise<CardboxLayout> {
@@ -1252,6 +1253,14 @@ export async function addCardboxLink(a: string, b: string): Promise<void> {
 
 export async function removeCardboxLink(a: string, b: string): Promise<void> {
   return invoke<void>("remove_cardbox_link", { a, b });
+}
+
+export async function pinCardboxCard(uuid: string): Promise<void> {
+  return invoke<void>("pin_cardbox_card", { uuid });
+}
+
+export async function unpinCardboxCard(uuid: string): Promise<void> {
+  return invoke<void>("unpin_cardbox_card", { uuid });
 }
 
 // Merge/Split preview commands
