@@ -36,12 +36,16 @@ export interface CardboxStore {
   notes: Record<string, CardNote>;
   layoutVersion: number;
   colors: Record<string, string>;
+  connectionsForUuid: string | null;
+  connectionsSavedFilters: { searchQuery: string; activeTypes: Set<string> | null } | null;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
   setSearchQuery: (query: string) => void;
   toggleType: (type: string) => void;
   resetFilters: () => void;
+  enterConnections: (uuid: string) => void;
+  exitConnections: () => void;
   setOrder: (order: string[]) => void;
   loadLayout: () => Promise<void>;
   saveLayout: () => Promise<void>;
@@ -80,6 +84,8 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   notes: {},
   layoutVersion: 3,
   colors: {},
+  connectionsForUuid: null,
+  connectionsSavedFilters: null,
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -110,10 +116,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         for (const [uuid, color] of Object.entries(s.colors)) {
           if (newUuids.has(uuid)) prunedColors[uuid] = color;
         }
+        const connectionsStale = s.connectionsForUuid != null && !newUuids.has(s.connectionsForUuid);
         return {
+          ...(connectionsStale ? {
+            searchQuery: s.connectionsSavedFilters?.searchQuery ?? s.searchQuery,
+            connectionsForUuid: null,
+            connectionsSavedFilters: null,
+          } : {}),
           annotations,
           loading: false,
-          activeTypes: s.activeTypes === null ? types : s.activeTypes,
+          activeTypes: connectionsStale
+            ? (s.connectionsSavedFilters?.activeTypes ?? types)
+            : (s.activeTypes === null && !s.connectionsForUuid ? types : s.activeTypes),
           links: prunedLinks,
           groups: prunedGroups,
           pinned: prunedPinned,
@@ -160,6 +174,24 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       searchQuery: "",
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
       activeColors: null,
+      connectionsForUuid: null,
+      connectionsSavedFilters: null,
+    })),
+  enterConnections: (uuid) =>
+    set((s) => ({
+      connectionsSavedFilters: s.connectionsForUuid === null
+        ? { searchQuery: s.searchQuery, activeTypes: s.activeTypes }
+        : s.connectionsSavedFilters,
+      searchQuery: "",
+      activeTypes: null,
+      connectionsForUuid: uuid,
+    })),
+  exitConnections: () =>
+    set((s) => ({
+      searchQuery: s.connectionsSavedFilters?.searchQuery ?? "",
+      activeTypes: s.connectionsSavedFilters?.activeTypes ?? null,
+      connectionsForUuid: null,
+      connectionsSavedFilters: null,
     })),
   setOrder: (order) => set({ order }),
   loadLayout: async () => {

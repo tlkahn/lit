@@ -15,13 +15,14 @@ interface SortableCardProps {
   linkedCards?: CardboxAnnotation[];
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
+  onShowConnections?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   note?: string;
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu, note, onSetNote, onExportNote }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onShowConnections, onContextMenu, note, onSetNote, onExportNote }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -65,6 +66,7 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, i
           note={note}
           onSetNote={onSetNote}
           onExportNote={onExportNote}
+          onShowConnections={onShowConnections}
         />
       </div>
     </div>

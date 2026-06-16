@@ -51,6 +51,8 @@ describe("cardbox store", () => {
       pinned: [],
       notes: {},
       colors: {},
+      connectionsForUuid: null,
+      connectionsSavedFilters: null,
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
@@ -676,6 +678,131 @@ describe("cardbox store", () => {
   it("loadLayout populates pinned", async () => {
     await useCardboxStore.getState().loadLayout();
     expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
+  });
+
+  // --- Connections mode tests ---
+
+  describe("connections mode", () => {
+    it("enterConnections saves filters and sets connectionsForUuid", async () => {
+      await useCardboxStore.getState().fetchAnnotations();
+      useCardboxStore.getState().setSearchQuery("test");
+      useCardboxStore.getState().enterConnections("u1");
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBe("u1");
+      expect(s.searchQuery).toBe("");
+      expect(s.activeTypes).toBeNull();
+      expect(s.connectionsSavedFilters).toEqual({
+        searchQuery: "test",
+        activeTypes: new Set(["note", "question"]),
+      });
+    });
+
+    it("enterConnections preserves original saved filters when switching cards", () => {
+      useCardboxStore.setState({
+        searchQuery: "original",
+        activeTypes: new Set(["note", "question"]),
+      });
+      useCardboxStore.getState().enterConnections("u1");
+      useCardboxStore.getState().enterConnections("u2");
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBe("u2");
+      expect(s.connectionsSavedFilters).toEqual({
+        searchQuery: "original",
+        activeTypes: new Set(["note", "question"]),
+      });
+    });
+
+    it("exitConnections restores saved filters", async () => {
+      await useCardboxStore.getState().fetchAnnotations();
+      useCardboxStore.getState().setSearchQuery("test");
+      useCardboxStore.getState().enterConnections("u1");
+      useCardboxStore.getState().exitConnections();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBeNull();
+      expect(s.connectionsSavedFilters).toBeNull();
+      expect(s.searchQuery).toBe("test");
+      expect(s.activeTypes).toEqual(new Set(["note", "question"]));
+    });
+
+    it("exitConnections with no saved filters falls back to defaults", () => {
+      useCardboxStore.setState({ connectionsForUuid: "u1", connectionsSavedFilters: null });
+      useCardboxStore.getState().exitConnections();
+      const s = useCardboxStore.getState();
+      expect(s.searchQuery).toBe("");
+      expect(s.activeTypes).toBeNull();
+    });
+
+    it("resetFilters clears connections mode", async () => {
+      await useCardboxStore.getState().fetchAnnotations();
+      useCardboxStore.getState().enterConnections("u1");
+      useCardboxStore.getState().resetFilters();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBeNull();
+      expect(s.connectionsSavedFilters).toBeNull();
+    });
+
+    it("fetchAnnotations clears connections when focused card is deleted", async () => {
+      useCardboxStore.setState({
+        connectionsForUuid: "stale-uuid",
+        connectionsSavedFilters: { searchQuery: "", activeTypes: null },
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBeNull();
+      expect(s.connectionsSavedFilters).toBeNull();
+    });
+
+    it("fetchAnnotations restores saved filters when target is pruned", async () => {
+      useCardboxStore.setState({
+        searchQuery: "during-connections",
+        activeTypes: null,
+        connectionsForUuid: "stale-uuid",
+        connectionsSavedFilters: { searchQuery: "original", activeTypes: new Set(["note"]) },
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBeNull();
+      expect(s.connectionsSavedFilters).toBeNull();
+      expect(s.searchQuery).toBe("original");
+      expect(s.activeTypes).toEqual(new Set(["note"]));
+    });
+
+    it("fetchAnnotations falls back to current filters when saved filters are null on prune", async () => {
+      useCardboxStore.setState({
+        searchQuery: "during-connections",
+        activeTypes: null,
+        connectionsForUuid: "stale-uuid",
+        connectionsSavedFilters: null,
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBeNull();
+      expect(s.searchQuery).toBe("during-connections");
+      // activeTypes falls back to all types since savedFilters is null
+      expect(s.activeTypes).toEqual(new Set(["note", "question"]));
+    });
+
+    it("fetchAnnotations preserves connections when focused card still exists", async () => {
+      useCardboxStore.setState({
+        connectionsForUuid: "u1",
+        connectionsSavedFilters: { searchQuery: "old", activeTypes: null },
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.connectionsForUuid).toBe("u1");
+      expect(s.connectionsSavedFilters).toEqual({ searchQuery: "old", activeTypes: null });
+    });
+
+    it("fetchAnnotations does not overwrite activeTypes=null during connections mode", async () => {
+      useCardboxStore.setState({
+        connectionsForUuid: "u1",
+        activeTypes: null,
+        connectionsSavedFilters: { searchQuery: "", activeTypes: new Set(["note"]) },
+      });
+      await useCardboxStore.getState().fetchAnnotations();
+      const s = useCardboxStore.getState();
+      expect(s.activeTypes).toBeNull();
+    });
   });
 
   it("setPinned updates pinned array", () => {

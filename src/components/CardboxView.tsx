@@ -24,6 +24,7 @@ import { parseActiveId, parseOverId } from "../lib/dndIds";
 import type { ParsedActiveId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
 
@@ -70,6 +71,9 @@ export default function CardboxView() {
   const colors = useCardboxStore((s) => s.colors);
   const setCardColor = useCardboxStore((s) => s.setCardColor);
   const clearCardColor = useCardboxStore((s) => s.clearCardColor);
+  const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
+  const enterConnections = useCardboxStore((s) => s.enterConnections);
+  const exitConnections = useCardboxStore((s) => s.exitConnections);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -166,47 +170,6 @@ export default function CardboxView() {
     });
   }, [annotations, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet, notes]);
 
-  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
-  const visiblePinnedUuids = useMemo(() => {
-    const filteredSet = new Set(filteredAnnotations.map((a) => a.uuid));
-    return pinned.filter((uuid) => filteredSet.has(uuid));
-  }, [filteredAnnotations, pinned]);
-
-  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
-  const sortedAnnotations = useMemo(() => {
-    const annMap = new Map(filteredAnnotations.map((a) => [a.uuid, a]));
-    const pinnedSection = visiblePinnedUuids
-      .map((uuid) => annMap.get(uuid)!)
-      .filter(Boolean);
-    const pinnedUuids = new Set(visiblePinnedUuids);
-    const unpinnedFiltered = filteredAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
-    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
-    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
-    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
-      const ai = orderMap.get(a.uuid) ?? Infinity;
-      const bi = orderMap.get(b.uuid) ?? Infinity;
-      return ai - bi;
-    });
-    return [...pinnedSection, ...unpinnedSorted];
-  }, [filteredAnnotations, order, visiblePinnedUuids]);
-
-  // Build filtered UUID set for quick membership tests
-  const filteredUuidSet = useMemo(
-    () => new Set(filteredAnnotations.map((a) => a.uuid)),
-    [filteredAnnotations],
-  );
-
-  const annotationMap = useMemo(() => {
-    const map = new Map<string, CardboxAnnotation>();
-    for (const ann of annotations) map.set(ann.uuid, ann);
-    return map;
-  }, [annotations]);
-
-  const renderEntries = useMemo(
-    () => buildRenderEntries(order, groups, annotationMap, filteredUuidSet, filteredAnnotations, pinned),
-    [order, groups, annotationMap, filteredUuidSet, filteredAnnotations, pinned],
-  );
-
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const [a, b] of links) {
@@ -217,6 +180,68 @@ export default function CardboxView() {
     }
     return map;
   }, [links]);
+
+  const connectionsUuidSet = useMemo(() => {
+    if (!connectionsForUuid) return null;
+    const uuidSet = new Set<string>();
+    uuidSet.add(connectionsForUuid);
+    const linked = linkMap.get(connectionsForUuid);
+    if (linked) for (const uuid of linked) uuidSet.add(uuid);
+    for (const group of Object.values(groups)) {
+      if (group.order.includes(connectionsForUuid)) {
+        for (const uuid of group.order) uuidSet.add(uuid);
+      }
+    }
+    return uuidSet;
+  }, [connectionsForUuid, linkMap, groups]);
+
+  const effectiveAnnotations = useMemo(
+    () => connectionsUuidSet
+      ? filteredAnnotations.filter((a) => connectionsUuidSet.has(a.uuid))
+      : filteredAnnotations,
+    [filteredAnnotations, connectionsUuidSet],
+  );
+
+  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
+  const visiblePinnedUuids = useMemo(() => {
+    const filteredSet = new Set(effectiveAnnotations.map((a) => a.uuid));
+    return pinned.filter((uuid) => filteredSet.has(uuid));
+  }, [effectiveAnnotations, pinned]);
+
+  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
+  const sortedAnnotations = useMemo(() => {
+    const annMap = new Map(effectiveAnnotations.map((a) => [a.uuid, a]));
+    const pinnedSection = visiblePinnedUuids
+      .map((uuid) => annMap.get(uuid)!)
+      .filter(Boolean);
+    const pinnedUuids = new Set(visiblePinnedUuids);
+    const unpinnedFiltered = effectiveAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
+    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
+    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
+    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
+      const ai = orderMap.get(a.uuid) ?? Infinity;
+      const bi = orderMap.get(b.uuid) ?? Infinity;
+      return ai - bi;
+    });
+    return [...pinnedSection, ...unpinnedSorted];
+  }, [effectiveAnnotations, order, visiblePinnedUuids]);
+
+  // Build filtered UUID set for quick membership tests
+  const filteredUuidSet = useMemo(
+    () => new Set(effectiveAnnotations.map((a) => a.uuid)),
+    [effectiveAnnotations],
+  );
+
+  const annotationMap = useMemo(() => {
+    const map = new Map<string, CardboxAnnotation>();
+    for (const ann of annotations) map.set(ann.uuid, ann);
+    return map;
+  }, [annotations]);
+
+  const renderEntries = useMemo(
+    () => buildRenderEntries(order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned),
+    [order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned],
+  );
 
   const linkedCardsMap = useMemo(() => {
     const map = new Map<string, CardboxAnnotation[]>();
@@ -311,7 +336,12 @@ export default function CardboxView() {
         trigger.click();
       }
     },
+    onShowConnections: () => {
+      if (expandedUuid) enterConnections(expandedUuid);
+    },
+    onExitConnections: () => exitConnections(),
     expandedUuid,
+    connectionsActive: !!connectionsForUuid,
     itemCount: sortedAnnotations.length,
   });
 
@@ -639,53 +669,79 @@ export default function CardboxView() {
     <div className="flex h-full flex-col overflow-hidden" data-testid="cardbox-view">
       {/* Search + filter controls */}
       <div className="shrink-0 space-y-2 border-b border-border px-6 py-3">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search annotations…"
-          className="w-full rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-faint outline-none focus:ring-1 focus:ring-interactive-accent"
-          data-testid="cardbox-search"
-        />
-        {allTypes.length > 1 && (
-          <div className="flex flex-wrap gap-1" data-testid="cardbox-type-chips">
-            {allTypes.map((type) => (
+        {connectionsForUuid ? (
+          <>
+            <div className="flex items-center gap-2" data-testid="cardbox-breadcrumb">
+              <span className="text-sm text-text-muted">Connections for:</span>
+              <span className="truncate text-sm font-medium text-text-normal">
+                {(() => { const ann = annotationMap.get(connectionsForUuid); return truncateBody(ann?.body || ann?.original || null); })()}
+              </span>
               <button
-                key={type}
-                onClick={() => toggleType(type)}
-                className={`rounded-full px-2 py-0.5 text-[11px] transition-opacity duration-150 ${
-                  activeTypes === null || activeTypes.has(type) ? "opacity-100" : "opacity-40"
-                }`}
-                data-annotation-type={type}
-                data-testid={`chip-${type}`}
+                onClick={() => exitConnections()}
+                className="ml-auto shrink-0 rounded p-0.5 text-text-faint hover:text-text-normal"
+                aria-label="Exit connections view"
+                data-testid="cardbox-breadcrumb-exit"
               >
-                {type}
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-4 w-4">
+                  <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
+                </svg>
               </button>
-            ))}
-          </div>
+            </div>
+            <div className="text-xs text-text-faint" data-testid="cardbox-count">
+              {effectiveAnnotations.length} connected card{effectiveAnnotations.length !== 1 ? "s" : ""}
+            </div>
+          </>
+        ) : (
+          <>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search annotations…"
+              className="w-full rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-faint outline-none focus:ring-1 focus:ring-interactive-accent"
+              data-testid="cardbox-search"
+            />
+            {allTypes.length > 1 && (
+              <div className="flex flex-wrap gap-1" data-testid="cardbox-type-chips">
+                {allTypes.map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => toggleType(type)}
+                    className={`rounded-full px-2 py-0.5 text-[11px] transition-opacity duration-150 ${
+                      activeTypes === null || activeTypes.has(type) ? "opacity-100" : "opacity-40"
+                    }`}
+                    data-annotation-type={type}
+                    data-testid={`chip-${type}`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            )}
+            {usedColors.length >= 2 && (
+              <div className="flex flex-wrap gap-1" data-testid="cardbox-color-chips">
+                {usedColors.map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => toggleColor(color)}
+                    className="h-5 w-5 rounded-full border border-border transition-opacity duration-150"
+                    style={{
+                      backgroundColor: `rgba(var(--chip-${color}), 0.6)`,
+                      opacity: effectiveActiveColors === null || effectiveActiveColors.has(color) ? 1 : 0.3,
+                    }}
+                    data-testid={`color-chip-${color}`}
+                    aria-label={`Filter by ${color}`}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="text-xs text-text-faint" data-testid="cardbox-count">
+              {filteredAnnotations.length === annotations.length
+                ? `${annotations.length} annotations`
+                : `${filteredAnnotations.length} of ${annotations.length} annotations`}
+            </div>
+          </>
         )}
-        {usedColors.length >= 2 && (
-          <div className="flex flex-wrap gap-1" data-testid="cardbox-color-chips">
-            {usedColors.map((color) => (
-              <button
-                key={color}
-                onClick={() => toggleColor(color)}
-                className="h-5 w-5 rounded-full border border-border transition-opacity duration-150"
-                style={{
-                  backgroundColor: `rgba(var(--chip-${color}), 0.6)`,
-                  opacity: effectiveActiveColors === null || effectiveActiveColors.has(color) ? 1 : 0.3,
-                }}
-                data-testid={`color-chip-${color}`}
-                aria-label={`Filter by ${color}`}
-              />
-            ))}
-          </div>
-        )}
-        <div className="text-xs text-text-faint" data-testid="cardbox-count">
-          {filteredAnnotations.length === annotations.length
-            ? `${annotations.length} annotations`
-            : `${filteredAnnotations.length} of ${annotations.length} annotations`}
-        </div>
       </div>
 
       {/* Card grid */}
@@ -736,6 +792,7 @@ export default function CardboxView() {
                       note={notesMap[entry.annotation.uuid]}
                       onSetNote={(body: string) => handleSetNote(entry.annotation.uuid, body)}
                       onExportNote={() => handleExportNote(entry.annotation.uuid)}
+                      onShowConnections={() => enterConnections(entry.annotation.uuid)}
                       onContextMenu={(e) => handleCardContextMenu(entry.annotation.uuid, e)}
                     />
                   ) : (
@@ -755,6 +812,7 @@ export default function CardboxView() {
                       notesMap={notes}
                       onSetNote={handleSetNote}
                       onExportNote={handleExportNote}
+                      onShowConnections={(uuid: string) => enterConnections(uuid)}
                       onToggleCollapse={() => toggleGroupCollapse(entry.groupId)}
                       onRename={(name: string) => renameGroup(entry.groupId, name)}
                       onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}

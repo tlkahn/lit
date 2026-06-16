@@ -30,6 +30,8 @@ export class CardboxErrorBoundary extends Component<Props, State> {
       links: [],
       pinned: [],
       colors: {},
+      connectionsForUuid: null,
+      connectionsSavedFilters: null,
     });
     this.setState({ hasError: false });
   };

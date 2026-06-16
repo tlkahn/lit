@@ -144,9 +144,10 @@ interface CardboxCardProps {
   note?: string;
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
+  onShowConnections?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -261,6 +262,18 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             >
               Open in document
             </button>
+            {onShowConnections && (
+              <button
+                className="text-xs text-text-accent underline hover:no-underline"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShowConnections();
+                }}
+                data-testid="card-show-connections"
+              >
+                Show connections
+              </button>
+            )}
             {linkedCards && linkedCards.length > 0 && (
               <div
                 data-testid="card-linked-section"
