@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 34 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(35);
+  it("has 42 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(42);
   });
 
   it("every entry has required fields defined", () => {
@@ -82,6 +82,7 @@ describe("CATEGORIES", () => {
       "Cross-references",
       "Annotations",
       "LLM",
+      "Paper Search",
       "Academic Export",
       "Experimental",
       "Keyboard Shortcuts",
@@ -92,12 +93,13 @@ describe("CATEGORIES", () => {
 describe("groupByCategory", () => {
   it("returns Map with 8 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
-    expect(grouped.size).toBe(8);
+    expect(grouped.size).toBe(9);
     expect(grouped.get("Appearance")).toHaveLength(7);
     expect(grouped.get("Editor")).toHaveLength(5);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
     expect(grouped.get("LLM")).toHaveLength(7);
+    expect(grouped.get("Paper Search")).toHaveLength(7);
     expect(grouped.get("Academic Export")).toHaveLength(7);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
@@ -122,7 +124,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(35);
+    expect(results).toHaveLength(42);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }
