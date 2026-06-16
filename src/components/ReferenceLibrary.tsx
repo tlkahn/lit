@@ -46,6 +46,34 @@ import { AlphabetStrip } from "./AlphabetStrip";
 import { EntryTypeBadge } from "./EntryTypeBadge";
 import { distinctPublisher } from "../lib/bibUtils";
 
+export function bibEntryToEditFields(entry: BibEntry): Record<string, string> {
+  return {
+    title: entry.title,
+    authors: entry.authors.join("; "),
+    year: entry.year,
+    journal: entry.journal ?? "",
+    publisher: entry.publisher ?? "",
+    isbn: entry.isbn ?? "",
+    oclc: entry.oclc ?? "",
+    series: entry.series ?? "",
+  };
+}
+
+const EDIT_FIELDS: ReadonlyArray<{
+  key: string;
+  label: string;
+  subtitle?: string;
+}> = [
+  { key: "title", label: "Title" },
+  { key: "authors", label: "Authors", subtitle: "semicolon-separated" },
+  { key: "year", label: "Year" },
+  { key: "journal", label: "Journal" },
+  { key: "publisher", label: "Publisher" },
+  { key: "isbn", label: "ISBN" },
+  { key: "oclc", label: "OCLC" },
+  { key: "series", label: "Series" },
+];
+
 function combinedText(entry: BibEntry): string {
   return [
     entry.key,
@@ -148,6 +176,7 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
   );
 }
 
+// Lightweight UI heuristic only; full validation with check-digits lives in recognize/identifiers.rs
 const ISBN_RE = /^(?:\d{9}[\dXx]|97[89]\d{10})$/;
 
 function looksLikeIsbn(query: string): boolean {
@@ -186,19 +215,13 @@ export function ReferenceLibrary() {
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [duplicateKeys, setDuplicateKeys] = useState<Map<string, string>>(new Map());
 
-  const detectedSearchType = useMemo(() => {
-    if (searchMode !== "auto") return searchMode;
-    if (looksLikeIsbn(searchQuery)) return "isbn";
-    return undefined;
-  }, [searchMode, searchQuery]);
-
   const handleSearchPapers = useCallback(async () => {
     const q = searchQuery.trim();
     if (!q || searching) return;
     setSearching(true);
     setSearchResults(null);
     try {
-      const st = detectedSearchType;
+      const st = searchMode !== "auto" ? searchMode : looksLikeIsbn(q) ? "isbn" : undefined;
       const result = await searchPapers(q, undefined, undefined, st);
       setSearchResults(result);
     } catch (err) {
@@ -206,7 +229,7 @@ export function ReferenceLibrary() {
     } finally {
       setSearching(false);
     }
-  }, [searchQuery, searching, show, detectedSearchType]);
+  }, [searchQuery, searching, show, searchMode]);
 
   const handleSaveSearchResult = useCallback(async (entry: BibEntry) => {
     if (!workspacePath) return;
@@ -551,16 +574,7 @@ export function ReferenceLibrary() {
 
   const startEdit = useCallback((entry: BibEntry) => {
     setEditingKey(entry.key);
-    setEditFields({
-      title: entry.title,
-      authors: entry.authors.join("; "),
-      year: entry.year,
-      journal: entry.journal ?? "",
-      publisher: entry.publisher ?? "",
-      isbn: entry.isbn ?? "",
-      oclc: entry.oclc ?? "",
-      series: entry.series ?? "",
-    });
+    setEditFields(bibEntryToEditFields(entry));
   }, []);
 
   const cancelEdit = useCallback(() => {
@@ -572,20 +586,11 @@ export function ReferenceLibrary() {
     if (!workspacePath) return;
     setSavingEdit(true);
     try {
-      const entry = filtered.find((e) => e.key === key);
+      const entry = entries.find((e) => e.key === key);
       if (!entry) return;
 
       const fields: Record<string, string> = {};
-      const original: Record<string, string> = {
-        title: entry.title,
-        authors: entry.authors.join("; "),
-        year: entry.year,
-        journal: entry.journal ?? "",
-        publisher: entry.publisher ?? "",
-        isbn: entry.isbn ?? "",
-        oclc: entry.oclc ?? "",
-        series: entry.series ?? "",
-      };
+      const original = bibEntryToEditFields(entry);
       for (const [k, v] of Object.entries(editFields)) {
         if (v !== original[k]) {
           fields[k] = v;
@@ -611,7 +616,7 @@ export function ReferenceLibrary() {
       setEditingKey(null);
       setEditFields({});
     }
-  }, [workspacePath, editFields, filtered, show]);
+  }, [workspacePath, editFields, entries, show]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
@@ -785,7 +790,7 @@ export function ReferenceLibrary() {
               {searching ? "Searching..." : "Search"}
             </button>
           </div>
-          {searchMode === "auto" && detectedSearchType === "isbn" && (
+          {searchMode === "auto" && looksLikeIsbn(searchQuery) && (
             <div data-testid="isbn-auto-detect-hint" className="px-2 pb-1 text-xs text-interactive-accent">
               Searching by ISBN
             </div>
@@ -922,54 +927,22 @@ export function ReferenceLibrary() {
                       <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
                         {editingKey === entry.key ? (
                           <div className="space-y-2">
-                            <div>
-                              <label className="block text-xs text-text-muted">Title</label>
-                              <input data-testid="edit-field-title" type="text" value={editFields.title ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, title: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">Authors (semicolon-separated)</label>
-                              <input data-testid="edit-field-authors" type="text" value={editFields.authors ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, authors: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">Year</label>
-                              <input data-testid="edit-field-year" type="text" value={editFields.year ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, year: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">Journal</label>
-                              <input data-testid="edit-field-journal" type="text" value={editFields.journal ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, journal: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">Publisher</label>
-                              <input data-testid="edit-field-publisher" type="text" value={editFields.publisher ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, publisher: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">ISBN</label>
-                              <input data-testid="edit-field-isbn" type="text" value={editFields.isbn ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, isbn: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">OCLC</label>
-                              <input data-testid="edit-field-oclc" type="text" value={editFields.oclc ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, oclc: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-text-muted">Series</label>
-                              <input data-testid="edit-field-series" type="text" value={editFields.series ?? ""}
-                                onChange={(e) => setEditFields(f => ({...f, series: e.target.value}))}
-                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
-                            </div>
+                            {EDIT_FIELDS.map((field) => (
+                              <div key={field.key}>
+                                <label className="block text-xs text-text-muted">
+                                  {field.label}{field.subtitle ? ` (${field.subtitle})` : ""}
+                                </label>
+                                <input
+                                  data-testid={`edit-field-${field.key}`}
+                                  type="text"
+                                  value={editFields[field.key] ?? ""}
+                                  onChange={(e) =>
+                                    setEditFields((f) => ({ ...f, [field.key]: e.target.value }))
+                                  }
+                                  className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                                />
+                              </div>
+                            ))}
                             <div className="flex gap-2">
                               <button data-testid="edit-save-btn" disabled={savingEdit}
                                 onClick={() => saveEdit(entry.key)}

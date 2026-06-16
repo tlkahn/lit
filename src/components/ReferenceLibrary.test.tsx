@@ -11,7 +11,7 @@ import {
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { ReferenceLibrary } from "./ReferenceLibrary";
+import { ReferenceLibrary, bibEntryToEditFields } from "./ReferenceLibrary";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import type { BibEntry, BacklinkEntry } from "../lib/ipc";
@@ -3642,5 +3642,68 @@ describe("ReferenceLibrary", () => {
         expect((call!.args as Record<string, unknown>).search_type).toBeNull();
       });
     });
+  });
+});
+
+describe("bibEntryToEditFields", () => {
+  it("maps all fields from a fully-populated entry", () => {
+    const entry: BibEntry = {
+      key: "test2024",
+      authors: ["Smith, John", "Doe, Jane"],
+      title: "Test Title",
+      year: "2024",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+      journal: "Test Journal",
+      publisher: "Test Press",
+      isbn: "978-0-123456-78-9",
+      oclc: "12345",
+      series: "Test Series",
+    };
+
+    expect(bibEntryToEditFields(entry)).toEqual({
+      title: "Test Title",
+      authors: "Smith, John; Doe, Jane",
+      year: "2024",
+      journal: "Test Journal",
+      publisher: "Test Press",
+      isbn: "978-0-123456-78-9",
+      oclc: "12345",
+      series: "Test Series",
+    });
+  });
+
+  it("coalesces undefined optional fields to empty string", () => {
+    const entry: BibEntry = {
+      key: "minimal2024",
+      authors: ["Solo, Han"],
+      title: "Minimal Entry",
+      year: "2024",
+      entry_type: "book",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+    };
+
+    const result = bibEntryToEditFields(entry);
+    expect(result.journal).toBe("");
+    expect(result.publisher).toBe("");
+    expect(result.isbn).toBe("");
+    expect(result.oclc).toBe("");
+    expect(result.series).toBe("");
+  });
+
+  it("joins multiple authors with semicolon-space separator", () => {
+    const entry: BibEntry = {
+      key: "multi2024",
+      authors: ["A", "B", "C"],
+      title: "Multi",
+      year: "2024",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+    };
+
+    expect(bibEntryToEditFields(entry).authors).toBe("A; B; C");
   });
 });

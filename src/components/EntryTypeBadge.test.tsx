@@ -78,6 +78,12 @@ describe("EntryTypeBadge", () => {
     const badge = screen.getByTestId("entry-type-badge");
     expect(badge.className).not.toMatch(/\s$/);
   });
+
+  it("does not produce trailing space when colorClass is empty", () => {
+    render(<EntryTypeBadge entryType="conference" />);
+    const badge = screen.getByTestId("entry-type-badge");
+    expect(badge.className).not.toMatch(/\s$/);
+  });
 });
 
 describe("HIDDEN_ENTRY_TYPES", () => {
