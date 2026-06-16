@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CardboxLayout {
@@ -584,6 +584,10 @@ pub fn export_card_note(
 
     super::page::reindex_and_emit(&graph_state, &app_handle, &root.to_path_buf(), |gi, ann_flag| {
         gi.add_file(&filename, ann_flag)
+    });
+
+    let _ = window.emit("workspace://file-created", crate::workspace::watcher::FileEvent {
+        path: filename.clone(),
     });
 
     Ok(filename)
