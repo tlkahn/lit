@@ -163,26 +163,28 @@ pub fn upsert_bib_item(
     let arxiv_id = entry.arxiv_id.as_deref().map(normalize_arxiv_id);
 
     // Dedup precedence: doi > isbn > oclc > arxiv_id > title+year (live rows only)
-    let dedup_match = if let Some(ref d) = doi {
-        find_live_by_field(conn, "doi", d)?
-    } else {
-        None
+    // Uses sequential checks instead of Option::or() to avoid eager evaluation of DB queries.
+    let mut dedup_match: Option<String> = None;
+    if dedup_match.is_none() {
+        if let Some(ref d) = doi {
+            dedup_match = find_live_by_field(conn, "doi", d)?;
+        }
     }
-    .or(if let Some(i) = isbn {
-        find_live_by_field(conn, "isbn", i)?
-    } else {
-        None
-    })
-    .or(if let Some(o) = oclc {
-        find_live_by_field(conn, "oclc", o)?
-    } else {
-        None
-    })
-    .or(if let Some(ref a) = arxiv_id {
-        find_live_by_field(conn, "arxiv_id", a)?
-    } else {
-        None
-    });
+    if dedup_match.is_none() {
+        if let Some(i) = isbn {
+            dedup_match = find_live_by_field(conn, "isbn", i)?;
+        }
+    }
+    if dedup_match.is_none() {
+        if let Some(o) = oclc {
+            dedup_match = find_live_by_field(conn, "oclc", o)?;
+        }
+    }
+    if dedup_match.is_none() {
+        if let Some(ref a) = arxiv_id {
+            dedup_match = find_live_by_field(conn, "arxiv_id", a)?;
+        }
+    }
 
     // Title+year fallback dedup: only when the incoming entry has NO identifiers
     let dedup_match = if dedup_match.is_none()
@@ -409,6 +411,16 @@ fn gap_fill_row(
             cite_key,
         ],
     )?;
+
+    // Re-serialize raw_bibtex from the merged row so it reflects post-COALESCE values
+    if let Some(merged) = get_bib_item(conn, cite_key)? {
+        let fresh_bibtex = serialize_bib_entry(&merged);
+        conn.execute(
+            "UPDATE bib_items SET raw_bibtex = ?1 WHERE cite_key = ?2",
+            params![fresh_bibtex, cite_key],
+        )?;
+    }
+
     Ok(())
 }
 

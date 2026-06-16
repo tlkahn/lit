@@ -116,6 +116,11 @@ pub fn serialize_bib_entry(entry: &BibEntry) -> String {
         out.push_str(&format!("  oclc = {{{}}},\n", sanitize_bib_value(oclc)));
     }
 
+    // type (work_type)
+    if let Some(ref work_type) = entry.work_type {
+        out.push_str(&format!("  type = {{{}}},\n", sanitize_bib_value(work_type)));
+    }
+
     // arxiv_id -> eprint + archiveprefix
     if let Some(ref arxiv_id) = entry.arxiv_id {
         out.push_str(&format!("  eprint = {{{}}},\n", sanitize_bib_value(arxiv_id)));
@@ -1696,6 +1701,20 @@ mod tests {
         let parsed = parse_bibtex(&bib_str);
         assert_eq!(parsed[0].isbn, Some("978-0-306-40615-7".to_string()));
         assert_eq!(parsed[0].arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn serialize_oclc_lccn_work_type_round_trips() {
+        let mut entry = minimal_entry();
+        entry.oclc = Some("12345".to_string());
+        entry.lccn = Some("2024012345".to_string());
+        entry.work_type = Some("PhD Thesis".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].oclc, Some("12345".to_string()));
+        assert_eq!(parsed[0].lccn, Some("2024012345".to_string()));
+        assert_eq!(parsed[0].work_type, Some("PhD Thesis".to_string()));
     }
 
     #[test]

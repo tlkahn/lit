@@ -539,13 +539,15 @@ impl Store {
         if version < 21 {
             info!(from = version, to = 21, "migrating schema: adding book-aware bib columns");
             self.conn.execute_batch(
-                "ALTER TABLE bib_items ADD COLUMN oclc TEXT;
+                "BEGIN;
+                 ALTER TABLE bib_items ADD COLUMN oclc TEXT;
                  ALTER TABLE bib_items ADD COLUMN work_type TEXT;
                  ALTER TABLE bib_items ADD COLUMN series TEXT;
                  ALTER TABLE bib_items ADD COLUMN lccn TEXT;
                  ALTER TABLE bib_items ADD COLUMN editors TEXT;
                  CREATE UNIQUE INDEX IF NOT EXISTS idx_bib_oclc ON bib_items(oclc) WHERE oclc IS NOT NULL AND deleted_at IS NULL;
-                 UPDATE meta SET value = '21' WHERE key = 'schema_version';"
+                 UPDATE meta SET value = '21' WHERE key = 'schema_version';
+                 COMMIT;"
             )?;
         }
 

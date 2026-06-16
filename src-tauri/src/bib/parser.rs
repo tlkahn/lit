@@ -143,10 +143,10 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
                         .map(|id| normalize_arxiv_id(&id))
                 }
             },
-            oclc: None,
-            work_type: None,
+            oclc: fields.get("oclc").cloned(),
+            work_type: fields.get("type").cloned(),
             series: fields.get("series").cloned(),
-            lccn: None,
+            lccn: fields.get("lccn").cloned(),
             editors: match fields.get("editor") {
                 Some(e) => e
                     .split(" and ")
@@ -641,6 +641,9 @@ mod tests {
         assert_eq!(entries[0].pages, None);
         assert_eq!(entries[0].publisher, None);
         assert_eq!(entries[0].issn, None);
+        assert_eq!(entries[0].oclc, None);
+        assert_eq!(entries[0].lccn, None);
+        assert_eq!(entries[0].work_type, None);
     }
 
     #[test]
@@ -760,5 +763,26 @@ mod tests {
         let input = "@article{a2023,\n  author = {Smith, John},\n  title = {T},\n  year = {2023},\n  eprint = {2301.07041},\n  archiveprefix = {ARXIV}\n}";
         let entries = parse_bibtex(input);
         assert_eq!(entries[0].arxiv_id, Some("2301.07041".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_oclc_field() {
+        let input = "@book{b2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  oclc = {12345}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].oclc, Some("12345".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_lccn_field() {
+        let input = "@book{b2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  lccn = {2024012345}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].lccn, Some("2024012345".to_string()));
+    }
+
+    #[test]
+    fn parse_extracts_type_as_work_type() {
+        let input = "@phdthesis{t2020,\n  author = {Smith, John},\n  title = {T},\n  year = {2020},\n  type = {PhD Thesis}\n}";
+        let entries = parse_bibtex(input);
+        assert_eq!(entries[0].work_type, Some("PhD Thesis".to_string()));
     }
 }
