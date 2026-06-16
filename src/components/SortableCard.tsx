@@ -9,6 +9,7 @@ interface SortableCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
   isPinned?: boolean;
+  colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
@@ -17,7 +18,7 @@ interface SortableCardProps {
   onContextMenu?: (e: React.MouseEvent) => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onContextMenu }: SortableCardProps) {
   const {
     attributes,
     listeners,
@@ -52,6 +53,7 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, i
           annotation={annotation}
           expanded={expanded}
           isPinned={isPinned}
+          colorTag={colorTag}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}
           linkedCards={linkedCards}

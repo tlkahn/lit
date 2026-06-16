@@ -15,6 +15,8 @@ import {
   toggleGroupCollapsed,
   pinCardboxCard,
   unpinCardboxCard,
+  setCardColor as setCardColorIpc,
+  clearCardColor as clearCardColorIpc,
 } from "../lib/ipc";
 
 export interface CardboxStore {
@@ -23,10 +25,12 @@ export interface CardboxStore {
   loading: boolean;
   searchQuery: string;
   activeTypes: Set<string> | null;
+  activeColors: Set<string> | null;
   order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
   pinned: string[];
+  colors: Record<string, string>;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -49,6 +53,9 @@ export interface CardboxStore {
   pinCard: (uuid: string) => Promise<void>;
   unpinCard: (uuid: string) => Promise<void>;
   setPinned: (pinned: string[]) => void;
+  setCardColor: (uuid: string, color: string) => Promise<void>;
+  clearCardColor: (uuid: string) => Promise<void>;
+  toggleColor: (color: string) => void;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -57,10 +64,12 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   loading: false,
   searchQuery: "",
   activeTypes: null,
+  activeColors: null,
   order: [],
   links: [],
   groups: {},
   pinned: [],
+  colors: {},
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -83,6 +92,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         // Collect all known group IDs so we can preserve them in order
         const groupIdSet = new Set(Object.keys(prunedGroups));
         const prunedPinned = s.pinned.filter((id) => newUuids.has(id));
+        const prunedColors: Record<string, string> = {};
+        for (const [uuid, color] of Object.entries(s.colors)) {
+          if (newUuids.has(uuid)) prunedColors[uuid] = color;
+        }
         return {
           annotations,
           loading: false,
@@ -90,6 +103,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           links: prunedLinks,
           groups: prunedGroups,
           pinned: prunedPinned,
+          colors: prunedColors,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
             // Keep entries that are either annotation UUIDs or group: refs
@@ -130,23 +144,25 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     set((s) => ({
       searchQuery: "",
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
+      activeColors: null,
     })),
   setOrder: (order) => set({ order }),
   loadLayout: async () => {
     try {
       const layout = await readCardboxLayout();
       const groups = layout.groups ?? {};
+      const colors = layout.colors ?? {};
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [] });
+        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], colors });
       } else {
-        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [] });
+        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], colors });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links, groups, pinned } = get();
+    const { order, links, groups, pinned, colors } = get();
     const hasGroups = Object.keys(groups).length > 0;
     try {
       await writeCardboxLayout({
@@ -155,6 +171,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         links,
         groups,
         pinned,
+        colors,
       });
     } catch {
       // Ignore write failures silently
@@ -358,4 +375,27 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await unpinCardboxCard(uuid);
   },
   setPinned: (pinned) => set({ pinned }),
+  setCardColor: async (uuid, color) => {
+    set((s) => ({
+      colors: { ...s.colors, [uuid]: color },
+    }));
+    await setCardColorIpc(uuid, color);
+  },
+  clearCardColor: async (uuid) => {
+    set((s) => {
+      const { [uuid]: _, ...rest } = s.colors;
+      return { colors: rest };
+    });
+    await clearCardColorIpc(uuid);
+  },
+  toggleColor: (color) =>
+    set((s) => {
+      const next = new Set(s.activeColors);
+      if (next.has(color)) {
+        next.delete(color);
+      } else {
+        next.add(color);
+      }
+      return { activeColors: next };
+    }),
 }));

@@ -139,6 +139,8 @@ import {
   moveCardToGroup,
   removeCardFromGroup,
   toggleGroupCollapsed,
+  setCardColor,
+  clearCardColor,
 } from "./ipc";
 
 const sampleMeta = {
@@ -828,6 +830,10 @@ describe("ipc", () => {
         case "remove_card_from_group":
           return null;
         case "toggle_group_collapsed":
+          return null;
+        case "set_card_color":
+          return null;
+        case "clear_card_color":
           return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -2588,6 +2594,25 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("toggle_group_collapsed", {
       groupId: "g1",
       collapsed: true,
+    });
+  });
+
+  // ── Color tag IPC wrappers ────────────────────────────────────
+
+  it("setCardColor calls set_card_color", async () => {
+    await setCardColor("u1", "blue");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("set_card_color", {
+      uuid: "u1",
+      color: "blue",
+    });
+  });
+
+  it("clearCardColor calls clear_card_color", async () => {
+    await clearCardColor("u1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("clear_card_color", {
+      uuid: "u1",
     });
   });
 

@@ -38,6 +38,8 @@ export default function CardboxView() {
   const loading = useCardboxStore((s) => s.loading);
   const searchQuery = useCardboxStore((s) => s.searchQuery);
   const activeTypes = useCardboxStore((s) => s.activeTypes);
+  const activeColors = useCardboxStore((s) => s.activeColors);
+  const toggleColor = useCardboxStore((s) => s.toggleColor);
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
@@ -61,6 +63,9 @@ export default function CardboxView() {
   const pinned = useCardboxStore((s) => s.pinned);
   const pinCard = useCardboxStore((s) => s.pinCard);
   const unpinCard = useCardboxStore((s) => s.unpinCard);
+  const colors = useCardboxStore((s) => s.colors);
+  const setCardColor = useCardboxStore((s) => s.setCardColor);
+  const clearCardColor = useCardboxStore((s) => s.clearCardColor);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -119,6 +124,18 @@ export default function CardboxView() {
     [annotations],
   );
 
+  const usedColors = useMemo(
+    () => [...new Set(Object.values(colors))].sort(),
+    [colors],
+  );
+
+  const effectiveActiveColors = useMemo(() => {
+    if (activeColors === null) return null;
+    const usedSet = new Set(usedColors);
+    const pruned = new Set([...activeColors].filter((c) => usedSet.has(c)));
+    return pruned.size > 0 ? pruned : null;
+  }, [activeColors, usedColors]);
+
   // Combined filter pipeline
   const filteredAnnotations = useMemo(() => {
     const query = searchQuery.toLowerCase();
@@ -126,6 +143,11 @@ export default function CardboxView() {
       // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
+      // Color filter (null = no filter; non-null = show only cards with a matching color tag)
+      if (effectiveActiveColors !== null) {
+        const c = colors[ann.uuid];
+        if (!c || !effectiveActiveColors.has(c)) return false;
+      }
       // Pinned cards bypass search filter
       if (pinnedSet.has(ann.uuid)) return true;
       // Search filter
@@ -138,7 +160,7 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes, pinnedSet]);
+  }, [annotations, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet]);
 
   // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
   const visiblePinnedUuids = useMemo(() => {
@@ -269,13 +291,14 @@ export default function CardboxView() {
       e.preventDefault();
       showCardboxContextMenu({
         cardUuid: uuid,
+        currentColor: colors[uuid],
         isPinned: pinnedSet.has(uuid),
         isGrouped: false,
         isGroupHeader: false,
         hasGroups: Object.keys(groups).length > 0,
       });
     },
-    [groups, pinnedSet],
+    [groups, pinnedSet, colors],
   );
 
   const handleGroupCardContextMenu = useCallback(
@@ -284,13 +307,14 @@ export default function CardboxView() {
       showCardboxContextMenu({
         cardUuid,
         groupId,
+        currentColor: colors[cardUuid],
         isPinned: pinnedSet.has(cardUuid),
         isGrouped: true,
         isGroupHeader: false,
         hasGroups: Object.keys(groups).length > 0,
       });
     },
-    [groups, pinnedSet],
+    [groups, pinnedSet, colors],
   );
 
   const handleGroupHeaderContextMenu = useCallback(
@@ -338,6 +362,14 @@ export default function CardboxView() {
       if (el) {
         el.dispatchEvent(new CustomEvent("lit:start-rename", { bubbles: false }));
       }
+    },
+    onSetColor: (cardUuid, color) => {
+      if (color) {
+        setCardColor(cardUuid, color);
+      } else {
+        clearCardColor(cardUuid);
+      }
+      debouncedSave();
     },
   });
 
@@ -585,6 +617,23 @@ export default function CardboxView() {
             ))}
           </div>
         )}
+        {usedColors.length >= 2 && (
+          <div className="flex flex-wrap gap-1" data-testid="cardbox-color-chips">
+            {usedColors.map((color) => (
+              <button
+                key={color}
+                onClick={() => toggleColor(color)}
+                className="h-5 w-5 rounded-full border border-border transition-opacity duration-150"
+                style={{
+                  backgroundColor: `rgba(var(--chip-${color}), 0.6)`,
+                  opacity: effectiveActiveColors === null || effectiveActiveColors.has(color) ? 1 : 0.3,
+                }}
+                data-testid={`color-chip-${color}`}
+                aria-label={`Filter by ${color}`}
+              />
+            ))}
+          </div>
+        )}
         <div className="text-xs text-text-faint" data-testid="cardbox-count">
           {filteredAnnotations.length === annotations.length
             ? `${annotations.length} annotations`
@@ -631,6 +680,7 @@ export default function CardboxView() {
                       annotation={entry.annotation}
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
+                      colorTag={colors[entry.annotation.uuid]}
                       onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
                       onNavigate={() => handleNavigate(entry.annotation)}
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
@@ -656,6 +706,7 @@ export default function CardboxView() {
                       onRename={(name: string) => renameGroup(entry.groupId, name)}
                       onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
                       onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
+                      colors={colors}
                     />
                   ),
                 )}
@@ -668,6 +719,7 @@ export default function CardboxView() {
                     annotation={overlayAnnotation}
                     expanded={false}
                     isPinned={pinnedSet.has(overlayAnnotation.uuid)}
+                    colorTag={colors[overlayAnnotation.uuid]}
                     onToggleExpand={() => {}}
                     onNavigate={() => {}}
                   />

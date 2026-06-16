@@ -1244,6 +1244,7 @@ export interface CardboxLayout {
   links: [string, string][];
   groups: Record<string, GroupInfo>;
   pinned: string[];
+  colors: Record<string, string>;
 }
 
 export async function readCardboxLayout(): Promise<CardboxLayout> {
@@ -1318,6 +1319,14 @@ export async function pinCardboxCard(uuid: string): Promise<void> {
 
 export async function unpinCardboxCard(uuid: string): Promise<void> {
   return invoke<void>("unpin_cardbox_card", { uuid });
+}
+
+export async function setCardColor(uuid: string, color: string): Promise<void> {
+  return invoke<void>("set_card_color", { uuid, color });
+}
+
+export async function clearCardColor(uuid: string): Promise<void> {
+  return invoke<void>("clear_card_color", { uuid });
 }
 
 // Merge/Split preview commands
