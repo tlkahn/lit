@@ -1898,8 +1898,10 @@ describe("PreferencesStore", () => {
 
   describe("searchEnabledProviders hydration", () => {
     const ALL_PROVIDERS = [
-      "openalex", "crossref", "pubmed", "semantic_scholar",
-      "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+      "openalex", "crossref", "base", "pubmed", "biorxiv",
+      "semantic_scholar", "openreview", "arxiv",
+      "unpaywall", "core", "zenodo", "doaj",
+      "open_library", "google_books", "hathitrust",
     ];
 
     it("keeps all providers enabled when search.enabledProviders key is absent (fresh install)", async () => {

@@ -226,6 +226,8 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
       { provider: "semantic-scholar", field: "searchS2ApiKeySet" },
       { provider: "core", field: "searchCoreApiKeySet" },
       { provider: "pubmed", field: "searchPubmedApiKeySet" },
+      { provider: "google-books", field: "searchGoogleBooksApiKeySet" },
+      { provider: "base", field: "searchBaseApiKeySet" },
     ];
     for (const { provider, field } of searchKeyChecks) {
       hasApiKey(provider).then((has) => {

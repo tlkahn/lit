@@ -65,6 +65,8 @@ export interface PreferencesState {
   searchS2ApiKeySet: boolean;
   searchCoreApiKeySet: boolean;
   searchPubmedApiKeySet: boolean;
+  searchGoogleBooksApiKeySet: boolean;
+  searchBaseApiKeySet: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -308,13 +310,15 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
   citationNotesDir: "references",
-  searchEnabledProviders: ["openalex", "crossref", "pubmed", "semantic_scholar", "unpaywall", "core", "openreview", "arxiv", "biorxiv"],
+  searchEnabledProviders: ["openalex", "crossref", "base", "pubmed", "biorxiv", "semantic_scholar", "openreview", "arxiv", "unpaywall", "core", "zenodo", "doaj", "open_library", "google_books", "hathitrust"],
   searchCrossrefEmail: "",
   searchUnpaywallEmail: "",
   searchProviderTimeout: 30,
   searchS2ApiKeySet: false,
   searchCoreApiKeySet: false,
   searchPubmedApiKeySet: false,
+  searchGoogleBooksApiKeySet: false,
+  searchBaseApiKeySet: false,
   loaded: false,
 
   loadPreferences: async () => {

@@ -1615,7 +1615,7 @@ describe("SettingsModal", () => {
       });
       const calls = invokeCalls.filter((c) => c.cmd === "has_api_key");
       expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "anthropic" } });
-      expect(calls).toHaveLength(4);
+      expect(calls).toHaveLength(6);
     });
 
     it("updates llmProvider.apiKeySet when provider reports key exists", async () => {
@@ -2011,7 +2011,7 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(4);
+      expect(hasApiKeyCalls).toHaveLength(6);
     });
 
     it("calls hasApiKey when store does not exist yet", async () => {
@@ -2031,7 +2031,7 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(4);
+      expect(hasApiKeyCalls).toHaveLength(6);
     });
 
     it("does not check hasApiKey when store exists but is locked (migration pending)", async () => {

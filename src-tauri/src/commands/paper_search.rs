@@ -16,6 +16,17 @@ use crate::recognize::resolve::BaseUrls;
 static CLIENT: std::sync::LazyLock<reqwest::Client> =
     std::sync::LazyLock::new(reqwest::Client::new);
 
+fn parse_search_type(s: &str) -> Option<research_hub::SearchType> {
+    match s.to_ascii_lowercase().as_str() {
+        "doi" => Some(research_hub::SearchType::Doi),
+        "keywords" => Some(research_hub::SearchType::Keywords),
+        "author" => Some(research_hub::SearchType::Author),
+        "title" => Some(research_hub::SearchType::Title),
+        "isbn" => Some(research_hub::SearchType::Isbn),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperSearchResult {
     pub entries: Vec<BibEntry>,
@@ -62,6 +73,7 @@ pub async fn search_papers(
     query: String,
     limit: Option<usize>,
     offset: Option<usize>,
+    search_type: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<PaperSearchResult, String> {
     let prefs = crate::preferences::read_preferences(&app_handle);
@@ -97,11 +109,13 @@ pub async fn search_papers(
         });
     }
 
+    let parsed_search_type = search_type.as_deref().and_then(parse_search_type);
+
     let result = research_hub::meta_search(
         &query,
         &providers,
         &config,
-        None,
+        parsed_search_type,
         limit.unwrap_or(20),
         offset.unwrap_or(0),
         research_hub::SortOrder::Relevance,
