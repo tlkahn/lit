@@ -3,7 +3,21 @@ use crate::bib::types::BibEntry;
 use crate::bib::writer::generate_key;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+
+// Excludes web scrapers: ssrn, mdpi, researchgate, sci_hub.
+const LEGAL_PROVIDERS: &[&str] = &[
+    "openalex",
+    "crossref",
+    "pubmed",
+    "semantic_scholar",
+    "unpaywall",
+    "core",
+    "openreview",
+    "arxiv",
+    "biorxiv",
+];
 
 pub fn paper_to_bib_entry(
     paper: &research_hub::Paper,
@@ -120,6 +134,18 @@ pub fn build_config(
         provider_timeout,
         max_parallel_providers: 5,
     }
+}
+
+pub fn create_enabled_providers(
+    client: reqwest::Client,
+    config: Arc<research_hub::Config>,
+    enabled: &HashSet<String>,
+) -> Vec<Arc<dyn research_hub::Provider>> {
+    let all = research_hub::create_all_providers(client, config);
+    all.into_iter()
+        .filter(|p| LEGAL_PROVIDERS.contains(&p.name()))
+        .filter(|p| enabled.contains(p.name()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -533,5 +559,106 @@ mod tests {
         );
         let config3 = super::build_config(&prefs3, &store);
         assert_eq!(config3.provider_timeout, Duration::from_secs(30));
+    }
+
+    // ── create_enabled_providers tests ─────────────────────────────────
+
+    #[test]
+    fn enabled_providers_excludes_scrapers() {
+        let client = reqwest::Client::new();
+        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        // Enable everything — scrapers should still be excluded
+        let enabled: HashSet<String> = [
+            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+            "ssrn", "mdpi", "researchgate", "sci_hub",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let providers = super::create_enabled_providers(client, config, &enabled);
+        let names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
+        assert_eq!(providers.len(), 9);
+        assert!(!names.contains(&"ssrn"));
+        assert!(!names.contains(&"mdpi"));
+        assert!(!names.contains(&"researchgate"));
+        assert!(!names.contains(&"sci_hub"));
+    }
+
+    #[test]
+    fn enabled_providers_respects_user_disabled() {
+        let client = reqwest::Client::new();
+        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        // Only enable two providers
+        let enabled: HashSet<String> = ["crossref", "arxiv"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let providers = super::create_enabled_providers(client, config, &enabled);
+        let names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
+        assert_eq!(providers.len(), 2);
+        assert!(names.contains(&"crossref"));
+        assert!(names.contains(&"arxiv"));
+    }
+
+    #[test]
+    fn enabled_providers_empty_set_returns_nothing() {
+        let client = reqwest::Client::new();
+        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let enabled = HashSet::new();
+        let providers = super::create_enabled_providers(client, config, &enabled);
+        assert!(providers.is_empty());
+    }
+
+    #[test]
+    fn enabled_providers_all_legal_returns_nine() {
+        let client = reqwest::Client::new();
+        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let enabled: HashSet<String> = [
+            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let providers = super::create_enabled_providers(client, config, &enabled);
+        assert_eq!(providers.len(), 9);
+    }
+
+    #[test]
+    fn enabled_providers_preserves_priority_order() {
+        let client = reqwest::Client::new();
+        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let enabled: HashSet<String> = [
+            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let providers = super::create_enabled_providers(client, config, &enabled);
+        for i in 1..providers.len() {
+            assert!(
+                providers[i - 1].priority() >= providers[i].priority(),
+                "{} (pri {}) should come before {} (pri {})",
+                providers[i - 1].name(),
+                providers[i - 1].priority(),
+                providers[i].name(),
+                providers[i].priority(),
+            );
+        }
+    }
+
+    #[test]
+    fn enabled_providers_scraper_only_returns_nothing() {
+        let client = reqwest::Client::new();
+        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        // Enable only scrapers — all should be filtered out
+        let enabled: HashSet<String> = ["ssrn", "mdpi", "researchgate", "sci_hub"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let providers = super::create_enabled_providers(client, config, &enabled);
+        assert!(providers.is_empty());
     }
 }
