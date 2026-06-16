@@ -1238,12 +1238,18 @@ export interface GroupInfo {
   collapsed: boolean;
 }
 
+export interface CardNote {
+  body: string;
+  updated_at?: string;
+}
+
 export interface CardboxLayout {
   version: number;
   order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
   pinned: string[];
+  notes: Record<string, CardNote>;
   colors: Record<string, string>;
 }
 
@@ -1319,6 +1325,18 @@ export async function pinCardboxCard(uuid: string): Promise<void> {
 
 export async function unpinCardboxCard(uuid: string): Promise<void> {
   return invoke<void>("unpin_cardbox_card", { uuid });
+}
+
+export async function setCardNote(uuid: string, body: string): Promise<void> {
+  return invoke<void>("set_card_note", { uuid, body });
+}
+
+export async function clearCardNote(uuid: string): Promise<void> {
+  return invoke<void>("clear_card_note", { uuid });
+}
+
+export async function exportCardNote(uuid: string): Promise<string> {
+  return invoke<string>("export_card_note", { uuid });
 }
 
 export async function setCardColor(uuid: string, color: string): Promise<void> {

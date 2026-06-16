@@ -8,7 +8,7 @@ import { SortableGroupCard } from "./SortableGroupCard";
 import { useMasonrySpan } from "../hooks/useMasonrySpan";
 import { makeGroupCardId, makeDroppableGroupId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
-import type { GroupInfo } from "../lib/ipc";
+import type { GroupInfo, CardNote } from "../lib/ipc";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
 
@@ -19,11 +19,14 @@ interface SortableGroupProps {
   allFilteredCount: number;
   expandedUuid: string | null;
   linkedCardsMap: Map<string, CardboxAnnotation[]>;
+  notesMap?: Record<string, CardNote>;
   isDropTarget?: boolean;
   onToggleExpand: (uuid: string) => void;
   onNavigate: (ann: CardboxAnnotation) => void;
   onFocusCard: (uuid: string) => void;
   onRemoveLink: (targetUuid: string) => void;
+  onSetNote?: (uuid: string, body: string) => void;
+  onExportNote?: (uuid: string) => void;
   onToggleCollapse: () => void;
   onRename: (name: string) => void;
   onCardContextMenu?: (cardUuid: string, e: React.MouseEvent) => void;
@@ -38,11 +41,14 @@ export const SortableGroup = memo(function SortableGroup({
   allFilteredCount,
   expandedUuid,
   linkedCardsMap,
+  notesMap,
   isDropTarget,
   onToggleExpand,
   onNavigate,
   onFocusCard,
   onRemoveLink,
+  onSetNote,
+  onExportNote,
   onToggleCollapse,
   onRename,
   onCardContextMenu,
@@ -134,6 +140,9 @@ export const SortableGroup = memo(function SortableGroup({
                     linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
                     onFocusCard={onFocusCard}
                     onRemoveLink={onRemoveLink}
+                    note={notesMap?.[ann.uuid]?.body}
+                    onSetNote={onSetNote ? (body: string) => onSetNote(ann.uuid, body) : undefined}
+                    onExportNote={onExportNote ? () => onExportNote(ann.uuid) : undefined}
                     onContextMenu={(e) => onCardContextMenu?.(ann.uuid, e)}
                   />
                 ))}

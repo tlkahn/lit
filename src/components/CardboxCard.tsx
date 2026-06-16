@@ -1,7 +1,135 @@
-import { useCallback, useMemo, useRef, memo } from "react";
+import { useCallback, useMemo, useRef, useState, memo } from "react";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
+
+/** Inline sub-component: slip-note editor for a card. */
+function CardNoteEditor({
+  note,
+  onSetNote,
+  onExportNote,
+}: {
+  note?: string;
+  onSetNote?: (body: string) => void;
+  onExportNote?: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note ?? "");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cancelingRef = useRef(false);
+
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, []);
+
+  const startEditing = useCallback(() => {
+    cancelingRef.current = false;
+    setDraft(note ?? "");
+    setEditing(true);
+    // Auto-focus + resize after mount
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      autoResize();
+    });
+  }, [note, autoResize]);
+
+  const commitDraft = useCallback(() => {
+    if (cancelingRef.current) return;
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed !== (note ?? "")) {
+      onSetNote?.(trimmed);
+    }
+  }, [draft, note, onSetNote]);
+
+  const renderedNote = useMemo(
+    () => (note ? renderMarkdown(note) : ""),
+    [note],
+  );
+
+  // Empty state: show placeholder button
+  if (!note && !editing) {
+    return (
+      <button
+        className="pt-2 text-xs text-text-faint hover:text-text-muted"
+        data-testid="card-note-add"
+        onClick={(e) => {
+          e.stopPropagation();
+          startEditing();
+        }}
+      >
+        + Add note
+      </button>
+    );
+  }
+
+  // Editing state: textarea
+  if (editing) {
+    return (
+      <div className="pt-2" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+        <textarea
+          ref={textareaRef}
+          className="w-full resize-none rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-normal focus:border-interactive-accent focus:outline-none"
+          style={{ minHeight: "60px" }}
+          data-testid="card-note-textarea"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            autoResize();
+          }}
+          onBlur={commitDraft}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              cancelingRef.current = true;
+              setEditing(false);
+            }
+          }}
+          rows={3}
+          placeholder="Write a slip note..."
+        />
+      </div>
+    );
+  }
+
+  // Display state: rendered markdown + edit/export buttons
+  return (
+    <div className="pt-2" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+      <div className="text-[10px] font-semibold uppercase text-text-muted">Note</div>
+      <div
+        className="prose prose-sm pt-1 cursor-text text-xs"
+        data-testid="card-note-display"
+        dangerouslySetInnerHTML={{ __html: renderedNote }}
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest("a")) {
+            startEditing();
+          }
+        }}
+      />
+      <div className="pt-1 flex gap-2">
+        <button
+          className="text-[10px] text-text-faint hover:text-text-muted"
+          data-testid="card-note-edit"
+          onClick={startEditing}
+        >
+          Edit
+        </button>
+        {onExportNote && (
+          <button
+            className="text-[10px] text-text-faint hover:text-text-muted"
+            data-testid="card-note-export"
+            onClick={onExportNote}
+          >
+            Export
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
@@ -13,9 +141,12 @@ interface CardboxCardProps {
   linkedCards?: CardboxAnnotation[];
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
+  note?: string;
+  onSetNote?: (body: string) => void;
+  onExportNote?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -96,6 +227,13 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             &middot;{linkedCards.length}
           </span>
         )}
+        {note && (
+          <span
+            className="text-text-faint"
+            data-testid="card-note-indicator"
+            title="Has slip note"
+          >&#9998;</span>
+        )}
       </div>
 
       {/* Expanded content */}
@@ -162,6 +300,13 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                   ))}
                 </div>
               </div>
+            )}
+            {onSetNote && (
+              <CardNoteEditor
+                note={note}
+                onSetNote={onSetNote}
+                onExportNote={onExportNote}
+              />
             )}
           </div>
         </div>

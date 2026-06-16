@@ -139,6 +139,11 @@ import {
   moveCardToGroup,
   removeCardFromGroup,
   toggleGroupCollapsed,
+  pinCardboxCard,
+  unpinCardboxCard,
+  setCardNote,
+  clearCardNote,
+  exportCardNote,
   setCardColor,
   clearCardColor,
 } from "./ipc";
@@ -812,7 +817,7 @@ describe("ipc", () => {
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
         case "read_cardbox_layout":
-          return { version: 2, order: ["u1", "u2"], links: [], groups: {} };
+          return { version: 2, order: ["u1", "u2"], links: [], groups: {}, pinned: [], notes: {}, colors: {} };
         case "write_cardbox_layout":
           return null;
         case "add_cardbox_link":
@@ -831,6 +836,16 @@ describe("ipc", () => {
           return null;
         case "toggle_group_collapsed":
           return null;
+        case "pin_cardbox_card":
+          return null;
+        case "unpin_cardbox_card":
+          return null;
+        case "set_card_note":
+          return null;
+        case "clear_card_note":
+          return null;
+        case "export_card_note":
+          return "Note on Test.md";
         case "set_card_color":
           return null;
         case "clear_card_color":
@@ -2595,6 +2610,44 @@ describe("ipc", () => {
       groupId: "g1",
       collapsed: true,
     });
+  });
+
+  // ── Cardbox pin IPC wrappers ───────────────────────────────────
+
+  it("pinCardboxCard calls pin_cardbox_card", async () => {
+    await pinCardboxCard("u1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("pin_cardbox_card", { uuid: "u1" });
+  });
+
+  it("unpinCardboxCard calls unpin_cardbox_card", async () => {
+    await unpinCardboxCard("u1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("unpin_cardbox_card", { uuid: "u1" });
+  });
+
+  // ── Card note (slip) IPC wrappers ─────────────────────────────
+
+  it("setCardNote calls set_card_note with uuid and body", async () => {
+    await setCardNote("u1", "My note content");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("set_card_note", {
+      uuid: "u1",
+      body: "My note content",
+    });
+  });
+
+  it("clearCardNote calls clear_card_note", async () => {
+    await clearCardNote("u1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("clear_card_note", { uuid: "u1" });
+  });
+
+  it("exportCardNote calls export_card_note and returns markdown", async () => {
+    const result = await exportCardNote("u1");
+    expect(result).toBe("Note on Test.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_card_note", { uuid: "u1" });
   });
 
   // ── Color tag IPC wrappers ────────────────────────────────────

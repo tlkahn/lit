@@ -44,10 +44,13 @@ describe("cardbox store", () => {
       loading: false,
       searchQuery: "",
       activeTypes: null,
+      activeColors: null,
       order: [],
       links: [],
       groups: {},
       pinned: [],
+      notes: {},
+      colors: {},
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
@@ -64,6 +67,8 @@ describe("cardbox store", () => {
       if (cmd === "toggle_group_collapsed") return null;
       if (cmd === "pin_cardbox_card") return null;
       if (cmd === "unpin_cardbox_card") return null;
+      if (cmd === "set_card_color") return null;
+      if (cmd === "clear_card_color") return null;
       return null;
     });
   });
@@ -260,7 +265,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [], colors: {} },
+      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [], notes: {}, colors: {} },
     });
   });
 
@@ -315,7 +320,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [], colors: {} },
+      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [], notes: {}, colors: {} },
     });
   });
 
@@ -332,7 +337,7 @@ describe("cardbox store", () => {
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [], colors: {} },
+      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [], notes: {}, colors: {} },
     });
   });
 
