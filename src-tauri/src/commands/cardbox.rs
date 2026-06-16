@@ -15,6 +15,8 @@ pub struct CardboxLayout {
     pub pinned: Vec<String>,
     #[serde(default)]
     pub notes: HashMap<String, CardNote>,
+    #[serde(default)]
+    pub colors: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,6 +41,7 @@ impl Default for CardboxLayout {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         }
     }
 }
@@ -277,6 +280,9 @@ fn prune_layout(layout: &mut CardboxLayout, valid_uuids: &HashSet<&str>) {
     layout.links.retain(|pair| {
         valid_uuids.contains(pair[0].as_str()) && valid_uuids.contains(pair[1].as_str())
     });
+
+    // Prune stale color entries
+    layout.colors.retain(|uuid, _| valid_uuids.contains(uuid.as_str()));
 }
 
 #[tauri::command]
@@ -614,6 +620,43 @@ pub fn clear_card_note(
     with_cardbox_layout(&window, &workspace_state, |layout| {
         layout.notes.remove(&uuid);
         layout.version = layout.version.max(4);
+        Ok(())
+    })
+}
+
+const VALID_COLORS: &[&str] = &["blue", "orange", "green", "purple", "pink", "cyan"];
+
+#[tauri::command]
+pub fn set_card_color(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+    color: String,
+) -> Result<(), String> {
+    if !VALID_COLORS.contains(&color.as_str()) {
+        return Err(format!(
+            "Invalid color '{}'. Must be one of: {}",
+            color,
+            VALID_COLORS.join(", ")
+        ));
+    }
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        layout.colors.insert(uuid.clone(), color.clone());
+        layout.version = layout.version.max(4);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn clear_card_color(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuid: String,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        if layout.colors.remove(&uuid).is_some() {
+            layout.version = layout.version.max(4);
+        }
         Ok(())
     })
 }
@@ -1086,6 +1129,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
         let result = read_layout(dir.path());
@@ -1107,6 +1151,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         let json = serde_json::to_string(&layout).unwrap();
         let deserialized: super::CardboxLayout = serde_json::from_str(&json).unwrap();
@@ -1128,6 +1173,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
@@ -1151,6 +1197,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1"].iter().copied().collect();
@@ -1176,6 +1223,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-1", "uuid-2", "uuid-a"].iter().copied().collect();
@@ -1202,6 +1250,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-dup", "uuid-solo"].iter().copied().collect();
@@ -1228,6 +1277,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["uuid-1"].iter().copied().collect();
@@ -1257,6 +1307,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["valid-1", "valid-2"].iter().copied().collect();
@@ -1286,6 +1337,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         let valid: std::collections::HashSet<&str> = ["a", "b", "c"].iter().copied().collect();
@@ -1304,6 +1356,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
         let result = read_layout(dir.path());
@@ -1323,6 +1376,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1354,6 +1408,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1384,6 +1439,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         super::do_create_group(
@@ -1408,6 +1464,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1442,6 +1499,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1477,6 +1535,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1506,6 +1565,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         super::do_dissolve_group(&mut layout, "g1").unwrap();
@@ -1532,6 +1592,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1565,6 +1626,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1593,6 +1655,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1621,6 +1684,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1650,6 +1714,7 @@ mod tests {
             groups,
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
         write_layout(dir.path(), &layout);
 
@@ -1678,6 +1743,7 @@ mod tests {
             groups: HashMap::new(),
             pinned: vec![],
             notes: HashMap::new(),
+            colors: HashMap::new(),
         };
 
         // First creation: group g1 with cards [a, b]
@@ -2038,5 +2104,133 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(blockquoted, "> First line\n> Second line\n> Third line");
+    }
+
+    // ---- Color tag tests ----
+
+    #[test]
+    fn set_card_color_updates_layout() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout::default();
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        layout.colors.insert("uuid-1".into(), "blue".into());
+        layout.version = layout.version.max(4);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.colors.get("uuid-1").unwrap(), "blue");
+        assert_eq!(result.version, 4);
+    }
+
+    #[test]
+    fn set_card_color_invalid_rejected() {
+        assert_eq!(super::VALID_COLORS.len(), 6);
+        assert!(super::VALID_COLORS.contains(&"blue"));
+        assert!(super::VALID_COLORS.contains(&"orange"));
+        assert!(super::VALID_COLORS.contains(&"green"));
+        assert!(super::VALID_COLORS.contains(&"purple"));
+        assert!(super::VALID_COLORS.contains(&"pink"));
+        assert!(super::VALID_COLORS.contains(&"cyan"));
+        assert!(!super::VALID_COLORS.contains(&"red"));
+        assert!(!super::VALID_COLORS.contains(&"yellow"));
+        assert!(!super::VALID_COLORS.contains(&""));
+    }
+
+    #[test]
+    fn clear_card_color_removes_entry() {
+        let dir = create_workspace();
+        let mut layout = super::CardboxLayout::default();
+        layout.colors.insert("uuid-1".into(), "green".into());
+        layout.version = 4;
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        assert!(layout.colors.contains_key("uuid-1"));
+        layout.colors.remove("uuid-1");
+        layout.version = layout.version.max(4);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(!result.colors.contains_key("uuid-1"));
+    }
+
+    #[test]
+    fn clear_card_color_noop_for_absent() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            version: 3,
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let had_color = layout.colors.remove("nonexistent").is_some();
+        assert!(!had_color, "should not have had a color entry");
+        // version should not bump
+        assert_eq!(layout.version, 3);
+    }
+
+    #[test]
+    fn prune_removes_stale_colors() {
+        let mut layout = super::CardboxLayout {
+            version: 4,
+            order: vec!["valid-1".into()],
+            colors: HashMap::from([
+                ("valid-1".into(), "blue".into()),
+                ("stale-1".into(), "pink".into()),
+            ]),
+            ..Default::default()
+        };
+        let valid: std::collections::HashSet<&str> = ["valid-1"].iter().copied().collect();
+        super::prune_layout(&mut layout, &valid);
+
+        assert_eq!(layout.colors.len(), 1);
+        assert!(layout.colors.contains_key("valid-1"));
+        assert!(!layout.colors.contains_key("stale-1"));
+    }
+
+    #[test]
+    fn colors_serde_backwards_compat() {
+        // Old JSON without colors field should deserialize with empty colors
+        let json = r#"{"version":3,"order":["uuid-1"],"links":[],"pinned":[]}"#;
+        let layout: super::CardboxLayout = serde_json::from_str(json).unwrap();
+        assert!(layout.colors.is_empty());
+    }
+
+    #[test]
+    fn colors_roundtrip() {
+        let dir = create_workspace();
+        let mut colors = HashMap::new();
+        colors.insert("uuid-1".into(), "blue".into());
+        colors.insert("uuid-2".into(), "cyan".into());
+        let layout = super::CardboxLayout {
+            version: 4,
+            order: vec!["uuid-1".into(), "uuid-2".into()],
+            colors,
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result, layout);
+        assert_eq!(result.colors.len(), 2);
+    }
+
+    #[test]
+    fn version_max_preserves_higher() {
+        // If version is already 5, setting color should not downgrade it
+        let dir = create_workspace();
+        let mut layout = super::CardboxLayout {
+            version: 5,
+            ..Default::default()
+        };
+        layout.colors.insert("uuid-1".into(), "orange".into());
+        layout.version = layout.version.max(4);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.version, 5);
     }
 }

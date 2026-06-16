@@ -144,6 +144,8 @@ import {
   setCardNote,
   clearCardNote,
   exportCardNote,
+  setCardColor,
+  clearCardColor,
 } from "./ipc";
 
 const sampleMeta = {
@@ -815,7 +817,7 @@ describe("ipc", () => {
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
         case "read_cardbox_layout":
-          return { version: 2, order: ["u1", "u2"], links: [], groups: {}, pinned: [], notes: {} };
+          return { version: 2, order: ["u1", "u2"], links: [], groups: {}, pinned: [], notes: {}, colors: {} };
         case "write_cardbox_layout":
           return null;
         case "add_cardbox_link":
@@ -844,6 +846,10 @@ describe("ipc", () => {
           return null;
         case "export_card_note":
           return "Note on Test.md";
+        case "set_card_color":
+          return null;
+        case "clear_card_color":
+          return null;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2642,6 +2648,25 @@ describe("ipc", () => {
     expect(result).toBe("Note on Test.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_card_note", { uuid: "u1" });
+  });
+
+  // ── Color tag IPC wrappers ────────────────────────────────────
+
+  it("setCardColor calls set_card_color", async () => {
+    await setCardColor("u1", "blue");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("set_card_color", {
+      uuid: "u1",
+      color: "blue",
+    });
+  });
+
+  it("clearCardColor calls clear_card_color", async () => {
+    await clearCardColor("u1");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("clear_card_color", {
+      uuid: "u1",
+    });
   });
 
 });

@@ -616,6 +616,7 @@ describe("useCardboxContextMenu", () => {
       onRemoveFromGroup: vi.fn(),
       onDissolveGroup: vi.fn(),
       onRenameGroup: vi.fn(),
+      onSetColor: vi.fn(),
     };
   }
 

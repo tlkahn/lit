@@ -31,6 +31,7 @@ interface SortableGroupProps {
   onRename: (name: string) => void;
   onCardContextMenu?: (cardUuid: string, e: React.MouseEvent) => void;
   onHeaderContextMenu?: (e: React.MouseEvent) => void;
+  colors?: Record<string, string>;
 }
 
 export const SortableGroup = memo(function SortableGroup({
@@ -52,6 +53,7 @@ export const SortableGroup = memo(function SortableGroup({
   onRename,
   onCardContextMenu,
   onHeaderContextMenu,
+  colors,
 }: SortableGroupProps) {
   const {
     attributes,
@@ -132,6 +134,7 @@ export const SortableGroup = memo(function SortableGroup({
                     groupId={groupId}
                     annotation={ann}
                     expanded={expandedUuid === ann.uuid}
+                    colorTag={colors?.[ann.uuid]}
                     onToggleExpand={() => onToggleExpand(ann.uuid)}
                     onNavigate={() => onNavigate(ann)}
                     linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}

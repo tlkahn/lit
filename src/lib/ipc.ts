@@ -1250,6 +1250,7 @@ export interface CardboxLayout {
   groups: Record<string, GroupInfo>;
   pinned: string[];
   notes: Record<string, CardNote>;
+  colors: Record<string, string>;
 }
 
 export async function readCardboxLayout(): Promise<CardboxLayout> {
@@ -1336,6 +1337,14 @@ export async function clearCardNote(uuid: string): Promise<void> {
 
 export async function exportCardNote(uuid: string): Promise<string> {
   return invoke<string>("export_card_note", { uuid });
+}
+
+export async function setCardColor(uuid: string, color: string): Promise<void> {
+  return invoke<void>("set_card_color", { uuid, color });
+}
+
+export async function clearCardColor(uuid: string): Promise<void> {
+  return invoke<void>("clear_card_color", { uuid });
 }
 
 // Merge/Split preview commands

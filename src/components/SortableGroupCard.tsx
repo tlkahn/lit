@@ -10,6 +10,7 @@ interface SortableGroupCardProps {
   groupId: string;
   annotation: CardboxAnnotation;
   expanded: boolean;
+  colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
@@ -25,6 +26,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   groupId,
   annotation,
   expanded,
+  colorTag,
   onToggleExpand,
   onNavigate,
   linkedCards,
@@ -68,6 +70,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
         <CardboxCard
           annotation={annotation}
           expanded={expanded}
+          colorTag={colorTag}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}
           linkedCards={linkedCards}

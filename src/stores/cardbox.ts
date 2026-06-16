@@ -18,6 +18,8 @@ import {
   setCardNote,
   clearCardNote,
   exportCardNote,
+  setCardColor as setCardColorIpc,
+  clearCardColor as clearCardColorIpc,
 } from "../lib/ipc";
 
 export interface CardboxStore {
@@ -26,12 +28,14 @@ export interface CardboxStore {
   loading: boolean;
   searchQuery: string;
   activeTypes: Set<string> | null;
+  activeColors: Set<string> | null;
   order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
   pinned: string[];
   notes: Record<string, CardNote>;
   layoutVersion: number;
+  colors: Record<string, string>;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -57,6 +61,9 @@ export interface CardboxStore {
   setNote: (uuid: string, body: string) => Promise<void>;
   clearNote: (uuid: string) => Promise<void>;
   exportNote: (uuid: string) => Promise<string>;
+  setCardColor: (uuid: string, color: string) => Promise<void>;
+  clearCardColor: (uuid: string) => Promise<void>;
+  toggleColor: (color: string) => void;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -65,12 +72,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   loading: false,
   searchQuery: "",
   activeTypes: null,
+  activeColors: null,
   order: [],
   links: [],
   groups: {},
   pinned: [],
   notes: {},
   layoutVersion: 3,
+  colors: {},
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -97,6 +106,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         for (const [id, note] of Object.entries(s.notes)) {
           if (newUuids.has(id)) prunedNotes[id] = note;
         }
+        const prunedColors: Record<string, string> = {};
+        for (const [uuid, color] of Object.entries(s.colors)) {
+          if (newUuids.has(uuid)) prunedColors[uuid] = color;
+        }
         return {
           annotations,
           loading: false,
@@ -105,6 +118,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           groups: prunedGroups,
           pinned: prunedPinned,
           notes: prunedNotes,
+          colors: prunedColors,
           order: (() => {
             if (s.order.length === 0) return annotations.map((a) => a.uuid);
             // Keep entries that are either annotation UUIDs or group: refs
@@ -145,6 +159,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     set((s) => ({
       searchQuery: "",
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
+      activeColors: null,
     })),
   setOrder: (order) => set({ order }),
   loadLayout: async () => {
@@ -152,17 +167,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const layout = await readCardboxLayout();
       const groups = layout.groups ?? {};
       const notes = layout.notes ?? {};
+      const colors = layout.colors ?? {};
       if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version });
+        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version, colors });
       } else {
-        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version });
+        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version, colors });
       }
     } catch {
       // Ignore — use default order from annotations
     }
   },
   saveLayout: async () => {
-    const { order, links, groups, pinned, notes, layoutVersion } = get();
+    const { order, links, groups, pinned, notes, layoutVersion, colors } = get();
     try {
       await writeCardboxLayout({
         version: Math.max(layoutVersion, 3),
@@ -171,6 +187,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         groups,
         pinned,
         notes,
+        colors,
       });
     } catch {
       // Ignore write failures silently
@@ -397,4 +414,27 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   exportNote: async (uuid) => {
     return exportCardNote(uuid);
   },
+  setCardColor: async (uuid, color) => {
+    set((s) => ({
+      colors: { ...s.colors, [uuid]: color },
+    }));
+    await setCardColorIpc(uuid, color);
+  },
+  clearCardColor: async (uuid) => {
+    set((s) => {
+      const { [uuid]: _, ...rest } = s.colors; // eslint-disable-line @typescript-eslint/no-unused-vars
+      return { colors: rest };
+    });
+    await clearCardColorIpc(uuid);
+  },
+  toggleColor: (color) =>
+    set((s) => {
+      const next = new Set(s.activeColors);
+      if (next.has(color)) {
+        next.delete(color);
+      } else {
+        next.add(color);
+      }
+      return { activeColors: next };
+    }),
 }));

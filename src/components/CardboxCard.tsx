@@ -135,6 +135,7 @@ interface CardboxCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
   isPinned?: boolean;
+  colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
@@ -145,7 +146,7 @@ interface CardboxCardProps {
   onExportNote?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleKeyDown = useCallback(
@@ -175,6 +176,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-annotation-type={annotation.annotation_type}
       data-expanded={expanded}
       data-pinned={isPinned || undefined}
+      data-color-tag={colorTag || undefined}
     >
       {isPinned && (
         <span

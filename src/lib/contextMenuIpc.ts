@@ -240,6 +240,7 @@ interface CardboxContextMenuArgs {
   isGrouped: boolean;
   isGroupHeader: boolean;
   hasGroups: boolean;
+  currentColor?: string;
 }
 
 export async function showCardboxContextMenu(args: CardboxContextMenuArgs): Promise<void> {
@@ -249,6 +250,7 @@ export async function showCardboxContextMenu(args: CardboxContextMenuArgs): Prom
 interface CardboxContextPayload {
   card_uuid: string | null;
   group_id: string | null;
+  color: string | null;
 }
 
 interface CardboxContextMenuHandlers {
@@ -259,6 +261,7 @@ interface CardboxContextMenuHandlers {
   onRemoveFromGroup: (cardUuid: string, groupId: string) => void;
   onDissolveGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string) => void;
+  onSetColor: (cardUuid: string, color: string | null) => void;
 }
 
 export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
@@ -315,6 +318,13 @@ export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
       listen<CardboxContextPayload>("context-menu://cardbox/rename-group", (event) => {
         if (!cancelled && event.payload.group_id)
           handlersRef.current.onRenameGroup(event.payload.group_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/set-color", (event) => {
+        if (!cancelled && event.payload.card_uuid)
+          handlersRef.current.onSetColor(event.payload.card_uuid, event.payload.color ?? null);
       }),
     );
 

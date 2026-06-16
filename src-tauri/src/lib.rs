@@ -399,6 +399,8 @@ pub fn run() {
             commands::cardbox::set_card_note,
             commands::cardbox::clear_card_note,
             commands::cardbox::export_card_note,
+            commands::cardbox::set_card_color,
+            commands::cardbox::clear_card_color,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,
