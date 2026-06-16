@@ -18,6 +18,7 @@ pub struct ProviderInfo {
 static PROVIDER_INFO: LazyLock<Vec<ProviderInfo>> = LazyLock::new(|| vec![
     ProviderInfo { id: "openalex".into(), label: "OpenAlex".into(), description: "Open catalog of the global research system".into(), category: "general".into(), needs_api_key: false },
     ProviderInfo { id: "crossref".into(), label: "Crossref".into(), description: "DOI registration agency metadata".into(), category: "general".into(), needs_api_key: false },
+    ProviderInfo { id: "base".into(), label: "BASE".into(), description: "Bielefeld Academic Search Engine".into(), category: "general".into(), needs_api_key: true },
     ProviderInfo { id: "pubmed".into(), label: "PubMed".into(), description: "Biomedical literature from MEDLINE and life science journals".into(), category: "biomedical".into(), needs_api_key: true },
     ProviderInfo { id: "biorxiv".into(), label: "bioRxiv".into(), description: "Preprint server for biology".into(), category: "biomedical".into(), needs_api_key: false },
     ProviderInfo { id: "semantic_scholar".into(), label: "Semantic Scholar".into(), description: "AI-powered research tool by Allen Institute for AI".into(), category: "cs-ml".into(), needs_api_key: true },
@@ -25,15 +26,17 @@ static PROVIDER_INFO: LazyLock<Vec<ProviderInfo>> = LazyLock::new(|| vec![
     ProviderInfo { id: "arxiv".into(), label: "arXiv".into(), description: "Open-access preprints in physics, math, CS, and more".into(), category: "cs-ml".into(), needs_api_key: false },
     ProviderInfo { id: "unpaywall".into(), label: "Unpaywall".into(), description: "Free legal full-text articles via open-access links".into(), category: "open-access".into(), needs_api_key: false },
     ProviderInfo { id: "core".into(), label: "CORE".into(), description: "Aggregator of open-access research papers".into(), category: "open-access".into(), needs_api_key: true },
+    ProviderInfo { id: "zenodo".into(), label: "Zenodo".into(), description: "Open-access repository hosted by CERN".into(), category: "open-access".into(), needs_api_key: false },
+    ProviderInfo { id: "doaj".into(), label: "DOAJ".into(), description: "Directory of Open Access Journals".into(), category: "open-access".into(), needs_api_key: false },
+    ProviderInfo { id: "open_library".into(), label: "Open Library".into(), description: "Internet Archive's open book catalog".into(), category: "books".into(), needs_api_key: false },
+    ProviderInfo { id: "google_books".into(), label: "Google Books".into(), description: "Google's book search and metadata".into(), category: "books".into(), needs_api_key: true },
+    ProviderInfo { id: "hathitrust".into(), label: "HathiTrust".into(), description: "Digital library of research institution holdings".into(), category: "books".into(), needs_api_key: false },
 ]);
 
-/// Just the ID strings, in the same order as `legal_provider_info()`.
-/// Compile-time constant — zero allocation.
-const LEGAL_PROVIDER_IDS: &[&str] = &[
-    "openalex", "crossref", "pubmed", "biorxiv",
-    "semantic_scholar", "openreview", "arxiv",
-    "unpaywall", "core",
-];
+/// Derived from `PROVIDER_INFO` — always in sync, single allocation on first use.
+static LEGAL_PROVIDER_IDS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    PROVIDER_INFO.iter().map(|p| p.id.clone()).collect()
+});
 
 /// Returns the full metadata for every legal (non-scraper) search provider.
 /// Backed by a `LazyLock` — allocates once, returns a static slice thereafter.
@@ -42,8 +45,8 @@ pub fn legal_provider_info() -> &'static [ProviderInfo] {
 }
 
 /// Convenience: just the ID strings, in the same order as `legal_provider_info()`.
-pub fn legal_provider_ids() -> &'static [&'static str] {
-    LEGAL_PROVIDER_IDS
+pub fn legal_provider_ids() -> &'static [String] {
+    &LEGAL_PROVIDER_IDS
 }
 
 /// Map a Paper's work_type to a BibTeX entry type.
@@ -176,6 +179,12 @@ pub fn build_config(
     let pubmed_api_key = cred_store
         .get("com.lit.app", "pubmed-api-key")
         .ok();
+    let google_books_api_key = cred_store
+        .get("com.lit.app", "google-books-api-key")
+        .ok();
+    let base_api_key = cred_store
+        .get("com.lit.app", "base-api-key")
+        .ok();
 
     research_hub::Config {
         download_dir: PathBuf::from("."),
@@ -184,6 +193,8 @@ pub fn build_config(
         unpaywall_email,
         core_api_key,
         pubmed_api_key,
+        google_books_api_key,
+        base_api_key,
         provider_timeout,
         max_parallel_providers: 5,
     }
@@ -196,7 +207,7 @@ pub fn create_enabled_providers(
 ) -> Vec<Arc<dyn research_hub::Provider>> {
     let all = research_hub::create_all_providers(client, config);
     all.into_iter()
-        .filter(|p| LEGAL_PROVIDER_IDS.contains(&p.name()))
+        .filter(|p| LEGAL_PROVIDER_IDS.iter().any(|id| id == p.name()))
         .filter(|p| enabled.contains(p.name()))
         .collect()
 }
@@ -262,6 +273,28 @@ mod tests {
             series: None,
             oclc: None,
             lccn: None,
+        }
+    }
+
+    fn book_paper() -> research_hub::Paper {
+        research_hub::Paper {
+            title: "Deep Learning".to_string(),
+            authors: vec![
+                "Goodfellow, Ian".to_string(),
+                "Bengio, Yoshua".to_string(),
+                "Courville, Aaron".to_string(),
+            ],
+            abstract_text: Some("An introduction to deep learning".to_string()),
+            year: Some(2016),
+            published_date: Some("2016-11-18".to_string()),
+            source: "google_books".to_string(),
+            publisher: Some("MIT Press".to_string()),
+            isbn: Some("978-0-262-03561-3".to_string()),
+            work_type: Some("book".to_string()),
+            editors: vec!["Editor, A".to_string()],
+            series: Some("Adaptive Computation and Machine Learning".to_string()),
+            lccn: Some("2016022992".to_string()),
+            ..Default::default()
         }
     }
 
@@ -517,6 +550,8 @@ mod tests {
         assert_eq!(config.semantic_scholar_api_key, None);
         assert_eq!(config.core_api_key, None);
         assert_eq!(config.pubmed_api_key, None);
+        assert_eq!(config.google_books_api_key, None);
+        assert_eq!(config.base_api_key, None);
         assert_eq!(config.download_dir, PathBuf::from("."));
         assert_eq!(config.max_parallel_providers, 5);
     }
@@ -663,6 +698,8 @@ mod tests {
             unpaywall_email: "test@test.com".to_string(),
             core_api_key: None,
             pubmed_api_key: None,
+            google_books_api_key: None,
+            base_api_key: None,
             provider_timeout: Duration::from_secs(30),
             max_parallel_providers: 5,
         })
@@ -674,8 +711,9 @@ mod tests {
         let config = test_config();
         // Enable everything — scrapers should still be excluded
         let enabled: HashSet<String> = [
-            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "openalex", "crossref", "base", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+            "zenodo", "doaj", "open_library", "google_books", "hathitrust",
             "ssrn", "mdpi", "researchgate", "sci_hub",
         ]
         .iter()
@@ -683,7 +721,7 @@ mod tests {
         .collect();
         let providers = super::create_enabled_providers(client, config, &enabled);
         let names: Vec<&str> = providers.iter().map(|p| p.name()).collect();
-        assert_eq!(providers.len(), 9);
+        assert_eq!(providers.len(), 15);
         assert!(!names.contains(&"ssrn"));
         assert!(!names.contains(&"mdpi"));
         assert!(!names.contains(&"researchgate"));
@@ -716,18 +754,19 @@ mod tests {
     }
 
     #[test]
-    fn enabled_providers_all_legal_returns_nine() {
+    fn enabled_providers_all_legal_returns_fifteen() {
         let client = reqwest::Client::new();
         let config = test_config();
         let enabled: HashSet<String> = [
-            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "openalex", "crossref", "base", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+            "zenodo", "doaj", "open_library", "google_books", "hathitrust",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
         let providers = super::create_enabled_providers(client, config, &enabled);
-        assert_eq!(providers.len(), 9);
+        assert_eq!(providers.len(), 15);
     }
 
     #[test]
@@ -735,8 +774,9 @@ mod tests {
         let client = reqwest::Client::new();
         let config = test_config();
         let enabled: HashSet<String> = [
-            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "openalex", "crossref", "base", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+            "zenodo", "doaj", "open_library", "google_books", "hathitrust",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -772,24 +812,24 @@ mod tests {
     #[test]
     fn provider_info_has_correct_count_and_unique_ids() {
         let info = super::legal_provider_info();
-        assert_eq!(info.len(), 9);
+        assert_eq!(info.len(), 15);
         let ids: HashSet<_> = info.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 9); // no duplicates
+        assert_eq!(ids.len(), 15); // no duplicates
     }
 
     #[test]
     fn provider_info_categories_are_valid() {
-        let valid = ["general", "biomedical", "cs-ml", "open-access"];
+        let valid = ["general", "biomedical", "cs-ml", "open-access", "books"];
         for p in super::legal_provider_info() {
             assert!(valid.contains(&p.category.as_str()), "bad category: {}", p.category);
         }
     }
 
     #[test]
-    fn legal_provider_ids_match_provider_info() {
+    fn legal_provider_ids_derived_from_provider_info() {
         let info_ids: Vec<&str> = super::PROVIDER_INFO.iter().map(|p| p.id.as_str()).collect();
-        let const_ids: Vec<&str> = super::LEGAL_PROVIDER_IDS.to_vec();
-        assert_eq!(info_ids, const_ids, "LEGAL_PROVIDER_IDS must match PROVIDER_INFO entries in order");
+        let derived: Vec<&str> = super::legal_provider_ids().iter().map(|s| s.as_str()).collect();
+        assert_eq!(info_ids, derived, "legal_provider_ids must match PROVIDER_INFO entries in order");
     }
 
     #[test]
@@ -811,19 +851,20 @@ mod tests {
     }
 
     #[test]
-    fn legal_provider_ids_is_static_str_slice() {
-        let ids: &[&str] = super::legal_provider_ids();
-        assert_eq!(ids.len(), 9);
+    fn legal_provider_ids_is_static_string_slice() {
+        let ids: &[String] = super::legal_provider_ids();
+        assert_eq!(ids.len(), 15);
         assert_eq!(ids[0], "openalex");
-        assert_eq!(ids[8], "core");
+        assert_eq!(ids[14], "hathitrust");
     }
 
     #[test]
     fn legal_provider_ids_contains_all_expected() {
-        let ids = super::legal_provider_ids();
+        let ids: Vec<&str> = super::legal_provider_ids().iter().map(|s| s.as_str()).collect();
         let expected = [
-            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "openalex", "crossref", "base", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+            "zenodo", "doaj", "open_library", "google_books", "hathitrust",
         ];
         for e in &expected {
             assert!(ids.contains(e), "missing provider id: {}", e);
@@ -981,5 +1022,25 @@ mod tests {
         let paper = minimal_paper();
         let entry = paper_to_bib_entry(&paper, &HashSet::new());
         assert_eq!(entry.arxiv_id, None);
+    }
+
+    // ── Book paper mapping ─────────────────────────────────────────
+
+    #[test]
+    fn book_paper_maps_correctly() {
+        let paper = book_paper();
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+
+        assert_eq!(entry.entry_type, "book");
+        assert_eq!(entry.title, "Deep Learning");
+        assert_eq!(entry.year, "2016");
+        assert_eq!(entry.authors, vec!["Goodfellow, Ian", "Bengio, Yoshua", "Courville, Aaron"]);
+        assert_eq!(entry.publisher, Some("MIT Press".to_string()));
+        assert_eq!(entry.isbn, Some("978-0-262-03561-3".to_string()));
+        assert_eq!(entry.series, Some("Adaptive Computation and Machine Learning".to_string()));
+        assert_eq!(entry.editors, vec!["Editor, A".to_string()]);
+        assert_eq!(entry.lccn, Some("2016022992".to_string()));
+        assert_eq!(entry.journal, None);
+        assert_eq!(entry.tags, vec!["source:google_books"]);
     }
 }

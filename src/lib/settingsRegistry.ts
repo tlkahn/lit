@@ -35,7 +35,7 @@ interface SegmentedEntry extends SettingEntryBase { controlType: "segmented"; op
 interface TextEntry extends SettingEntryBase { controlType: "text"; }
 interface TextAreaEntry extends SettingEntryBase { controlType: "textarea"; }
 interface DropdownEntry extends SettingEntryBase { controlType: "dropdown"; options?: { value: string; label: string }[]; }
-interface PasswordEntry extends SettingEntryBase { controlType: "password"; provider: string; }
+export interface PasswordEntry extends SettingEntryBase { controlType: "password"; provider: string; }
 interface SliderEntry extends SettingEntryBase { controlType: "slider"; min: number; max: number; step: number; }
 /** Renders nothing itself (a dedicated component owns the UI). Exists purely
  *  to give a section a searchable anchor so search cannot hide it. */
@@ -446,6 +446,26 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-searchPubmedApiKey",
     provider: "pubmed",
     keywords: ["pubmed", "ncbi", "api key", "entrez"],
+  },
+  {
+    category: "Paper Search",
+    label: "Google Books API Key",
+    storeField: "searchGoogleBooksApiKeySet",
+    jsonKey: "search.googleBooksApiKey",
+    controlType: "password",
+    testId: "settings-searchGoogleBooksApiKey",
+    provider: "google-books",
+    keywords: ["google books", "api key", "books"],
+  },
+  {
+    category: "Paper Search",
+    label: "BASE API Key",
+    storeField: "searchBaseApiKeySet",
+    jsonKey: "search.baseApiKey",
+    controlType: "password",
+    testId: "settings-searchBaseApiKey",
+    provider: "base",
+    keywords: ["base", "bielefeld", "api key"],
   },
   {
     category: "Paper Search",

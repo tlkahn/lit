@@ -13,7 +13,7 @@ import { SettingsTextArea } from "./SettingsTextArea";
 import { SettingsSlider } from "./SettingsSlider";
 import { HighlightedText } from "./HighlightedText";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
-import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField } from "../lib/settingsRegistry";
+import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField, type PasswordEntry } from "../lib/settingsRegistry";
 import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { AcademicExportSettings } from "./AcademicExportSettings";
@@ -222,11 +222,9 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
       });
     });
     // Reconcile paper-search API key flags against the credential store.
-    const searchKeyChecks: { provider: string; field: keyof PreferencesState }[] = [
-      { provider: "semantic-scholar", field: "searchS2ApiKeySet" },
-      { provider: "core", field: "searchCoreApiKeySet" },
-      { provider: "pubmed", field: "searchPubmedApiKeySet" },
-    ];
+    const searchKeyChecks = SETTINGS_REGISTRY
+      .filter((e): e is PasswordEntry => e.controlType === "password" && e.category === "Paper Search")
+      .map(e => ({ provider: e.provider, field: e.storeField as keyof PreferencesState }));
     for (const { provider, field } of searchKeyChecks) {
       hasApiKey(provider).then((has) => {
         usePreferencesStore.setState({ [field]: has } as Partial<PreferencesState>);

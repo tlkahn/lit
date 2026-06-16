@@ -420,14 +420,27 @@ impl CredentialStore for EncryptedFileStore {
     }
 }
 
+/// Check whether `provider` (hyphenated slug) matches a search provider from
+/// `legal_provider_info()` that requires an API key.  Normalises hyphens to
+/// underscores so credential slugs ("google-books") match PROVIDER_INFO ids
+/// ("google_books").
+fn is_search_provider_needing_key(provider: &str) -> bool {
+    let normalised = provider.replace('-', "_");
+    crate::bib::research_hub::legal_provider_info()
+        .iter()
+        .any(|p| p.id == normalised && p.needs_api_key)
+}
+
 fn account_for_provider(provider: &str) -> Result<String, String> {
     match provider {
         "openai" => Ok(ACCOUNT_OPENAI.to_string()),
         "anthropic" => Ok(ACCOUNT_ANTHROPIC.to_string()),
-        // Any registry-known provider or a custom-* slug derives its account from
-        // the id directly, so adding a provider to provider_registry::REGISTRY
-        // requires no second edit here.
-        "semantic-scholar" | "core" | "pubmed" => Ok(format!("{}-api-key", provider)),
+        // Any search provider from legal_provider_info() that needs an API key
+        // is resolved dynamically -- adding a provider to PROVIDER_INFO with
+        // needs_api_key: true is sufficient, no edit here required.
+        _ if is_search_provider_needing_key(provider) => Ok(format!("{}-api-key", provider)),
+        // Any LLM-registry-known provider or a custom-* slug derives its account
+        // from the id directly.
         _ if crate::provider_registry::lookup(provider).is_some()
             || provider.starts_with("custom-") =>
         {
@@ -1387,6 +1400,45 @@ mod tests {
             );
             assert!(store.is_unlocked());
         }
+    }
+
+    #[test]
+    fn test_search_providers_need_no_hardcoded_arms() {
+        // Every search provider in legal_provider_info() that needs an API key
+        // must resolve via is_search_provider_needing_key, so adding a provider
+        // to PROVIDER_INFO with needs_api_key: true is sufficient -- no edit to
+        // account_for_provider is required.
+        for p in crate::bib::research_hub::legal_provider_info() {
+            if !p.needs_api_key {
+                continue;
+            }
+            // Credential slugs use hyphens; PROVIDER_INFO ids use underscores.
+            let slug = p.id.replace('_', "-");
+            assert_eq!(
+                account_for_provider(&slug),
+                Ok(format!("{}-api-key", slug)),
+                "search provider {:?} (slug {:?}) must resolve dynamically",
+                p.id, slug
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_search_provider_needing_key_positive() {
+        assert!(super::is_search_provider_needing_key("semantic-scholar"));
+        assert!(super::is_search_provider_needing_key("google-books"));
+        assert!(super::is_search_provider_needing_key("core"));
+        assert!(super::is_search_provider_needing_key("pubmed"));
+        assert!(super::is_search_provider_needing_key("base"));
+    }
+
+    #[test]
+    fn test_is_search_provider_needing_key_negative() {
+        // Providers that exist but don't need a key
+        assert!(!super::is_search_provider_needing_key("openalex"));
+        assert!(!super::is_search_provider_needing_key("arxiv"));
+        // Completely unknown provider
+        assert!(!super::is_search_provider_needing_key("nonexistent"));
     }
 
     #[test]

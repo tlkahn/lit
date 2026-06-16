@@ -669,11 +669,13 @@ export async function searchPapers(
   query: string,
   limit?: number,
   offset?: number,
+  searchType?: string,
 ): Promise<PaperSearchResult> {
   return invoke<PaperSearchResult>("search_papers", {
     query,
     limit: limit ?? null,
     offset: offset ?? null,
+    search_type: searchType ?? null,
   });
 }
 

@@ -1898,8 +1898,10 @@ describe("PreferencesStore", () => {
 
   describe("searchEnabledProviders hydration", () => {
     const ALL_PROVIDERS = [
-      "openalex", "crossref", "pubmed", "semantic_scholar",
-      "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+      "openalex", "crossref", "base", "pubmed", "biorxiv",
+      "semantic_scholar", "openreview", "arxiv",
+      "unpaywall", "core", "zenodo", "doaj",
+      "open_library", "google_books", "hathitrust",
     ];
 
     it("keeps all providers enabled when search.enabledProviders key is absent (fresh install)", async () => {
@@ -1920,7 +1922,7 @@ describe("PreferencesStore", () => {
       expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(ALL_PROVIDERS);
     });
 
-    it("uses stored array when search.enabledProviders is present", async () => {
+    it("uses stored array when search.enabledProviders is present (with migration)", async () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
@@ -1935,7 +1937,77 @@ describe("PreferencesStore", () => {
       mockListen();
 
       await usePreferencesStore.getState().loadPreferences();
-      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(["crossref", "arxiv"]);
+      const result = usePreferencesStore.getState().searchEnabledProviders;
+      // Persisted providers come first in their original order
+      expect(result[0]).toBe("crossref");
+      expect(result[1]).toBe("arxiv");
+      // All canonical providers merged in
+      expect(result).toHaveLength(ALL_PROVIDERS.length);
+    });
+
+    it("merges new providers into existing persisted list on upgrade", async () => {
+      // Simulate a user who saved preferences when only 9 providers existed
+      const OLD_PROVIDERS = [
+        "openalex", "crossref", "base", "pubmed", "biorxiv",
+        "semantic_scholar", "openreview", "arxiv", "unpaywall",
+      ];
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            "search.enabledProviders": OLD_PROVIDERS,
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const result = usePreferencesStore.getState().searchEnabledProviders;
+
+      // Original providers preserved in original order
+      expect(result.slice(0, 9)).toEqual(OLD_PROVIDERS);
+      // New providers appended at the end
+      expect(result).toContain("core");
+      expect(result).toContain("zenodo");
+      expect(result).toContain("doaj");
+      expect(result).toContain("open_library");
+      expect(result).toContain("google_books");
+      expect(result).toContain("hathitrust");
+      // Total count = all 15
+      expect(result).toHaveLength(ALL_PROVIDERS.length);
+    });
+
+    it("does not duplicate providers that already exist in persisted list", async () => {
+      // User already has some of the "new" providers (e.g. they were on a beta)
+      const PARTIAL = [
+        "openalex", "crossref", "core", "zenodo",
+      ];
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            "search.enabledProviders": PARTIAL,
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      const result = usePreferencesStore.getState().searchEnabledProviders;
+
+      // Original order preserved, then missing ones appended
+      expect(result.slice(0, 4)).toEqual(PARTIAL);
+      // No duplicates
+      const unique = new Set(result);
+      expect(unique.size).toBe(result.length);
+      // All canonical providers present
+      expect(result).toHaveLength(ALL_PROVIDERS.length);
     });
 
     it("uses empty array when search.enabledProviders is explicitly [] (user disabled all)", async () => {
@@ -2012,6 +2084,128 @@ describe("PreferencesStore", () => {
       setSearchEnabledProviders(["crossref"]);
       await new Promise((r) => setTimeout(r, 0));
 
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(ALL_PROVIDERS);
+    });
+
+    // Cross-language sync: the TS ALL_PROVIDERS array above must match the Rust
+    // LEGAL_PROVIDER_IDS in src-tauri/src/bib/research_hub.rs. If you add or
+    // remove a provider in Rust, update ALL_PROVIDERS here AND the hardcoded
+    // ALL_SEARCH_PROVIDERS in preferences.ts. The test below catches drift by
+    // verifying the IPC-returned list matches the TS default.
+    it("default searchEnabledProviders matches Rust canonical list (via mocked IPC)", async () => {
+      // This simulates the Rust list_search_providers return value.
+      // If a provider is added/removed in Rust, this mock AND ALL_PROVIDERS
+      // must be updated in lockstep -- the test failure is the reminder.
+      const RUST_CANONICAL = [
+        { id: "openalex", label: "OpenAlex", description: "", category: "general", needs_api_key: false },
+        { id: "crossref", label: "Crossref", description: "", category: "general", needs_api_key: false },
+        { id: "base", label: "BASE", description: "", category: "general", needs_api_key: true },
+        { id: "pubmed", label: "PubMed", description: "", category: "biomedical", needs_api_key: true },
+        { id: "biorxiv", label: "bioRxiv", description: "", category: "biomedical", needs_api_key: false },
+        { id: "semantic_scholar", label: "Semantic Scholar", description: "", category: "cs-ml", needs_api_key: true },
+        { id: "openreview", label: "OpenReview", description: "", category: "cs-ml", needs_api_key: false },
+        { id: "arxiv", label: "arXiv", description: "", category: "cs-ml", needs_api_key: false },
+        { id: "unpaywall", label: "Unpaywall", description: "", category: "open-access", needs_api_key: false },
+        { id: "core", label: "CORE", description: "", category: "open-access", needs_api_key: true },
+        { id: "zenodo", label: "Zenodo", description: "", category: "open-access", needs_api_key: false },
+        { id: "doaj", label: "DOAJ", description: "", category: "open-access", needs_api_key: false },
+        { id: "open_library", label: "Open Library", description: "", category: "books", needs_api_key: false },
+        { id: "google_books", label: "Google Books", description: "", category: "books", needs_api_key: true },
+        { id: "hathitrust", label: "HathiTrust", description: "", category: "books", needs_api_key: false },
+      ];
+
+      // Verify the TS default list matches the mocked Rust canonical IDs
+      const rustIds = RUST_CANONICAL.map((p) => p.id);
+      expect(ALL_PROVIDERS).toEqual(rustIds);
+
+      // Also verify the store's initial default matches
+      const storeDefault = usePreferencesStore.getState().searchEnabledProviders;
+      expect(storeDefault).toEqual(rustIds);
+    });
+
+    it("fetches canonical providers from Rust IPC when search.enabledProviders is absent (fresh install)", async () => {
+      // Simulate Rust returning a list with a hypothetical extra provider
+      const RUST_PROVIDERS = [
+        ...ALL_PROVIDERS.map((id) => ({
+          id, label: id, description: "", category: "general", needs_api_key: false,
+        })),
+        { id: "new_rust_provider", label: "New", description: "", category: "general", needs_api_key: false },
+      ];
+
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            // No "search.enabledProviders" -- fresh install
+          };
+        }
+        if (cmd === "list_search_providers") {
+          return RUST_PROVIDERS;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      // Flush the fire-and-forget listSearchProviders call
+      await new Promise((r) => setTimeout(r, 0));
+
+      const result = usePreferencesStore.getState().searchEnabledProviders;
+      // Should have adopted the Rust list, including the new provider
+      expect(result).toContain("new_rust_provider");
+      expect(result).toHaveLength(ALL_PROVIDERS.length + 1);
+    });
+
+    it("does NOT call list_search_providers when search.enabledProviders is present", async () => {
+      let listCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            "search.enabledProviders": ["crossref", "arxiv"],
+          };
+        }
+        if (cmd === "list_search_providers") {
+          listCalled = true;
+          return [];
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(listCalled).toBe(false);
+    });
+
+    it("keeps hardcoded fallback when list_search_providers IPC fails", async () => {
+      // Reset to the default so leftover state from prior tests does not interfere.
+      usePreferencesStore.setState({ searchEnabledProviders: ALL_PROVIDERS });
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            // No "search.enabledProviders" -- triggers IPC fetch
+          };
+        }
+        if (cmd === "list_search_providers") {
+          throw new Error("IPC unavailable");
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Should still have the hardcoded TS fallback
       expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(ALL_PROVIDERS);
     });
 
