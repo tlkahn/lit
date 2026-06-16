@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // Excludes web scrapers: ssrn, mdpi, researchgate, sci_hub.
-const LEGAL_PROVIDERS: &[&str] = &[
+pub const LEGAL_PROVIDERS: &[&str] = &[
     "openalex",
     "crossref",
     "pubmed",

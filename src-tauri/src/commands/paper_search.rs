@@ -4,9 +4,14 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::bib::research_hub::{build_config, create_enabled_providers, paper_to_bib_entry_with_pdf};
+use crate::bib::research_hub::{
+    build_config, create_enabled_providers, paper_to_bib_entry_with_pdf, LEGAL_PROVIDERS,
+};
 use crate::bib::types::BibEntry;
 use crate::commands::credential::CredentialStore;
+
+static CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(reqwest::Client::new);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperSearchResult {
@@ -29,9 +34,7 @@ pub(crate) fn convert_search_result(
         existing_keys.insert(entry.key.clone());
 
         if let Some(url) = pdf_url {
-            if let Some(ref doi) = entry.doi {
-                pdf_urls.insert(doi.clone(), url);
-            }
+            pdf_urls.insert(entry.key.clone(), url);
         }
 
         entries.push(entry);
@@ -69,23 +72,10 @@ pub async fn search_papers(
                 .collect()
         })
         .unwrap_or_else(|| {
-            [
-                "openalex",
-                "crossref",
-                "pubmed",
-                "semantic_scholar",
-                "unpaywall",
-                "core",
-                "openreview",
-                "arxiv",
-                "biorxiv",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
+            LEGAL_PROVIDERS.iter().map(|s| s.to_string()).collect()
         });
 
-    let client = reqwest::Client::new();
+    let client = CLIENT.clone();
     let config = Arc::new(config);
     let providers = create_enabled_providers(client, config.clone(), &enabled);
 
@@ -128,11 +118,12 @@ mod tests {
         searched: Vec<&str>,
         failed: Vec<&str>,
     ) -> research_hub::SearchResult {
+        let total_results = papers.len();
         research_hub::SearchResult {
             query: "test".to_string(),
             search_type: "KEYWORDS".to_string(),
-            papers: papers.clone(),
-            total_results: papers.len(),
+            papers,
+            total_results,
             offset: 0,
             sort: "relevance".to_string(),
             total_hits: None,
@@ -196,7 +187,7 @@ mod tests {
 
         assert_eq!(result.entries.len(), 1);
         assert_eq!(
-            result.pdf_urls.get("10.1234/test"),
+            result.pdf_urls.get("smith2024"),
             Some(&"https://example.com/paper.pdf".to_string())
         );
     }
@@ -204,7 +195,7 @@ mod tests {
     // ── Test 4: PDF URL without DOI is not stored ───────────────────
 
     #[test]
-    fn convert_pdf_url_without_doi_not_stored() {
+    fn convert_pdf_url_without_doi_still_stored() {
         let paper = make_paper(|p| {
             p.title = "No DOI Paper".to_string();
             p.pdf_url = Some("https://example.com/paper.pdf".to_string());
@@ -214,7 +205,11 @@ mod tests {
         let result = convert_search_result(&sr);
 
         assert_eq!(result.entries.len(), 1);
-        assert!(result.pdf_urls.is_empty());
+        assert_eq!(result.pdf_urls.len(), 1);
+        assert_eq!(
+            result.pdf_urls.get(&result.entries[0].key),
+            Some(&"https://example.com/paper.pdf".to_string())
+        );
     }
 
     // ── Test 5: Multiple papers with key deduplication ──────────────
@@ -320,11 +315,15 @@ mod tests {
         let result = convert_search_result(&sr);
 
         assert_eq!(result.entries.len(), 3);
-        // Only paper1 has both DOI and PDF
-        assert_eq!(result.pdf_urls.len(), 1);
+        // paper1 and paper2 both have PDF URLs (keyed by cite key)
+        assert_eq!(result.pdf_urls.len(), 2);
         assert_eq!(
-            result.pdf_urls.get("10.1111/aaa"),
+            result.pdf_urls.get("alpha2023"),
             Some(&"https://example.com/a.pdf".to_string())
+        );
+        assert_eq!(
+            result.pdf_urls.get("beta2023"),
+            Some(&"https://example.com/b.pdf".to_string())
         );
     }
 }
