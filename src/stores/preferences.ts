@@ -58,6 +58,13 @@ export interface PreferencesState {
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   companionSearchPath: string[];
   citationNotesDir: string;
+  searchEnabledProviders: string[];
+  searchCrossrefEmail: string;
+  searchUnpaywallEmail: string;
+  searchProviderTimeout: number;
+  searchS2ApiKeySet: boolean;
+  searchCoreApiKeySet: boolean;
+  searchPubmedApiKeySet: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -150,6 +157,14 @@ function applyCompanionSearchPath(val: unknown): string[] {
   return filtered.length > 0 ? filtered : ["."];
 }
 
+const ALL_SEARCH_PROVIDERS = ["openalex", "crossref", "pubmed", "semantic_scholar", "unpaywall", "core", "openreview", "arxiv", "biorxiv"];
+
+function applySearchEnabledProviders(val: unknown): string[] {
+  if (!Array.isArray(val)) return ALL_SEARCH_PROVIDERS;
+  const filtered = val.filter((entry): entry is string => typeof entry === "string" && ALL_SEARCH_PROVIDERS.includes(entry));
+  return filtered.length > 0 ? filtered : ALL_SEARCH_PROVIDERS;
+}
+
 function mapPreferences(prefs: Preferences) {
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
@@ -189,6 +204,10 @@ function mapPreferences(prefs: Preferences) {
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
+    searchEnabledProviders: applySearchEnabledProviders(prefs["search.enabledProviders"]),
+    searchCrossrefEmail: (prefs["search.crossrefEmail"] as string) ?? "",
+    searchUnpaywallEmail: (prefs["search.unpaywallEmail"] as string) ?? "",
+    searchProviderTimeout: (prefs["search.providerTimeout"] as number) ?? 30,
   };
 }
 
@@ -208,6 +227,17 @@ export function setCompanionSearchPath(paths: string[]) {
   setPreference("companion.searchPath", next).catch(() => {
     usePreferencesStore.setState((state) =>
       state.companionSearchPath === next ? { companionSearchPath: prev } : {},
+    );
+  });
+}
+
+export function setSearchEnabledProviders(providers: string[]) {
+  const prev = usePreferencesStore.getState().searchEnabledProviders;
+  const next = applySearchEnabledProviders(providers);
+  usePreferencesStore.setState({ searchEnabledProviders: next });
+  setPreference("search.enabledProviders", next).catch(() => {
+    usePreferencesStore.setState((state) =>
+      state.searchEnabledProviders === next ? { searchEnabledProviders: prev } : {},
     );
   });
 }
@@ -280,6 +310,13 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
   citationNotesDir: "references",
+  searchEnabledProviders: ["openalex", "crossref", "pubmed", "semantic_scholar", "unpaywall", "core", "openreview", "arxiv", "biorxiv"],
+  searchCrossrefEmail: "",
+  searchUnpaywallEmail: "",
+  searchProviderTimeout: 30,
+  searchS2ApiKeySet: false,
+  searchCoreApiKeySet: false,
+  searchPubmedApiKeySet: false,
   loaded: false,
 
   loadPreferences: async () => {
