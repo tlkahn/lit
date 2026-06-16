@@ -459,7 +459,7 @@ pub fn search_bib_items(
     let sql = format!(
         "SELECT {} FROM bib_items WHERE deleted_at IS NULL \
          AND (cite_key LIKE ?1 OR title LIKE ?1 OR authors LIKE ?1 \
-              OR year LIKE ?1 OR doi LIKE ?1) \
+              OR year LIKE ?1 OR doi LIKE ?1 OR isbn LIKE ?1) \
          ORDER BY cite_key LIMIT ?2",
         SELECT_COLUMNS
     );
@@ -1356,6 +1356,19 @@ mod tests {
         let results = search_bib_items(&store.conn, "Einstein", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].key, "a2024");
+    }
+
+    #[test]
+    fn test_search_bib_items_by_isbn() {
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("evola1992");
+        e.title = "The Yoga of Power".to_string();
+        e.isbn = Some("9780231179249".to_string());
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let results = search_bib_items(&store.conn, "9780231179249", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "evola1992");
     }
 
     #[test]
