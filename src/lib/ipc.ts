@@ -640,6 +640,26 @@ export async function bibDelete(
   return invoke<boolean>("bib_delete", { citeKey, workspacePath });
 }
 
+export interface PaperSearchResult {
+  entries: BibEntry[];
+  pdf_urls: Record<string, string>;
+  total_results: number;
+  providers_searched: string[];
+  providers_failed: string[];
+}
+
+export async function searchPapers(
+  query: string,
+  limit?: number,
+  offset?: number,
+): Promise<PaperSearchResult> {
+  return invoke<PaperSearchResult>("search_papers", {
+    query,
+    limit: limit ?? null,
+    offset: offset ?? null,
+  });
+}
+
 export interface EnsureCompanionBibResult {
   bib_path: string;
   bibliography_value: string | null;
