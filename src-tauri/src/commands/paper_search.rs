@@ -52,7 +52,7 @@ pub(crate) fn convert_search_result(
 
 #[tauri::command]
 pub fn list_search_providers() -> Vec<ProviderInfo> {
-    legal_provider_info()
+    legal_provider_info().to_vec()
 }
 
 #[tauri::command]
@@ -78,7 +78,7 @@ pub async fn search_papers(
                 .collect()
         })
         .unwrap_or_else(|| {
-            legal_provider_ids().into_iter().collect()
+            legal_provider_ids().iter().map(|s| s.to_string()).collect()
         });
 
     let client = CLIENT.clone();

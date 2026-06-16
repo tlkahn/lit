@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { PaperSearchResult, BibEntry } from "../lib/ipc";
 import { doiHref } from "../lib/urlUtils";
+import { EntryTypeBadge } from "./EntryTypeBadge";
+import { distinctPublisher } from "../lib/bibUtils";
 
 interface PaperSearchResultsProps {
   results: PaperSearchResult;
@@ -22,20 +24,6 @@ function entryStableKey(entry: BibEntry): string {
   return entry.doi ?? entry.key;
 }
 
-/** Entry types that are too common/generic to badge. */
-const HIDDEN_ENTRY_TYPES = new Set(["article", "misc", ""]);
-
-function EntryTypeBadge({ entryType }: { entryType: string }) {
-  if (HIDDEN_ENTRY_TYPES.has(entryType)) return null;
-  return (
-    <span
-      data-testid="entry-type-badge"
-      className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-    >
-      {entryType}
-    </span>
-  );
-}
 
 export function PaperSearchResults({
   results,
@@ -150,10 +138,7 @@ export function PaperSearchResults({
                           {abbreviateAuthors(entry.authors)}
                           {entry.year ? ` (${entry.year})` : ""}
                           {entry.journal ? ` — ${entry.journal}` : ""}
-                          {entry.publisher &&
-                          entry.publisher !== entry.journal
-                            ? ` — ${entry.publisher}`
-                            : ""}
+                          {(() => { const dp = distinctPublisher(entry); return dp ? ` — ${dp}` : ""; })()}
                         </span>
                         <EntryTypeBadge entryType={entry.entry_type} />
                       </div>
@@ -184,15 +169,14 @@ export function PaperSearchResults({
                           {entry.authors.join("; ")}
                         </div>
                       )}
-                      {entry.publisher &&
-                        entry.publisher !== entry.journal && (
+                      {(() => { const dp = distinctPublisher(entry); return dp ? (
                           <div
                             data-testid="entry-publisher"
                             className="text-xs text-text-muted"
                           >
-                            {entry.publisher}
+                            {dp}
                           </div>
-                        )}
+                        ) : null; })()}
                       {(entry.volume || entry.number || entry.pages) && (
                         <div className="text-xs text-text-muted">
                           {[
@@ -204,9 +188,8 @@ export function PaperSearchResults({
                             .join(", ")}
                         </div>
                       )}
-                      <div className="mt-1 flex flex-wrap items-center gap-1">
-                        <EntryTypeBadge entryType={entry.entry_type} />
-                        {entry.isbn && (
+                      {entry.isbn && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
                           <a
                             data-testid="entry-isbn"
                             href={`https://openlibrary.org/isbn/${entry.isbn}`}
@@ -217,8 +200,8 @@ export function PaperSearchResults({
                           >
                             ISBN {entry.isbn}
                           </a>
-                        )}
-                      </div>
+                        </div>
+                      )}
                       {entry.doi && (
                         <div className="mt-1">
                           <a

@@ -43,9 +43,8 @@ import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { doiHref } from "../lib/urlUtils";
 import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
-
-/** Entry types that are too common/generic to badge. */
-const HIDDEN_ENTRY_TYPES = new Set(["article", "misc", ""]);
+import { EntryTypeBadge } from "./EntryTypeBadge";
+import { distinctPublisher } from "../lib/bibUtils";
 
 function combinedText(entry: BibEntry): string {
   return [
@@ -935,14 +934,7 @@ export function ReferenceLibrary() {
                           <>
                             <div className="flex items-start gap-2">
                               <div className="font-semibold text-text-normal">{entry.title}</div>
-                              {!HIDDEN_ENTRY_TYPES.has(entry.entry_type) && (
-                                <span
-                                  data-testid="entry-type-badge"
-                                  className="shrink-0 rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                                >
-                                  {entry.entry_type}
-                                </span>
-                              )}
+                              <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
                             </div>
                             {entry.authors.length > 0 ? (
                               <div className="mt-1 text-text-muted">
@@ -955,9 +947,9 @@ export function ReferenceLibrary() {
                             {entry.journal ? (
                               <div className="text-text-muted">{entry.journal}</div>
                             ) : null}
-                            {entry.publisher && entry.publisher !== entry.journal ? (
-                              <div data-testid="entry-publisher" className="text-text-muted">{entry.publisher}</div>
-                            ) : null}
+                            {(() => { const dp = distinctPublisher(entry); return dp ? (
+                              <div data-testid="entry-publisher" className="text-text-muted">{dp}</div>
+                            ) : null; })()}
                             {entry.isbn ? (
                               <div data-testid="entry-isbn" className="text-text-muted">
                                 ISBN:{" "}

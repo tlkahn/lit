@@ -211,13 +211,13 @@ describe("PaperSearchResults", () => {
   });
 
   describe("Expanded view - entry type badge", () => {
-    it("shows entry type badge in expanded view for non-hidden types", async () => {
+    it("shows exactly one entry type badge when expanded (no duplicate)", async () => {
       const user = userEvent.setup();
       renderResults([makeEntry({ entry_type: "book" })]);
       await user.click(screen.getByText("A Great Paper"));
 
       const badges = screen.getAllByTestId("entry-type-badge");
-      expect(badges.length).toBeGreaterThanOrEqual(1);
+      expect(badges).toHaveLength(1);
     });
 
     it("does not show entry type badge in expanded view for 'article' type", async () => {
@@ -226,6 +226,31 @@ describe("PaperSearchResults", () => {
       await user.click(screen.getByText("A Great Paper"));
 
       expect(screen.queryByTestId("entry-type-badge")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Expanded view - no empty container div", () => {
+    it("does not render the isbn/badge container when entry_type is hidden and isbn is absent", async () => {
+      const user = userEvent.setup();
+      renderResults([
+        makeEntry({ entry_type: "article", isbn: undefined }),
+      ]);
+      await user.click(screen.getByText("A Great Paper"));
+
+      // The expanded section should not contain an empty div with the gap class
+      const expandedSection = screen.getByText("Smith, Alice; Jones, Bob").parentElement!;
+      const emptyContainers = expandedSection.querySelectorAll(".mt-1.flex.flex-wrap");
+      expect(emptyContainers).toHaveLength(0);
+    });
+
+    it("renders the isbn container when isbn is present even for hidden entry types", async () => {
+      const user = userEvent.setup();
+      renderResults([
+        makeEntry({ entry_type: "article", isbn: "978-0-123456-78-9" }),
+      ]);
+      await user.click(screen.getByText("A Great Paper"));
+
+      expect(screen.getByTestId("entry-isbn")).toBeInTheDocument();
     });
   });
 

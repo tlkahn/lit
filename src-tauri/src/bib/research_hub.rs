@@ -3,7 +3,7 @@ use crate::bib::types::BibEntry;
 use crate::bib::writer::generate_key;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -15,24 +15,35 @@ pub struct ProviderInfo {
     pub needs_api_key: bool,
 }
 
+static PROVIDER_INFO: LazyLock<Vec<ProviderInfo>> = LazyLock::new(|| vec![
+    ProviderInfo { id: "openalex".into(), label: "OpenAlex".into(), description: "Open catalog of the global research system".into(), category: "general".into(), needs_api_key: false },
+    ProviderInfo { id: "crossref".into(), label: "Crossref".into(), description: "DOI registration agency metadata".into(), category: "general".into(), needs_api_key: false },
+    ProviderInfo { id: "pubmed".into(), label: "PubMed".into(), description: "Biomedical literature from MEDLINE and life science journals".into(), category: "biomedical".into(), needs_api_key: true },
+    ProviderInfo { id: "biorxiv".into(), label: "bioRxiv".into(), description: "Preprint server for biology".into(), category: "biomedical".into(), needs_api_key: false },
+    ProviderInfo { id: "semantic_scholar".into(), label: "Semantic Scholar".into(), description: "AI-powered research tool by Allen Institute for AI".into(), category: "cs-ml".into(), needs_api_key: true },
+    ProviderInfo { id: "openreview".into(), label: "OpenReview".into(), description: "Open peer review platform for ML conferences".into(), category: "cs-ml".into(), needs_api_key: false },
+    ProviderInfo { id: "arxiv".into(), label: "arXiv".into(), description: "Open-access preprints in physics, math, CS, and more".into(), category: "cs-ml".into(), needs_api_key: false },
+    ProviderInfo { id: "unpaywall".into(), label: "Unpaywall".into(), description: "Free legal full-text articles via open-access links".into(), category: "open-access".into(), needs_api_key: false },
+    ProviderInfo { id: "core".into(), label: "CORE".into(), description: "Aggregator of open-access research papers".into(), category: "open-access".into(), needs_api_key: true },
+]);
+
+/// Just the ID strings, in the same order as `legal_provider_info()`.
+/// Compile-time constant — zero allocation.
+const LEGAL_PROVIDER_IDS: &[&str] = &[
+    "openalex", "crossref", "pubmed", "biorxiv",
+    "semantic_scholar", "openreview", "arxiv",
+    "unpaywall", "core",
+];
+
 /// Returns the full metadata for every legal (non-scraper) search provider.
-pub fn legal_provider_info() -> Vec<ProviderInfo> {
-    vec![
-        ProviderInfo { id: "openalex".into(), label: "OpenAlex".into(), description: "Open catalog of the global research system".into(), category: "general".into(), needs_api_key: false },
-        ProviderInfo { id: "crossref".into(), label: "Crossref".into(), description: "DOI registration agency metadata".into(), category: "general".into(), needs_api_key: false },
-        ProviderInfo { id: "pubmed".into(), label: "PubMed".into(), description: "Biomedical literature from MEDLINE and life science journals".into(), category: "biomedical".into(), needs_api_key: true },
-        ProviderInfo { id: "biorxiv".into(), label: "bioRxiv".into(), description: "Preprint server for biology".into(), category: "biomedical".into(), needs_api_key: false },
-        ProviderInfo { id: "semantic_scholar".into(), label: "Semantic Scholar".into(), description: "AI-powered research tool by Allen Institute for AI".into(), category: "cs-ml".into(), needs_api_key: true },
-        ProviderInfo { id: "openreview".into(), label: "OpenReview".into(), description: "Open peer review platform for ML conferences".into(), category: "cs-ml".into(), needs_api_key: false },
-        ProviderInfo { id: "arxiv".into(), label: "arXiv".into(), description: "Open-access preprints in physics, math, CS, and more".into(), category: "cs-ml".into(), needs_api_key: false },
-        ProviderInfo { id: "unpaywall".into(), label: "Unpaywall".into(), description: "Free legal full-text articles via open-access links".into(), category: "open-access".into(), needs_api_key: false },
-        ProviderInfo { id: "core".into(), label: "CORE".into(), description: "Aggregator of open-access research papers".into(), category: "open-access".into(), needs_api_key: true },
-    ]
+/// Backed by a `LazyLock` — allocates once, returns a static slice thereafter.
+pub fn legal_provider_info() -> &'static [ProviderInfo] {
+    &PROVIDER_INFO
 }
 
 /// Convenience: just the ID strings, in the same order as `legal_provider_info()`.
-pub fn legal_provider_ids() -> Vec<String> {
-    legal_provider_info().iter().map(|p| p.id.clone()).collect()
+pub fn legal_provider_ids() -> &'static [&'static str] {
+    LEGAL_PROVIDER_IDS
 }
 
 /// Map a Paper's work_type to a BibTeX entry type.
@@ -178,10 +189,9 @@ pub fn create_enabled_providers(
     config: Arc<research_hub::Config>,
     enabled: &HashSet<String>,
 ) -> Vec<Arc<dyn research_hub::Provider>> {
-    let legal: HashSet<String> = legal_provider_ids().into_iter().collect();
     let all = research_hub::create_all_providers(client, config);
     all.into_iter()
-        .filter(|p| legal.contains(p.name()))
+        .filter(|p| LEGAL_PROVIDER_IDS.contains(&p.name()))
         .filter(|p| enabled.contains(p.name()))
         .collect()
 }
@@ -769,8 +779,8 @@ mod tests {
     #[test]
     fn provider_ids_matches_info() {
         let ids = super::legal_provider_ids();
-        let info_ids: Vec<String> = super::legal_provider_info().iter().map(|p| p.id.clone()).collect();
-        assert_eq!(ids, info_ids);
+        let info_ids: Vec<&str> = super::legal_provider_info().iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, info_ids.as_slice());
     }
 
     #[test]
@@ -779,6 +789,36 @@ mod tests {
         let json = serde_json::to_string(&info).expect("should serialize");
         assert!(json.contains("openalex"));
         assert!(json.contains("needs_api_key"));
+    }
+
+    // ── LazyLock / static tests ──────────────────────────────────────
+
+    #[test]
+    fn provider_info_returns_static_slice() {
+        // Calling twice should return the same pointer (same static data)
+        let a = super::legal_provider_info();
+        let b = super::legal_provider_info();
+        assert!(std::ptr::eq(a, b), "legal_provider_info should return the same static slice");
+    }
+
+    #[test]
+    fn legal_provider_ids_is_static_str_slice() {
+        let ids: &[&str] = super::legal_provider_ids();
+        assert_eq!(ids.len(), 9);
+        assert_eq!(ids[0], "openalex");
+        assert_eq!(ids[8], "core");
+    }
+
+    #[test]
+    fn legal_provider_ids_contains_all_expected() {
+        let ids = super::legal_provider_ids();
+        let expected = [
+            "openalex", "crossref", "pubmed", "semantic_scholar",
+            "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+        ];
+        for e in &expected {
+            assert!(ids.contains(e), "missing provider id: {}", e);
+        }
     }
 
     // ── entry_type from work_type mapping ───────────────────────────

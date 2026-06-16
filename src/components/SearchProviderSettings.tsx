@@ -1,6 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { usePreferencesStore, setSearchEnabledProviders } from "../stores/preferences";
 import { listSearchProviders, type ProviderInfo } from "../lib/ipc";
+
+let cachedProviders: ProviderInfo[] | null = null;
+
+/** Reset the module-level cache. Exported for tests only. */
+export function _resetCachedProviders() {
+  cachedProviders = null;
+}
 
 const CATEGORY_ORDER = ["general", "biomedical", "cs-ml", "open-access"] as const;
 const CATEGORY_LABELS: Record<string, string> = {
@@ -10,17 +17,62 @@ const CATEGORY_LABELS: Record<string, string> = {
   "open-access": "Open Access",
 };
 
+export interface ProviderGroup {
+  category: string;
+  label: string;
+  providers: ProviderInfo[];
+}
+
+export function groupProviders(providers: ProviderInfo[]): ProviderGroup[] {
+  const knownCategories = new Set<string>(CATEGORY_ORDER);
+  const ungrouped = providers.filter((p) => !knownCategories.has(p.category));
+  return [
+    ...CATEGORY_ORDER.map((cat) => ({
+      category: cat,
+      label: CATEGORY_LABELS[cat] ?? cat,
+      providers: providers.filter((p) => p.category === cat),
+    })),
+    ...(ungrouped.length > 0
+      ? [{ category: "other", label: "Other", providers: ungrouped }]
+      : []),
+  ].filter((g) => g.providers.length > 0);
+}
+
 export function SearchProviderSettings() {
   const enabled = usePreferencesStore((s) => s.searchEnabledProviders);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
+  const fetchProviders = useCallback(() => {
+    if (cachedProviders) {
+      setProviders(cachedProviders);
+      setLoading(false);
+      setError(false);
+      return;
+    }
+    setLoading(true);
+    setError(false);
     listSearchProviders()
-      .then((result) => setProviders(result ?? []))
-      .catch((err: unknown) => console.error("Failed to load search providers:", err))
+      .then((result) => {
+        const list = result ?? [];
+        cachedProviders = list;
+        setProviders(list);
+      })
+      .catch((err: unknown) => {
+        console.error("Failed to load search providers:", err);
+        setError(true);
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    fetchProviders();
+  }, [fetchProviders]);
+
+  function retry() {
+    fetchProviders();
+  }
 
   function handleToggle(id: string) {
     const next = enabled.includes(id)
@@ -37,11 +89,7 @@ export function SearchProviderSettings() {
     setSearchEnabledProviders([]);
   }
 
-  const grouped = CATEGORY_ORDER.map((cat) => ({
-    category: cat,
-    label: CATEGORY_LABELS[cat] ?? cat,
-    providers: providers.filter((p) => p.category === cat),
-  })).filter((g) => g.providers.length > 0);
+  const grouped = groupProviders(providers);
 
   return (
     <div data-testid="search-provider-settings" className="space-y-2">
@@ -66,6 +114,11 @@ export function SearchProviderSettings() {
       </div>
       {loading ? (
         <div className="text-xs text-text-muted">Loading providers...</div>
+      ) : error ? (
+        <div className="text-xs text-text-error">
+          Failed to load providers.{" "}
+          <button onClick={retry} className="text-interactive-accent hover:underline">Retry</button>
+        </div>
       ) : (
         <div className="space-y-3">
           {grouped.map((group) => (
