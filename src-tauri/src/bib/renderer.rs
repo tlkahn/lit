@@ -116,6 +116,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: Vec::new(),
             tags: Vec::new(),
         }
     }

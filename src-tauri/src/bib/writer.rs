@@ -93,6 +93,29 @@ pub fn serialize_bib_entry(entry: &BibEntry) -> String {
         out.push_str(&format!("  isbn = {{{}}},\n", sanitize_bib_value(isbn)));
     }
 
+    // series
+    if let Some(ref series) = entry.series {
+        out.push_str(&format!("  series = {{{}}},\n", sanitize_bib_value(series)));
+    }
+
+    // editor (from editors vec joined with " and ")
+    if !entry.editors.is_empty() {
+        out.push_str(&format!(
+            "  editor = {{{}}},\n",
+            sanitize_bib_value(&entry.editors.join(" and "))
+        ));
+    }
+
+    // lccn
+    if let Some(ref lccn) = entry.lccn {
+        out.push_str(&format!("  lccn = {{{}}},\n", sanitize_bib_value(lccn)));
+    }
+
+    // oclc
+    if let Some(ref oclc) = entry.oclc {
+        out.push_str(&format!("  oclc = {{{}}},\n", sanitize_bib_value(oclc)));
+    }
+
     // arxiv_id -> eprint + archiveprefix
     if let Some(ref arxiv_id) = entry.arxiv_id {
         out.push_str(&format!("  eprint = {{{}}},\n", sanitize_bib_value(arxiv_id)));
@@ -529,6 +552,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -555,6 +583,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         }
     }

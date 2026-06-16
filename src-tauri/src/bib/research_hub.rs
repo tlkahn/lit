@@ -122,6 +122,11 @@ pub fn paper_to_bib_entry(
         issn: paper.issn.clone(),
         isbn: paper.isbn.clone(),
         arxiv_id: paper.arxiv_id.clone(),
+        oclc: paper.oclc.clone(),
+        work_type: paper.work_type.clone(),
+        series: paper.series.clone(),
+        lccn: paper.lccn.clone(),
+        editors: paper.editors.clone(),
         tags,
     }
 }
@@ -227,6 +232,8 @@ mod tests {
             work_type: Some("conference-paper".to_string()),
             editors: vec![],
             series: None,
+            oclc: None,
+            lccn: None,
         }
     }
 
@@ -253,6 +260,8 @@ mod tests {
             work_type: None,
             editors: vec![],
             series: None,
+            oclc: None,
+            lccn: None,
         }
     }
 

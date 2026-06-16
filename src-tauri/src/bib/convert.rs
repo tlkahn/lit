@@ -208,6 +208,11 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
         issn: item.issn.clone().and_then(|i| i.into_first()),
         isbn: item.isbn.clone(),
         arxiv_id: None,
+        oclc: None,
+        work_type: None,
+        series: None,
+        lccn: None,
+        editors: vec![],
         tags: item.subject.clone().unwrap_or_default(),
     }
 }
@@ -276,6 +281,11 @@ pub fn minimal_ref_bib_entry(
         issn: None,
         isbn: None,
         arxiv_id: None,
+        oclc: None,
+        work_type: None,
+        series: None,
+        lccn: None,
+        editors: vec![],
         tags: vec![],
     }
 }

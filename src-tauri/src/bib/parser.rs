@@ -143,6 +143,18 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
                         .map(|id| normalize_arxiv_id(&id))
                 }
             },
+            oclc: None,
+            work_type: None,
+            series: fields.get("series").cloned(),
+            lccn: None,
+            editors: match fields.get("editor") {
+                Some(e) => e
+                    .split(" and ")
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                None => Vec::new(),
+            },
             tags: match fields.get("keywords") {
                 Some(kw) => kw
                     .split(',')

@@ -180,6 +180,11 @@ pub fn s2_paper_to_bib_entry(paper: &S2Paper, existing_keys: &HashSet<String>) -
         issn: None,
         isbn: None,
         arxiv_id: None,
+        oclc: None,
+        work_type: None,
+        series: None,
+        lccn: None,
+        editors: vec![],
         tags: vec![],
     }
 }
