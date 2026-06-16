@@ -2,6 +2,8 @@ use crate::bib::convert::{normalize_doi, strip_jats};
 use crate::bib::types::BibEntry;
 use crate::bib::writer::generate_key;
 use std::collections::HashSet;
+use std::path::PathBuf;
+use std::time::Duration;
 
 pub fn paper_to_bib_entry(
     paper: &research_hub::Paper,
@@ -70,6 +72,54 @@ pub fn paper_to_bib_entry_with_pdf(
     let entry = paper_to_bib_entry(paper, existing_keys);
     let pdf_url = paper.pdf_url.clone();
     (entry, pdf_url)
+}
+
+pub fn build_config(
+    prefs: &crate::preferences::Preferences,
+    cred_store: &dyn crate::commands::credential::CredentialStore,
+) -> research_hub::Config {
+    let crossref_email = prefs
+        .extra
+        .get("search.crossrefEmail")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let unpaywall_email = prefs
+        .extra
+        .get("search.unpaywallEmail")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("user@example.com")
+        .to_string();
+
+    let provider_timeout = prefs
+        .extra
+        .get("search.providerTimeout")
+        .and_then(|v| v.as_f64())
+        .filter(|&t| t > 0.0)
+        .map(Duration::from_secs_f64)
+        .unwrap_or(Duration::from_secs(30));
+
+    let semantic_scholar_api_key = cred_store
+        .get("com.lit.app", "semantic-scholar-api-key")
+        .ok();
+    let core_api_key = cred_store
+        .get("com.lit.app", "core-api-key")
+        .ok();
+    let pubmed_api_key = cred_store
+        .get("com.lit.app", "pubmed-api-key")
+        .ok();
+
+    research_hub::Config {
+        download_dir: PathBuf::from("."),
+        crossref_email,
+        semantic_scholar_api_key,
+        unpaywall_email,
+        core_api_key,
+        pubmed_api_key,
+        provider_timeout,
+        max_parallel_providers: 5,
+    }
 }
 
 #[cfg(test)]
@@ -349,5 +399,139 @@ mod tests {
         paper.abstract_text = Some("<jats:p>Summary <jats:italic>text</jats:italic></jats:p>".to_string());
         let entry = paper_to_bib_entry(&paper, &HashSet::new());
         assert_eq!(entry.abstract_text, Some("Summary text".to_string()));
+    }
+
+    // ── build_config tests ──────────────────────────────────────────
+
+    use crate::commands::credential::{CredentialStore, InMemoryStore};
+    use crate::preferences::Preferences;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    #[test]
+    fn build_config_defaults_with_empty_prefs() {
+        let prefs = Preferences::default();
+        let store = InMemoryStore::new();
+        let config = super::build_config(&prefs, &store);
+
+        assert_eq!(config.crossref_email, None);
+        assert_eq!(config.unpaywall_email, "user@example.com");
+        assert_eq!(config.provider_timeout, Duration::from_secs(30));
+        assert_eq!(config.semantic_scholar_api_key, None);
+        assert_eq!(config.core_api_key, None);
+        assert_eq!(config.pubmed_api_key, None);
+        assert_eq!(config.download_dir, PathBuf::from("."));
+        assert_eq!(config.max_parallel_providers, 5);
+    }
+
+    #[test]
+    fn build_config_reads_emails_from_prefs() {
+        let mut prefs = Preferences::default();
+        prefs.extra.insert(
+            "search.crossrefEmail".to_string(),
+            serde_json::json!("me@uni.edu"),
+        );
+        prefs.extra.insert(
+            "search.unpaywallEmail".to_string(),
+            serde_json::json!("me@uni.edu"),
+        );
+        let store = InMemoryStore::new();
+        let config = super::build_config(&prefs, &store);
+
+        assert_eq!(config.crossref_email, Some("me@uni.edu".to_string()));
+        assert_eq!(config.unpaywall_email, "me@uni.edu");
+    }
+
+    #[test]
+    fn build_config_reads_api_keys_from_credential_store() {
+        let prefs = Preferences::default();
+        let store = InMemoryStore::new();
+        store
+            .set("com.lit.app", "semantic-scholar-api-key", "ss-key-123")
+            .unwrap();
+        store
+            .set("com.lit.app", "core-api-key", "core-key-456")
+            .unwrap();
+        store
+            .set("com.lit.app", "pubmed-api-key", "pm-key-789")
+            .unwrap();
+        let config = super::build_config(&prefs, &store);
+
+        assert_eq!(
+            config.semantic_scholar_api_key,
+            Some("ss-key-123".to_string())
+        );
+        assert_eq!(config.core_api_key, Some("core-key-456".to_string()));
+        assert_eq!(config.pubmed_api_key, Some("pm-key-789".to_string()));
+    }
+
+    #[test]
+    fn build_config_missing_api_keys_are_none() {
+        let prefs = Preferences::default();
+        let store = InMemoryStore::new();
+        store
+            .set("com.lit.app", "semantic-scholar-api-key", "ss-key-123")
+            .unwrap();
+        let config = super::build_config(&prefs, &store);
+
+        assert_eq!(
+            config.semantic_scholar_api_key,
+            Some("ss-key-123".to_string())
+        );
+        assert_eq!(config.core_api_key, None);
+        assert_eq!(config.pubmed_api_key, None);
+    }
+
+    #[test]
+    fn build_config_timeout_from_prefs() {
+        let mut prefs = Preferences::default();
+        prefs.extra.insert(
+            "search.providerTimeout".to_string(),
+            serde_json::json!(15),
+        );
+        let store = InMemoryStore::new();
+        let config = super::build_config(&prefs, &store);
+        assert_eq!(config.provider_timeout, Duration::from_secs(15));
+
+        // Also test with a float value
+        let mut prefs2 = Preferences::default();
+        prefs2.extra.insert(
+            "search.providerTimeout".to_string(),
+            serde_json::json!(15.5),
+        );
+        let config2 = super::build_config(&prefs2, &store);
+        assert_eq!(config2.provider_timeout, Duration::from_secs_f64(15.5));
+    }
+
+    #[test]
+    fn build_config_invalid_timeout_uses_default() {
+        let store = InMemoryStore::new();
+
+        // Negative timeout
+        let mut prefs = Preferences::default();
+        prefs.extra.insert(
+            "search.providerTimeout".to_string(),
+            serde_json::json!(-5),
+        );
+        let config = super::build_config(&prefs, &store);
+        assert_eq!(config.provider_timeout, Duration::from_secs(30));
+
+        // Zero timeout
+        let mut prefs2 = Preferences::default();
+        prefs2.extra.insert(
+            "search.providerTimeout".to_string(),
+            serde_json::json!(0),
+        );
+        let config2 = super::build_config(&prefs2, &store);
+        assert_eq!(config2.provider_timeout, Duration::from_secs(30));
+
+        // String timeout (wrong type)
+        let mut prefs3 = Preferences::default();
+        prefs3.extra.insert(
+            "search.providerTimeout".to_string(),
+            serde_json::json!("thirty"),
+        );
+        let config3 = super::build_config(&prefs3, &store);
+        assert_eq!(config3.provider_timeout, Duration::from_secs(30));
     }
 }
