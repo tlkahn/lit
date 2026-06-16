@@ -96,6 +96,7 @@ pub fn build_config(
         .extra
         .get("search.crossrefEmail")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(String::from);
 
     let unpaywall_email = prefs
@@ -103,14 +104,14 @@ pub fn build_config(
         .get("search.unpaywallEmail")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .unwrap_or("user@example.com")
+        .unwrap_or("lit@lit.solar")
         .to_string();
 
     let provider_timeout = prefs
         .extra
         .get("search.providerTimeout")
         .and_then(|v| v.as_f64())
-        .filter(|&t| t > 0.0)
+        .filter(|&t| t > 0.0 && t <= 3600.0)
         .map(Duration::from_secs_f64)
         .unwrap_or(Duration::from_secs(30));
 
@@ -441,7 +442,7 @@ mod tests {
         let config = super::build_config(&prefs, &store);
 
         assert_eq!(config.crossref_email, None);
-        assert_eq!(config.unpaywall_email, "user@example.com");
+        assert_eq!(config.unpaywall_email, "lit@lit.solar");
         assert_eq!(config.provider_timeout, Duration::from_secs(30));
         assert_eq!(config.semantic_scholar_api_key, None);
         assert_eq!(config.core_api_key, None);
@@ -559,14 +560,48 @@ mod tests {
         );
         let config3 = super::build_config(&prefs3, &store);
         assert_eq!(config3.provider_timeout, Duration::from_secs(30));
+
+        // Huge timeout (would overflow Duration)
+        let mut prefs4 = Preferences::default();
+        prefs4.extra.insert(
+            "search.providerTimeout".to_string(),
+            serde_json::json!(1e308),
+        );
+        let config4 = super::build_config(&prefs4, &store);
+        assert_eq!(config4.provider_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn build_config_empty_crossref_email_becomes_none() {
+        let mut prefs = Preferences::default();
+        prefs.extra.insert(
+            "search.crossrefEmail".to_string(),
+            serde_json::json!(""),
+        );
+        let store = InMemoryStore::new();
+        let config = super::build_config(&prefs, &store);
+        assert_eq!(config.crossref_email, None);
     }
 
     // ── create_enabled_providers tests ─────────────────────────────────
 
+    fn test_config() -> Arc<research_hub::Config> {
+        Arc::new(research_hub::Config {
+            download_dir: PathBuf::from("/tmp"),
+            crossref_email: None,
+            semantic_scholar_api_key: None,
+            unpaywall_email: "test@test.com".to_string(),
+            core_api_key: None,
+            pubmed_api_key: None,
+            provider_timeout: Duration::from_secs(30),
+            max_parallel_providers: 5,
+        })
+    }
+
     #[test]
     fn enabled_providers_excludes_scrapers() {
         let client = reqwest::Client::new();
-        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let config = test_config();
         // Enable everything — scrapers should still be excluded
         let enabled: HashSet<String> = [
             "openalex", "crossref", "pubmed", "semantic_scholar",
@@ -588,7 +623,7 @@ mod tests {
     #[test]
     fn enabled_providers_respects_user_disabled() {
         let client = reqwest::Client::new();
-        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let config = test_config();
         // Only enable two providers
         let enabled: HashSet<String> = ["crossref", "arxiv"]
             .iter()
@@ -604,7 +639,7 @@ mod tests {
     #[test]
     fn enabled_providers_empty_set_returns_nothing() {
         let client = reqwest::Client::new();
-        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let config = test_config();
         let enabled = HashSet::new();
         let providers = super::create_enabled_providers(client, config, &enabled);
         assert!(providers.is_empty());
@@ -613,7 +648,7 @@ mod tests {
     #[test]
     fn enabled_providers_all_legal_returns_nine() {
         let client = reqwest::Client::new();
-        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let config = test_config();
         let enabled: HashSet<String> = [
             "openalex", "crossref", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",
@@ -628,7 +663,7 @@ mod tests {
     #[test]
     fn enabled_providers_preserves_priority_order() {
         let client = reqwest::Client::new();
-        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let config = test_config();
         let enabled: HashSet<String> = [
             "openalex", "crossref", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",
@@ -652,7 +687,7 @@ mod tests {
     #[test]
     fn enabled_providers_scraper_only_returns_nothing() {
         let client = reqwest::Client::new();
-        let config = std::sync::Arc::new(research_hub::Config::from_env());
+        let config = test_config();
         // Enable only scrapers — all should be filtered out
         let enabled: HashSet<String> = ["ssrn", "mdpi", "researchgate", "sci_hub"]
             .iter()
