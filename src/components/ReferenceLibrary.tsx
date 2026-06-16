@@ -51,6 +51,7 @@ function combinedText(entry: BibEntry): string {
     entry.key,
     entry.title,
     entry.authors.join(" "),
+    (entry.editors ?? []).join(" "),
     (entry.tags ?? []).join(" "),
     entry.journal ?? "",
     entry.publisher ?? "",
@@ -147,6 +148,12 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
   );
 }
 
+const ISBN_RE = /^(?:\d{9}[\dXx]|97[89]\d{10})$/;
+
+function looksLikeIsbn(query: string): boolean {
+  return ISBN_RE.test(query.replace(/[-\s]/g, ""));
+}
+
 export function ReferenceLibrary() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const graphReady = useWorkspaceStore((s) => s.graphReady);
@@ -172,11 +179,18 @@ export function ReferenceLibrary() {
   // --- Search tab state ---
   const [mode, setMode] = useState<"library" | "search">("library");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchMode, setSearchMode] = useState("auto");
   const [searchResults, setSearchResults] = useState<PaperSearchResult | null>(null);
   const [searching, setSearching] = useState(false);
   const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [duplicateKeys, setDuplicateKeys] = useState<Map<string, string>>(new Map());
+
+  const detectedSearchType = useMemo(() => {
+    if (searchMode !== "auto") return searchMode;
+    if (looksLikeIsbn(searchQuery)) return "isbn";
+    return undefined;
+  }, [searchMode, searchQuery]);
 
   const handleSearchPapers = useCallback(async () => {
     const q = searchQuery.trim();
@@ -184,14 +198,15 @@ export function ReferenceLibrary() {
     setSearching(true);
     setSearchResults(null);
     try {
-      const result = await searchPapers(q);
+      const st = detectedSearchType;
+      const result = await searchPapers(q, undefined, undefined, st);
       setSearchResults(result);
     } catch (err) {
       show(err instanceof Error ? err.message : String(err), "error");
     } finally {
       setSearching(false);
     }
-  }, [searchQuery, searching, show]);
+  }, [searchQuery, searching, show, detectedSearchType]);
 
   const handleSaveSearchResult = useCallback(async (entry: BibEntry) => {
     if (!workspacePath) return;
@@ -543,6 +558,8 @@ export function ReferenceLibrary() {
       journal: entry.journal ?? "",
       publisher: entry.publisher ?? "",
       isbn: entry.isbn ?? "",
+      oclc: entry.oclc ?? "",
+      series: entry.series ?? "",
     });
   }, []);
 
@@ -566,6 +583,8 @@ export function ReferenceLibrary() {
         journal: entry.journal ?? "",
         publisher: entry.publisher ?? "",
         isbn: entry.isbn ?? "",
+        oclc: entry.oclc ?? "",
+        series: entry.series ?? "",
       };
       for (const [k, v] of Object.entries(editFields)) {
         if (v !== original[k]) {
@@ -744,6 +763,19 @@ export function ReferenceLibrary() {
               }}
               className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
             />
+            <select
+              data-testid="search-mode-select"
+              value={searchMode}
+              onChange={(e) => setSearchMode(e.target.value)}
+              className="rounded border border-border bg-bg-primary px-1 py-1 text-xs text-text-normal"
+            >
+              <option value="auto">Auto</option>
+              <option value="keywords">Keywords</option>
+              <option value="isbn">ISBN</option>
+              <option value="doi">DOI</option>
+              <option value="author">Author</option>
+              <option value="title">Title</option>
+            </select>
             <button
               data-testid="search-papers-btn"
               onClick={handleSearchPapers}
@@ -753,6 +785,11 @@ export function ReferenceLibrary() {
               {searching ? "Searching..." : "Search"}
             </button>
           </div>
+          {searchMode === "auto" && detectedSearchType === "isbn" && (
+            <div data-testid="isbn-auto-detect-hint" className="px-2 pb-1 text-xs text-interactive-accent">
+              Searching by ISBN
+            </div>
+          )}
           {searchResults ? (
             <PaperSearchResults
               results={searchResults}
@@ -858,9 +895,12 @@ export function ReferenceLibrary() {
                       >
                         {entry.title}
                       </span>
-                      <span className="w-full truncate text-xs text-text-muted">
-                        {entry.authors.join("; ")}
-                        {entry.year ? ` (${entry.year})` : ""}
+                      <span className="flex w-full items-center gap-1 text-xs text-text-muted">
+                        <span className="truncate">
+                          {entry.authors.join("; ")}
+                          {entry.year ? ` (${entry.year})` : ""}
+                        </span>
+                        <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
                       </span>
                       {state?.page_id ? (
                         <span
@@ -918,6 +958,18 @@ export function ReferenceLibrary() {
                                 onChange={(e) => setEditFields(f => ({...f, isbn: e.target.value}))}
                                 className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
                             </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">OCLC</label>
+                              <input data-testid="edit-field-oclc" type="text" value={editFields.oclc ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, oclc: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">Series</label>
+                              <input data-testid="edit-field-series" type="text" value={editFields.series ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, series: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
                             <div className="flex gap-2">
                               <button data-testid="edit-save-btn" disabled={savingEdit}
                                 onClick={() => saveEdit(entry.key)}
@@ -939,6 +991,11 @@ export function ReferenceLibrary() {
                             {entry.authors.length > 0 ? (
                               <div className="mt-1 text-text-muted">
                                 {entry.authors.join("; ")}
+                              </div>
+                            ) : null}
+                            {entry.editors && entry.editors.length > 0 ? (
+                              <div data-testid="entry-editors" className="text-text-muted">
+                                Ed. {entry.editors.join("; ")}
                               </div>
                             ) : null}
                             {entry.year ? (

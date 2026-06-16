@@ -2904,6 +2904,38 @@ describe("ReferenceLibrary", () => {
       publisher: "Mind",
     };
 
+    const editedVolume: BibEntry = {
+      key: "sanderson2015",
+      authors: ["Sanderson, Alexis"],
+      title: "Tolerance, Exclusion, and Persecution",
+      year: "2015",
+      entry_type: "incollection",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+      editors: ["Florinda De Simini", "Csaba Kiss"],
+      publisher: "Austrian Academy of Sciences",
+      series: "BKGA 93",
+      oclc: "934454286",
+    };
+
+    it("search matches editor name", async () => {
+      const user = userEvent.setup();
+      fixture = [editedVolume, abrams];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
+      );
+
+      await user.type(screen.getByLabelText("Search references"), "Csaba Kiss");
+
+      expect(
+        await screen.findByText("Tolerance, Exclusion, and Persecution"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByText("Aardvark")).not.toBeInTheDocument(),
+      );
+    });
+
     it("search matches publisher field", async () => {
       const user = userEvent.setup();
       fixture = [bookEntry, flood, abrams];
@@ -2940,6 +2972,29 @@ describe("ReferenceLibrary", () => {
       );
     });
 
+    it("shows entry type badge in collapsed row for 'book' type", async () => {
+      fixture = [bookEntry];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      // Not expanded — badge should still appear in collapsed row
+      const badge = screen.getByTestId("entry-type-badge");
+      expect(badge).toBeInTheDocument();
+      expect(badge.textContent).toBe("book");
+    });
+
+    it("does not show entry type badge in collapsed row for 'article' type", async () => {
+      fixture = [sanderson];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
+      );
+
+      expect(screen.queryByTestId("entry-type-badge")).not.toBeInTheDocument();
+    });
+
     it("shows entry type badge for 'book' type in expanded detail view", async () => {
       const user = userEvent.setup();
       fixture = [bookEntry];
@@ -2950,9 +3005,9 @@ describe("ReferenceLibrary", () => {
 
       await user.click(screen.getByText("The Art of Computer Programming"));
 
-      const badge = screen.getByTestId("entry-type-badge");
-      expect(badge).toBeInTheDocument();
-      expect(badge.textContent).toBe("book");
+      const badges = screen.getAllByTestId("entry-type-badge");
+      expect(badges.length).toBeGreaterThanOrEqual(2);
+      expect(badges.every((b) => b.textContent === "book")).toBe(true);
     });
 
     it("does not show entry type badge for 'article' type in expanded detail view", async () => {
@@ -3027,6 +3082,34 @@ describe("ReferenceLibrary", () => {
       await user.click(screen.getByText("Go To Considered Harmful"));
 
       expect(screen.queryByTestId("entry-isbn")).not.toBeInTheDocument();
+    });
+
+    it("shows editors in expanded detail view for edited volumes", async () => {
+      const user = userEvent.setup();
+      fixture = [editedVolume];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
+
+      const editorsEl = screen.getByTestId("entry-editors");
+      expect(editorsEl).toBeInTheDocument();
+      expect(editorsEl.textContent).toBe("Ed. Florinda De Simini; Csaba Kiss");
+    });
+
+    it("does not show editors when editors is absent", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+
+      expect(screen.queryByTestId("entry-editors")).not.toBeInTheDocument();
     });
 
     it("edit form includes publisher and isbn fields", async () => {
@@ -3187,6 +3270,128 @@ describe("ReferenceLibrary", () => {
         expect(fields).not.toHaveProperty("isbn");
       });
     });
+
+    it("edit form includes oclc and series fields", async () => {
+      const user = userEvent.setup();
+      fixture = [editedVolume];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const oclcInput = screen.getByTestId("edit-field-oclc") as HTMLInputElement;
+      expect(oclcInput).toBeInTheDocument();
+      expect(oclcInput.value).toBe("934454286");
+
+      const seriesInput = screen.getByTestId("edit-field-series") as HTMLInputElement;
+      expect(seriesInput).toBeInTheDocument();
+      expect(seriesInput.value).toBe("BKGA 93");
+    });
+
+    it("edit form oclc and series fields are empty when entry lacks them", async () => {
+      const user = userEvent.setup();
+      fixture = [sanderson];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const oclcInput = screen.getByTestId("edit-field-oclc") as HTMLInputElement;
+      expect(oclcInput.value).toBe("");
+
+      const seriesInput = screen.getByTestId("edit-field-series") as HTMLInputElement;
+      expect(seriesInput.value).toBe("");
+    });
+
+    it("Edit Save sends changed oclc field", async () => {
+      const user = userEvent.setup();
+      fixture = [editedVolume];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "bib_update_fields") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const oclcInput = screen.getByTestId("edit-field-oclc") as HTMLInputElement;
+      await user.clear(oclcInput);
+      await user.type(oclcInput, "999999999");
+
+      await user.click(screen.getByTestId("edit-save-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+        expect(call).toBeTruthy();
+        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
+        expect(fields.oclc).toBe("999999999");
+        expect(fields).not.toHaveProperty("title");
+        expect(fields).not.toHaveProperty("series");
+      });
+    });
+
+    it("Edit Save sends changed series field", async () => {
+      const user = userEvent.setup();
+      fixture = [editedVolume];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "bib_update_fields") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const seriesInput = screen.getByTestId("edit-field-series") as HTMLInputElement;
+      await user.clear(seriesInput);
+      await user.type(seriesInput, "New Series 42");
+
+      await user.click(screen.getByTestId("edit-save-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+        expect(call).toBeTruthy();
+        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
+        expect(fields.series).toBe("New Series 42");
+        expect(fields).not.toHaveProperty("title");
+        expect(fields).not.toHaveProperty("oclc");
+      });
+    });
   });
 
   describe("Section headers", () => {
@@ -3269,6 +3474,173 @@ describe("ReferenceLibrary", () => {
       expect(headers).toHaveLength(1);
       expect(headers[0]!.textContent).toBe("S");
       expect(screen.getAllByTestId("reference-entry-title")).toHaveLength(2);
+    });
+  });
+
+  describe("Search mode dropdown and ISBN auto-detect", () => {
+    async function switchToSearch(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByTestId("ref-lib-mode-search"));
+    }
+
+    it("shows search mode dropdown in search tab", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const dropdown = screen.getByTestId("search-mode-select");
+      expect(dropdown).toBeInTheDocument();
+      expect(dropdown).toHaveValue("auto");
+    });
+
+    it("dropdown has Auto, Keywords, ISBN, DOI, Author, Title options", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const dropdown = screen.getByTestId("search-mode-select") as HTMLSelectElement;
+      const options = Array.from(dropdown.options).map((o) => o.value);
+      expect(options).toEqual(["auto", "keywords", "isbn", "doi", "author", "title"]);
+    });
+
+    it("shows ISBN auto-detect hint when query looks like ISBN", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "9780199767465");
+
+      expect(screen.getByTestId("isbn-auto-detect-hint")).toBeInTheDocument();
+      expect(screen.getByTestId("isbn-auto-detect-hint").textContent).toContain("Searching by ISBN");
+    });
+
+    it("shows ISBN hint for hyphenated ISBN", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "978-0-199-76746-5");
+
+      expect(screen.getByTestId("isbn-auto-detect-hint")).toBeInTheDocument();
+    });
+
+    it("does not show ISBN hint for regular keywords", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "machine learning");
+
+      expect(screen.queryByTestId("isbn-auto-detect-hint")).not.toBeInTheDocument();
+    });
+
+    it("does not show ISBN hint when dropdown is explicitly set", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const dropdown = screen.getByTestId("search-mode-select");
+      await user.selectOptions(dropdown, "keywords");
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "9780199767465");
+
+      expect(screen.queryByTestId("isbn-auto-detect-hint")).not.toBeInTheDocument();
+    });
+
+    it("passes auto-detected isbn searchType to searchPapers", async () => {
+      const user = userEvent.setup();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "search_papers") return { entries: [], pdf_urls: {}, total_results: 0, providers_searched: [], providers_failed: [] };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "9780199767465");
+      await user.click(screen.getByTestId("search-papers-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "search_papers");
+        expect(call).toBeTruthy();
+        expect((call!.args as Record<string, unknown>).search_type).toBe("isbn");
+      });
+    });
+
+    it("passes explicit dropdown searchType to searchPapers", async () => {
+      const user = userEvent.setup();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "search_papers") return { entries: [], pdf_urls: {}, total_results: 0, providers_searched: [], providers_failed: [] };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const dropdown = screen.getByTestId("search-mode-select");
+      await user.selectOptions(dropdown, "doi");
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "10.1000/xyz");
+      await user.click(screen.getByTestId("search-papers-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "search_papers");
+        expect(call).toBeTruthy();
+        expect((call!.args as Record<string, unknown>).search_type).toBe("doi");
+      });
+    });
+
+    it("does not pass searchType for auto mode with non-ISBN query", async () => {
+      const user = userEvent.setup();
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "search_papers") return { entries: [], pdf_urls: {}, total_results: 0, providers_searched: [], providers_failed: [] };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await switchToSearch(user);
+
+      const input = screen.getByLabelText("Search academic papers");
+      await user.type(input, "machine learning");
+      await user.click(screen.getByTestId("search-papers-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "search_papers");
+        expect(call).toBeTruthy();
+        expect((call!.args as Record<string, unknown>).search_type).toBeNull();
+      });
     });
   });
 });

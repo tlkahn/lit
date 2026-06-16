@@ -31,7 +31,46 @@ describe("EntryTypeBadge", () => {
     expect(badge.className).toContain("shrink-0");
     // Still has base classes
     expect(badge.className).toContain("rounded");
+  });
+
+  it("uses accent color for book types", () => {
+    for (const t of ["book", "inbook", "incollection"]) {
+      const { unmount } = render(<EntryTypeBadge entryType={t} />);
+      const badge = screen.getByTestId("entry-type-badge");
+      expect(badge.className).toContain("bg-interactive-accent/15");
+      expect(badge.className).toContain("text-interactive-accent");
+      expect(badge.className).not.toContain("bg-bg-hover");
+      unmount();
+    }
+  });
+
+  it("uses purple color for conference types", () => {
+    for (const t of ["inproceedings", "proceedings", "conference"]) {
+      const { unmount } = render(<EntryTypeBadge entryType={t} />);
+      const badge = screen.getByTestId("entry-type-badge");
+      expect(badge.style.color).toBe("var(--color-purple)");
+      expect(badge.style.backgroundColor).toContain("color-mix");
+      expect(badge.className).not.toContain("bg-bg-hover");
+      unmount();
+    }
+  });
+
+  it("uses orange color for thesis types", () => {
+    for (const t of ["phdthesis", "mastersthesis"]) {
+      const { unmount } = render(<EntryTypeBadge entryType={t} />);
+      const badge = screen.getByTestId("entry-type-badge");
+      expect(badge.style.color).toBe("var(--color-orange)");
+      expect(badge.style.backgroundColor).toContain("color-mix");
+      expect(badge.className).not.toContain("bg-bg-hover");
+      unmount();
+    }
+  });
+
+  it("uses default muted style for other visible types", () => {
+    render(<EntryTypeBadge entryType="techreport" />);
+    const badge = screen.getByTestId("entry-type-badge");
     expect(badge.className).toContain("bg-bg-hover");
+    expect(badge.className).toContain("text-text-muted");
   });
 
   it("does not append extra space when className is not provided", () => {
