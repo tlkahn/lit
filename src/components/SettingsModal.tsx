@@ -19,6 +19,7 @@ import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { AcademicExportSettings } from "./AcademicExportSettings";
 import { LlmProviderSettings } from "./LlmProviderSettings";
 import { CompanionSearchPathSettings } from "./CompanionSearchPathSettings";
+import { SearchProviderSettings } from "./SearchProviderSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -220,6 +221,17 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
         return { llmProvider: { ...prev.llmProvider, apiKeySet: has } };
       });
     });
+    // Reconcile paper-search API key flags against the credential store.
+    const searchKeyChecks: { provider: string; field: keyof PreferencesState }[] = [
+      { provider: "semantic-scholar", field: "searchS2ApiKeySet" },
+      { provider: "core", field: "searchCoreApiKeySet" },
+      { provider: "pubmed", field: "searchPubmedApiKeySet" },
+    ];
+    for (const { provider, field } of searchKeyChecks) {
+      hasApiKey(provider).then((has) => {
+        usePreferencesStore.setState({ [field]: has } as Partial<PreferencesState>);
+      }).catch(() => {});
+    }
   }, [open, exists, unlocked]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -478,6 +490,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           {cat === "LLM" && (
                             <div className="mb-3">
                               <LlmProviderSettings ensureUnlocked={ensureUnlocked} />
+                            </div>
+                          )}
+                          {cat === "Paper Search" && (
+                            <div className="mb-3">
+                              <SearchProviderSettings />
                             </div>
                           )}
                           <div className="space-y-3">
