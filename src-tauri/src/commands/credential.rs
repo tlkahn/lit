@@ -427,6 +427,7 @@ fn account_for_provider(provider: &str) -> Result<String, String> {
         // Any registry-known provider or a custom-* slug derives its account from
         // the id directly, so adding a provider to provider_registry::REGISTRY
         // requires no second edit here.
+        "semantic-scholar" | "core" | "pubmed" => Ok(format!("{}-api-key", provider)),
         _ if crate::provider_registry::lookup(provider).is_some()
             || provider.starts_with("custom-") =>
         {
