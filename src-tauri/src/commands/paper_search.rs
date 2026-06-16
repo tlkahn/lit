@@ -10,6 +10,8 @@ use crate::bib::research_hub::{
 };
 use crate::bib::types::BibEntry;
 use crate::commands::credential::CredentialStore;
+use crate::recognize::resolve::isbn::{self, IsbnPath};
+use crate::recognize::resolve::BaseUrls;
 
 static CLIENT: std::sync::LazyLock<reqwest::Client> =
     std::sync::LazyLock::new(reqwest::Client::new);
@@ -106,12 +108,50 @@ pub async fn search_papers(
     )
     .await;
 
-    Ok(convert_search_result(&result))
+    let mut psr = convert_search_result(&result);
+
+    let urls = BaseUrls::production();
+    if let Some((entry, isbn_path)) =
+        try_isbn_fallback(&CLIENT, &query, &result, urls.open_library, urls.google_books).await
+    {
+        let provider_name = match isbn_path {
+            IsbnPath::OpenLibrary => "open_library",
+            IsbnPath::GoogleBooks => "google_books",
+        };
+        psr.providers_searched.push(provider_name.to_string());
+        psr.entries = vec![entry];
+        psr.total_results = 1;
+    }
+
+    Ok(psr)
+}
+
+async fn try_isbn_fallback(
+    client: &reqwest::Client,
+    query: &str,
+    search_result: &research_hub::SearchResult,
+    open_library_url: &str,
+    google_books_url: &str,
+) -> Option<(BibEntry, IsbnPath)> {
+    if search_result.search_type != "ISBN" || !search_result.papers.is_empty() {
+        return None;
+    }
+
+    let isbn: String = query.chars().filter(|c| c.is_ascii_digit() || *c == 'X' || *c == 'x').collect();
+    match isbn::resolve_isbn_with_base(client, &isbn, open_library_url, google_books_url).await {
+        Ok(result) => Some(result),
+        Err(e) => {
+            tracing::debug!(error = %e, "ISBN fallback resolution failed");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_paper(overrides: impl FnOnce(&mut research_hub::Paper)) -> research_hub::Paper {
         let mut p = research_hub::Paper::default();
@@ -359,5 +399,153 @@ mod tests {
         assert_eq!(e.isbn, Some("978-3-030-12345-6".to_string()));
         assert_eq!(e.issn, Some("1234-5678".to_string()));
         assert_eq!(e.arxiv_id, Some("2301.00001".to_string()));
+    }
+
+    // ── ISBN fallback tests ───────────────────────────────────────────
+
+    fn make_isbn_search_result(
+        search_type: &str,
+        papers: Vec<research_hub::Paper>,
+    ) -> research_hub::SearchResult {
+        research_hub::SearchResult {
+            query: "9780262035613".to_string(),
+            search_type: search_type.to_string(),
+            papers,
+            total_results: 0,
+            offset: 0,
+            sort: "relevance".to_string(),
+            total_hits: None,
+            provider_hits: vec![],
+            providers_searched: vec!["crossref".to_string()],
+            providers_failed: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn isbn_fallback_on_empty_crossref_result() {
+        let ol_server = MockServer::start().await;
+        let gb_server = MockServer::start().await;
+        let client = reqwest::Client::new();
+
+        let ol_json = r#"{
+            "ISBN:9780262035613": {
+                "title": "Deep Learning",
+                "authors": [
+                    {"name": "Ian Goodfellow"},
+                    {"name": "Yoshua Bengio"},
+                    {"name": "Aaron Courville"}
+                ],
+                "publishers": [{"name": "MIT Press"}],
+                "publish_date": "2016",
+                "identifiers": {
+                    "isbn_13": ["9780262035613"]
+                }
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780262035613"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_json))
+            .mount(&ol_server)
+            .await;
+
+        let sr = make_isbn_search_result("ISBN", vec![]);
+
+        let result = try_isbn_fallback(
+            &client,
+            "9780262035613",
+            &sr,
+            &ol_server.uri(),
+            &gb_server.uri(),
+        )
+        .await;
+
+        let (entry, isbn_path) = result.expect("fallback should return a result");
+        assert_eq!(isbn_path, IsbnPath::OpenLibrary);
+        assert_eq!(entry.title, "Deep Learning");
+        assert_eq!(entry.isbn, Some("9780262035613".to_string()));
+    }
+
+    #[tokio::test]
+    async fn isbn_fallback_with_spaced_isbn() {
+        let ol_server = MockServer::start().await;
+        let gb_server = MockServer::start().await;
+        let client = reqwest::Client::new();
+
+        let ol_json = r#"{
+            "ISBN:9780262035613": {
+                "title": "Deep Learning",
+                "authors": [
+                    {"name": "Ian Goodfellow"},
+                    {"name": "Yoshua Bengio"},
+                    {"name": "Aaron Courville"}
+                ],
+                "publishers": [{"name": "MIT Press"}],
+                "publish_date": "2016",
+                "identifiers": {
+                    "isbn_13": ["9780262035613"]
+                }
+            }
+        }"#;
+
+        Mock::given(method("GET"))
+            .and(path("/api/books"))
+            .and(query_param("bibkeys", "ISBN:9780262035613"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(ol_json))
+            .mount(&ol_server)
+            .await;
+
+        let sr = make_isbn_search_result("ISBN", vec![]);
+
+        let result = try_isbn_fallback(
+            &client,
+            "978 0262035613",
+            &sr,
+            &ol_server.uri(),
+            &gb_server.uri(),
+        )
+        .await;
+
+        let (entry, _) = result.expect("fallback should resolve spaced ISBN");
+        assert_eq!(entry.title, "Deep Learning");
+    }
+
+    #[tokio::test]
+    async fn isbn_fallback_skipped_for_keywords() {
+        let client = reqwest::Client::new();
+        let sr = make_isbn_search_result("KEYWORDS", vec![]);
+
+        let result = try_isbn_fallback(
+            &client,
+            "deep learning",
+            &sr,
+            "http://localhost:1",
+            "http://localhost:1",
+        )
+        .await;
+
+        assert!(result.is_none(), "fallback should be skipped for keyword searches");
+    }
+
+    #[tokio::test]
+    async fn isbn_fallback_skipped_when_papers_present() {
+        let client = reqwest::Client::new();
+        let paper = make_paper(|p| {
+            p.title = "Existing Result".to_string();
+            p.source = "crossref".to_string();
+        });
+        let sr = make_isbn_search_result("ISBN", vec![paper]);
+
+        let result = try_isbn_fallback(
+            &client,
+            "9780262035613",
+            &sr,
+            "http://localhost:1",
+            "http://localhost:1",
+        )
+        .await;
+
+        assert!(result.is_none(), "fallback should be skipped when papers already present");
     }
 }
