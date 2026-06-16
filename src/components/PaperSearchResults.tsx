@@ -22,6 +22,21 @@ function entryStableKey(entry: BibEntry): string {
   return entry.doi ?? entry.key;
 }
 
+/** Entry types that are too common/generic to badge. */
+const HIDDEN_ENTRY_TYPES = new Set(["article", "misc", ""]);
+
+function EntryTypeBadge({ entryType }: { entryType: string }) {
+  if (HIDDEN_ENTRY_TYPES.has(entryType)) return null;
+  return (
+    <span
+      data-testid="entry-type-badge"
+      className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+    >
+      {entryType}
+    </span>
+  );
+}
+
 export function PaperSearchResults({
   results,
   onSave,
@@ -79,6 +94,7 @@ export function PaperSearchResults({
       <div
         ref={scrollRef}
         data-testid="search-results-list"
+        data-virtual-scroll
         className="flex-1 overflow-y-auto overscroll-contain px-1"
       >
         <div
@@ -129,10 +145,17 @@ export function PaperSearchResults({
                       >
                         {entry.title}
                       </div>
-                      <div className="truncate text-xs text-text-muted">
-                        {abbreviateAuthors(entry.authors)}
-                        {entry.year ? ` (${entry.year})` : ""}
-                        {entry.journal ? ` — ${entry.journal}` : ""}
+                      <div className="flex items-center gap-1 truncate text-xs text-text-muted">
+                        <span className="truncate">
+                          {abbreviateAuthors(entry.authors)}
+                          {entry.year ? ` (${entry.year})` : ""}
+                          {entry.journal ? ` — ${entry.journal}` : ""}
+                          {entry.publisher &&
+                          entry.publisher !== entry.journal
+                            ? ` — ${entry.publisher}`
+                            : ""}
+                        </span>
+                        <EntryTypeBadge entryType={entry.entry_type} />
                       </div>
                     </div>
                     <button
@@ -161,6 +184,41 @@ export function PaperSearchResults({
                           {entry.authors.join("; ")}
                         </div>
                       )}
+                      {entry.publisher &&
+                        entry.publisher !== entry.journal && (
+                          <div
+                            data-testid="entry-publisher"
+                            className="text-xs text-text-muted"
+                          >
+                            {entry.publisher}
+                          </div>
+                        )}
+                      {(entry.volume || entry.number || entry.pages) && (
+                        <div className="text-xs text-text-muted">
+                          {[
+                            entry.volume ? `vol. ${entry.volume}` : "",
+                            entry.number ? `no. ${entry.number}` : "",
+                            entry.pages ? `pp. ${entry.pages}` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(", ")}
+                        </div>
+                      )}
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <EntryTypeBadge entryType={entry.entry_type} />
+                        {entry.isbn && (
+                          <a
+                            data-testid="entry-isbn"
+                            href={`https://openlibrary.org/isbn/${entry.isbn}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            ISBN {entry.isbn}
+                          </a>
+                        )}
+                      </div>
                       {entry.doi && (
                         <div className="mt-1">
                           <a

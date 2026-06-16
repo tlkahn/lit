@@ -6,18 +6,50 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-// Excludes web scrapers: ssrn, mdpi, researchgate, sci_hub.
-pub const LEGAL_PROVIDERS: &[&str] = &[
-    "openalex",
-    "crossref",
-    "pubmed",
-    "semantic_scholar",
-    "unpaywall",
-    "core",
-    "openreview",
-    "arxiv",
-    "biorxiv",
-];
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProviderInfo {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub category: String,
+    pub needs_api_key: bool,
+}
+
+/// Returns the full metadata for every legal (non-scraper) search provider.
+pub fn legal_provider_info() -> Vec<ProviderInfo> {
+    vec![
+        ProviderInfo { id: "openalex".into(), label: "OpenAlex".into(), description: "Open catalog of the global research system".into(), category: "general".into(), needs_api_key: false },
+        ProviderInfo { id: "crossref".into(), label: "Crossref".into(), description: "DOI registration agency metadata".into(), category: "general".into(), needs_api_key: false },
+        ProviderInfo { id: "pubmed".into(), label: "PubMed".into(), description: "Biomedical literature from MEDLINE and life science journals".into(), category: "biomedical".into(), needs_api_key: true },
+        ProviderInfo { id: "biorxiv".into(), label: "bioRxiv".into(), description: "Preprint server for biology".into(), category: "biomedical".into(), needs_api_key: false },
+        ProviderInfo { id: "semantic_scholar".into(), label: "Semantic Scholar".into(), description: "AI-powered research tool by Allen Institute for AI".into(), category: "cs-ml".into(), needs_api_key: true },
+        ProviderInfo { id: "openreview".into(), label: "OpenReview".into(), description: "Open peer review platform for ML conferences".into(), category: "cs-ml".into(), needs_api_key: false },
+        ProviderInfo { id: "arxiv".into(), label: "arXiv".into(), description: "Open-access preprints in physics, math, CS, and more".into(), category: "cs-ml".into(), needs_api_key: false },
+        ProviderInfo { id: "unpaywall".into(), label: "Unpaywall".into(), description: "Free legal full-text articles via open-access links".into(), category: "open-access".into(), needs_api_key: false },
+        ProviderInfo { id: "core".into(), label: "CORE".into(), description: "Aggregator of open-access research papers".into(), category: "open-access".into(), needs_api_key: true },
+    ]
+}
+
+/// Convenience: just the ID strings, in the same order as `legal_provider_info()`.
+pub fn legal_provider_ids() -> Vec<String> {
+    legal_provider_info().iter().map(|p| p.id.clone()).collect()
+}
+
+/// Map a Paper's work_type to a BibTeX entry type.
+/// Returns None if work_type is None or not in the mapping table,
+/// in which case the caller should fall back to heuristics.
+fn infer_entry_type(work_type: Option<&str>) -> Option<&'static str> {
+    match work_type? {
+        "book" => Some("book"),
+        "book-chapter" => Some("incollection"),
+        "conference-paper" | "proceedings-article" => Some("inproceedings"),
+        "thesis" | "dissertation" => Some("phdthesis"),
+        "dataset" => Some("misc"),
+        "journal-article" | "article" => Some("article"),
+        "preprint" => Some("article"),
+        _ => None,
+    }
+}
 
 pub fn paper_to_bib_entry(
     paper: &research_hub::Paper,
@@ -41,11 +73,15 @@ pub fn paper_to_bib_entry(
     let url = paper.url.clone();
     let abstract_text = paper.abstract_text.as_deref().map(strip_jats);
 
-    let entry_type = if journal.is_some() {
-        "article".to_string()
-    } else {
-        "misc".to_string()
-    };
+    let entry_type = infer_entry_type(paper.work_type.as_deref())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            if journal.is_some() {
+                "article".to_string()
+            } else {
+                "misc".to_string()
+            }
+        });
 
     let tags = if paper.source.is_empty() {
         vec![]
@@ -71,10 +107,10 @@ pub fn paper_to_bib_entry(
         volume,
         number,
         pages,
-        publisher: None,
-        issn: None,
-        isbn: None,
-        arxiv_id: None,
+        publisher: paper.publisher.clone(),
+        issn: paper.issn.clone(),
+        isbn: paper.isbn.clone(),
+        arxiv_id: paper.arxiv_id.clone(),
         tags,
     }
 }
@@ -142,9 +178,10 @@ pub fn create_enabled_providers(
     config: Arc<research_hub::Config>,
     enabled: &HashSet<String>,
 ) -> Vec<Arc<dyn research_hub::Provider>> {
+    let legal: HashSet<String> = legal_provider_ids().into_iter().collect();
     let all = research_hub::create_all_providers(client, config);
     all.into_iter()
-        .filter(|p| LEGAL_PROVIDERS.contains(&p.name()))
+        .filter(|p| legal.contains(p.name()))
         .filter(|p| enabled.contains(p.name()))
         .collect()
 }
@@ -173,6 +210,13 @@ mod tests {
             issue: Some("1".to_string()),
             pages: Some("5998-6008".to_string()),
             citation_count: Some(100000),
+            publisher: Some("Curran Associates, Inc.".to_string()),
+            isbn: None,
+            issn: Some("1049-5258".to_string()),
+            arxiv_id: Some("1706.03762".to_string()),
+            work_type: Some("conference-paper".to_string()),
+            editors: vec![],
+            series: None,
         }
     }
 
@@ -192,6 +236,13 @@ mod tests {
             issue: None,
             pages: None,
             citation_count: None,
+            publisher: None,
+            isbn: None,
+            issn: None,
+            arxiv_id: None,
+            work_type: None,
+            editors: vec![],
+            series: None,
         }
     }
 
@@ -206,7 +257,7 @@ mod tests {
         assert_eq!(entry.authors, vec!["Vaswani, Ashish", "Shazeer, Noam"]);
         assert_eq!(entry.title, "Attention Is All You Need");
         assert_eq!(entry.year, "2017");
-        assert_eq!(entry.entry_type, "article");
+        assert_eq!(entry.entry_type, "inproceedings");
         assert_eq!(entry.journal, Some("Advances in Neural Information Processing Systems".to_string()));
         assert_eq!(entry.doi, Some("10.5555/3295222.3295349".to_string()));
         assert_eq!(entry.url, Some("https://arxiv.org/abs/1706.03762".to_string()));
@@ -218,10 +269,10 @@ mod tests {
         assert_eq!(entry.line_number, 0);
         assert_eq!(entry.bib_file, None);
         assert_eq!(entry.file, None);
-        assert_eq!(entry.publisher, None);
-        assert_eq!(entry.issn, None);
+        assert_eq!(entry.publisher, Some("Curran Associates, Inc.".to_string()));
+        assert_eq!(entry.issn, Some("1049-5258".to_string()));
         assert_eq!(entry.isbn, None);
-        assert_eq!(entry.arxiv_id, None);
+        assert_eq!(entry.arxiv_id, Some("1706.03762".to_string()));
     }
 
     // ── Test 2: Minimal paper ────────────────────────────────────────
@@ -695,5 +746,191 @@ mod tests {
             .collect();
         let providers = super::create_enabled_providers(client, config, &enabled);
         assert!(providers.is_empty());
+    }
+
+    // ── ProviderInfo tests ────────────────────────────────────────
+
+    #[test]
+    fn provider_info_has_correct_count_and_unique_ids() {
+        let info = super::legal_provider_info();
+        assert_eq!(info.len(), 9);
+        let ids: HashSet<_> = info.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids.len(), 9); // no duplicates
+    }
+
+    #[test]
+    fn provider_info_categories_are_valid() {
+        let valid = ["general", "biomedical", "cs-ml", "open-access"];
+        for p in super::legal_provider_info() {
+            assert!(valid.contains(&p.category.as_str()), "bad category: {}", p.category);
+        }
+    }
+
+    #[test]
+    fn provider_ids_matches_info() {
+        let ids = super::legal_provider_ids();
+        let info_ids: Vec<String> = super::legal_provider_info().iter().map(|p| p.id.clone()).collect();
+        assert_eq!(ids, info_ids);
+    }
+
+    #[test]
+    fn provider_info_serializes_to_json() {
+        let info = super::legal_provider_info();
+        let json = serde_json::to_string(&info).expect("should serialize");
+        assert!(json.contains("openalex"));
+        assert!(json.contains("needs_api_key"));
+    }
+
+    // ── entry_type from work_type mapping ───────────────────────────
+
+    #[test]
+    fn entry_type_book_from_work_type() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("book".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "book");
+    }
+
+    #[test]
+    fn entry_type_incollection_from_book_chapter() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("book-chapter".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "incollection");
+    }
+
+    #[test]
+    fn entry_type_inproceedings_from_conference_paper() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("conference-paper".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "inproceedings");
+    }
+
+    #[test]
+    fn entry_type_inproceedings_from_proceedings_article() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("proceedings-article".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "inproceedings");
+    }
+
+    #[test]
+    fn entry_type_phdthesis_from_thesis() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("thesis".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "phdthesis");
+    }
+
+    #[test]
+    fn entry_type_misc_from_dataset() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("dataset".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "misc");
+    }
+
+    #[test]
+    fn entry_type_article_from_journal_article() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("journal-article".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "article");
+    }
+
+    #[test]
+    fn entry_type_article_from_preprint() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("preprint".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "article");
+    }
+
+    #[test]
+    fn entry_type_falls_back_to_journal_heuristic_for_unknown_work_type() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("unknown-type".to_string());
+        paper.journal = Some("Nature".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "article");
+    }
+
+    #[test]
+    fn entry_type_falls_back_to_misc_for_unknown_work_type_no_journal() {
+        let mut paper = minimal_paper();
+        paper.work_type = Some("unknown-type".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "misc");
+    }
+
+    #[test]
+    fn entry_type_falls_back_when_work_type_none() {
+        let mut paper = minimal_paper();
+        paper.journal = Some("Science".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.entry_type, "article");
+    }
+
+    // ── publisher/isbn/issn/arxiv_id passthrough ────────────────────
+
+    #[test]
+    fn publisher_passed_through() {
+        let mut paper = minimal_paper();
+        paper.publisher = Some("Springer".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.publisher, Some("Springer".to_string()));
+    }
+
+    #[test]
+    fn publisher_none_stays_none() {
+        let paper = minimal_paper();
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.publisher, None);
+    }
+
+    #[test]
+    fn isbn_passed_through() {
+        let mut paper = minimal_paper();
+        paper.isbn = Some("978-3-030-12345-6".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.isbn, Some("978-3-030-12345-6".to_string()));
+    }
+
+    #[test]
+    fn isbn_none_stays_none() {
+        let paper = minimal_paper();
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.isbn, None);
+    }
+
+    #[test]
+    fn issn_passed_through() {
+        let mut paper = minimal_paper();
+        paper.issn = Some("1234-5678".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.issn, Some("1234-5678".to_string()));
+    }
+
+    #[test]
+    fn issn_none_stays_none() {
+        let paper = minimal_paper();
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.issn, None);
+    }
+
+    #[test]
+    fn arxiv_id_passed_through() {
+        let mut paper = minimal_paper();
+        paper.arxiv_id = Some("2301.00001".to_string());
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.arxiv_id, Some("2301.00001".to_string()));
+    }
+
+    #[test]
+    fn arxiv_id_none_stays_none() {
+        let paper = minimal_paper();
+        let entry = paper_to_bib_entry(&paper, &HashSet::new());
+        assert_eq!(entry.arxiv_id, None);
     }
 }

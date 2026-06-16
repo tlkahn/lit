@@ -44,6 +44,9 @@ import { doiHref } from "../lib/urlUtils";
 import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
 
+/** Entry types that are too common/generic to badge. */
+const HIDDEN_ENTRY_TYPES = new Set(["article", "misc", ""]);
+
 function combinedText(entry: BibEntry): string {
   return [
     entry.key,
@@ -51,6 +54,8 @@ function combinedText(entry: BibEntry): string {
     entry.authors.join(" "),
     (entry.tags ?? []).join(" "),
     entry.journal ?? "",
+    entry.publisher ?? "",
+    entry.isbn ?? "",
   ].join(" ");
 }
 
@@ -537,6 +542,8 @@ export function ReferenceLibrary() {
       authors: entry.authors.join("; "),
       year: entry.year,
       journal: entry.journal ?? "",
+      publisher: entry.publisher ?? "",
+      isbn: entry.isbn ?? "",
     });
   }, []);
 
@@ -558,6 +565,8 @@ export function ReferenceLibrary() {
         authors: entry.authors.join("; "),
         year: entry.year,
         journal: entry.journal ?? "",
+        publisher: entry.publisher ?? "",
+        isbn: entry.isbn ?? "",
       };
       for (const [k, v] of Object.entries(editFields)) {
         if (v !== original[k]) {
@@ -898,6 +907,18 @@ export function ReferenceLibrary() {
                                 onChange={(e) => setEditFields(f => ({...f, journal: e.target.value}))}
                                 className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
                             </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">Publisher</label>
+                              <input data-testid="edit-field-publisher" type="text" value={editFields.publisher ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, publisher: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-text-muted">ISBN</label>
+                              <input data-testid="edit-field-isbn" type="text" value={editFields.isbn ?? ""}
+                                onChange={(e) => setEditFields(f => ({...f, isbn: e.target.value}))}
+                                className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal" />
+                            </div>
                             <div className="flex gap-2">
                               <button data-testid="edit-save-btn" disabled={savingEdit}
                                 onClick={() => saveEdit(entry.key)}
@@ -912,7 +933,17 @@ export function ReferenceLibrary() {
                           </div>
                         ) : (
                           <>
-                            <div className="font-semibold text-text-normal">{entry.title}</div>
+                            <div className="flex items-start gap-2">
+                              <div className="font-semibold text-text-normal">{entry.title}</div>
+                              {!HIDDEN_ENTRY_TYPES.has(entry.entry_type) && (
+                                <span
+                                  data-testid="entry-type-badge"
+                                  className="shrink-0 rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
+                                >
+                                  {entry.entry_type}
+                                </span>
+                              )}
+                            </div>
                             {entry.authors.length > 0 ? (
                               <div className="mt-1 text-text-muted">
                                 {entry.authors.join("; ")}
@@ -923,6 +954,22 @@ export function ReferenceLibrary() {
                             ) : null}
                             {entry.journal ? (
                               <div className="text-text-muted">{entry.journal}</div>
+                            ) : null}
+                            {entry.publisher && entry.publisher !== entry.journal ? (
+                              <div data-testid="entry-publisher" className="text-text-muted">{entry.publisher}</div>
+                            ) : null}
+                            {entry.isbn ? (
+                              <div data-testid="entry-isbn" className="text-text-muted">
+                                ISBN:{" "}
+                                <a
+                                  href={`https://openlibrary.org/isbn/${entry.isbn}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-interactive-accent hover:underline"
+                                >
+                                  {entry.isbn}
+                                </a>
+                              </div>
                             ) : null}
                           </>
                         )}

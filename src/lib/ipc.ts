@@ -640,6 +640,18 @@ export async function bibDelete(
   return invoke<boolean>("bib_delete", { citeKey, workspacePath });
 }
 
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  description: string;
+  category: string;
+  needs_api_key: boolean;
+}
+
+export async function listSearchProviders(): Promise<ProviderInfo[]> {
+  return invoke<ProviderInfo[]>("list_search_providers");
+}
+
 export interface PaperSearchResult {
   entries: BibEntry[];
   pdf_urls: Record<string, string>;

@@ -397,7 +397,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "search.enabledProviders",
     controlType: "custom",
     testId: "settings-searchProviders",
-    keywords: ["openalex", "crossref", "pubmed", "semantic scholar", "unpaywall", "core", "openreview", "arxiv", "biorxiv", "provider", "search", "paper"],
+    keywords: ["provider", "search", "paper", "academic", "enable", "disable"],
   },
   {
     category: "Paper Search",

@@ -157,11 +157,9 @@ function applyCompanionSearchPath(val: unknown): string[] {
   return filtered.length > 0 ? filtered : ["."];
 }
 
-const ALL_SEARCH_PROVIDERS = ["openalex", "crossref", "pubmed", "semantic_scholar", "unpaywall", "core", "openreview", "arxiv", "biorxiv"];
-
 function applySearchEnabledProviders(val: unknown): string[] {
-  if (!Array.isArray(val)) return ALL_SEARCH_PROVIDERS;
-  return val.filter((entry): entry is string => typeof entry === "string" && ALL_SEARCH_PROVIDERS.includes(entry));
+  if (!Array.isArray(val)) return [];
+  return val.filter((entry): entry is string => typeof entry === "string");
 }
 
 function mapPreferences(prefs: Preferences) {

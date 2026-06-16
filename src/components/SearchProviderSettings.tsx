@@ -1,19 +1,26 @@
+import { useState, useEffect } from "react";
 import { usePreferencesStore, setSearchEnabledProviders } from "../stores/preferences";
+import { listSearchProviders, type ProviderInfo } from "../lib/ipc";
 
-const PROVIDERS: { id: string; label: string; description: string }[] = [
-  { id: "openalex", label: "OpenAlex", description: "Open catalog of scholarly works" },
-  { id: "crossref", label: "Crossref", description: "DOI metadata registry" },
-  { id: "pubmed", label: "PubMed", description: "Biomedical literature (NCBI)" },
-  { id: "semantic_scholar", label: "Semantic Scholar", description: "AI-powered research corpus (S2)" },
-  { id: "unpaywall", label: "Unpaywall", description: "Open-access PDF finder" },
-  { id: "core", label: "CORE", description: "Open-access research aggregator" },
-  { id: "openreview", label: "OpenReview", description: "Peer review platform (ML/AI)" },
-  { id: "arxiv", label: "arXiv", description: "Preprint server (physics, CS, math)" },
-  { id: "biorxiv", label: "bioRxiv", description: "Preprint server (biology)" },
-];
+const CATEGORY_ORDER = ["general", "biomedical", "cs-ml", "open-access"] as const;
+const CATEGORY_LABELS: Record<string, string> = {
+  general: "General",
+  biomedical: "Biomedical",
+  "cs-ml": "CS & ML",
+  "open-access": "Open Access",
+};
 
 export function SearchProviderSettings() {
   const enabled = usePreferencesStore((s) => s.searchEnabledProviders);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    listSearchProviders()
+      .then((result) => setProviders(result ?? []))
+      .catch((err: unknown) => console.error("Failed to load search providers:", err))
+      .finally(() => setLoading(false));
+  }, []);
 
   function handleToggle(id: string) {
     const next = enabled.includes(id)
@@ -23,12 +30,18 @@ export function SearchProviderSettings() {
   }
 
   function handleEnableAll() {
-    setSearchEnabledProviders(PROVIDERS.map((p) => p.id));
+    setSearchEnabledProviders(providers.map((p) => p.id));
   }
 
   function handleDisableAll() {
     setSearchEnabledProviders([]);
   }
+
+  const grouped = CATEGORY_ORDER.map((cat) => ({
+    category: cat,
+    label: CATEGORY_LABELS[cat] ?? cat,
+    providers: providers.filter((p) => p.category === cat),
+  })).filter((g) => g.providers.length > 0);
 
   return (
     <div data-testid="search-provider-settings" className="space-y-2">
@@ -36,7 +49,8 @@ export function SearchProviderSettings() {
         <button
           data-testid="search-providers-enable-all"
           onClick={handleEnableAll}
-          className="text-xs text-text-muted hover:text-text-normal"
+          disabled={providers.length === 0}
+          className="text-xs text-text-muted hover:text-text-normal disabled:opacity-50"
         >
           Enable all
         </button>
@@ -44,33 +58,47 @@ export function SearchProviderSettings() {
         <button
           data-testid="search-providers-disable-all"
           onClick={handleDisableAll}
-          className="text-xs text-text-muted hover:text-text-normal"
+          disabled={providers.length === 0}
+          className="text-xs text-text-muted hover:text-text-normal disabled:opacity-50"
         >
           Disable all
         </button>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-        {PROVIDERS.map(({ id, label, description }) => (
-          <label
-            key={id}
-            data-testid={`search-provider-${id}`}
-            className="flex items-start gap-2 cursor-pointer group"
-          >
-            <input
-              type="checkbox"
-              checked={enabled.includes(id)}
-              onChange={() => handleToggle(id)}
-              className="mt-0.5 accent-accent"
-            />
-            <div className="min-w-0">
-              <span className="text-sm text-text-normal group-hover:text-text-normal">
-                {label}
-              </span>
-              <span className="block text-xs text-text-muted">{description}</span>
+      {loading ? (
+        <div className="text-xs text-text-muted">Loading providers...</div>
+      ) : (
+        <div className="space-y-3">
+          {grouped.map((group) => (
+            <div key={group.category}>
+              <h4 className="text-xs font-medium text-text-muted uppercase tracking-wide mb-1">
+                {group.label}
+              </h4>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {group.providers.map(({ id, label, description }) => (
+                  <label
+                    key={id}
+                    data-testid={`search-provider-${id}`}
+                    className="flex items-start gap-2 cursor-pointer group"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enabled.includes(id)}
+                      onChange={() => handleToggle(id)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <div className="min-w-0">
+                      <span className="text-sm text-text-normal group-hover:text-text-normal">
+                        {label}
+                      </span>
+                      <span className="block text-xs text-text-muted">{description}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
             </div>
-          </label>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
