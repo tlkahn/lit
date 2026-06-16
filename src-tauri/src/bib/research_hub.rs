@@ -33,14 +33,10 @@ static PROVIDER_INFO: LazyLock<Vec<ProviderInfo>> = LazyLock::new(|| vec![
     ProviderInfo { id: "hathitrust".into(), label: "HathiTrust".into(), description: "Digital library of research institution holdings".into(), category: "books".into(), needs_api_key: false },
 ]);
 
-/// Just the ID strings, in the same order as `legal_provider_info()`.
-/// Compile-time constant — zero allocation.
-const LEGAL_PROVIDER_IDS: &[&str] = &[
-    "openalex", "crossref", "base", "pubmed", "biorxiv",
-    "semantic_scholar", "openreview", "arxiv",
-    "unpaywall", "core", "zenodo", "doaj",
-    "open_library", "google_books", "hathitrust",
-];
+/// Derived from `PROVIDER_INFO` — always in sync, single allocation on first use.
+static LEGAL_PROVIDER_IDS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    PROVIDER_INFO.iter().map(|p| p.id.clone()).collect()
+});
 
 /// Returns the full metadata for every legal (non-scraper) search provider.
 /// Backed by a `LazyLock` — allocates once, returns a static slice thereafter.
@@ -49,8 +45,8 @@ pub fn legal_provider_info() -> &'static [ProviderInfo] {
 }
 
 /// Convenience: just the ID strings, in the same order as `legal_provider_info()`.
-pub fn legal_provider_ids() -> &'static [&'static str] {
-    LEGAL_PROVIDER_IDS
+pub fn legal_provider_ids() -> &'static [String] {
+    &LEGAL_PROVIDER_IDS
 }
 
 /// Map a Paper's work_type to a BibTeX entry type.
@@ -211,7 +207,7 @@ pub fn create_enabled_providers(
 ) -> Vec<Arc<dyn research_hub::Provider>> {
     let all = research_hub::create_all_providers(client, config);
     all.into_iter()
-        .filter(|p| LEGAL_PROVIDER_IDS.contains(&p.name()))
+        .filter(|p| LEGAL_PROVIDER_IDS.iter().any(|id| id == p.name()))
         .filter(|p| enabled.contains(p.name()))
         .collect()
 }
@@ -289,26 +285,16 @@ mod tests {
                 "Courville, Aaron".to_string(),
             ],
             abstract_text: Some("An introduction to deep learning".to_string()),
-            doi: None,
             year: Some(2016),
             published_date: Some("2016-11-18".to_string()),
             source: "google_books".to_string(),
-            url: None,
-            pdf_url: None,
-            journal: None,
-            volume: None,
-            issue: None,
-            pages: None,
-            citation_count: None,
             publisher: Some("MIT Press".to_string()),
             isbn: Some("978-0-262-03561-3".to_string()),
-            issn: None,
-            arxiv_id: None,
             work_type: Some("book".to_string()),
             editors: vec!["Editor, A".to_string()],
             series: Some("Adaptive Computation and Machine Learning".to_string()),
-            oclc: None,
             lccn: Some("2016022992".to_string()),
+            ..Default::default()
         }
     }
 
@@ -840,10 +826,10 @@ mod tests {
     }
 
     #[test]
-    fn legal_provider_ids_match_provider_info() {
+    fn legal_provider_ids_derived_from_provider_info() {
         let info_ids: Vec<&str> = super::PROVIDER_INFO.iter().map(|p| p.id.as_str()).collect();
-        let const_ids: Vec<&str> = super::LEGAL_PROVIDER_IDS.to_vec();
-        assert_eq!(info_ids, const_ids, "LEGAL_PROVIDER_IDS must match PROVIDER_INFO entries in order");
+        let derived: Vec<&str> = super::legal_provider_ids().iter().map(|s| s.as_str()).collect();
+        assert_eq!(info_ids, derived, "legal_provider_ids must match PROVIDER_INFO entries in order");
     }
 
     #[test]
@@ -865,8 +851,8 @@ mod tests {
     }
 
     #[test]
-    fn legal_provider_ids_is_static_str_slice() {
-        let ids: &[&str] = super::legal_provider_ids();
+    fn legal_provider_ids_is_static_string_slice() {
+        let ids: &[String] = super::legal_provider_ids();
         assert_eq!(ids.len(), 15);
         assert_eq!(ids[0], "openalex");
         assert_eq!(ids[14], "hathitrust");
@@ -874,7 +860,7 @@ mod tests {
 
     #[test]
     fn legal_provider_ids_contains_all_expected() {
-        let ids = super::legal_provider_ids();
+        let ids: Vec<&str> = super::legal_provider_ids().iter().map(|s| s.as_str()).collect();
         let expected = [
             "openalex", "crossref", "base", "pubmed", "semantic_scholar",
             "unpaywall", "core", "openreview", "arxiv", "biorxiv",

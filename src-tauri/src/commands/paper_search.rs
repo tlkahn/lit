@@ -16,14 +16,18 @@ use crate::recognize::resolve::BaseUrls;
 static CLIENT: std::sync::LazyLock<reqwest::Client> =
     std::sync::LazyLock::new(reqwest::Client::new);
 
-fn parse_search_type(s: &str) -> Option<research_hub::SearchType> {
-    match s.to_ascii_lowercase().as_str() {
-        "doi" => Some(research_hub::SearchType::Doi),
-        "keywords" => Some(research_hub::SearchType::Keywords),
-        "author" => Some(research_hub::SearchType::Author),
-        "title" => Some(research_hub::SearchType::Title),
-        "isbn" => Some(research_hub::SearchType::Isbn),
-        _ => None,
+fn parse_search_type(s: &str) -> Result<Option<research_hub::SearchType>, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "doi" => Ok(Some(research_hub::SearchType::Doi)),
+        "keywords" => Ok(Some(research_hub::SearchType::Keywords)),
+        "author" => Ok(Some(research_hub::SearchType::Author)),
+        "title" => Ok(Some(research_hub::SearchType::Title)),
+        "isbn" => Ok(Some(research_hub::SearchType::Isbn)),
+        _ => Err(format!("Unknown search type: \"{}\"", trimmed)),
     }
 }
 
@@ -109,7 +113,10 @@ pub async fn search_papers(
         });
     }
 
-    let parsed_search_type = search_type.as_deref().and_then(parse_search_type);
+    let parsed_search_type = match search_type.as_deref() {
+        Some(s) => parse_search_type(s)?,
+        None => None,
+    };
 
     let result = research_hub::meta_search(
         &query,
@@ -561,5 +568,34 @@ mod tests {
         .await;
 
         assert!(result.is_none(), "fallback should be skipped when papers already present");
+    }
+
+    #[test]
+    fn parse_search_type_valid_variants() {
+        assert_eq!(parse_search_type("doi").unwrap(), Some(research_hub::SearchType::Doi));
+        assert_eq!(parse_search_type("keywords").unwrap(), Some(research_hub::SearchType::Keywords));
+        assert_eq!(parse_search_type("author").unwrap(), Some(research_hub::SearchType::Author));
+        assert_eq!(parse_search_type("title").unwrap(), Some(research_hub::SearchType::Title));
+        assert_eq!(parse_search_type("isbn").unwrap(), Some(research_hub::SearchType::Isbn));
+    }
+
+    #[test]
+    fn parse_search_type_case_insensitive() {
+        assert_eq!(parse_search_type("DOI").unwrap(), Some(research_hub::SearchType::Doi));
+        assert_eq!(parse_search_type("Keywords").unwrap(), Some(research_hub::SearchType::Keywords));
+        assert_eq!(parse_search_type("ISBN").unwrap(), Some(research_hub::SearchType::Isbn));
+    }
+
+    #[test]
+    fn parse_search_type_empty_returns_none() {
+        assert_eq!(parse_search_type("").unwrap(), None);
+        assert_eq!(parse_search_type("  ").unwrap(), None);
+    }
+
+    #[test]
+    fn parse_search_type_unknown_returns_err() {
+        assert!(parse_search_type("titl").is_err());
+        assert!(parse_search_type("orcid").is_err());
+        assert!(parse_search_type("unknown").is_err());
     }
 }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences, setPreference, deleteApiKey, hasApiKey, isViewMode } from "../lib/ipc";
+import { getPreferences, setPreference, deleteApiKey, hasApiKey, isViewMode, listSearchProviders } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
@@ -159,9 +159,22 @@ function applyCompanionSearchPath(val: unknown): string[] {
   return filtered.length > 0 ? filtered : ["."];
 }
 
+/** Canonical list of all search providers, in display order. */
+const ALL_SEARCH_PROVIDERS: string[] = [
+  "openalex", "crossref", "base", "pubmed", "biorxiv",
+  "semantic_scholar", "openreview", "arxiv", "unpaywall",
+  "core", "zenodo", "doaj", "open_library", "google_books", "hathitrust",
+];
+
 function applySearchEnabledProviders(val: unknown): string[] | null {
   if (!Array.isArray(val)) return null;
-  return val.filter((entry): entry is string => typeof entry === "string");
+  const persisted = val.filter((entry): entry is string => typeof entry === "string");
+  // Empty array = user explicitly disabled all providers; respect that choice.
+  if (persisted.length === 0) return persisted;
+  // Merge in any providers that were added after the user's config was saved.
+  // New providers are appended at the end, enabled by default.
+  const missing = ALL_SEARCH_PROVIDERS.filter((p) => !persisted.includes(p));
+  return missing.length > 0 ? [...persisted, ...missing] : persisted;
 }
 
 function mapPreferences(prefs: Preferences) {
@@ -310,7 +323,9 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
   citationNotesDir: "references",
-  searchEnabledProviders: ["openalex", "crossref", "base", "pubmed", "biorxiv", "semantic_scholar", "openreview", "arxiv", "unpaywall", "core", "zenodo", "doaj", "open_library", "google_books", "hathitrust"],
+  // Synchronous fallback -- overridden by Rust canonical list via IPC on fresh install.
+  // Keep in sync with PROVIDER_INFO / LEGAL_PROVIDER_IDS in src-tauri/src/bib/research_hub.rs.
+  searchEnabledProviders: ALL_SEARCH_PROVIDERS,
   searchCrossrefEmail: "",
   searchUnpaywallEmail: "",
   searchProviderTimeout: 30,
@@ -325,6 +340,21 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
     try {
       const prefs = await getPreferences();
       set({ ...mapPreferences(prefs), loaded: true });
+
+      // When search.enabledProviders is absent from persisted prefs (fresh install
+      // or pre-TurboRef upgrade), fetch the canonical provider list from Rust
+      // instead of relying on the hardcoded TS default. This ensures Rust is the
+      // single source of truth for which providers exist.
+      if (applySearchEnabledProviders(prefs["search.enabledProviders"]) === null) {
+        listSearchProviders()
+          .then((providers) => {
+            const ids = providers.map((p) => p.id);
+            set({ searchEnabledProviders: ids });
+          })
+          .catch(() => {
+            // IPC failed -- keep the hardcoded fallback already in the store
+          });
+      }
 
       // Persist the migrated llm.provider exactly once, only when migration
       // actually synthesized it from legacy flat keys (no valid object on disk).
