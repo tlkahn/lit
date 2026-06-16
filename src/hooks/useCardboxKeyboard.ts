@@ -25,6 +25,9 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     const grid = gridRef.current;
     if (!grid) return;
 
+    const tag = (document.activeElement as HTMLElement)?.tagName;
+    if (tag === "TEXTAREA" || tag === "INPUT" || (document.activeElement as HTMLElement)?.isContentEditable) return;
+
     const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='cardbox-card']"));
     const focused = document.activeElement as HTMLElement;
     const currentIndex = cards.indexOf(focused?.closest("[data-testid='cardbox-card']") as HTMLElement);
