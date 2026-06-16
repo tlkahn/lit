@@ -24,6 +24,7 @@ import {
   searchPapers,
   saveBibEntry,
   isSaved,
+  isSavedNoDoi,
   isDuplicateDoi,
   type BibEntry,
   type BibKeyState,
@@ -198,6 +199,9 @@ export function ReferenceLibrary() {
         if (isSaved(o)) {
           setSavedKeys((prev) => new Set(prev).add(stableKey));
           show(`Saved @${o.Saved.key}`);
+        } else if (isSavedNoDoi(o)) {
+          setSavedKeys((prev) => new Set(prev).add(stableKey));
+          show(`Saved @${o.SavedNoDoi.key}`);
         } else if (isDuplicateDoi(o)) {
           setDuplicateKeys((prev) => new Map(prev).set(o.DuplicateDoi.doi, o.DuplicateDoi.existing_key));
           show(`Already in library as @${o.DuplicateDoi.existing_key}`);
@@ -744,7 +748,6 @@ export function ReferenceLibrary() {
           {searchResults ? (
             <PaperSearchResults
               results={searchResults}
-              pdfUrls={searchResults.pdf_urls}
               onSave={handleSaveSearchResult}
               savingKeys={savingKeys}
               savedKeys={savedKeys}

@@ -5,11 +5,10 @@ import { doiHref } from "../lib/urlUtils";
 
 interface PaperSearchResultsProps {
   results: PaperSearchResult;
-  pdfUrls: Record<string, string>;
   onSave: (entry: BibEntry) => void;
   savingKeys: Set<string>;
   savedKeys: Set<string>;
-  duplicateKeys: Map<string, string>; // doi -> existing_key
+  duplicateKeys: Map<string, string>;
 }
 
 function abbreviateAuthors(authors: string[]): string {
@@ -25,7 +24,6 @@ function entryStableKey(entry: BibEntry): string {
 
 export function PaperSearchResults({
   results,
-  pdfUrls: _pdfUrls,
   onSave,
   savingKeys,
   savedKeys,
