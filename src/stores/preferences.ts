@@ -161,8 +161,7 @@ const ALL_SEARCH_PROVIDERS = ["openalex", "crossref", "pubmed", "semantic_schola
 
 function applySearchEnabledProviders(val: unknown): string[] {
   if (!Array.isArray(val)) return ALL_SEARCH_PROVIDERS;
-  const filtered = val.filter((entry): entry is string => typeof entry === "string" && ALL_SEARCH_PROVIDERS.includes(entry));
-  return filtered.length > 0 ? filtered : ALL_SEARCH_PROVIDERS;
+  return val.filter((entry): entry is string => typeof entry === "string" && ALL_SEARCH_PROVIDERS.includes(entry));
 }
 
 function mapPreferences(prefs: Preferences) {
