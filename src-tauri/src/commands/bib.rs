@@ -658,6 +658,11 @@ mod tests {
             number: None,
             pages: None,
             file: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         }
     }
@@ -1350,6 +1355,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec!["ml".to_string(), "nlp".to_string()],
         }
     }
@@ -1434,6 +1444,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -1470,6 +1485,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         };
         let fm = super::build_citation_frontmatter(&entry);
@@ -1524,6 +1544,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         };
         let body = super::build_citation_body(&entry, &[]);

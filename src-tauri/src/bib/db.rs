@@ -25,7 +25,7 @@ pub enum UpsertOutcome {
 const SELECT_COLUMNS: &str =
     "cite_key, entry_type, title, authors, year, doi, isbn, arxiv_id, url, \
      journal, publisher, \"abstract\", issn, volume, number, pages, file, tags, \
-     source_file, source_line";
+     source_file, source_line, oclc, work_type, series, lccn, editors";
 
 fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
     let authors_json: Option<String> = row.get(3)?;
@@ -39,6 +39,11 @@ fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
         .unwrap_or_default();
 
     let source_line: Option<i64> = row.get(19)?;
+
+    let editors_json: Option<String> = row.get(24)?;
+    let editors: Vec<String> = editors_json
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
 
     Ok(BibEntry {
         key: row.get(0)?,
@@ -61,6 +66,11 @@ fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
         tags,
         bib_file: row.get(18)?,
         line_number: source_line.unwrap_or(0) as usize,
+        oclc: row.get(20)?,
+        work_type: row.get(21)?,
+        series: row.get(22)?,
+        lccn: row.get(23)?,
+        editors,
     })
 }
 
@@ -149,29 +159,38 @@ pub fn upsert_bib_item(
 ) -> Result<UpsertOutcome, GraphError> {
     let doi = entry.doi.as_deref().map(normalize_doi);
     let isbn = entry.isbn.as_deref();
+    let oclc = entry.oclc.as_deref();
     let arxiv_id = entry.arxiv_id.as_deref().map(normalize_arxiv_id);
 
-    // Dedup precedence: doi > isbn > arxiv_id > title+year (live rows only)
-    let dedup_match = if let Some(ref d) = doi {
-        find_live_by_field(conn, "doi", d)?
-    } else {
-        None
+    // Dedup precedence: doi > isbn > oclc > arxiv_id > title+year (live rows only)
+    // Uses sequential checks instead of Option::or() to avoid eager evaluation of DB queries.
+    let mut dedup_match: Option<String> = None;
+    if dedup_match.is_none() {
+        if let Some(ref d) = doi {
+            dedup_match = find_live_by_field(conn, "doi", d)?;
+        }
     }
-    .or(if let Some(i) = isbn {
-        find_live_by_field(conn, "isbn", i)?
-    } else {
-        None
-    })
-    .or(if let Some(ref a) = arxiv_id {
-        find_live_by_field(conn, "arxiv_id", a)?
-    } else {
-        None
-    });
+    if dedup_match.is_none() {
+        if let Some(i) = isbn {
+            dedup_match = find_live_by_field(conn, "isbn", i)?;
+        }
+    }
+    if dedup_match.is_none() {
+        if let Some(o) = oclc {
+            dedup_match = find_live_by_field(conn, "oclc", o)?;
+        }
+    }
+    if dedup_match.is_none() {
+        if let Some(ref a) = arxiv_id {
+            dedup_match = find_live_by_field(conn, "arxiv_id", a)?;
+        }
+    }
 
     // Title+year fallback dedup: only when the incoming entry has NO identifiers
     let dedup_match = if dedup_match.is_none()
         && doi.is_none()
         && isbn.is_none()
+        && oclc.is_none()
         && arxiv_id.is_none()
     {
         find_live_by_title_year(conn, &entry.title, &entry.year)?
@@ -213,12 +232,13 @@ pub fn upsert_bib_item(
     // No match: INSERT new row
     let authors_json = serde_json::to_string(&entry.authors)?;
     let tags_json = serde_json::to_string(&entry.tags)?;
+    let editors_json = serde_json::to_string(&entry.editors)?;
     let raw_bibtex = serialize_bib_entry(entry);
     let sl: Option<i64> = source_line.filter(|&l| l != 0).map(|l| l as i64);
 
     conn.execute(
         &format!(
-            "INSERT INTO bib_items ({}, raw_bibtex) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            "INSERT INTO bib_items ({}, raw_bibtex) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             SELECT_COLUMNS
         ),
         params![
@@ -242,6 +262,11 @@ pub fn upsert_bib_item(
             tags_json,
             source_file,
             sl,
+            entry.oclc,
+            entry.work_type,
+            entry.series,
+            entry.lccn,
+            editors_json,
             raw_bibtex,
         ],
     )?;
@@ -263,6 +288,7 @@ fn update_row_full(
 ) -> Result<(), GraphError> {
     let authors_json = serde_json::to_string(&entry.authors)?;
     let tags_json = serde_json::to_string(&entry.tags)?;
+    let editors_json = serde_json::to_string(&entry.editors)?;
     let raw_bibtex = serialize_bib_entry(entry);
     let sl: Option<i64> = source_line.filter(|&l| l != 0).map(|l| l as i64);
 
@@ -273,8 +299,10 @@ fn update_row_full(
             journal = ?9, publisher = ?10, \"abstract\" = ?11, issn = ?12,
             volume = ?13, number = ?14, pages = ?15, file = ?16,
             tags = ?17, source_file = ?18, source_line = ?19,
-            raw_bibtex = ?20, deleted_at = NULL, updated_at = datetime('now')
-         WHERE cite_key = ?21",
+            raw_bibtex = ?20,
+            oclc = ?21, work_type = ?22, series = ?23, lccn = ?24, editors = ?25,
+            deleted_at = NULL, updated_at = datetime('now')
+         WHERE cite_key = ?26",
         params![
             entry.entry_type,
             entry.title,
@@ -296,6 +324,11 @@ fn update_row_full(
             source_file,
             sl,
             raw_bibtex,
+            entry.oclc,
+            entry.work_type,
+            entry.series,
+            entry.lccn,
+            editors_json,
             cite_key,
         ],
     )?;
@@ -315,6 +348,7 @@ fn gap_fill_row(
 ) -> Result<(), GraphError> {
     let authors_json = serde_json::to_string(&entry.authors)?;
     let tags_json = serde_json::to_string(&entry.tags)?;
+    let editors_json = serde_json::to_string(&entry.editors)?;
     let raw_bibtex = serialize_bib_entry(entry);
     let sl: Option<i64> = source_line.filter(|&l| l != 0).map(|l| l as i64);
 
@@ -340,9 +374,14 @@ fn gap_fill_row(
             source_file = ?18,
             source_line = ?19,
             raw_bibtex = ?20,
+            oclc = COALESCE(oclc, ?21),
+            work_type = COALESCE(work_type, ?22),
+            series = COALESCE(series, ?23),
+            lccn = COALESCE(lccn, ?24),
+            editors = COALESCE(NULLIF(NULLIF(editors, ''), '[]'), ?25),
             deleted_at = NULL,
             updated_at = datetime('now')
-         WHERE cite_key = ?21",
+         WHERE cite_key = ?26",
         params![
             entry.entry_type,
             entry.title,
@@ -364,9 +403,24 @@ fn gap_fill_row(
             source_file,
             sl,
             raw_bibtex,
+            entry.oclc,
+            entry.work_type,
+            entry.series,
+            entry.lccn,
+            editors_json,
             cite_key,
         ],
     )?;
+
+    // Re-serialize raw_bibtex from the merged row so it reflects post-COALESCE values
+    if let Some(merged) = get_bib_item(conn, cite_key)? {
+        let fresh_bibtex = serialize_bib_entry(&merged);
+        conn.execute(
+            "UPDATE bib_items SET raw_bibtex = ?1 WHERE cite_key = ?2",
+            params![fresh_bibtex, cite_key],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -405,7 +459,7 @@ pub fn search_bib_items(
     let sql = format!(
         "SELECT {} FROM bib_items WHERE deleted_at IS NULL \
          AND (cite_key LIKE ?1 OR title LIKE ?1 OR authors LIKE ?1 \
-              OR year LIKE ?1 OR doi LIKE ?1) \
+              OR year LIKE ?1 OR doi LIKE ?1 OR isbn LIKE ?1) \
          ORDER BY cite_key LIMIT ?2",
         SELECT_COLUMNS
     );
@@ -478,12 +532,27 @@ pub fn update_bib_fields(
                     });
                 }
             }
+            "oclc" => entry.oclc = if value.is_empty() { None } else { Some(value.clone()) },
+            "work_type" => {
+                entry.work_type = if value.is_empty() { None } else { Some(value.clone()) }
+            }
+            "series" => entry.series = if value.is_empty() { None } else { Some(value.clone()) },
+            "lccn" => entry.lccn = if value.is_empty() { None } else { Some(value.clone()) },
+            "editors" => {
+                if value.is_empty() {
+                    entry.editors = vec![];
+                } else {
+                    entry.editors =
+                        serde_json::from_str(value).unwrap_or_else(|_| vec![value.clone()]);
+                }
+            }
             _ => {} // unknown fields silently ignored
         }
     }
 
     let authors_json = serde_json::to_string(&entry.authors)?;
     let tags_json = serde_json::to_string(&entry.tags)?;
+    let editors_json = serde_json::to_string(&entry.editors)?;
     let raw_bibtex = serialize_bib_entry(&entry);
 
     let rows = conn.execute(
@@ -492,8 +561,10 @@ pub fn update_bib_fields(
             doi = ?5, isbn = ?6, arxiv_id = ?7, url = ?8,
             journal = ?9, publisher = ?10, \"abstract\" = ?11, issn = ?12,
             volume = ?13, number = ?14, pages = ?15, file = ?16,
-            tags = ?17, raw_bibtex = ?18, updated_at = datetime('now')
-         WHERE cite_key = ?19 AND deleted_at IS NULL",
+            tags = ?17, raw_bibtex = ?18,
+            oclc = ?19, work_type = ?20, series = ?21, lccn = ?22, editors = ?23,
+            updated_at = datetime('now')
+         WHERE cite_key = ?24 AND deleted_at IS NULL",
         params![
             entry.entry_type,
             entry.title,
@@ -513,6 +584,11 @@ pub fn update_bib_fields(
             entry.file,
             tags_json,
             raw_bibtex,
+            entry.oclc,
+            entry.work_type,
+            entry.series,
+            entry.lccn,
+            editors_json,
             cite_key,
         ],
     )?;
@@ -826,6 +902,11 @@ mod tests {
             number: None,
             pages: None,
             file: None,
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         }
     }
@@ -1023,6 +1104,34 @@ mod tests {
             )
             .unwrap();
         assert!(raw.contains("10.1/added"), "raw_bibtex should be refreshed on scan");
+    }
+
+    #[test]
+    fn test_gap_fill_raw_bibtex_contains_preserved_fields() {
+        let store = Store::open_memory().unwrap();
+        // Insert with series="LNCS"
+        let mut a = test_entry("smith2024");
+        a.series = Some("LNCS".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        // Gap-fill with series=None — should preserve "LNCS"
+        let scan = test_entry("smith2024"); // series is None
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        // raw_bibtex must contain the preserved series value
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT raw_bibtex FROM bib_items WHERE cite_key = 'smith2024'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            raw.contains("LNCS"),
+            "raw_bibtex should contain preserved COALESCE field 'LNCS', got: {}",
+            raw
+        );
     }
 
     #[test]
@@ -1247,6 +1356,19 @@ mod tests {
         let results = search_bib_items(&store.conn, "Einstein", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].key, "a2024");
+    }
+
+    #[test]
+    fn test_search_bib_items_by_isbn() {
+        let store = Store::open_memory().unwrap();
+        let mut e = test_entry("evola1992");
+        e.title = "The Yoga of Power".to_string();
+        e.isbn = Some("9780231179249".to_string());
+        upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
+
+        let results = search_bib_items(&store.conn, "9780231179249", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "evola1992");
     }
 
     #[test]

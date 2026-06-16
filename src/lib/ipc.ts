@@ -399,6 +399,11 @@ export interface BibEntry {
   issn?: string;
   isbn?: string;
   arxiv_id?: string;
+  oclc?: string;
+  work_type?: string;
+  series?: string;
+  lccn?: string;
+  editors?: string[];
   tags?: string[];
 }
 

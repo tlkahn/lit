@@ -241,6 +241,11 @@ mod tests {
             issn: None,
             isbn: None,
             arxiv_id: arxiv_id.map(String::from),
+            oclc: None,
+            work_type: None,
+            series: None,
+            lccn: None,
+            editors: vec![],
             tags: vec![],
         }
     }

@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 20;
+pub const CURRENT_SCHEMA_VERSION: i64 = 21;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -533,6 +533,21 @@ impl Store {
                 );
                 CREATE INDEX IF NOT EXISTS idx_bib_refs_child ON bib_references(child_key);
                 UPDATE meta SET value = '20' WHERE key = 'schema_version';"
+            )?;
+        }
+
+        if version < 21 {
+            info!(from = version, to = 21, "migrating schema: adding book-aware bib columns");
+            self.conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE bib_items ADD COLUMN oclc TEXT;
+                 ALTER TABLE bib_items ADD COLUMN work_type TEXT;
+                 ALTER TABLE bib_items ADD COLUMN series TEXT;
+                 ALTER TABLE bib_items ADD COLUMN lccn TEXT;
+                 ALTER TABLE bib_items ADD COLUMN editors TEXT;
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_bib_oclc ON bib_items(oclc) WHERE oclc IS NOT NULL AND deleted_at IS NULL;
+                 UPDATE meta SET value = '21' WHERE key = 'schema_version';
+                 COMMIT;"
             )?;
         }
 
@@ -3410,8 +3425,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
+    fn schema_version_is_twenty_one() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 21);
     }
 
     #[test]
