@@ -2866,6 +2866,329 @@ describe("ReferenceLibrary", () => {
     });
   });
 
+  describe("Entry-type-aware UI", () => {
+    const bookEntry: BibEntry = {
+      key: "knuth1997",
+      authors: ["Knuth, Donald"],
+      title: "The Art of Computer Programming",
+      year: "1997",
+      entry_type: "book",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+      journal: undefined,
+      publisher: "Addison-Wesley",
+      isbn: "978-0-201-89683-1",
+    };
+
+    const articleWithPublisher: BibEntry = {
+      key: "dijkstra1968",
+      authors: ["Dijkstra, Edsger"],
+      title: "Go To Considered Harmful",
+      year: "1968",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+      journal: "Communications of the ACM",
+      publisher: "ACM",
+    };
+
+    const articleSamePublisher: BibEntry = {
+      key: "turing1950",
+      authors: ["Turing, Alan"],
+      title: "Computing Machinery and Intelligence",
+      year: "1950",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/workspace/refs.bib",
+      journal: "Mind",
+      publisher: "Mind",
+    };
+
+    it("search matches publisher field", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry, flood, abrams];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.type(screen.getByLabelText("Search references"), "Addison-Wesley");
+
+      expect(
+        await screen.findByText("The Art of Computer Programming"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByText("Aardvark")).not.toBeInTheDocument(),
+      );
+    });
+
+    it("search matches isbn field", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry, flood, abrams];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.type(screen.getByLabelText("Search references"), "978-0-201-89683-1");
+
+      expect(
+        await screen.findByText("The Art of Computer Programming"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByText("Aardvark")).not.toBeInTheDocument(),
+      );
+    });
+
+    it("shows entry type badge for 'book' type in expanded detail view", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+
+      const badge = screen.getByTestId("entry-type-badge");
+      expect(badge).toBeInTheDocument();
+      expect(badge.textContent).toBe("book");
+    });
+
+    it("does not show entry type badge for 'article' type in expanded detail view", async () => {
+      const user = userEvent.setup();
+      fixture = [articleWithPublisher];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Go To Considered Harmful")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Go To Considered Harmful"));
+
+      expect(screen.queryByTestId("entry-type-badge")).not.toBeInTheDocument();
+    });
+
+    it("shows publisher in expanded detail view when publisher differs from journal", async () => {
+      const user = userEvent.setup();
+      fixture = [articleWithPublisher];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Go To Considered Harmful")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Go To Considered Harmful"));
+
+      const publisherEl = screen.getByTestId("entry-publisher");
+      expect(publisherEl).toBeInTheDocument();
+      expect(publisherEl.textContent).toBe("ACM");
+    });
+
+    it("does not show publisher in expanded detail view when publisher equals journal", async () => {
+      const user = userEvent.setup();
+      fixture = [articleSamePublisher];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Computing Machinery and Intelligence")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Computing Machinery and Intelligence"));
+
+      expect(screen.queryByTestId("entry-publisher")).not.toBeInTheDocument();
+    });
+
+    it("shows ISBN as Open Library link in expanded detail view", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+
+      const isbnEl = screen.getByTestId("entry-isbn");
+      expect(isbnEl).toBeInTheDocument();
+      const link = isbnEl.querySelector("a");
+      expect(link).toHaveAttribute(
+        "href",
+        "https://openlibrary.org/isbn/978-0-201-89683-1",
+      );
+      expect(link!.textContent).toBe("978-0-201-89683-1");
+    });
+
+    it("does not show ISBN when isbn is absent", async () => {
+      const user = userEvent.setup();
+      fixture = [articleWithPublisher];
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("Go To Considered Harmful")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("Go To Considered Harmful"));
+
+      expect(screen.queryByTestId("entry-isbn")).not.toBeInTheDocument();
+    });
+
+    it("edit form includes publisher and isbn fields", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const publisherInput = screen.getByTestId("edit-field-publisher") as HTMLInputElement;
+      expect(publisherInput).toBeInTheDocument();
+      expect(publisherInput.value).toBe("Addison-Wesley");
+
+      const isbnInput = screen.getByTestId("edit-field-isbn") as HTMLInputElement;
+      expect(isbnInput).toBeInTheDocument();
+      expect(isbnInput.value).toBe("978-0-201-89683-1");
+    });
+
+    it("edit form publisher and isbn fields are empty when entry lacks them", async () => {
+      const user = userEvent.setup();
+      fixture = [sanderson];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const publisherInput = screen.getByTestId("edit-field-publisher") as HTMLInputElement;
+      expect(publisherInput.value).toBe("");
+
+      const isbnInput = screen.getByTestId("edit-field-isbn") as HTMLInputElement;
+      expect(isbnInput.value).toBe("");
+    });
+
+    it("Edit Save sends changed publisher field", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "bib_update_fields") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const publisherInput = screen.getByTestId("edit-field-publisher") as HTMLInputElement;
+      await user.clear(publisherInput);
+      await user.type(publisherInput, "New Publisher");
+
+      await user.click(screen.getByTestId("edit-save-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+        expect(call).toBeTruthy();
+        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
+        expect(fields.publisher).toBe("New Publisher");
+        // Unchanged fields should NOT be in fields
+        expect(fields).not.toHaveProperty("title");
+        expect(fields).not.toHaveProperty("isbn");
+      });
+    });
+
+    it("Edit Save sends changed isbn field", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "bib_update_fields") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      const isbnInput = screen.getByTestId("edit-field-isbn") as HTMLInputElement;
+      await user.clear(isbnInput);
+      await user.type(isbnInput, "978-new-isbn");
+
+      await user.click(screen.getByTestId("edit-save-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+        expect(call).toBeTruthy();
+        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
+        expect(fields.isbn).toBe("978-new-isbn");
+        expect(fields).not.toHaveProperty("title");
+        expect(fields).not.toHaveProperty("publisher");
+      });
+    });
+
+    it("Edit Save does not send publisher/isbn when unchanged", async () => {
+      const user = userEvent.setup();
+      fixture = [bookEntry];
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "bib_update_fields") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() =>
+        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
+      );
+
+      await user.click(screen.getByText("The Art of Computer Programming"));
+      await user.click(screen.getByTestId("edit-entry-btn"));
+
+      // Change only the title
+      const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
+      await user.clear(titleInput);
+      await user.type(titleInput, "TAOCP");
+
+      await user.click(screen.getByTestId("edit-save-btn"));
+
+      await waitFor(() => {
+        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
+        expect(call).toBeTruthy();
+        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
+        expect(fields.title).toBe("TAOCP");
+        expect(fields).not.toHaveProperty("publisher");
+        expect(fields).not.toHaveProperty("isbn");
+      });
+    });
+  });
+
   describe("Section headers", () => {
     it("renders alphabetical section headers above each letter group", async () => {
       render(<ReferenceLibrary />);

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 use crate::bib::research_hub::{
-    build_config, create_enabled_providers, paper_to_bib_entry_with_pdf, LEGAL_PROVIDERS,
+    build_config, create_enabled_providers, legal_provider_ids, legal_provider_info,
+    paper_to_bib_entry_with_pdf, ProviderInfo,
 };
 use crate::bib::types::BibEntry;
 use crate::commands::credential::CredentialStore;
@@ -50,6 +51,11 @@ pub(crate) fn convert_search_result(
 }
 
 #[tauri::command]
+pub fn list_search_providers() -> Vec<ProviderInfo> {
+    legal_provider_info().to_vec()
+}
+
+#[tauri::command]
 pub async fn search_papers(
     query: String,
     limit: Option<usize>,
@@ -72,7 +78,7 @@ pub async fn search_papers(
                 .collect()
         })
         .unwrap_or_else(|| {
-            LEGAL_PROVIDERS.iter().map(|s| s.to_string()).collect()
+            legal_provider_ids().iter().map(|s| s.to_string()).collect()
         });
 
     let client = CLIENT.clone();
@@ -325,5 +331,33 @@ mod tests {
             result.pdf_urls.get("beta2023"),
             Some(&"https://example.com/b.pdf".to_string())
         );
+    }
+
+    // ── Test 9: New paper fields flow through conversion ───────────
+
+    #[test]
+    fn convert_paper_with_new_fields() {
+        let paper = make_paper(|p| {
+            p.title = "A Book Chapter".to_string();
+            p.authors = vec!["Author, A".to_string()];
+            p.year = Some(2024);
+            p.source = "crossref".to_string();
+            p.publisher = Some("Springer".to_string());
+            p.isbn = Some("978-3-030-12345-6".to_string());
+            p.issn = Some("1234-5678".to_string());
+            p.arxiv_id = Some("2301.00001".to_string());
+            p.work_type = Some("book-chapter".to_string());
+        });
+
+        let sr = make_search_result(vec![paper], vec!["crossref"], vec![]);
+        let result = convert_search_result(&sr);
+
+        assert_eq!(result.entries.len(), 1);
+        let e = &result.entries[0];
+        assert_eq!(e.entry_type, "incollection");
+        assert_eq!(e.publisher, Some("Springer".to_string()));
+        assert_eq!(e.isbn, Some("978-3-030-12345-6".to_string()));
+        assert_eq!(e.issn, Some("1234-5678".to_string()));
+        assert_eq!(e.arxiv_id, Some("2301.00001".to_string()));
     }
 }

@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { PaperSearchResult, BibEntry } from "../lib/ipc";
 import { doiHref } from "../lib/urlUtils";
+import { EntryTypeBadge } from "./EntryTypeBadge";
+import { distinctPublisher } from "../lib/bibUtils";
 
 interface PaperSearchResultsProps {
   results: PaperSearchResult;
@@ -21,6 +23,7 @@ function abbreviateAuthors(authors: string[]): string {
 function entryStableKey(entry: BibEntry): string {
   return entry.doi ?? entry.key;
 }
+
 
 export function PaperSearchResults({
   results,
@@ -79,6 +82,7 @@ export function PaperSearchResults({
       <div
         ref={scrollRef}
         data-testid="search-results-list"
+        data-virtual-scroll
         className="flex-1 overflow-y-auto overscroll-contain px-1"
       >
         <div
@@ -97,6 +101,7 @@ export function PaperSearchResults({
               ? duplicateKeys.get(entry.doi)
               : undefined;
             const isExpanded = expandedIndex === virtualRow.index;
+            const pub = distinctPublisher(entry);
 
             return (
               <div
@@ -129,10 +134,14 @@ export function PaperSearchResults({
                       >
                         {entry.title}
                       </div>
-                      <div className="truncate text-xs text-text-muted">
-                        {abbreviateAuthors(entry.authors)}
-                        {entry.year ? ` (${entry.year})` : ""}
-                        {entry.journal ? ` — ${entry.journal}` : ""}
+                      <div className="flex items-center gap-1 truncate text-xs text-text-muted">
+                        <span className="truncate">
+                          {abbreviateAuthors(entry.authors)}
+                          {entry.year ? ` (${entry.year})` : ""}
+                          {entry.journal ? ` — ${entry.journal}` : ""}
+                          {pub ? ` — ${pub}` : ""}
+                        </span>
+                        <EntryTypeBadge entryType={entry.entry_type} />
                       </div>
                     </div>
                     <button
@@ -159,6 +168,39 @@ export function PaperSearchResults({
                       {entry.authors.length > 0 && (
                         <div className="text-xs text-text-muted">
                           {entry.authors.join("; ")}
+                        </div>
+                      )}
+                      {pub && (
+                        <div
+                          data-testid="entry-publisher"
+                          className="text-xs text-text-muted"
+                        >
+                          {pub}
+                        </div>
+                      )}
+                      {(entry.volume || entry.number || entry.pages) && (
+                        <div className="text-xs text-text-muted">
+                          {[
+                            entry.volume ? `vol. ${entry.volume}` : "",
+                            entry.number ? `no. ${entry.number}` : "",
+                            entry.pages ? `pp. ${entry.pages}` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(", ")}
+                        </div>
+                      )}
+                      {entry.isbn && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <a
+                            data-testid="entry-isbn"
+                            href={`https://openlibrary.org/isbn/${entry.isbn}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            ISBN {entry.isbn}
+                          </a>
                         </div>
                       )}
                       {entry.doi && (

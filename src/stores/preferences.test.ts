@@ -6,6 +6,7 @@ import {
   updateCustomProvider,
   removeCustomProvider,
   setCompanionSearchPath,
+  setSearchEnabledProviders,
 } from "./preferences";
 import type { Preferences } from "../lib/ipc";
 import type { CustomProviderDef } from "../lib/providerRegistry";
@@ -1890,6 +1891,144 @@ describe("PreferencesStore", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(usePreferencesStore.getState().llmCustomProviders).toEqual([]);
+    });
+  });
+
+  // --- searchEnabledProviders hydration ---
+
+  describe("searchEnabledProviders hydration", () => {
+    const ALL_PROVIDERS = [
+      "openalex", "crossref", "pubmed", "semantic_scholar",
+      "unpaywall", "core", "openreview", "arxiv", "biorxiv",
+    ];
+
+    it("keeps all providers enabled when search.enabledProviders key is absent (fresh install)", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            // No "search.enabledProviders" key — simulates fresh install
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(ALL_PROVIDERS);
+    });
+
+    it("uses stored array when search.enabledProviders is present", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            "search.enabledProviders": ["crossref", "arxiv"],
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(["crossref", "arxiv"]);
+    });
+
+    it("uses empty array when search.enabledProviders is explicitly [] (user disabled all)", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+            "search.enabledProviders": [],
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual([]);
+    });
+
+    it("keeps all providers when search.enabledProviders key is absent on preferences://changed event", async () => {
+      // Set initial state to all providers
+      usePreferencesStore.setState({ searchEnabledProviders: ALL_PROVIDERS });
+
+      mockInvoke((cmd) => {
+        if (cmd === "get_preferences") {
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "auto",
+            "workbench.sideBar.location": "left",
+          };
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      await usePreferencesStore.getState().loadPreferences();
+
+      // Fire a changed event without the key
+      emitMockEvent("preferences://changed", {
+        "workbench.colorTheme": null,
+        "workbench.darkMode": "auto",
+        "workbench.sideBar.location": "left",
+      });
+
+      // Should preserve the existing value, not overwrite with []
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(ALL_PROVIDERS);
+    });
+
+    it("setSearchEnabledProviders updates store and persists", async () => {
+      usePreferencesStore.setState({ searchEnabledProviders: ALL_PROVIDERS });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      setSearchEnabledProviders(["crossref", "arxiv"]);
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(["crossref", "arxiv"]);
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall).toBeDefined();
+      expect(setCall?.args?.key).toBe("search.enabledProviders");
+      expect(setCall?.args?.value).toEqual(["crossref", "arxiv"]);
+    });
+
+    it("setSearchEnabledProviders rolls back when persistence rejects", async () => {
+      usePreferencesStore.setState({ searchEnabledProviders: ALL_PROVIDERS });
+      mockInvoke((cmd) =>
+        cmd === "set_preference" ? Promise.reject(new Error("write failed")) : undefined,
+      );
+
+      setSearchEnabledProviders(["crossref"]);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual(ALL_PROVIDERS);
+    });
+
+    it("setSearchEnabledProviders with empty array persists [] (user disabled all)", async () => {
+      usePreferencesStore.setState({ searchEnabledProviders: ALL_PROVIDERS });
+      const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+      mockInvoke((cmd, args) => {
+        calls.push({ cmd, args });
+        return undefined;
+      });
+
+      setSearchEnabledProviders([]);
+      await Promise.resolve();
+
+      expect(usePreferencesStore.getState().searchEnabledProviders).toEqual([]);
+      const setCall = calls.find((c) => c.cmd === "set_preference");
+      expect(setCall?.args?.value).toEqual([]);
     });
   });
 });

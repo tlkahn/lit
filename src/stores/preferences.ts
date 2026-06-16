@@ -157,14 +157,13 @@ function applyCompanionSearchPath(val: unknown): string[] {
   return filtered.length > 0 ? filtered : ["."];
 }
 
-const ALL_SEARCH_PROVIDERS = ["openalex", "crossref", "pubmed", "semantic_scholar", "unpaywall", "core", "openreview", "arxiv", "biorxiv"];
-
-function applySearchEnabledProviders(val: unknown): string[] {
-  if (!Array.isArray(val)) return ALL_SEARCH_PROVIDERS;
-  return val.filter((entry): entry is string => typeof entry === "string" && ALL_SEARCH_PROVIDERS.includes(entry));
+function applySearchEnabledProviders(val: unknown): string[] | null {
+  if (!Array.isArray(val)) return null;
+  return val.filter((entry): entry is string => typeof entry === "string");
 }
 
 function mapPreferences(prefs: Preferences) {
+  const searchProviders = applySearchEnabledProviders(prefs["search.enabledProviders"]);
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
     colorTheme: prefs["workbench.colorTheme"] ?? null,
@@ -203,7 +202,7 @@ function mapPreferences(prefs: Preferences) {
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
-    searchEnabledProviders: applySearchEnabledProviders(prefs["search.enabledProviders"]),
+    ...(searchProviders !== null ? { searchEnabledProviders: searchProviders } : {}),
     searchCrossrefEmail: (prefs["search.crossrefEmail"] as string) ?? "",
     searchUnpaywallEmail: (prefs["search.unpaywallEmail"] as string) ?? "",
     searchProviderTimeout: (prefs["search.providerTimeout"] as number) ?? 30,
@@ -232,7 +231,7 @@ export function setCompanionSearchPath(paths: string[]) {
 
 export function setSearchEnabledProviders(providers: string[]) {
   const prev = usePreferencesStore.getState().searchEnabledProviders;
-  const next = applySearchEnabledProviders(providers);
+  const next = providers.filter((p): p is string => typeof p === "string");
   usePreferencesStore.setState({ searchEnabledProviders: next });
   setPreference("search.enabledProviders", next).catch(() => {
     usePreferencesStore.setState((state) =>

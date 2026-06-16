@@ -146,6 +146,7 @@ import {
   exportCardNote,
   setCardColor,
   clearCardColor,
+  listSearchProviders,
 } from "./ipc";
 
 const sampleMeta = {
@@ -850,6 +851,11 @@ describe("ipc", () => {
           return null;
         case "clear_card_color":
           return null;
+        case "list_search_providers":
+          return [
+            { id: "openalex", label: "OpenAlex", description: "Open catalog of the global research system", category: "general", needs_api_key: false },
+            { id: "crossref", label: "Crossref", description: "DOI registration agency metadata", category: "general", needs_api_key: false },
+          ];
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2667,6 +2673,15 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("clear_card_color", {
       uuid: "u1",
     });
+  });
+
+  // ── Search provider IPC wrappers ────────────────────────────────
+
+  it("listSearchProviders calls list_search_providers", async () => {
+    const result = await listSearchProviders();
+    expect(result).toBeInstanceOf(Array);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_search_providers");
   });
 
 });
