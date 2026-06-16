@@ -46,21 +46,18 @@ import { AlphabetStrip } from "./AlphabetStrip";
 import { EntryTypeBadge } from "./EntryTypeBadge";
 import { distinctPublisher } from "../lib/bibUtils";
 
-export function bibEntryToEditFields(entry: BibEntry): Record<string, string> {
-  return {
-    title: entry.title,
-    authors: entry.authors.join("; "),
-    year: entry.year,
-    journal: entry.journal ?? "",
-    publisher: entry.publisher ?? "",
-    isbn: entry.isbn ?? "",
-    oclc: entry.oclc ?? "",
-    series: entry.series ?? "",
-  };
-}
+type EditFieldKey =
+  | "title"
+  | "authors"
+  | "year"
+  | "journal"
+  | "publisher"
+  | "isbn"
+  | "oclc"
+  | "series";
 
 const EDIT_FIELDS: ReadonlyArray<{
-  key: string;
+  key: EditFieldKey;
   label: string;
   subtitle?: string;
 }> = [
@@ -73,6 +70,18 @@ const EDIT_FIELDS: ReadonlyArray<{
   { key: "oclc", label: "OCLC" },
   { key: "series", label: "Series" },
 ];
+
+export function bibEntryToEditFields(entry: BibEntry): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const { key } of EDIT_FIELDS) {
+    if (key === "authors") {
+      result[key] = entry.authors.join("; ");
+    } else {
+      result[key] = (entry[key] as string | undefined) ?? "";
+    }
+  }
+  return result;
+}
 
 function combinedText(entry: BibEntry): string {
   return [
