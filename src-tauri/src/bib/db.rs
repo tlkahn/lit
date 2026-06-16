@@ -1107,6 +1107,34 @@ mod tests {
     }
 
     #[test]
+    fn test_gap_fill_raw_bibtex_contains_preserved_fields() {
+        let store = Store::open_memory().unwrap();
+        // Insert with series="LNCS"
+        let mut a = test_entry("smith2024");
+        a.series = Some("LNCS".to_string());
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        // Gap-fill with series=None — should preserve "LNCS"
+        let scan = test_entry("smith2024"); // series is None
+        upsert_bib_item(&store.conn, &scan, None, None, true).unwrap();
+
+        // raw_bibtex must contain the preserved series value
+        let raw: String = store
+            .conn
+            .query_row(
+                "SELECT raw_bibtex FROM bib_items WHERE cite_key = 'smith2024'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            raw.contains("LNCS"),
+            "raw_bibtex should contain preserved COALESCE field 'LNCS', got: {}",
+            raw
+        );
+    }
+
+    #[test]
     fn test_upsert_non_scan_overwrites_all() {
         let store = Store::open_memory().unwrap();
         let mut a = test_entry("smith2024");

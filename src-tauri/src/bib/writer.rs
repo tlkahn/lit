@@ -1704,6 +1704,30 @@ mod tests {
     }
 
     #[test]
+    fn serialize_work_type_round_trips() {
+        let mut entry = minimal_entry();
+        entry.work_type = Some("PhD Thesis".to_string());
+        let bib_str = serialize_bib_entry(&entry);
+        let parsed = parse_bibtex(&bib_str);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].work_type, Some("PhD Thesis".to_string()));
+    }
+
+    #[test]
+    fn serialize_omits_none_work_type() {
+        let entry = minimal_entry();
+        assert!(entry.work_type.is_none());
+        let bib_str = serialize_bib_entry(&entry);
+        // "type" should not appear as a field; it does appear in "@misc{" so
+        // check specifically for the field pattern "type ="
+        assert!(
+            !bib_str.contains("type ="),
+            "should not emit type field when work_type is None, got:\n{}",
+            bib_str
+        );
+    }
+
+    #[test]
     fn serialize_oclc_lccn_work_type_round_trips() {
         let mut entry = minimal_entry();
         entry.oclc = Some("12345".to_string());
