@@ -777,10 +777,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_ids_matches_info() {
-        let ids = super::legal_provider_ids();
-        let info_ids: Vec<&str> = super::legal_provider_info().iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, info_ids.as_slice());
+    fn legal_provider_ids_match_provider_info() {
+        let info_ids: Vec<&str> = super::PROVIDER_INFO.iter().map(|p| p.id.as_str()).collect();
+        let const_ids: Vec<&str> = super::LEGAL_PROVIDER_IDS.to_vec();
+        assert_eq!(info_ids, const_ids, "LEGAL_PROVIDER_IDS must match PROVIDER_INFO entries in order");
     }
 
     #[test]

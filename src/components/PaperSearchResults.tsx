@@ -101,6 +101,7 @@ export function PaperSearchResults({
               ? duplicateKeys.get(entry.doi)
               : undefined;
             const isExpanded = expandedIndex === virtualRow.index;
+            const pub = distinctPublisher(entry);
 
             return (
               <div
@@ -138,7 +139,7 @@ export function PaperSearchResults({
                           {abbreviateAuthors(entry.authors)}
                           {entry.year ? ` (${entry.year})` : ""}
                           {entry.journal ? ` — ${entry.journal}` : ""}
-                          {(() => { const dp = distinctPublisher(entry); return dp ? ` — ${dp}` : ""; })()}
+                          {pub ? ` — ${pub}` : ""}
                         </span>
                         <EntryTypeBadge entryType={entry.entry_type} />
                       </div>
@@ -169,14 +170,14 @@ export function PaperSearchResults({
                           {entry.authors.join("; ")}
                         </div>
                       )}
-                      {(() => { const dp = distinctPublisher(entry); return dp ? (
-                          <div
-                            data-testid="entry-publisher"
-                            className="text-xs text-text-muted"
-                          >
-                            {dp}
-                          </div>
-                        ) : null; })()}
+                      {pub && (
+                        <div
+                          data-testid="entry-publisher"
+                          className="text-xs text-text-muted"
+                        >
+                          {pub}
+                        </div>
+                      )}
                       {(entry.volume || entry.number || entry.pages) && (
                         <div className="text-xs text-text-muted">
                           {[
