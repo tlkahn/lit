@@ -8,3 +8,4 @@ pub mod writer;
 pub mod semantic_scholar;
 pub mod db;
 pub mod unpaywall;
+pub mod research_hub;

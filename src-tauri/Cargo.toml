@@ -60,6 +60,7 @@ llm-core = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 llm-openai = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 llm-anthropic = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 futures = "0.3"
+research-hub = { path = "../../research-hub" }
 tokio-stream = "0.1"
 uuid = { version = "1", features = ["v4"] }
 argon2 = "0.5"

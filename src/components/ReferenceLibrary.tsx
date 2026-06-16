@@ -7,6 +7,8 @@ import {
   useCallback,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { SegmentedControl } from "./SegmentedControl";
+import { PaperSearchResults } from "./PaperSearchResults";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -19,10 +21,16 @@ import {
   bibUpdateFields,
   downloadEntryPdf,
   linkEntryPdf,
+  searchPapers,
+  saveBibEntry,
+  isSaved,
+  isSavedNoDoi,
+  isDuplicateDoi,
   type BibEntry,
   type BibKeyState,
   type BacklinkEntry,
   type FileEvent,
+  type PaperSearchResult,
 } from "../lib/ipc";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
@@ -156,6 +164,59 @@ export function ReferenceLibrary() {
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
+
+  // --- Search tab state ---
+  const [mode, setMode] = useState<"library" | "search">("library");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<PaperSearchResult | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+  const [duplicateKeys, setDuplicateKeys] = useState<Map<string, string>>(new Map());
+
+  const handleSearchPapers = useCallback(async () => {
+    const q = searchQuery.trim();
+    if (!q || searching) return;
+    setSearching(true);
+    setSearchResults(null);
+    try {
+      const result = await searchPapers(q);
+      setSearchResults(result);
+    } catch (err) {
+      show(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setSearching(false);
+    }
+  }, [searchQuery, searching, show]);
+
+  const handleSaveSearchResult = useCallback(async (entry: BibEntry) => {
+    if (!workspacePath) return;
+    const stableKey = entry.doi ?? entry.key;
+    setSavingKeys((prev) => new Set(prev).add(stableKey));
+    try {
+      const outcomes = await saveBibEntry(entry, workspacePath);
+      for (const o of outcomes) {
+        if (isSaved(o)) {
+          setSavedKeys((prev) => new Set(prev).add(stableKey));
+          show(`Saved @${o.Saved.key}`);
+        } else if (isSavedNoDoi(o)) {
+          setSavedKeys((prev) => new Set(prev).add(stableKey));
+          show(`Saved @${o.SavedNoDoi.key}`);
+        } else if (isDuplicateDoi(o)) {
+          setDuplicateKeys((prev) => new Map(prev).set(o.DuplicateDoi.doi, o.DuplicateDoi.existing_key));
+          show(`Already in library as @${o.DuplicateDoi.existing_key}`);
+        }
+      }
+    } catch (err) {
+      show(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setSavingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(stableKey);
+        return next;
+      });
+    }
+  }, [workspacePath, show]);
 
   const dropPdf = useDropPdf({
     enabled: !!workspacePath,
@@ -641,18 +702,75 @@ export function ReferenceLibrary() {
     return "";
   }, [virtualItems[0]?.index, sectionedItems]);
 
+  const modeOptions = useMemo(() => [
+    { value: "library", label: "Library" },
+    { value: "search", label: "Search" },
+  ], []);
+
   return (
     <div
       ref={dropPdf.panelRef}
       data-testid="reference-library-panel"
       className={`flex flex-1 flex-col overflow-hidden${dropPdf.isDropHighlighted ? " drop-highlight" : ""}`}
     >
-      {entries.length === 0 ? (
+      <div className="flex items-center justify-center px-2 pt-2 pb-1">
+        <SegmentedControl
+          options={modeOptions}
+          value={mode}
+          onChange={(v) => setMode(v as "library" | "search")}
+          testId="ref-lib-mode"
+        />
+      </div>
+
+      {mode === "search" && (
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex items-center gap-2 px-2 pb-1">
+            <input
+              type="text"
+              placeholder="Search academic papers..."
+              aria-label="Search academic papers"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSearchPapers();
+              }}
+              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+            />
+            <button
+              data-testid="search-papers-btn"
+              onClick={handleSearchPapers}
+              disabled={searching || !searchQuery.trim()}
+              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+            >
+              {searching ? "Searching..." : "Search"}
+            </button>
+          </div>
+          {searchResults ? (
+            <PaperSearchResults
+              results={searchResults}
+              onSave={handleSaveSearchResult}
+              savingKeys={savingKeys}
+              savedKeys={savedKeys}
+              duplicateKeys={duplicateKeys}
+            />
+          ) : searching ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-text-faint">
+              Searching...
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-text-faint">
+              Enter a query to search academic papers
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === "library" && entries.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-sm text-text-faint">
           <div>No references found. Add .bib files to your workspace.</div>
           <div className="mt-2 flex gap-2">{addButton}{importPdfButton}</div>
         </div>
-      ) : (
+      ) : mode === "library" ? (
         <>
           <div className="flex items-center gap-2 p-2">
             <input
@@ -980,7 +1098,7 @@ export function ReferenceLibrary() {
           />
           </div>
         </>
-      )}
+      ) : null}
       {dialog}
       {importPdfDialog}
       {ocrEntry && workspacePath ? (
