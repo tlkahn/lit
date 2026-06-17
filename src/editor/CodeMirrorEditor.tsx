@@ -48,7 +48,7 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
       if (detail.cursor) view.focus();
 
       // Flash the target line for visual orientation
-      if (detail.flash !== false) {
+      if (detail.flash === true) {
         requestAnimationFrame(() => {
           try {
             const lineBlock = view.lineBlockAt(pos);

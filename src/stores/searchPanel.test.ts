@@ -181,6 +181,56 @@ describe("searchPanel store", () => {
     expect(useSearchPanelStore.getState().selectedIndex).toBe(0);
   });
 
+  // --- scroll target after selectNext / selectPrev (handleKeyDown contract) ---
+  // After selectNext()/selectPrev(), the caller should scroll to getState().selectedIndex
+  // directly -- no additional +1 or -1 arithmetic.
+
+  it("scroll target after selectNext equals selectedIndex (no +1 needed)", () => {
+    const results = [makeResult("a.md", "A"), makeResult("b.md", "B"), makeResult("c.md", "C")];
+    useSearchPanelStore.setState({ results, selectedIndex: 0 });
+
+    useSearchPanelStore.getState().selectNext();
+    const scrollTarget = useSearchPanelStore.getState().selectedIndex;
+
+    // After pressing ArrowDown from index 0, we selected index 1.
+    // The scroll target should be 1 (the newly selected item), NOT 2.
+    expect(scrollTarget).toBe(1);
+  });
+
+  it("scroll target after selectPrev equals selectedIndex (no -1 needed)", () => {
+    const results = [makeResult("a.md", "A"), makeResult("b.md", "B"), makeResult("c.md", "C")];
+    useSearchPanelStore.setState({ results, selectedIndex: 2 });
+
+    useSearchPanelStore.getState().selectPrev();
+    const scrollTarget = useSearchPanelStore.getState().selectedIndex;
+
+    // After pressing ArrowUp from index 2, we selected index 1.
+    // The scroll target should be 1 (the newly selected item), NOT 0.
+    expect(scrollTarget).toBe(1);
+  });
+
+  it("scroll target after selectNext at last item stays at last index", () => {
+    const results = [makeResult("a.md", "A"), makeResult("b.md", "B")];
+    useSearchPanelStore.setState({ results, selectedIndex: 1 });
+
+    useSearchPanelStore.getState().selectNext();
+    const scrollTarget = useSearchPanelStore.getState().selectedIndex;
+
+    // Already at the end (index 1), selectNext clamps. Scroll target = 1.
+    expect(scrollTarget).toBe(1);
+  });
+
+  it("scroll target after selectPrev at first item stays at 0", () => {
+    const results = [makeResult("a.md", "A"), makeResult("b.md", "B")];
+    useSearchPanelStore.setState({ results, selectedIndex: 0 });
+
+    useSearchPanelStore.getState().selectPrev();
+    const scrollTarget = useSearchPanelStore.getState().selectedIndex;
+
+    // Already at the start (index 0), selectPrev clamps. Scroll target = 0.
+    expect(scrollTarget).toBe(0);
+  });
+
   // --- executeSearch stale-request handling ---
 
   it("drops stale search responses", async () => {
@@ -277,5 +327,35 @@ describe("searchPanel store", () => {
 
     expect(receivedArgs).toBeDefined();
     expect(receivedArgs!.filter).toEqual({ folder_prefix: "notes/", tags: ["math"] });
+  });
+
+  // --- mtime filter values must be epoch milliseconds ---
+
+  it("date filter values are epoch milliseconds (matching Rust mtime)", async () => {
+    let receivedArgs: Record<string, unknown> | undefined;
+    mockInvoke((cmd, args) => {
+      if (cmd === "search_content_filtered") {
+        receivedArgs = args;
+        return [];
+      }
+      return null;
+    });
+
+    // Simulate "last 7 days" filter: mtime_after should be ~7 days ago in milliseconds
+    const now = Date.now(); // milliseconds
+    const sevenDaysMs = 7 * 86_400_000;
+    const mtimeAfter = now - sevenDaysMs;
+
+    useSearchPanelStore.setState({ query: "test" });
+    useSearchPanelStore.getState().setFilter({ mtime_after: mtimeAfter });
+    await vi.runAllTimersAsync();
+
+    expect(receivedArgs).toBeDefined();
+    const filterSent = receivedArgs!.filter as { mtime_after?: number };
+    expect(filterSent.mtime_after).toBeDefined();
+
+    // The value must be in milliseconds (> 1_000_000_000_000).
+    // If it were in seconds it would be ~1_700_000_000 (< 1 trillion).
+    expect(filterSent.mtime_after!).toBeGreaterThan(1_000_000_000_000);
   });
 });

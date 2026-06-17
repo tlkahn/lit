@@ -47,6 +47,14 @@ fn sanitize_like_term(term: &str) -> String {
     term.replace('%', "").replace('_', "")
 }
 
+/// Escape LIKE metacharacters (`%`, `_`, `\`) in a term using `\` as the escape
+/// character.  The caller must add `ESCAPE '\'` to the SQL statement.
+fn escape_like_term(term: &str) -> String {
+    term.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// Build additional WHERE clauses and parameter values from a `SearchFilter`.
 ///
 /// `param_offset` is the 1-based index of the next available `?N` placeholder.
@@ -61,8 +69,9 @@ fn build_filter_clauses(
     let mut idx = param_offset;
 
     if let Some(ref prefix) = filter.folder_prefix {
-        clauses.push(format!("AND n.id LIKE ?{idx}"));
-        params.push(rusqlite::types::Value::Text(format!("{prefix}%")));
+        clauses.push(format!("AND n.id LIKE ?{idx} ESCAPE '\\'"));
+        let escaped = escape_like_term(prefix);
+        params.push(rusqlite::types::Value::Text(format!("{escaped}%")));
         idx += 1;
     }
 
@@ -77,13 +86,13 @@ fn build_filter_clauses(
     }
 
     if let Some(after) = filter.mtime_after {
-        clauses.push(format!("AND n.mtime > ?{idx}"));
+        clauses.push(format!("AND n.mtime >= ?{idx}"));
         params.push(rusqlite::types::Value::Integer(after));
         idx += 1;
     }
 
     if let Some(before) = filter.mtime_before {
-        clauses.push(format!("AND n.mtime < ?{idx}"));
+        clauses.push(format!("AND n.mtime <= ?{idx}"));
         params.push(rusqlite::types::Value::Integer(before));
         idx += 1;
     }
@@ -1370,113 +1379,7 @@ impl Store {
     // --- Content search (FTS5) ---
 
     pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<super::types::SearchResult>, GraphError> {
-        if query.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let terms: Vec<&str> = query.split_whitespace().collect();
-        if terms.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // Partition terms: trigram FTS5 requires >= 3 chars per term
-        let (fts_terms, short_terms) = partition_terms(&terms);
-
-        if fts_terms.is_empty() {
-            // All terms are short — pure LIKE fallback
-            let mut conditions = Vec::new();
-            let mut params: Vec<rusqlite::types::Value> = Vec::new();
-            let mut idx = 1;
-
-            for term in &terms {
-                let clean = sanitize_like_term(term);
-                if clean.is_empty() {
-                    continue;
-                }
-                conditions.push(format!(
-                    "(n.title LIKE ?{idx} OR n.body LIKE ?{idx} OR n.tags_text LIKE ?{idx})"
-                ));
-                params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
-                idx += 1;
-            }
-
-            if conditions.is_empty() {
-                return Ok(vec![]);
-            }
-            let where_clause = conditions.join(" AND ");
-            let sql = format!(
-                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), '')
-                 FROM nodes n
-                 WHERE n.is_stub = 0 AND n.materialization = 'materialized' AND {where_clause}
-                 ORDER BY length(n.body) ASC
-                 LIMIT ?{idx}"
-            );
-            params.push(rusqlite::types::Value::Integer(limit));
-
-            let mut stmt = self.conn.prepare(&sql)?;
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-                params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
-            let results = stmt
-                .query_map(param_refs.as_slice(), |row| {
-                    Ok(super::types::SearchResult {
-                        id: row.get(0)?,
-                        title: row.get(1)?,
-                        score: row.get(2)?,
-                        excerpt: row.get(3)?,
-                        first_match_line: None,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(results)
-        } else {
-            // FTS5 trigram search with snippet highlighting (only FTS-eligible terms)
-            let fts_query = build_fts_query(&fts_terms);
-
-            // Fetch extra rows when post-filtering, so we still return up to `limit` results
-            let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
-
-            let sql = "SELECT n.id, n.title, f.rank,
-                        snippet(notes_fts, -1, '<mark>', '</mark>', '...', 64),
-                        COALESCE(n.body, ''), COALESCE(n.tags_text, '')
-                 FROM notes_fts f
-                 JOIN nodes n ON n.id = f.node_id
-                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0
-                 ORDER BY rank
-                 LIMIT ?2";
-
-            let mut stmt = self.conn.prepare(sql)?;
-            let rows = stmt
-                .query_map(rusqlite::params![fts_query, fetch_limit], |row| {
-                    Ok((
-                        super::types::SearchResult {
-                            id: row.get(0)?,
-                            title: row.get(1)?,
-                            score: row.get(2)?,
-                            excerpt: row.get(3)?,
-                            first_match_line: None,
-                        },
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                    ))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-
-            // Post-filter: every short term must appear (case-insensitive) in title, body, or tags
-            let results: Vec<super::types::SearchResult> = rows
-                .into_iter()
-                .filter(|(result, body, tags_text)| {
-                    short_terms.iter().all(|st| {
-                        let lower = st.to_lowercase();
-                        result.title.to_lowercase().contains(&lower)
-                            || body.to_lowercase().contains(&lower)
-                            || tags_text.to_lowercase().contains(&lower)
-                    })
-                })
-                .map(|(result, _, _)| result)
-                .take(limit as usize)
-                .collect();
-            Ok(results)
-        }
+        self.search_content_filtered(query, &SearchFilter::default(), limit)
     }
 
     /// Like `search_content` but with optional facet filters (folder, tags, date range).
@@ -1565,7 +1468,7 @@ impl Store {
                         COALESCE(n.body, ''), COALESCE(n.tags_text, '')
                  FROM notes_fts f
                  JOIN nodes n ON n.id = f.node_id
-                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0 {filter_sql}
+                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0 AND n.materialization = 'materialized' {filter_sql}
                  ORDER BY rank
                  LIMIT ?2"
             );
@@ -6417,6 +6320,49 @@ mod tests {
             results.iter().all(|r| r.id != "bib:sm2024"),
             "shadow node should not appear in LIKE fallback search results"
         );
+    }
+
+    #[test]
+    fn search_content_excludes_shadows_in_fts_path() {
+        let store = Store::open_memory().unwrap();
+        // Create a materialized node so the FTS table is not empty
+        upsert_node_with_body(&store, "a.md", "Alpha Research", &[], "The transformer architecture revolutionized deep learning", 1);
+        // Create a shadow node and manually inject an FTS entry for it
+        // (simulates a scenario where a non-materialized node ends up indexed)
+        store.upsert_shadow("bib:shadow2024", "Shadow Research", Materialization::Shadow).unwrap();
+        store.conn.execute(
+            "INSERT INTO notes_fts(node_id, title, body, tags_text) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["bib:shadow2024", "Shadow Research", "The transformer model is powerful", ""],
+        ).unwrap();
+
+        // "transformer" is >= 3 chars, so this takes the FTS branch
+        let results = store.search_content("transformer", 10).unwrap();
+        assert!(
+            results.iter().all(|r| r.id != "bib:shadow2024"),
+            "shadow node should not appear in FTS search results"
+        );
+        assert_eq!(results.len(), 1, "only the materialized node should appear");
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_excludes_shadows_in_fts_path() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha Research", &[], "The transformer architecture revolutionized deep learning", 1);
+        store.upsert_shadow("bib:shadow2024", "Shadow Research", Materialization::Shadow).unwrap();
+        store.conn.execute(
+            "INSERT INTO notes_fts(node_id, title, body, tags_text) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["bib:shadow2024", "Shadow Research", "The transformer model is powerful", ""],
+        ).unwrap();
+
+        // search_content_filtered with default filter should also exclude shadows in FTS path
+        let results = store.search_content_filtered("transformer", &SearchFilter::default(), 10).unwrap();
+        assert!(
+            results.iter().all(|r| r.id != "bib:shadow2024"),
+            "shadow node should not appear in filtered FTS search results"
+        );
+        assert_eq!(results.len(), 1, "only the materialized node should appear");
+        assert_eq!(results[0].id, "a.md");
     }
 
     #[test]

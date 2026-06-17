@@ -1,9 +1,8 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useSearchPanelStore } from "../stores/searchPanel";
-import { useWorkspaceStore } from "../stores/workspace";
 import { listFolders, searchTags, type TagSearchResult } from "../lib/ipc";
-import { globalJumpTracker } from "../editor/jumpTracker";
+import { navigateToNote } from "../lib/navigateToNote";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 
 // ---------------------------------------------------------------------------
@@ -179,6 +178,27 @@ function TagInput({
 }
 
 // ---------------------------------------------------------------------------
+// Date helpers — epoch milliseconds (matching Rust indexer mtime)
+// ---------------------------------------------------------------------------
+
+/** Convert an epoch-millisecond timestamp to a YYYY-MM-DD date string. */
+export function toDateString(epoch?: number): string {
+  if (!epoch) return "";
+  return new Date(epoch).toISOString().slice(0, 10);
+}
+
+/** Parse a YYYY-MM-DD date string into epoch milliseconds. */
+export function fromDateString(s: string): number | undefined {
+  if (!s) return undefined;
+  return new Date(s).getTime();
+}
+
+/** Return epoch-ms timestamp for `daysAgo` days before `now` (epoch ms). */
+export function presetMtimeAfter(daysAgo: number, now: number = Date.now()): number {
+  return now - daysAgo * 86_400_000;
+}
+
+// ---------------------------------------------------------------------------
 // DatePresets
 // ---------------------------------------------------------------------------
 
@@ -191,20 +211,8 @@ function DateRangeFilter({
   mtimeBefore: number | undefined;
   onChange: (after?: number, before?: number) => void;
 }) {
-  const toDateString = (epoch?: number) => {
-    if (!epoch) return "";
-    return new Date(epoch * 1000).toISOString().slice(0, 10);
-  };
-
-  const fromDateString = (s: string): number | undefined => {
-    if (!s) return undefined;
-    return Math.floor(new Date(s).getTime() / 1000);
-  };
-
   const setPreset = (daysAgo: number) => {
-    const now = Math.floor(Date.now() / 1000);
-    const after = now - daysAgo * 86400;
-    onChange(after, undefined);
+    onChange(presetMtimeAfter(daysAgo), undefined);
   };
 
   return (
@@ -355,9 +363,6 @@ export function SearchPanel() {
   const navigatedResultId = useSearchPanelStore((s) => s.navigatedResultId);
   const setNavigatedResultId = useSearchPanelStore((s) => s.setNavigatedResultId);
 
-  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
-  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
-
   // Load folders on first expand
   useEffect(() => {
     if (facetsExpanded && !foldersLoaded) {
@@ -394,26 +399,10 @@ export function SearchPanel() {
 
   const navigateToResult = useCallback(
     (id: string, line?: number) => {
-      const targetLine = line ?? 1;
-
-      globalJumpTracker.recordJump(
-        { notePath: currentPagePath ?? "", line: 1, col: 0 },
-        { notePath: id, line: targetLine, col: 0 },
-      );
-
-      if (id === currentPagePath) {
-        window.dispatchEvent(
-          new CustomEvent("lit:scroll-to-line", {
-            detail: { line: targetLine, cursor: true },
-          }),
-        );
-      } else {
-        selectPageAtLine(id, targetLine);
-      }
-
+      navigateToNote(id, line ?? 1, { flash: true });
       setNavigatedResultId(id);
     },
-    [currentPagePath, selectPageAtLine, setNavigatedResultId],
+    [setNavigatedResultId],
   );
 
   const handleKeyDown = useCallback(
@@ -421,15 +410,12 @@ export function SearchPanel() {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         selectNext();
-        const nextIdx = Math.min(
-          useSearchPanelStore.getState().selectedIndex + 1,
-          results.length - 1,
-        );
-        virtualizer.scrollToIndex(Math.max(nextIdx, 0), { align: "auto" });
+        const nextIdx = useSearchPanelStore.getState().selectedIndex;
+        virtualizer.scrollToIndex(nextIdx, { align: "auto" });
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         selectPrev();
-        const prevIdx = Math.max(useSearchPanelStore.getState().selectedIndex - 1, 0);
+        const prevIdx = useSearchPanelStore.getState().selectedIndex;
         virtualizer.scrollToIndex(prevIdx, { align: "auto" });
       } else if (e.key === "Enter") {
         e.preventDefault();
