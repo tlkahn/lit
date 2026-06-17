@@ -615,6 +615,7 @@ mod tests {
             tags: vec![],
             frontmatter: serde_json::json!({}),
             first_paragraph: String::new(),
+            body: String::new(),
         }
     }
 
@@ -1941,6 +1942,7 @@ mod tests {
                                 tags: vec![],
                                 frontmatter: serde_json::json!({}),
                                 first_paragraph: String::new(),
+                                body: String::new(),
                             },
                             1,
                             None,

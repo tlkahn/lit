@@ -656,6 +656,20 @@ pub fn search_tags(
 }
 
 #[tauri::command]
+pub fn search_content(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.search_content(&query, limit.unwrap_or(20))?;
+        serde_json::to_value(results).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
 pub fn list_pages_by_tag(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
@@ -999,6 +1013,26 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         assert!(gi.list_pages_by_tag("nonexistent", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cmd_search_content() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntitle: Quantum\n---\nThe quick brown fox.").unwrap();
+        std::fs::write(dir.path().join("b.md"), "---\ntitle: Classic\n---\nSomething else.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi.search_content("brown fox", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+        assert!(results[0].excerpt.contains("brown"));
+    }
+
+    #[test]
+    fn cmd_search_content_empty_query() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "---\ntitle: Note\n---\nBody.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        assert!(gi.search_content("", 10).unwrap().is_empty());
     }
 
     #[test]
