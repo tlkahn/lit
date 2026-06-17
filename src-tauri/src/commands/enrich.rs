@@ -559,9 +559,17 @@ pub(crate) async fn enrich_entry(
             merge_and_persist(&store.conn, bib_key, &existing, crossref_entry.as_ref(), s2_entry.as_ref())?
         };
 
-        // Link references
-        let (references_found, counters) =
-            fetch_and_link_references(existing.doi.as_deref(), &existing.title, gi, bib_key, None).await?;
+        // Link references (reuse already-fetched crossref_csl / s2_paper)
+        let (references_found, counters) = {
+            let store = gi.store();
+            link_references_from_sources(
+                &store.conn,
+                bib_key,
+                crossref_csl.as_ref(),
+                s2_paper.as_ref(),
+                None,
+            )?
+        };
 
         // Re-read entry from DB
         let updated_entry = {
