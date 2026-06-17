@@ -514,6 +514,9 @@ export interface EnrichResult {
   references_appended: number;
   shadow_nodes_created: number;
   references_linked: number;
+  candidates: BibEntry[];
+  providers_searched: string[];
+  providers_failed: string[];
 }
 
 export async function enrichBibEntry(

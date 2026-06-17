@@ -752,6 +752,9 @@ describe("ipc", () => {
             references_appended: 5,
             shadow_nodes_created: 3,
             references_linked: 5,
+            candidates: [],
+            providers_searched: [],
+            providers_failed: [],
           };
         case "download_entry_pdf":
           return "assets/pdf/smith2020.pdf";
@@ -2266,6 +2269,9 @@ describe("ipc", () => {
     expect(result.references_appended).toBe(5);
     expect(result.shadow_nodes_created).toBe(3);
     expect(result.references_linked).toBe(5);
+    expect(result.candidates).toEqual([]);
+    expect(result.providers_searched).toEqual([]);
+    expect(result.providers_failed).toEqual([]);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
       bibKey: "smith2020",
