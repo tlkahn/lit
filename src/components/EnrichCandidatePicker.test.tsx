@@ -270,6 +270,34 @@ describe("EnrichCandidatePicker", () => {
     expect(defaultProps.onApply).toHaveBeenCalledWith(candidateA);
   });
 
+  it("Enter on focused Apply button fires onApply via native click, not keydown handler", () => {
+    const { container } = render(
+      <EnrichCandidatePicker {...defaultProps} />,
+    );
+    const applyBtn = container.querySelector("[data-testid='enrich-apply-btn']") as HTMLButtonElement;
+    applyBtn.focus();
+    fireEvent.keyDown(document, { key: "Enter" });
+    // The keydown handler should NOT have called onApply (it defers to native click).
+    // Simulate what the browser would do: fire click on the focused button.
+    fireEvent.click(applyBtn);
+    expect(defaultProps.onApply).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onApply).toHaveBeenCalledWith(candidateA);
+  });
+
+  it("Enter on focused Cancel button fires onClose, not onApply", () => {
+    const { container } = render(
+      <EnrichCandidatePicker {...defaultProps} />,
+    );
+    const cancelBtn = container.querySelector("[data-testid='enrich-picker-cancel-btn']") as HTMLButtonElement;
+    cancelBtn.focus();
+    fireEvent.keyDown(document, { key: "Enter" });
+    // The keydown handler should NOT have called onApply.
+    expect(defaultProps.onApply).not.toHaveBeenCalled();
+    // Simulate native click on the focused Cancel button.
+    fireEvent.click(cancelBtn);
+    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("selectedIndex resets to 0 when picker re-opens", () => {
     const { rerender, container } = render(
       <EnrichCandidatePicker {...defaultProps} />,

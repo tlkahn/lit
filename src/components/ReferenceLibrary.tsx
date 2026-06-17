@@ -485,25 +485,28 @@ export function ReferenceLibrary() {
     [materializingKey, doMaterialize],
   );
 
-  const handleEnrich = useCallback(
-    async (entry: BibEntry) => {
-      if (!workspacePath) return;
-      setEnrichCandidates(null); // close any open picker (T3.3.2)
-      setEnrichingKey(entry.key);
+  /** Shared enrichment flow: spinner, phase timer, classify result, toast. */
+  const runEnrichFlow = useCallback(
+    async (
+      bibKey: string,
+      title: string,
+      ipcFn: () => Promise<import("../lib/ipc").EnrichResult>,
+    ) => {
+      setEnrichingKey(bibKey);
       setEnrichPhase("fetch");
+      if (enrichPhaseTimerRef.current) clearTimeout(enrichPhaseTimerRef.current);
       enrichPhaseTimerRef.current = setTimeout(() => {
         setEnrichPhase("search");
       }, 1500);
       try {
-        const result = await enrichBibEntry(entry.key, workspacePath);
-        const classified = classifyEnrichResult(result, entry.key, entry.title);
-
+        const result = await ipcFn();
+        const classified = classifyEnrichResult(result, bibKey, title);
         switch (classified.kind) {
           case "candidates":
             setEnrichCandidates(classified);
             return;
           case "miss":
-            show(classified.message);
+            show(classified.message, "error");
             return;
           case "success":
             show(classified.message);
@@ -522,44 +525,30 @@ export function ReferenceLibrary() {
         }
       }
     },
-    [workspacePath, show, setEnrichCandidates],
+    [show, setEnrichCandidates],
+  );
+
+  const handleEnrich = useCallback(
+    async (entry: BibEntry) => {
+      if (!workspacePath) return;
+      setEnrichCandidates(null); // close any open picker (T3.3.2)
+      await runEnrichFlow(entry.key, entry.title, () =>
+        enrichBibEntry(entry.key, workspacePath),
+      );
+    },
+    [workspacePath, runEnrichFlow, setEnrichCandidates],
   );
 
   const handleApplyCandidate = useCallback(
     async (candidate: BibEntry) => {
       if (!workspacePath || !enrichCandidates) return;
-      const { bibKey } = enrichCandidates;
+      const { bibKey, title } = enrichCandidates;
       setEnrichCandidates(null); // close picker immediately
-      setEnrichingKey(bibKey); // show spinner on the button
-      setEnrichPhase("fetch");
-      enrichPhaseTimerRef.current = setTimeout(() => {
-        setEnrichPhase("search");
-      }, 1500);
-      try {
-        const result = await applyEnrichmentCandidate(bibKey, candidate, workspacePath);
-        const classified = classifyEnrichResult(result, bibKey, candidate.title);
-        switch (classified.kind) {
-          case "candidates":
-            setEnrichCandidates(classified);
-            break;
-          case "miss":
-            show(classified.message);
-            break;
-          case "success":
-            show(classified.message);
-            break;
-        }
-      } catch (err) {
-        show(err instanceof Error ? err.message : String(err), "error");
-      } finally {
-        setEnrichingKey(null);
-        if (enrichPhaseTimerRef.current) {
-          clearTimeout(enrichPhaseTimerRef.current);
-          enrichPhaseTimerRef.current = null;
-        }
-      }
+      await runEnrichFlow(bibKey, title, () =>
+        applyEnrichmentCandidate(bibKey, candidate, workspacePath),
+      );
     },
-    [workspacePath, enrichCandidates, show],
+    [workspacePath, enrichCandidates, runEnrichFlow, setEnrichCandidates],
   );
 
   const handleDownload = useCallback(

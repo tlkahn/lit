@@ -1,14 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import type { BibEntry } from "../lib/ipc";
+import { abbreviateAuthors } from "../lib/bibUtils";
 import { EntryTypeBadge } from "./EntryTypeBadge";
-
-function abbreviateAuthors(authors: string[]): string {
-  if (authors.length === 0) return "";
-  if (authors.length === 1) return authors[0]!;
-  if (authors.length === 2) return `${authors[0]} & ${authors[1]}`;
-  return `${authors[0]} et al.`;
-}
 
 interface EnrichCandidatePickerProps {
   open: boolean;
@@ -67,12 +61,22 @@ export function EnrichCandidatePicker({
           e.preventDefault();
           setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
           break;
-        case "Enter":
+        case "Enter": {
+          const active = document.activeElement;
+          if (
+            active instanceof HTMLButtonElement &&
+            active.hasAttribute("data-enrich-action")
+          ) {
+            // A specific action button (Apply / Cancel) is focused —
+            // defer to the native button click handler.
+            break;
+          }
           e.preventDefault();
           if (candidates.length > 0) {
             onApply(candidates[selectedIndex]!);
           }
           break;
+        }
       }
     },
     [onClose, onApply, candidates, selectedIndex],
@@ -122,7 +126,7 @@ export function EnrichCandidatePicker({
           <div className="flex flex-wrap gap-1">
             {providersSearched.map((p) => (
               <span
-                key={p}
+                key={`ok-${p}`}
                 className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent"
               >
                 {p} ✓
@@ -130,7 +134,7 @@ export function EnrichCandidatePicker({
             ))}
             {providersFailed.map((p) => (
               <span
-                key={p}
+                key={`fail-${p}`}
                 className="rounded bg-text-error/15 px-1.5 py-0.5 text-xs text-text-error"
               >
                 {p} ✗
@@ -198,6 +202,7 @@ export function EnrichCandidatePicker({
                 {/* Apply button */}
                 <button
                   data-testid="enrich-apply-btn"
+                  data-enrich-action="apply"
                   onClick={() => onApply(candidate)}
                   className="shrink-0 rounded bg-interactive-accent px-3 py-1.5 text-xs text-white hover:opacity-90"
                 >
@@ -212,6 +217,7 @@ export function EnrichCandidatePicker({
         <div className="flex justify-end px-5 pb-5 pt-3">
           <button
             data-testid="enrich-picker-cancel-btn"
+            data-enrich-action="cancel"
             onClick={onClose}
             className="rounded px-3 py-1.5 text-sm text-text-muted hover:bg-bg-secondary"
           >
