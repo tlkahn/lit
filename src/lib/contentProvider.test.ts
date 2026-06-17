@@ -34,15 +34,14 @@ const mockResults: GraphSearchResult[] = [
   {
     id: "notes/rust.md",
     title: "Rust Notes",
-    score: -3.0,
-    excerpt: "ownership and borrowing",
-    first_match_line: 12,
+    score: 4.2,
+    excerpt: "<mark>ownership</mark> and borrowing",
   },
   {
     id: "journal/2024.md",
     title: "Journal 2024",
-    score: -1.0,
-    excerpt: "new year reflections",
+    score: 1.8,
+    excerpt: "new year <mark>reflections</mark>",
   },
 ];
 
@@ -60,17 +59,17 @@ describe("contentProvider", () => {
     expect(contentProvider.priority).toBe(40);
   });
 
-  it('has omniMode "exclude"', () => {
-    expect(contentProvider.omniMode).toBe("exclude");
+  it('has omniMode "include"', () => {
+    expect(contentProvider.omniMode).toBe("include");
   });
 
   it('search("") returns []', async () => {
     expect(await contentProvider.search("")).toEqual([]);
   });
 
-  it("search(query) calls searchPages IPC and maps to PaletteResult[]", async () => {
+  it("search(query) calls searchContent IPC and maps to PaletteResult[]", async () => {
     mockInvoke((cmd) => {
-      if (cmd === "search_pages") return mockResults;
+      if (cmd === "search_content") return mockResults;
       return [];
     });
     const results = await contentProvider.search("rust");
@@ -79,46 +78,64 @@ describe("contentProvider", () => {
     expect(results[0]!.section).toBe("Content");
   });
 
-  it('subtitle format: "path:line — excerpt" when line present', async () => {
+  it('subtitle strips <mark> tags and uses "path — excerpt" format', async () => {
     mockInvoke((cmd) => {
-      if (cmd === "search_pages") return mockResults;
+      if (cmd === "search_content") return mockResults;
       return [];
     });
     const results = await contentProvider.search("rust");
-    expect(results[0]!.subtitle).toBe("notes/rust.md:12 — ownership and borrowing");
+    expect(results[0]!.subtitle).toBe("notes/rust.md — ownership and borrowing");
   });
 
-  it('subtitle format: "path — excerpt" when line absent', async () => {
+  it('subtitle strips <mark> from second result too', async () => {
     mockInvoke((cmd) => {
-      if (cmd === "search_pages") return mockResults;
+      if (cmd === "search_content") return mockResults;
       return [];
     });
     const results = await contentProvider.search("rust");
     expect(results[1]!.subtitle).toBe("journal/2024.md — new year reflections");
   });
 
-  it("result.data includes path and line", async () => {
+  it("result.data includes path (no line from FTS5)", async () => {
     mockInvoke((cmd) => {
-      if (cmd === "search_pages") return mockResults;
+      if (cmd === "search_content") return mockResults;
       return [];
     });
     const results = await contentProvider.search("rust");
-    expect(results[0]!.data).toEqual({ path: "notes/rust.md", line: 12 });
+    expect(results[0]!.data).toEqual({ path: "notes/rust.md", line: undefined });
     expect(results[1]!.data).toEqual({ path: "journal/2024.md", line: undefined });
+    // Verify the `line` key is explicitly present (passed through from backend)
+    expect(Object.keys(results[0]!.data as object)).toContain("line");
+    expect(Object.keys(results[1]!.data as object)).toContain("line");
   });
 
-  it("onSelect navigates to page+line for different page", () => {
+  it("onSelect navigates to provided line when present", () => {
     mockWorkspaceState.currentPagePath = "other-page.md";
     contentProvider.onSelect({
       id: "content-notes/rust.md",
       title: "Rust Notes",
       section: "Content",
-      data: { path: "notes/rust.md", line: 12 },
+      data: { path: "notes/rust.md", line: 42 },
     });
-    expect(mockSelectPageAtLine).toHaveBeenCalledWith("notes/rust.md", 12);
+    expect(mockSelectPageAtLine).toHaveBeenCalledWith("notes/rust.md", 42);
     expect(mockRecordJump).toHaveBeenCalledWith(
       { notePath: "other-page.md", line: 1, col: 0 },
-      { notePath: "notes/rust.md", line: 12, col: 0 },
+      { notePath: "notes/rust.md", line: 42, col: 0 },
+    );
+  });
+
+  it("onSelect navigates to line 1 for different page", () => {
+    mockWorkspaceState.currentPagePath = "other-page.md";
+    contentProvider.onSelect({
+      id: "content-notes/rust.md",
+      title: "Rust Notes",
+      section: "Content",
+      data: { path: "notes/rust.md" },
+    });
+    expect(mockSelectPageAtLine).toHaveBeenCalledWith("notes/rust.md", 1);
+    expect(mockRecordJump).toHaveBeenCalledWith(
+      { notePath: "other-page.md", line: 1, col: 0 },
+      { notePath: "notes/rust.md", line: 1, col: 0 },
     );
   });
 
@@ -129,29 +146,14 @@ describe("contentProvider", () => {
       id: "content-notes/rust.md",
       title: "Rust Notes",
       section: "Content",
-      data: { path: "notes/rust.md", line: 12 },
+      data: { path: "notes/rust.md" },
     });
     const scrollEvent = dispatchSpy.mock.calls.find(
       (call) => (call[0] as CustomEvent).type === "lit:scroll-to-line",
     );
     expect(scrollEvent).toBeDefined();
-    expect((scrollEvent![0] as CustomEvent).detail).toEqual({ line: 12, cursor: true });
+    expect((scrollEvent![0] as CustomEvent).detail).toEqual({ line: 1, cursor: true });
     expect(mockSelectPageAtLine).not.toHaveBeenCalled();
     dispatchSpy.mockRestore();
-  });
-
-  it("onSelect falls back to line 1 when line is undefined", () => {
-    mockWorkspaceState.currentPagePath = "other-page.md";
-    contentProvider.onSelect({
-      id: "content-journal/2024.md",
-      title: "Journal 2024",
-      section: "Content",
-      data: { path: "journal/2024.md" },
-    });
-    expect(mockSelectPageAtLine).toHaveBeenCalledWith("journal/2024.md", 1);
-    expect(mockRecordJump).toHaveBeenCalledWith(
-      { notePath: "other-page.md", line: 1, col: 0 },
-      { notePath: "journal/2024.md", line: 1, col: 0 },
-    );
   });
 });

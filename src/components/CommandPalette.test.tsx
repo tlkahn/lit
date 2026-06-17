@@ -638,7 +638,7 @@ describe("CommandPalette", () => {
   describe("content provider (/ prefix)", () => {
     it('/ prefix shows "No results" when search returns empty', async () => {
       mockInvoke((cmd) => {
-        if (cmd === "search_pages") return [];
+        if (cmd === "search_content") return [];
         return [];
       });
       render(<CommandPalette open={true} onClose={onClose} />);
@@ -649,12 +649,12 @@ describe("CommandPalette", () => {
       expect(screen.getByText("No results")).toBeInTheDocument();
     });
 
-    it("/ prefix shows results from searchPages IPC", async () => {
+    it("/ prefix shows results from searchContent IPC", async () => {
       const searchResults: GraphSearchResult[] = [
-        { id: "a.md", title: "Alpha", score: -2, excerpt: "pattern found here", first_match_line: 5 },
+        { id: "a.md", title: "Alpha", score: 2.5, excerpt: "<mark>pattern</mark> found here" },
       ];
       mockInvoke((cmd) => {
-        if (cmd === "search_pages") return searchResults;
+        if (cmd === "search_content") return searchResults;
         return [];
       });
       render(<CommandPalette open={true} onClose={onClose} />);
@@ -870,14 +870,12 @@ describe("CommandPalette", () => {
       });
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
-      const hint = screen.getByTestId("command-palette-content-hint");
       expect(results.length).toBe(3); // 2 annotations + 1 command
 
       // First item active
       expect(results[0]!.getAttribute("data-active")).toBe("true");
       expect(results[1]!.getAttribute("data-active")).toBe("false");
       expect(results[2]!.getAttribute("data-active")).toBe("false");
-      expect(hint.getAttribute("data-active")).toBe("false");
 
       // ArrowDown → second item (still in first section)
       fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
@@ -890,29 +888,25 @@ describe("CommandPalette", () => {
       expect(results[1]!.getAttribute("data-active")).toBe("false");
       expect(results[2]!.getAttribute("data-active")).toBe("true");
 
-      // ArrowDown → fourth item (content hint)
-      fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
-      expect(results[2]!.getAttribute("data-active")).toBe("false");
-      expect(hint.getAttribute("data-active")).toBe("true");
-
       // ArrowDown → wraps back to first
       fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowDown" });
       expect(results[0]!.getAttribute("data-active")).toBe("true");
-      expect(hint.getAttribute("data-active")).toBe("false");
 
-      // ArrowUp from first → wraps to last (content hint)
+      // ArrowUp from first → wraps to last
       fireEvent.keyDown(screen.getByTestId("command-palette-input"), { key: "ArrowUp" });
-      expect(hint.getAttribute("data-active")).toBe("true");
+      expect(results[2]!.getAttribute("data-active")).toBe("true");
     });
   });
 
-  describe("lazy content search in omni mode", () => {
-    it("omni mode does not call content provider search (excluded via omniMode)", async () => {
-      let searchPagesCalled = false;
+  describe("content search in omni mode", () => {
+    it("omni mode includes content results from FTS5", async () => {
+      let searchContentCalled = false;
       mockInvoke((cmd) => {
-        if (cmd === "search_pages") {
-          searchPagesCalled = true;
-          return [];
+        if (cmd === "search_content") {
+          searchContentCalled = true;
+          return [
+            { id: "a.md", title: "Rust Notes", score: 2.5, excerpt: "<mark>rust</mark> ownership" },
+          ];
         }
         return [];
       });
@@ -921,63 +915,11 @@ describe("CommandPalette", () => {
         target: { value: "rust" },
       });
       await advanceDebounce();
-      expect(searchPagesCalled).toBe(false);
+      expect(searchContentCalled).toBe(true);
+      expect(screen.getByText("Rust Notes")).toBeInTheDocument();
     });
 
-    it('omni mode appends "Search content…" synthetic result after other results', async () => {
-      mockInvoke(() => []);
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "silk" },
-      });
-      await advanceDebounce();
-      const hint = screen.getByTestId("command-palette-content-hint");
-      expect(hint).toHaveTextContent('Search content for "silk"');
-    });
-
-    it('synthetic "Search content…" does not appear when query is empty', () => {
-      render(<CommandPalette open={true} onClose={onClose} />);
-      expect(screen.queryByText(/Search content for/)).not.toBeInTheDocument();
-    });
-
-    it('selecting "Search content…" sets input to "/<query>" and keeps palette open', async () => {
-      mockInvoke((cmd) => {
-        if (cmd === "search_pages") return [
-          { id: "a.md", title: "Alpha", score: -1, excerpt: "silk content", first_match_line: 3 },
-        ];
-        return [];
-      });
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "silk" },
-      });
-      await advanceDebounce();
-      const hintResult = screen.getByTestId("command-palette-content-hint");
-      expect(hintResult).toHaveTextContent('Search content for "silk"');
-      fireEvent.click(hintResult);
-      expect(onClose).not.toHaveBeenCalled();
-      const input = screen.getByTestId("command-palette-input") as HTMLInputElement;
-      expect(input.value).toBe("/silk");
-      await advanceDebounce();
-      expect(screen.getByText("Alpha")).toBeInTheDocument();
-    });
-
-    it("content hint is hidden when all providers error", async () => {
-      vi.spyOn(console, "warn").mockImplementation(() => {});
-      mockInvoke(() => {
-        throw new Error("IPC timeout");
-      });
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "silk" },
-      });
-      await advanceDebounce();
-      expect(screen.queryByTestId("command-palette-content-hint")).not.toBeInTheDocument();
-      expect(screen.queryByText(/Search content for/)).not.toBeInTheDocument();
-      vi.mocked(console.warn).mockRestore();
-    });
-
-    it("shows 'No results' when all providers return empty (hint does not suppress it)", async () => {
+    it("shows 'No results' when all providers return empty", async () => {
       mockInvoke(() => []);
       render(<CommandPalette open={true} onClose={onClose} />);
       fireEvent.change(screen.getByTestId("command-palette-input"), {
@@ -985,33 +927,15 @@ describe("CommandPalette", () => {
       });
       await advanceDebounce();
       expect(screen.getByText("No results")).toBeInTheDocument();
-      expect(screen.getByTestId("command-palette-content-hint")).toBeInTheDocument();
     });
 
-    it("content hint has distinct data-testid and muted+italic styling", async () => {
-      mockInvoke(() => []);
-      render(<CommandPalette open={true} onClose={onClose} />);
-      fireEvent.change(screen.getByTestId("command-palette-input"), {
-        target: { value: "silk" },
-      });
-      await advanceDebounce();
-      const hint = screen.getByTestId("command-palette-content-hint");
-      expect(hint).toBeInTheDocument();
-      expect(screen.queryAllByTestId("command-palette-result").every(
-        el => el !== hint,
-      )).toBe(true);
-      const titleSpan = hint.querySelector("span.italic");
-      expect(titleSpan).not.toBeNull();
-      expect(titleSpan!.className).toContain("text-text-muted");
-    });
-
-    it("/prefix content search still fires immediately (omniMode exclude does not affect prefix mode)", async () => {
-      let searchPagesCalled = false;
+    it("/prefix content search still fires via prefix mode", async () => {
+      let searchContentCalled = false;
       mockInvoke((cmd) => {
-        if (cmd === "search_pages") {
-          searchPagesCalled = true;
+        if (cmd === "search_content") {
+          searchContentCalled = true;
           return [
-            { id: "a.md", title: "Rust Notes", score: -1, excerpt: "rust ownership", first_match_line: 1 },
+            { id: "a.md", title: "Rust Notes", score: 1.0, excerpt: "<mark>rust</mark> ownership" },
           ];
         }
         return [];
@@ -1021,7 +945,7 @@ describe("CommandPalette", () => {
         target: { value: "/rust" },
       });
       await advanceDebounce();
-      expect(searchPagesCalled).toBe(true);
+      expect(searchContentCalled).toBe(true);
       expect(screen.getByText("Rust Notes")).toBeInTheDocument();
     });
   });
@@ -1075,7 +999,7 @@ describe("CommandPalette", () => {
       vi.mocked(console.warn).mockRestore();
     });
 
-    it("omni mode: one failing provider still shows other results", async () => {
+    it("omni mode: one failing provider shows partial error and other results", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       mockInvoke((cmd) => {
         if (cmd === "search_annotations") throw new Error("IPC timeout");
@@ -1088,7 +1012,7 @@ describe("CommandPalette", () => {
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
       expect(results.length).toBeGreaterThan(0);
-      expect(screen.queryByTestId("search-error-message")).not.toBeInTheDocument();
+      expect(screen.getByTestId("search-error-message")).toHaveTextContent("Some results may be missing");
       expect(warnSpy).toHaveBeenCalledWith(
         "[CommandPalette] provider failed:",
         "annotations",

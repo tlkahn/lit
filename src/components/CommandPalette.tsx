@@ -13,19 +13,7 @@ import { initCompanionCommands } from "../lib/commands/companion";
 import { initOcrCommands } from "../lib/commands/ocr";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
-const omniContentHintProvider: PaletteProvider = {
-  id: "__omni-content-hint__",
-  label: "Content",
-  priority: 999,
-  async search() { return []; },
-  onSelect(result: PaletteResult): false {
-    const data = result.data as { query: string };
-    window.dispatchEvent(
-      new CustomEvent("lit:palette-set-input", { detail: { value: `/${data.query}` } }),
-    );
-    return false;
-  },
-};
+const DEBOUNCE_MS = 120;
 
 interface SectionedResults {
   section: string;
@@ -144,7 +132,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         }
         setActiveIndex(0);
         setHasSearched(true);
-      }, 250);
+      }, DEBOUNCE_MS);
     } else {
       if (!query) {
         setSections([]);
@@ -179,25 +167,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             });
           }
         }
-        const hasRealResults = allSections.length > 0;
-        if (!hasError || hasRealResults) {
-          allSections.push({
-            section: "Content",
-            provider: omniContentHintProvider,
-            results: [{
-              id: "__omni-content-hint__",
-              title: `Search content for "${query}"…`,
-              icon: "",
-              section: "Content",
-              data: { query },
-            }],
-          });
-        }
         setSections(allSections);
-        setSearchError(hasError && !hasRealResults ? "Search failed" : null);
+        setSearchError(hasError ? (allSections.length === 0 ? "Search failed" : "Some results may be missing") : null);
         setActiveIndex(0);
         setHasSearched(true);
-      }, 250);
+      }, DEBOUNCE_MS);
     }
 
     return () => {
@@ -208,9 +182,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   const allResults = sections.flatMap((s) => s.results);
   const totalItems = allResults.length;
-  const realResultCount = sections
-    .filter(s => s.provider.id !== "__omni-content-hint__")
-    .flatMap(s => s.results).length;
 
   useEffect(() => {
     if (totalItems === 0) return;
@@ -340,7 +311,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             </div>
           )}
 
-          {hasSearched && realResultCount === 0 && !searchError && (
+          {hasSearched && totalItems === 0 && !searchError && (
             <div className="px-4 py-3 text-sm text-text-muted">No results</div>
           )}
 
@@ -353,11 +324,10 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           {sections.map((section) => {
             const sectionElements = section.results.map((result) => {
               const i = resultIndexMap.get(result)!;
-              const isHint = result.id === "__omni-content-hint__";
               return (
                 <div
                   key={result.id}
-                  data-testid={isHint ? "command-palette-content-hint" : "command-palette-result"}
+                  data-testid="command-palette-result"
                   data-active={i === activeIndex ? "true" : "false"}
                   className={`cursor-pointer px-4 py-2 text-sm ${i === activeIndex ? "bg-bg-hover" : ""}`}
                   onClick={() => handleSelect(result)}
@@ -368,7 +338,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                         {result.icon}
                       </span>
                     )}
-                    <span className={isHint ? "text-text-muted italic" : "font-medium text-text-normal"}>
+                    <span className="font-medium text-text-normal">
                       {result.title}
                     </span>
                     {result.shortcut && (
