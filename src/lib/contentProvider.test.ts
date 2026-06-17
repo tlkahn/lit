@@ -109,6 +109,21 @@ describe("contentProvider", () => {
     expect(Object.keys(results[1]!.data as object)).toContain("line");
   });
 
+  it("onSelect navigates to provided line when present", () => {
+    mockWorkspaceState.currentPagePath = "other-page.md";
+    contentProvider.onSelect({
+      id: "content-notes/rust.md",
+      title: "Rust Notes",
+      section: "Content",
+      data: { path: "notes/rust.md", line: 42 },
+    });
+    expect(mockSelectPageAtLine).toHaveBeenCalledWith("notes/rust.md", 42);
+    expect(mockRecordJump).toHaveBeenCalledWith(
+      { notePath: "other-page.md", line: 1, col: 0 },
+      { notePath: "notes/rust.md", line: 42, col: 0 },
+    );
+  });
+
   it("onSelect navigates to line 1 for different page", () => {
     mockWorkspaceState.currentPagePath = "other-page.md";
     contentProvider.onSelect({
