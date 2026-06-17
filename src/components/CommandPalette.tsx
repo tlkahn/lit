@@ -13,6 +13,8 @@ import { initCompanionCommands } from "../lib/commands/companion";
 import { initOcrCommands } from "../lib/commands/ocr";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
+const DEBOUNCE_MS = 120;
+
 interface SectionedResults {
   section: string;
   provider: PaletteProvider;
@@ -130,7 +132,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         }
         setActiveIndex(0);
         setHasSearched(true);
-      }, 120);
+      }, DEBOUNCE_MS);
     } else {
       if (!query) {
         setSections([]);
@@ -166,10 +168,10 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           }
         }
         setSections(allSections);
-        setSearchError(hasError && allSections.length === 0 ? "Search failed" : null);
+        setSearchError(hasError ? (allSections.length === 0 ? "Search failed" : "Some results may be missing") : null);
         setActiveIndex(0);
         setHasSearched(true);
-      }, 120);
+      }, DEBOUNCE_MS);
     }
 
     return () => {

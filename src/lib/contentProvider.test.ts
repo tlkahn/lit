@@ -102,8 +102,11 @@ describe("contentProvider", () => {
       return [];
     });
     const results = await contentProvider.search("rust");
-    expect(results[0]!.data).toEqual({ path: "notes/rust.md" });
-    expect(results[1]!.data).toEqual({ path: "journal/2024.md" });
+    expect(results[0]!.data).toEqual({ path: "notes/rust.md", line: undefined });
+    expect(results[1]!.data).toEqual({ path: "journal/2024.md", line: undefined });
+    // Verify the `line` key is explicitly present (passed through from backend)
+    expect(Object.keys(results[0]!.data as object)).toContain("line");
+    expect(Object.keys(results[1]!.data as object)).toContain("line");
   });
 
   it("onSelect navigates to line 1 for different page", () => {

@@ -999,7 +999,7 @@ describe("CommandPalette", () => {
       vi.mocked(console.warn).mockRestore();
     });
 
-    it("omni mode: one failing provider still shows other results", async () => {
+    it("omni mode: one failing provider shows partial error and other results", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       mockInvoke((cmd) => {
         if (cmd === "search_annotations") throw new Error("IPC timeout");
@@ -1012,7 +1012,7 @@ describe("CommandPalette", () => {
       await advanceDebounce();
       const results = screen.getAllByTestId("command-palette-result");
       expect(results.length).toBeGreaterThan(0);
-      expect(screen.queryByTestId("search-error-message")).not.toBeInTheDocument();
+      expect(screen.getByTestId("search-error-message")).toHaveTextContent("Some results may be missing");
       expect(warnSpy).toHaveBeenCalledWith(
         "[CommandPalette] provider failed:",
         "annotations",

@@ -3,8 +3,10 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import type { PaletteProvider, PaletteResult } from "./paletteRegistry";
 
+const SNIPPET_HIGHLIGHT_RE = /<\/?mark>/g;
+
 function stripMarkTags(s: string): string {
-  return s.replace(/<\/?mark>/g, "");
+  return s.replace(SNIPPET_HIGHLIGHT_RE, "");
 }
 
 export const contentProvider: PaletteProvider = {
@@ -23,14 +25,14 @@ export const contentProvider: PaletteProvider = {
       subtitle: `${r.id} — ${stripMarkTags(r.excerpt)}`,
       icon: "",
       section: "Content",
-      data: { path: r.id },
+      data: { path: r.id, line: r.first_match_line },
     }));
   },
 
   onSelect(result: PaletteResult): void {
-    const data = result.data as { path: string };
+    const data = result.data as { path: string; line?: number };
     const { currentPagePath, selectPageAtLine } = useWorkspaceStore.getState();
-    const targetLine = 1;
+    const targetLine = data.line ?? 1;
 
     globalJumpTracker.recordJump(
       { notePath: currentPagePath ?? "", line: 1, col: 0 },
