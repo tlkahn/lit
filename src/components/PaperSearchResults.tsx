@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { PaperSearchResult, BibEntry } from "../lib/ipc";
 import { doiHref } from "../lib/urlUtils";
 import { EntryTypeBadge } from "./EntryTypeBadge";
-import { distinctPublisher } from "../lib/bibUtils";
+import { abbreviateAuthors, distinctPublisher } from "../lib/bibUtils";
 
 interface PaperSearchResultsProps {
   results: PaperSearchResult;
@@ -11,13 +11,6 @@ interface PaperSearchResultsProps {
   savingKeys: Set<string>;
   savedKeys: Set<string>;
   duplicateKeys: Map<string, string>;
-}
-
-function abbreviateAuthors(authors: string[]): string {
-  if (authors.length === 0) return "";
-  if (authors.length === 1) return authors[0]!;
-  if (authors.length === 2) return `${authors[0]} & ${authors[1]}`;
-  return `${authors[0]} et al.`;
 }
 
 function entryStableKey(entry: BibEntry): string {
