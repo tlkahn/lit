@@ -21,11 +21,22 @@ use crate::workspace::normalize::filename_to_page_name;
 // parse_md_file
 // ---------------------------------------------------------------------------
 
+const MAX_NOTE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+
 pub fn parse_md_file(
     root: &Path,
     relative_path: &str,
 ) -> Result<(ParsedNode, Vec<WikiLink>, String), GraphError> {
     let abs = root.join(relative_path);
+    let metadata = std::fs::metadata(&abs).map_err(|e| GraphError::Io {
+        source: e,
+        path: abs.clone(),
+    })?;
+    if metadata.len() > MAX_NOTE_SIZE {
+        return Err(GraphError::Other(format!(
+            "skipping oversized file ({} bytes): {}", metadata.len(), relative_path
+        )));
+    }
     let raw = std::fs::read_to_string(&abs).map_err(|e| GraphError::Io {
         source: e,
         path: abs.clone(),
@@ -6633,5 +6644,105 @@ mod tests {
             "SELECT node_id FROM notes_fts WHERE notes_fts MATCH 'Quantum'",
         ).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(matches, vec!["a.md"]);
+    }
+
+    // ======================================================================
+    // Phase 5.3 — Edge cases
+    // ======================================================================
+
+    // --- 5.3.1 Binary/non-text file protection ---
+
+    #[test]
+    fn parse_md_file_rejects_oversized_file() {
+        let dir = create_workspace();
+        let big = vec![b'x'; 11 * 1024 * 1024]; // 11 MB > MAX_NOTE_SIZE
+        let abs = dir.path().join("huge.md");
+        fs::write(&abs, &big).unwrap();
+        let err = parse_md_file(dir.path(), "huge.md");
+        assert!(err.is_err(), "oversized file should be rejected");
+        let msg = err.unwrap_err().to_string();
+        assert!(msg.contains("oversized"), "error should mention oversized: {msg}");
+    }
+
+    #[test]
+    fn parse_md_file_accepts_normal_sized_file() {
+        let dir = create_workspace();
+        write_md(dir.path(), "ok.md", "---\ntitle: Normal\n---\nBody text");
+        let result = parse_md_file(dir.path(), "ok.md");
+        assert!(result.is_ok(), "normal file should parse fine");
+    }
+
+    #[test]
+    fn parse_md_file_accepts_just_under_limit() {
+        let dir = create_workspace();
+        let body = "x".repeat(9 * 1024 * 1024); // 9 MB < MAX_NOTE_SIZE
+        let content = format!("---\ntitle: Big\n---\n{body}");
+        let abs = dir.path().join("big.md");
+        fs::write(&abs, &content).unwrap();
+        let result = parse_md_file(dir.path(), "big.md");
+        assert!(result.is_ok(), "file just under 10MB limit should parse");
+    }
+
+    // --- 5.3.3 Concurrent search during reindex ---
+
+    #[test]
+    fn concurrent_search_and_reindex_no_panics() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = create_workspace();
+        for i in 0..20 {
+            write_md(dir.path(), &format!("note{i}.md"),
+                &format!("---\ntitle: Note {i}\n---\nQuantum physics topic {i}"));
+        }
+        let gi = Arc::new(GraphIndex::build(dir.path().to_path_buf(), false).unwrap());
+
+        let gi_search = Arc::clone(&gi);
+        let search_handle = thread::spawn(move || {
+            let mut ok_count = 0u32;
+            for _ in 0..50 {
+                match gi_search.search_content("quantum", 10) {
+                    Ok(results) => {
+                        for r in &results {
+                            assert!(
+                                !r.id.is_empty(),
+                                "search result should have non-empty id"
+                            );
+                        }
+                        ok_count += 1;
+                    }
+                    Err(_) => {}
+                }
+            }
+            ok_count
+        });
+
+        let dir_path = dir.path().to_path_buf();
+        let gi_reindex = Arc::clone(&gi);
+        let reindex_handle = thread::spawn(move || {
+            let mut ok_count = 0u32;
+            for round in 0..10 {
+                let note = format!("note0.md");
+                let content = format!(
+                    "---\ntitle: Note 0 v{round}\n---\nQuantum rewrite round {round}"
+                );
+                write_md(&dir_path, &note, &content);
+                let diff = DiffResult {
+                    new: vec![],
+                    changed: vec![note],
+                    deleted: vec![],
+                };
+                match gi_reindex.batch_reindex(&diff, false) {
+                    Ok(_) => { ok_count += 1; }
+                    Err(_) => {}
+                }
+            }
+            ok_count
+        });
+
+        let search_ok = search_handle.join().expect("search thread panicked");
+        let reindex_ok = reindex_handle.join().expect("reindex thread panicked");
+        assert!(search_ok > 0, "at least some searches should succeed");
+        assert!(reindex_ok > 0, "at least some reindexes should succeed");
     }
 }

@@ -789,6 +789,13 @@ impl Store {
 
         if version < 22 {
             info!(from = version, to = 22, "migrating schema: adding notes_fts");
+            // Double-storage (nodes.body + notes_fts copy) is intentional.
+            // `content=nodes` external-content would need FTS columns to
+            // match the source table's column order, but notes_fts
+            // (title, body, tags_text, node_id) differs from nodes
+            // (id, title, first_paragraph, frontmatter, ...).  The
+            // contentless alternative (`content=''`) loses snippet().
+            // ~20-40 MB extra for 10K notes is acceptable for a desktop app.
             self.conn.execute_batch(
                 "BEGIN;
                  CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -7218,5 +7225,253 @@ mod tests {
         let results = store.search_content_filtered("quantum", &filter, 20).unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.id == "projects/a.md"));
+    }
+
+    // ======================================================================
+    // Phase 5.1 — CJK and multilingual support
+    // ======================================================================
+
+    #[test]
+    fn search_content_cjk_single_char_like_fallback() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Physics", &[],
+            "探索量子力学的奥秘", 1);
+        // "量" is 1 char (< 3), triggers LIKE fallback
+        let results = store.search_content("量", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_cjk_two_char_like_fallback() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Physics", &[],
+            "探索量子力学的奥秘", 1);
+        // "量子" is 2 chars (< 3), triggers LIKE fallback
+        let results = store.search_content("量子", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_cjk_three_char_fts_with_snippet() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Physics", &[],
+            "探索量子力学的奥秘", 1);
+        // "量子力" is 3 chars, hits FTS path
+        let results = store.search_content("量子力", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+        assert!(
+            results[0].excerpt.contains("<mark>"),
+            "FTS snippet should have <mark> tags: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
+    fn search_content_japanese_hiragana_katakana() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Japanese Note", &[],
+            "プログラミング言語の学習", 1);
+        upsert_node_with_body(&store, "b.md", "Other", &[], "Nothing here", 1);
+        let results = store.search_content("プログラミング", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_korean_hangul() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Korean Note", &[],
+            "한국어 프로그래밍 자습서입니다", 1);
+        upsert_node_with_body(&store, "b.md", "Other", &[], "Nothing here", 1);
+        let results = store.search_content("프로그래밍", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_mixed_cjk_latin() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Mixed", &[],
+            "量子力学 quantum mechanics is fascinating", 1);
+        upsert_node_with_body(&store, "b.md", "Other", &[],
+            "只是量子力学", 1);
+        // Both terms >= 3 chars → FTS, AND semantics
+        let results = store.search_content("量子力学 quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_cjk_snippet_correctness() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Physics", &[],
+            "这是一篇关于量子力学的文章\n第二行内容", 1);
+        let results = store.search_content_filtered("量子力学", &SearchFilter::default(), 20).unwrap();
+        assert!(!results.is_empty());
+        assert!(
+            results[0].excerpt.contains("<mark>"),
+            "line-level excerpt should contain <mark>: {}",
+            results[0].excerpt
+        );
+        assert!(
+            results[0].excerpt.contains("量子力学"),
+            "excerpt should contain the matched CJK term: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
+    fn search_content_cjk_in_title() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "量子力学入門", &[],
+            "This is a basic introduction to quantum mechanics", 1);
+        let results = store.search_content("量子力学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_cjk_in_tags() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Physics Note", &["物理学"],
+            "This note covers various topics", 1);
+        let results = store.search_content("物理学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_emoji_before_cjk_match() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Celebration", &[],
+            "The 🎉 celebration of 量子力学 is wonderful", 1);
+        let results = store.search_content("量子力学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+        assert!(
+            results[0].excerpt.contains("量子力学"),
+            "emoji should not corrupt CJK in excerpt: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
+    fn highlight_terms_in_line_cjk() {
+        assert_eq!(
+            highlight_terms_in_line("探索量子力学的奥秘", &["量子力学"]),
+            "探索<mark>量子力学</mark>的奥秘"
+        );
+    }
+
+    #[test]
+    fn highlight_terms_in_line_mixed_cjk_latin() {
+        let result = highlight_terms_in_line("quantum和量子力学", &["quantum", "量子"]);
+        assert!(result.contains("<mark>quantum</mark>"), "should highlight quantum: {}", result);
+        assert!(result.contains("<mark>量子"), "should highlight 量子: {}", result);
+        // Verify no overlap corruption — both marks should be present and well-formed
+        let mark_count = result.matches("<mark>").count();
+        let end_mark_count = result.matches("</mark>").count();
+        assert_eq!(mark_count, end_mark_count, "marks should be balanced: {}", result);
+    }
+
+    // --- 5.1.2 Dual-index evaluation ---
+
+    #[test]
+    fn trigram_bm25_ranking_is_sensible_for_western_text() {
+        // Trigram tokenizer produces sensible BM25 rankings: a title match
+        // ranks above a body-only mention. This confirms trigram is sufficient
+        // as a single index — no dual unicode61 index needed. CJK benefits
+        // from trigram's lack of word-boundary requirement.
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "exact.md", "Quantum Mechanics", &[],
+            "An overview of physics", 1);
+        upsert_node_with_body(&store, "body.md", "General Physics", &[],
+            "Briefly mentions quantum mechanics among many other topics", 1);
+        upsert_node_with_body(&store, "tangent.md", "Cooking Recipes", &[],
+            "Nothing about quantum or mechanics at all. Except this sentence.", 1);
+        upsert_node_with_body(&store, "absent.md", "Music Theory", &[],
+            "Totally unrelated content about scales and chords", 1);
+        upsert_node_with_body(&store, "partial.md", "Advanced Physics", &[],
+            "This discusses quantum entanglement but not mechanics", 1);
+
+        let results = store.search_content("quantum mechanics", 10).unwrap();
+        // "exact.md" has both terms in title → should rank first
+        assert!(!results.is_empty());
+        assert_eq!(results[0].id, "exact.md", "title match should rank first");
+        // "absent.md" should not appear (no matching terms)
+        assert!(
+            results.iter().all(|r| r.id != "absent.md"),
+            "unrelated note should not appear"
+        );
+    }
+
+    // --- 5.1.3 Snippet multibyte verification ---
+
+    #[test]
+    fn search_content_cjk_fts_snippet_has_marks() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "CJK", &[],
+            "这篇文章探讨了量子力学的核心概念", 1);
+        let results = store.search_content("量子力学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0].excerpt.contains("<mark>"),
+            "FTS snippet for CJK should have <mark>: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
+    fn search_content_long_cjk_body_snippet_does_not_crash() {
+        let store = Store::open_memory().unwrap();
+        // Build a body with > 64 trigram tokens of CJK text
+        let long_body = "这是一段很长的中文文本。".repeat(200);
+        let body = format!("{long_body} 量子力学是现代物理学的基础。");
+        upsert_node_with_body(&store, "a.md", "Long CJK", &[], &body, 1);
+        let results = store.search_content("量子力学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        // snippet() caps at 64 tokens; just verify it doesn't crash and has content
+        assert!(!results[0].excerpt.is_empty(), "excerpt should not be empty");
+    }
+
+    // --- 5.2.4 Content-synced vs external-content evaluation ---
+    // (research finding, documented as comment near notes_fts CREATE — see migration v22)
+
+    // --- 5.3.2 Very large notes ---
+
+    #[test]
+    fn search_content_large_body_fts_finds_match() {
+        let store = Store::open_memory().unwrap();
+        let filler = "Lorem ipsum dolor sit amet. ".repeat(8000); // ~200KB
+        let body = format!("{filler}quantum mechanics is key");
+        upsert_node_with_body(&store, "a.md", "Big Note", &[], &body, 1);
+        let results = store.search_content("quantum mechanics", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_large_cjk_body_fts_finds_match() {
+        let store = Store::open_memory().unwrap();
+        let filler = "中文内容重复填充测试。".repeat(6000); // ~200KB of CJK
+        let body = format!("{filler}量子力学是现代物理学的基础");
+        upsert_node_with_body(&store, "a.md", "Big CJK", &[], &body, 1);
+        let results = store.search_content("量子力学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_large_body_respects_limit() {
+        let store = Store::open_memory().unwrap();
+        // Each line matches
+        let lines: Vec<String> = (0..500).map(|i| format!("quantum line {i}")).collect();
+        let body = lines.join("\n");
+        upsert_node_with_body(&store, "a.md", "Many Lines", &[], &body, 1);
+        let results = store.search_content_filtered("quantum", &SearchFilter::default(), 10).unwrap();
+        assert!(results.len() <= 10, "limit should cap line-level results: got {}", results.len());
     }
 }
