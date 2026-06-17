@@ -17,6 +17,7 @@ import {
   getCitingPages,
   getBibKeyStates,
   enrichBibEntry,
+  applyEnrichmentCandidate,
   bibDelete,
   bibUpdateFields,
   downloadEntryPdf,
@@ -32,6 +33,7 @@ import {
   type FileEvent,
   type PaperSearchResult,
 } from "../lib/ipc";
+import { classifyEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
 import { localeFilter } from "../lib/localeSearch";
@@ -44,6 +46,7 @@ import { doiHref } from "../lib/urlUtils";
 import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
 import { EntryTypeBadge } from "./EntryTypeBadge";
+import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
 import { distinctPublisher } from "../lib/bibUtils";
 
 type EditFieldKey =
@@ -207,12 +210,24 @@ export function ReferenceLibrary() {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [importPdfDialogOpen, setImportPdfDialogOpen] = useState(false);
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
+  const [enrichPhase, setEnrichPhase] = useState<"fetch" | "search">("fetch");
+  const enrichPhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
+  const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
+
+  // Clean up enrichPhase timer on unmount
+  useEffect(() => {
+    return () => {
+      if (enrichPhaseTimerRef.current) {
+        clearTimeout(enrichPhaseTimerRef.current);
+      }
+    };
+  }, []);
 
   // --- Search tab state ---
   const [mode, setMode] = useState<"library" | "search">("library");
@@ -473,27 +488,26 @@ export function ReferenceLibrary() {
   const handleEnrich = useCallback(
     async (entry: BibEntry) => {
       if (!workspacePath) return;
+      setEnrichCandidates(null); // close any open picker (T3.3.2)
       setEnrichingKey(entry.key);
+      setEnrichPhase("fetch");
+      enrichPhaseTimerRef.current = setTimeout(() => {
+        setEnrichPhase("search");
+      }, 1500);
       try {
         const result = await enrichBibEntry(entry.key, workspacePath);
-        const parts: string[] = [];
-        if (result.fields_added.length > 0)
-          parts.push(`added ${result.fields_added.join(", ")}`);
-        if (result.references_appended > 0) {
-          const qualifier =
-            result.references_found > result.references_appended
-              ? ` of ${result.references_found}`
-              : "";
-          parts.push(
-            `${result.references_appended}${qualifier} references added`,
-          );
-        }
-        if (result.shadow_nodes_created > 0)
-          parts.push(`${result.shadow_nodes_created} shadow nodes created`);
-        if (parts.length === 0) {
-          show(`No new metadata found for @${entry.key}`);
-        } else {
-          show(`Enriched ${entry.key}: ${parts.join(". ")}`);
+        const classified = classifyEnrichResult(result, entry.key, entry.title);
+
+        switch (classified.kind) {
+          case "candidates":
+            setEnrichCandidates(classified);
+            return;
+          case "miss":
+            show(classified.message);
+            return;
+          case "success":
+            show(classified.message);
+            return;
         }
       } catch (err) {
         show(
@@ -502,9 +516,50 @@ export function ReferenceLibrary() {
         );
       } finally {
         setEnrichingKey(null);
+        if (enrichPhaseTimerRef.current) {
+          clearTimeout(enrichPhaseTimerRef.current);
+          enrichPhaseTimerRef.current = null;
+        }
       }
     },
-    [workspacePath, show],
+    [workspacePath, show, setEnrichCandidates],
+  );
+
+  const handleApplyCandidate = useCallback(
+    async (candidate: BibEntry) => {
+      if (!workspacePath || !enrichCandidates) return;
+      const { bibKey } = enrichCandidates;
+      setEnrichCandidates(null); // close picker immediately
+      setEnrichingKey(bibKey); // show spinner on the button
+      setEnrichPhase("fetch");
+      enrichPhaseTimerRef.current = setTimeout(() => {
+        setEnrichPhase("search");
+      }, 1500);
+      try {
+        const result = await applyEnrichmentCandidate(bibKey, candidate, workspacePath);
+        const classified = classifyEnrichResult(result, bibKey, candidate.title);
+        switch (classified.kind) {
+          case "candidates":
+            setEnrichCandidates(classified);
+            break;
+          case "miss":
+            show(classified.message);
+            break;
+          case "success":
+            show(classified.message);
+            break;
+        }
+      } catch (err) {
+        show(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setEnrichingKey(null);
+        if (enrichPhaseTimerRef.current) {
+          clearTimeout(enrichPhaseTimerRef.current);
+          enrichPhaseTimerRef.current = null;
+        }
+      }
+    },
+    [workspacePath, enrichCandidates, show],
   );
 
   const handleDownload = useCallback(
@@ -1087,7 +1142,7 @@ export function ReferenceLibrary() {
                               className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >
                               {enrichingKey === entry.key
-                                ? "Fetching…"
+                                ? (enrichPhase === "fetch" ? "Fetching…" : "Searching providers…")
                                 : state?.materialization === "partial"
                                   ? "Refresh"
                                   : "Fetch details"}
@@ -1195,6 +1250,15 @@ export function ReferenceLibrary() {
           }}
         />
       ) : null}
+      <EnrichCandidatePicker
+        open={enrichCandidates !== null}
+        bibKey={enrichCandidates?.bibKey ?? ""}
+        candidates={enrichCandidates?.candidates ?? []}
+        providersSearched={enrichCandidates?.providersSearched ?? []}
+        providersFailed={enrichCandidates?.providersFailed ?? []}
+        onApply={handleApplyCandidate}
+        onClose={() => setEnrichCandidates(null)}
+      />
     </div>
   );
 }
