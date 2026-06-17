@@ -7,23 +7,6 @@ import { navigateToNote } from "../lib/navigateToNote";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 
 // ---------------------------------------------------------------------------
-// Match count heuristic
-// ---------------------------------------------------------------------------
-
-/** Count <mark> occurrences in a snippet as a proxy for match count. */
-export function countMatches(excerpt: string): number {
-  let count = 0;
-  let idx = 0;
-  while (true) {
-    idx = excerpt.indexOf("<mark>", idx);
-    if (idx === -1) break;
-    count++;
-    idx += 6; // length of "<mark>"
-  }
-  return count;
-}
-
-// ---------------------------------------------------------------------------
 // SearchResultRow
 // ---------------------------------------------------------------------------
 
