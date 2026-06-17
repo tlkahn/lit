@@ -44,6 +44,7 @@ import {
   saveBibEntries,
   materializeCitation,
   enrichBibEntry,
+  applyEnrichmentCandidate,
   downloadEntryPdf,
   linkEntryPdf,
   ocrPdfToMarkdown,
@@ -757,6 +758,32 @@ describe("ipc", () => {
             references_appended: 5,
             shadow_nodes_created: 3,
             references_linked: 5,
+            candidates: [],
+            providers_searched: [],
+            providers_failed: [],
+          };
+        case "apply_enrichment_candidate":
+          return {
+            entry: {
+              key: (args as Record<string, unknown>)?.bibKey ?? "smith2020",
+              authors: ["Smith, John"],
+              title: "A Study",
+              year: "2020",
+              entry_type: "article",
+              line_number: 0,
+              bib_file: "/workspace/refs.bib",
+              doi: "10.1/candidate-doi",
+              journal: "Science",
+              abstract_text: "Candidate abstract",
+            },
+            fields_added: ["doi", "journal", "abstract"],
+            references_found: 3,
+            references_appended: 3,
+            shadow_nodes_created: 2,
+            references_linked: 3,
+            candidates: [],
+            providers_searched: [],
+            providers_failed: [],
           };
         case "download_entry_pdf":
           return "assets/pdf/smith2020.pdf";
@@ -2292,9 +2319,40 @@ describe("ipc", () => {
     expect(result.references_appended).toBe(5);
     expect(result.shadow_nodes_created).toBe(3);
     expect(result.references_linked).toBe(5);
+    expect(result.candidates).toEqual([]);
+    expect(result.providers_searched).toEqual([]);
+    expect(result.providers_failed).toEqual([]);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("enrich_bib_entry", {
       bibKey: "smith2020",
+      workspacePath: "/workspace",
+    });
+  });
+
+  it("applyEnrichmentCandidate calls apply_enrichment_candidate with bibKey, candidate, and workspacePath", async () => {
+    const candidate = {
+      key: "candidate2020",
+      authors: ["Doe, Jane"],
+      title: "Candidate Paper",
+      year: "2020",
+      entry_type: "article",
+      line_number: 0,
+      doi: "10.1/candidate-doi",
+      journal: "Science",
+      abstract_text: "Candidate abstract",
+    };
+    const result: EnrichResult = await applyEnrichmentCandidate("smith2020", candidate, "/workspace");
+    expect(result.entry.key).toBe("smith2020");
+    expect(result.fields_added).toEqual(["doi", "journal", "abstract"]);
+    expect(result.references_found).toBe(3);
+    expect(result.references_appended).toBe(3);
+    expect(result.shadow_nodes_created).toBe(2);
+    expect(result.references_linked).toBe(3);
+    expect(result.candidates).toEqual([]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("apply_enrichment_candidate", {
+      bibKey: "smith2020",
+      candidate,
       workspacePath: "/workspace",
     });
   });

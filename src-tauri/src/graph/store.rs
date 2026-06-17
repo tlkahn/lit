@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 22;
+pub const CURRENT_SCHEMA_VERSION: i64 = 23;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -206,6 +206,7 @@ impl Store {
                  DROP TABLE IF EXISTS bib_items;
                  DROP TABLE IF EXISTS conversation_messages;
                  DROP TABLE IF EXISTS conversations;
+                 DROP TABLE IF EXISTS notes_fts;
                  DROP TABLE IF EXISTS annotations_fts;
                  DROP TABLE IF EXISTS annotations;
                  DROP TABLE IF EXISTS node_positions;
@@ -575,8 +576,21 @@ impl Store {
         }
 
         if version < 22 {
-            info!(from = version, to = 22, "migrating schema: adding body column + notes_fts");
-            // Step 1: Add body column (idempotent — skip if column already exists)
+            info!(from = version, to = 22, "migrating schema: adding notes_fts");
+            self.conn.execute_batch(
+                "BEGIN;
+                 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+                     title, body, tags_text, node_id UNINDEXED,
+                     tokenize = 'trigram case_sensitive 0'
+                 );
+                 UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '22' WHERE key = 'schema_version';
+                 COMMIT;"
+            )?;
+        }
+
+        if version < 23 {
+            info!(from = version, to = 23, "migrating schema: adding body column to nodes + rebuilding notes_fts");
             let has_body: bool = self.conn.query_row(
                 "SELECT COUNT(*) > 0 FROM pragma_table_info('nodes') WHERE name = 'body'",
                 [],
@@ -587,22 +601,13 @@ impl Store {
                     "ALTER TABLE nodes ADD COLUMN body TEXT DEFAULT '';"
                 )?;
             }
-            // Step 2: Create FTS table (idempotent via IF NOT EXISTS)
-            self.conn.execute_batch(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-                     title, body, tags_text,
-                     tokenize = 'trigram case_sensitive 0'
-                 );"
-            )?;
-            // Step 3: Backfill FTS from existing nodes data (idempotent — clear first)
             self.conn.execute_batch(
                 "DELETE FROM notes_fts;
-                 INSERT INTO notes_fts(rowid, title, body, tags_text)
-                     SELECT rowid, COALESCE(title, ''), COALESCE(body, ''), COALESCE(tags_text, '')
-                     FROM nodes WHERE is_stub = 0;"
-            )?;
-            self.conn.execute_batch(
-                "UPDATE meta SET value = '22' WHERE key = 'schema_version';"
+                 INSERT INTO notes_fts(title, body, tags_text, node_id)
+                     SELECT COALESCE(title, ''), COALESCE(body, ''), COALESCE(tags_text, ''), id
+                     FROM nodes WHERE is_stub = 0;
+                 UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '23' WHERE key = 'schema_version';"
             )?;
         }
 
@@ -629,17 +634,11 @@ impl Store {
 
     // --- CRUD ---
 
-    pub fn upsert_node(&self, node: &ParsedNode, mtime: i64) -> Result<(), GraphError> {
+    pub fn upsert_node(&self, node: &ParsedNode, mtime: i64, body: Option<&str>) -> Result<(), GraphError> {
         let fm_json = serde_json::to_string(&node.frontmatter).unwrap_or_default();
         let tags_text = node.tags.join(" ");
 
         self.with_savepoint("upsert_node", || {
-            // Delete old FTS entry before upserting (if the node already exists)
-            self.conn.execute(
-                "DELETE FROM notes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?1)",
-                [&node.id],
-            )?;
-
             self.conn.execute(
                 "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization, body)
                  VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized', ?7)
@@ -652,15 +651,7 @@ impl Store {
                     tags_text = excluded.tags_text,
                     materialization = excluded.materialization,
                     body = excluded.body",
-                rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text, node.body],
-            )?;
-
-            // Insert new FTS entry
-            self.conn.execute(
-                "INSERT INTO notes_fts(rowid, title, body, tags_text)
-                 SELECT rowid, title, COALESCE(body, ''), COALESCE(tags_text, '')
-                 FROM nodes WHERE id = ?1",
-                [&node.id],
+                rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text, body.unwrap_or("")],
             )?;
 
             self.conn
@@ -686,6 +677,14 @@ impl Store {
                 "INSERT OR REPLACE INTO sync(path, mtime) VALUES (?1, ?2)",
                 rusqlite::params![node.id, mtime],
             )?;
+
+            self.conn.execute("DELETE FROM notes_fts WHERE node_id = ?1", [&node.id])?;
+            if let Some(b) = body {
+                self.conn.execute(
+                    "INSERT INTO notes_fts(node_id, title, body, tags_text) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![node.id, node.title, b, tags_text],
+                )?;
+            }
 
             Ok(())
         })
@@ -814,10 +813,7 @@ impl Store {
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
         self.with_savepoint("delete_node", || {
-            self.conn.execute(
-                "DELETE FROM notes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?1)",
-                [id],
-            )?;
+            self.conn.execute("DELETE FROM notes_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -1399,7 +1395,7 @@ impl Store {
                         snippet(notes_fts, -1, '<mark>', '</mark>', '...', 64),
                         COALESCE(n.body, ''), COALESCE(n.tags_text, '')
                  FROM notes_fts f
-                 JOIN nodes n ON n.rowid = f.rowid
+                 JOIN nodes n ON n.id = f.node_id
                  WHERE notes_fts MATCH ?1 AND n.is_stub = 0
                  ORDER BY rank
                  LIMIT ?2";
@@ -1953,7 +1949,7 @@ mod tests {
         store
             .with_savepoint("sp", || {
                 let node = make_node("a.md", "A", &[], json!({}));
-                store.upsert_node(&node, 1)?;
+                store.upsert_node(&node, 1, None)?;
                 Ok(())
             })
             .unwrap();
@@ -1964,11 +1960,11 @@ mod tests {
     fn with_savepoint_rolls_back_on_error() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let result: Result<(), _> = store.with_savepoint("sp", || {
             let node_b = make_node("b.md", "B", &[], json!({}));
-            store.upsert_node(&node_b, 1)?;
+            store.upsert_node(&node_b, 1, None)?;
             Err(GraphError::Other("forced failure".into()))
         });
         assert!(result.is_err());
@@ -2019,7 +2015,7 @@ mod tests {
     fn has_data_after_upsert() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1000).unwrap();
+        store.upsert_node(&node, 1000, None).unwrap();
         assert!(store.has_data().unwrap());
     }
 
@@ -2027,7 +2023,7 @@ mod tests {
     fn has_data_false_after_delete() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1000).unwrap();
+        store.upsert_node(&node, 1000, None).unwrap();
         store.delete_node("a.md").unwrap();
         assert!(!store.has_data().unwrap());
     }
@@ -2041,7 +2037,7 @@ mod tests {
         {
             let store = Store::open(&db_path).unwrap();
             let node = make_node("a.md", "A", &[], json!({}));
-            store.upsert_node(&node, 1000).unwrap();
+            store.upsert_node(&node, 1000, None).unwrap();
             assert!(store.has_data().unwrap());
             store
                 .conn
@@ -2063,7 +2059,7 @@ mod tests {
         {
             let store = Store::open(&db_path).unwrap();
             let node = make_node("a.md", "A", &["t"], json!({"aliases": ["X"]}));
-            store.upsert_node(&node, 1000).unwrap();
+            store.upsert_node(&node, 1000, None).unwrap();
             store.upsert_annotations("a.md", &[IndexableAnnotation {
                 annotation_type: "highlight".into(),
                 certainty: "certain".into(),
@@ -2089,7 +2085,7 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
-        for table in &["annotations", "annotations_fts", "node_positions", "bib_items", "bib_source_files"] {
+        for table in &["annotations", "annotations_fts", "notes_fts", "node_positions", "bib_items", "bib_source_files"] {
             let count: i64 = store.conn.query_row(
                 &format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0),
             ).unwrap();
@@ -2123,6 +2119,107 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn notes_fts_table_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes_fts'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upsert_node_with_body_populates_fts() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &["tag1"], json!({}));
+        store.upsert_node(&node, 1, Some("Hello world")).unwrap();
+        let (nid, body): (String, String) = store.conn.query_row(
+            "SELECT node_id, body FROM notes_fts WHERE node_id = 'a.md'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(nid, "a.md");
+        assert_eq!(body, "Hello world");
+    }
+
+    #[test]
+    fn upsert_node_updates_fts_on_change() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1, Some("version one")).unwrap();
+        store.upsert_node(&node, 2, Some("version two")).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM notes_fts WHERE node_id = 'a.md'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+        let body: String = store.conn.query_row(
+            "SELECT body FROM notes_fts WHERE node_id = 'a.md'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(body, "version two");
+    }
+
+    #[test]
+    fn upsert_node_without_body_skips_fts() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1, None).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM notes_fts WHERE node_id = 'a.md'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn delete_node_removes_fts_row() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &[], json!({}));
+        store.upsert_node(&node, 1, Some("body text")).unwrap();
+        store.delete_node("a.md").unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM notes_fts WHERE node_id = 'a.md'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn notes_fts_search_matches_body() {
+        let store = Store::open_memory().unwrap();
+        let a = make_node("a.md", "Alpha", &[], json!({}));
+        let b = make_node("b.md", "Beta", &[], json!({}));
+        store.upsert_node(&a, 1, Some("quantum mechanics")).unwrap();
+        store.upsert_node(&b, 1, Some("classical physics")).unwrap();
+        let matches: Vec<String> = store.conn.prepare(
+            "SELECT node_id FROM notes_fts WHERE notes_fts MATCH 'quantum'",
+        ).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(matches, vec!["a.md"]);
+    }
+
+    #[test]
+    fn notes_fts_search_matches_title() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Quantum Mechanics", &[], json!({}));
+        store.upsert_node(&node, 1, Some("intro text")).unwrap();
+        let matches: Vec<String> = store.conn.prepare(
+            "SELECT node_id FROM notes_fts WHERE notes_fts MATCH 'Quantum'",
+        ).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(matches, vec!["a.md"]);
+    }
+
+    #[test]
+    fn notes_fts_search_matches_tags() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Alpha", &["physics", "quantum"], json!({}));
+        store.upsert_node(&node, 1, Some("body")).unwrap();
+        let matches: Vec<String> = store.conn.prepare(
+            "SELECT node_id FROM notes_fts WHERE notes_fts MATCH 'physics'",
+        ).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(matches, vec!["a.md"]);
     }
 
     #[test]
@@ -2174,7 +2271,7 @@ mod tests {
     fn upsert_node_insert_and_readback() {
         let store = Store::open_memory().unwrap();
         let node = make_node("People/Alice.md", "Alice", &["person"], json!({"title": "Alice"}));
-        store.upsert_node(&node, 1000).unwrap();
+        store.upsert_node(&node, 1000, None).unwrap();
 
         let title: String = store
             .conn
@@ -2191,7 +2288,7 @@ mod tests {
     fn upsert_node_writes_tags() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["tag1", "tag2"], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let mut stmt = store
             .conn
@@ -2209,7 +2306,7 @@ mod tests {
     fn upsert_node_writes_aliases() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({"aliases": ["Alpha", "Alfa"]}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let mut stmt = store
             .conn
@@ -2227,7 +2324,7 @@ mod tests {
     fn upsert_node_writes_sync() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 42).unwrap();
+        store.upsert_node(&node, 42, None).unwrap();
 
         assert_eq!(store.get_sync_mtime("a.md").unwrap(), Some(42));
     }
@@ -2236,9 +2333,9 @@ mod tests {
     fn upsert_node_replaces_on_conflict() {
         let store = Store::open_memory().unwrap();
         let node1 = make_node("a.md", "Old", &[], json!({}));
-        store.upsert_node(&node1, 1).unwrap();
+        store.upsert_node(&node1, 1, None).unwrap();
         let node2 = make_node("a.md", "New", &[], json!({}));
-        store.upsert_node(&node2, 2).unwrap();
+        store.upsert_node(&node2, 2, None).unwrap();
 
         let title: String = store
             .conn
@@ -2253,9 +2350,9 @@ mod tests {
     fn upsert_node_replaces_tags_on_reupsert() {
         let store = Store::open_memory().unwrap();
         let node1 = make_node("a.md", "A", &["old"], json!({}));
-        store.upsert_node(&node1, 1).unwrap();
+        store.upsert_node(&node1, 1, None).unwrap();
         let node2 = make_node("a.md", "A", &["new1", "new2"], json!({}));
-        store.upsert_node(&node2, 2).unwrap();
+        store.upsert_node(&node2, 2, None).unwrap();
 
         let mut stmt = store
             .conn
@@ -2273,7 +2370,7 @@ mod tests {
     fn upsert_node_populates_tags_text() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["rust", "coding"], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let tags_text: String = store
             .conn
@@ -2302,7 +2399,7 @@ mod tests {
     fn upsert_stub_does_not_overwrite_real_node() {
         let store = Store::open_memory().unwrap();
         let node = make_node("Real.md", "Real", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         store.upsert_stub("Real.md").unwrap();
 
@@ -2336,7 +2433,7 @@ mod tests {
     fn delete_node_removes_all_data() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t"], json!({"aliases": ["X"]}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "ctx", "", 0, EdgeKind::Wikilink).unwrap();
 
         store.delete_node("a.md").unwrap();
@@ -2382,8 +2479,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node_a = make_node("a.md", "A", &[], json!({}));
         let node_b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
+        store.upsert_node(&node_a, 1, None).unwrap();
+        store.upsert_node(&node_b, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("b.md", "a.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
@@ -2406,7 +2503,7 @@ mod tests {
     fn delete_node_is_atomic() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t"], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "ctx", "", 0, EdgeKind::Wikilink).unwrap();
         {
             use super::super::types::Position;
@@ -2664,7 +2761,7 @@ mod tests {
     fn get_sync_mtime_returns_stored() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 999).unwrap();
+        store.upsert_node(&node, 999, None).unwrap();
         assert_eq!(store.get_sync_mtime("a.md").unwrap(), Some(999));
     }
 
@@ -2673,8 +2770,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node_a = make_node("b.md", "B", &[], json!({}));
         let node_b = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
+        store.upsert_node(&node_a, 1, None).unwrap();
+        store.upsert_node(&node_b, 1, None).unwrap();
 
         let paths = store.all_synced_paths().unwrap();
         assert_eq!(paths, vec!["a.md", "b.md"]);
@@ -2685,8 +2782,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node_b = make_node("b.md", "B", &[], json!({}));
         let node_a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node_b, 1).unwrap();
-        store.upsert_node(&node_a, 1).unwrap();
+        store.upsert_node(&node_b, 1, None).unwrap();
+        store.upsert_node(&node_a, 1, None).unwrap();
 
         let ids = store.all_node_ids().unwrap();
         assert_eq!(ids, vec!["a.md", "b.md"]);
@@ -2696,7 +2793,7 @@ mod tests {
     fn resolvable_node_ids_excludes_shadows() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
         store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
 
@@ -2711,7 +2808,7 @@ mod tests {
     fn resolvable_node_ids_excludes_partial() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
         store.upsert_shadow("bib:jones2023", "Jones 2023", Materialization::Partial).unwrap();
 
@@ -2749,7 +2846,7 @@ mod tests {
     fn all_nodes_metadata_returns_id_and_stub_flag() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
 
         let meta = store.all_nodes_metadata().unwrap();
@@ -2769,7 +2866,7 @@ mod tests {
     fn node_titles_returns_all() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
 
         let titles = store.node_titles().unwrap();
@@ -2782,7 +2879,7 @@ mod tests {
     fn node_frontmatter_map_returns_frontmatter() {
         let store = Store::open_memory().unwrap();
         store
-            .upsert_node(&make_node("a.md", "Alpha", &["tag1"], json!({"title":"Alpha","custom":42})), 1)
+            .upsert_node(&make_node("a.md", "Alpha", &["tag1"], json!({"title":"Alpha","custom":42})), 1, None)
             .unwrap();
 
         let map = store.node_frontmatter_map().unwrap();
@@ -2812,6 +2909,7 @@ mod tests {
             .upsert_node(
                 &make_node("a.md", "Alpha", &["t1"], json!({"title":"Alpha","custom":42})),
                 1,
+                None,
             )
             .unwrap();
         store.upsert_stub("Ghost").unwrap();
@@ -2857,9 +2955,9 @@ mod tests {
     fn stats_populated() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &["t1", "t2"], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let node2 = make_node("b.md", "B", &["t1"], json!({}));
-        store.upsert_node(&node2, 1).unwrap();
+        store.upsert_node(&node2, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
         store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("a.md", "Ghost", "", "", 0, EdgeKind::Wikilink).unwrap();
@@ -2881,9 +2979,9 @@ mod tests {
     fn max_mtime_returns_largest() {
         let store = Store::open_memory().unwrap();
         let node_a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node_a, 100).unwrap();
+        store.upsert_node(&node_a, 100, None).unwrap();
         let node_b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&node_b, 200).unwrap();
+        store.upsert_node(&node_b, 200, None).unwrap();
         assert_eq!(store.max_mtime().unwrap(), 200);
     }
 
@@ -2891,7 +2989,7 @@ mod tests {
     fn max_mtime_ignores_stubs() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 50).unwrap();
+        store.upsert_node(&node, 50, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
         assert_eq!(store.max_mtime().unwrap(), 50);
     }
@@ -2902,7 +3000,7 @@ mod tests {
         let fp1 = store.graph_fingerprint().unwrap();
 
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 100).unwrap();
+        store.upsert_node(&node, 100, None).unwrap();
         let fp2 = store.graph_fingerprint().unwrap();
         assert_ne!(fp1, fp2);
     }
@@ -2911,7 +3009,7 @@ mod tests {
     fn graph_fingerprint_stable_for_same_data() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 100).unwrap();
+        store.upsert_node(&node, 100, None).unwrap();
         let fp1 = store.graph_fingerprint().unwrap();
         let fp2 = store.graph_fingerprint().unwrap();
         assert_eq!(fp1, fp2);
@@ -2929,9 +3027,9 @@ mod tests {
     fn wikilink_edge_count_excludes_citations() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         let b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("a.md", "smith2024", "[@smith2024]", "smith2024", 2, EdgeKind::Citation).unwrap();
 
@@ -2943,9 +3041,9 @@ mod tests {
     fn graph_fingerprint_stable_when_citation_added() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         let b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let fp1 = store.graph_fingerprint().unwrap();
@@ -2959,12 +3057,12 @@ mod tests {
     fn graph_fingerprint_changes_when_wikilink_added() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
 
         let fp1 = store.graph_fingerprint().unwrap();
 
         let b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
 
         let fp2 = store.graph_fingerprint().unwrap();
@@ -2984,8 +3082,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
         let b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 2).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 2, None).unwrap();
         let entries = store.all_sync_entries().unwrap();
         assert_eq!(entries, vec![("a.md".into(), 1), ("b.md".into(), 2)]);
     }
@@ -3003,8 +3101,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({"aliases": ["Alpha", "Alfa"]}));
         let b = make_node("b.md", "B", &[], json!({"aliases": ["Beta"]}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         let aliases = store.all_aliases().unwrap();
         assert_eq!(aliases.len(), 2);
         assert_eq!(aliases["a.md"], vec!["Alfa", "Alpha"]);
@@ -3015,7 +3113,7 @@ mod tests {
     fn all_aliases_excludes_nodes_without_aliases() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         assert!(store.all_aliases().unwrap().is_empty());
     }
 
@@ -3097,7 +3195,7 @@ mod tests {
 
         // Uncited but materialized node with a bib: id must survive.
         let page = make_node("bib:jones2023", "Jones 2023", &[], json!({}));
-        store.upsert_node(&page, 1).unwrap();
+        store.upsert_node(&page, 1, None).unwrap();
         assert!(!store.prune_shadow_if_uncited("bib:jones2023").unwrap());
         let count: i64 = store
             .conn
@@ -3137,8 +3235,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
         let b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "links to b", "b", 5, EdgeKind::Wikilink).unwrap();
 
         let bl = store.backlinks("b.md").unwrap();
@@ -3153,7 +3251,7 @@ mod tests {
     fn backlinks_empty_when_no_inbound() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         let bl = store.backlinks("a.md").unwrap();
         assert!(bl.is_empty());
     }
@@ -3164,9 +3262,9 @@ mod tests {
         let a = make_node("a.md", "Alpha", &[], json!({}));
         let b = make_node("b.md", "Beta", &[], json!({}));
         let c = make_node("c.md", "Charlie", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
-        store.upsert_node(&c, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
+        store.upsert_node(&c, 1, None).unwrap();
         store.insert_edge("a.md", "c.md", "from a", "c", 1, EdgeKind::Wikilink).unwrap();
         store.insert_edge("b.md", "c.md", "from b", "c", 3, EdgeKind::Wikilink).unwrap();
 
@@ -3185,8 +3283,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
         let b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("a.md", "smith2024", "as shown [@smith2024]", "smith2024", 7, EdgeKind::Citation).unwrap();
         // Decoy wikilink edge to the same target must not appear.
         store.insert_edge("b.md", "smith2024", "noise", "smith2024", 2, EdgeKind::Wikilink).unwrap();
@@ -3204,8 +3302,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
         let b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("b.md", "doe2020", "cite b", "doe2020", 3, EdgeKind::Citation).unwrap();
         store.insert_edge("a.md", "doe2020", "cite a", "doe2020", 1, EdgeKind::Citation).unwrap();
         // Orphan source with no nodes row is dropped by the JOIN.
@@ -3226,8 +3324,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
         let b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "links to b", "B", 0, EdgeKind::Wikilink).unwrap();
 
         let fl = store.forward_links("a.md").unwrap();
@@ -3242,7 +3340,7 @@ mod tests {
     fn forward_links_empty_when_no_outbound() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         let fl = store.forward_links("a.md").unwrap();
         assert!(fl.is_empty());
     }
@@ -3253,9 +3351,9 @@ mod tests {
         let a = make_node("a.md", "Alpha", &[], json!({}));
         let b = make_node("b.md", "Beta", &[], json!({}));
         let c = make_node("c.md", "Charlie", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
-        store.upsert_node(&c, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
+        store.upsert_node(&c, 1, None).unwrap();
         store.insert_edge("a.md", "b.md", "to b", "B", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("a.md", "c.md", "to c", "C", 0, EdgeKind::Wikilink).unwrap();
 
@@ -3269,7 +3367,7 @@ mod tests {
     fn forward_links_includes_stub_targets() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
         store.insert_edge("a.md", "Ghost", "to ghost", "Ghost", 0, EdgeKind::Wikilink).unwrap();
 
@@ -3286,7 +3384,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         store.begin_transaction().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.commit().unwrap();
 
         let ids = store.all_node_ids().unwrap();
@@ -3470,7 +3568,7 @@ mod tests {
     fn title_and_aliases_returns_title_and_aliases() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({"aliases": ["Alfa", "A"]}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let (title, aliases) = store.title_and_aliases("a.md").unwrap();
         assert_eq!(title, "Alpha");
         assert_eq!(aliases, vec!["A", "Alfa"]);
@@ -3480,7 +3578,7 @@ mod tests {
     fn title_and_aliases_no_aliases() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let (title, aliases) = store.title_and_aliases("a.md").unwrap();
         assert_eq!(title, "Alpha");
         assert!(aliases.is_empty());
@@ -3523,7 +3621,7 @@ mod tests {
     fn search_titles_matches_title_substring() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Quantum Computing", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let results = store.search_titles("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "a.md");
@@ -3534,7 +3632,7 @@ mod tests {
     fn search_titles_case_insensitive() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Quantum Computing", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let results = store.search_titles("quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "a.md");
@@ -3544,7 +3642,7 @@ mod tests {
     fn search_titles_matches_id_stem() {
         let store = Store::open_memory().unwrap();
         let node = make_node("quantum-notes.md", "My Notes", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let results = store.search_titles("quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "quantum-notes.md");
@@ -3554,7 +3652,7 @@ mod tests {
     fn search_titles_matches_aliases() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alice", &[], json!({"aliases": ["Ali", "Ally"]}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let results = store.search_titles("Ali", 10).unwrap();
         assert!(results.iter().any(|(id, _)| id == "a.md"));
     }
@@ -3564,7 +3662,7 @@ mod tests {
         let store = Store::open_memory().unwrap();
         for i in 0..10 {
             let node = make_node(&format!("{i}.md"), &format!("Note {i}"), &[], json!({}));
-            store.upsert_node(&node, 1).unwrap();
+            store.upsert_node(&node, 1, None).unwrap();
         }
         let results = store.search_titles("Note", 3).unwrap();
         assert_eq!(results.len(), 3);
@@ -3574,7 +3672,7 @@ mod tests {
     fn search_titles_empty_query_returns_empty() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let results = store.search_titles("", 10).unwrap();
         assert!(results.is_empty());
     }
@@ -3583,7 +3681,7 @@ mod tests {
     fn search_titles_deduplicates_alias_and_title_match() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({"aliases": ["Alpha Team"]}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         let results = store.search_titles("Alpha", 10).unwrap();
         let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
         let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
@@ -3594,7 +3692,7 @@ mod tests {
     fn search_titles_excludes_stubs() {
         let store = Store::open_memory().unwrap();
         let node = make_node("agentic-design.md", "Agentic Design", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_stub("agentic-workflows").unwrap();
         let results = store.search_titles("agentic", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -3605,7 +3703,7 @@ mod tests {
     fn search_titles_excludes_shadows() {
         let store = Store::open_memory().unwrap();
         let node = make_node("real-note.md", "Smith Analysis", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
         let results = store.search_titles("Smith", 10).unwrap();
         assert_eq!(results.len(), 1, "only the materialized node should appear");
@@ -3635,8 +3733,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_two() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+    fn schema_version_is_twenty_three() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
     }
 
     #[test]
@@ -3862,7 +3960,7 @@ mod tests {
     fn migration_v11_backfills_existing_annotation_uuids() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
 
         let uuid: String = store.conn.query_row(
@@ -3970,7 +4068,7 @@ mod tests {
     fn upsert_annotations_generates_v4_uuid() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         store.upsert_annotations("a.md", &[make_annotation("note", Some("hello"))]).unwrap();
 
@@ -3985,7 +4083,7 @@ mod tests {
     fn upsert_annotations_inserts_rows() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             make_annotation("note", Some("first note")),
@@ -4010,7 +4108,7 @@ mod tests {
     fn upsert_annotations_replaces_on_reupsert() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             make_annotation("note", Some("first")),
@@ -4040,7 +4138,7 @@ mod tests {
     fn upsert_annotations_preserves_uuid_on_body_match() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![super::IndexableAnnotation {
             char_start: 0,
@@ -4075,7 +4173,7 @@ mod tests {
     fn upsert_annotations_assigns_new_uuid_on_new_annotation() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![make_annotation("note", Some("first"))];
         store.upsert_annotations("a.md", &anns).unwrap();
@@ -4116,7 +4214,7 @@ mod tests {
     fn upsert_annotations_deletes_removed_annotations() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             make_annotation("note", Some("keep")),
@@ -4150,7 +4248,7 @@ mod tests {
     fn upsert_annotations_returns_deleted_uuids() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             make_annotation("note", Some("keep")),
@@ -4178,7 +4276,7 @@ mod tests {
     fn upsert_annotations_returns_empty_when_no_deletions() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![make_annotation("note", Some("stay"))];
         let deleted = store.upsert_annotations("a.md", &anns).unwrap();
@@ -4193,7 +4291,7 @@ mod tests {
     fn upsert_annotations_handles_duplicate_type_body() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("recurring")) },
@@ -4231,7 +4329,7 @@ mod tests {
     fn upsert_annotations_fts_rowids_stable_on_update_only() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         // Insert two annotations with bodies
         let anns = vec![
@@ -4350,7 +4448,7 @@ mod tests {
         // ordinal annotation.
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("TODO")) },
@@ -4394,7 +4492,7 @@ mod tests {
     fn delete_node_removes_annotations() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_annotations("a.md", &[make_annotation("note", Some("body"))]).unwrap();
 
         store.delete_node("a.md").unwrap();
@@ -4417,7 +4515,7 @@ mod tests {
     fn search_annotations_finds_by_body() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann = super::IndexableAnnotation {
             annotation_type: "note".into(),
@@ -4446,7 +4544,7 @@ mod tests {
     fn search_annotations_filters_by_type() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             make_annotation("note", Some("important note")),
@@ -4463,7 +4561,7 @@ mod tests {
     fn search_annotations_returns_results_ordered_by_relevance() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann_a = super::IndexableAnnotation {
             body: Some("The trade agreement was signed alongside many other economic policies and regulations that affect imports".into()),
@@ -4492,7 +4590,7 @@ mod tests {
     fn list_annotations_for_node() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let mut ann1 = make_annotation("note", Some("first"));
         ann1.source_line = 1;
@@ -4514,7 +4612,7 @@ mod tests {
     fn list_annotations_with_type_filter() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let anns = vec![
             make_annotation("note", Some("a note")),
@@ -4539,8 +4637,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node_a = make_node("a.md", "Alpha", &[], json!({}));
         let node_b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
+        store.upsert_node(&node_a, 1, None).unwrap();
+        store.upsert_node(&node_b, 1, None).unwrap();
 
         let mut ann1 = make_annotation("note", Some("first"));
         ann1.source_line = 1;
@@ -4564,8 +4662,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node_a = make_node("a.md", "Alpha", &[], json!({}));
         let node_b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
+        store.upsert_node(&node_a, 1, None).unwrap();
+        store.upsert_node(&node_b, 1, None).unwrap();
 
         let ann1 = make_annotation("note", Some("a note"));
         let ann2 = make_annotation("question", Some("a question"));
@@ -4584,7 +4682,7 @@ mod tests {
     #[test]
     fn all_annotations_full_returns_scope_fields() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1, None).unwrap();
 
         let mut ann = make_annotation("note", Some("hello"));
         ann.scope_kind = "words".into();
@@ -4610,8 +4708,8 @@ mod tests {
     #[test]
     fn all_annotations_full_orders_by_node_then_charstart() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
-        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1, None).unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1, None).unwrap();
 
         let ann_a1 = super::IndexableAnnotation { char_start: 30, ..make_annotation("note", Some("x")) };
         let ann_a2 = super::IndexableAnnotation { char_start: 10, ..make_annotation("question", Some("y")) };
@@ -4635,7 +4733,7 @@ mod tests {
     fn search_annotations_finds_cjk_body() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann = super::IndexableAnnotation {
             body: Some("丝绸之路是古代贸易通道".into()),
@@ -4652,7 +4750,7 @@ mod tests {
     fn search_annotations_finds_short_cjk_query() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann = super::IndexableAnnotation {
             body: Some("丝绸之路是古代贸易通道".into()),
@@ -4669,7 +4767,7 @@ mod tests {
     fn search_annotations_finds_devanagari_body() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann = super::IndexableAnnotation {
             body: Some("यह एक टिप्पणी है".into()),
@@ -4687,8 +4785,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let node_a = make_node("a.md", "Alpha", &[], json!({}));
         let node_b = make_node("b.md", "Beta", &[], json!({}));
-        store.upsert_node(&node_a, 1).unwrap();
-        store.upsert_node(&node_b, 1).unwrap();
+        store.upsert_node(&node_a, 1, None).unwrap();
+        store.upsert_node(&node_b, 1, None).unwrap();
 
         let ann_cjk = super::IndexableAnnotation {
             body: Some("丝绸之路是古代贸易通道".into()),
@@ -4716,7 +4814,7 @@ mod tests {
     fn find_annotation_uuid_returns_match() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann = make_annotation("note", Some("hello world"));
         store.upsert_annotations("a.md", &[ann]).unwrap();
@@ -4733,7 +4831,7 @@ mod tests {
     fn find_annotation_uuid_returns_none_for_missing() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let result = store
             .find_annotation_uuid("a.md", "note", Some("no such body"), 0)
@@ -4745,7 +4843,7 @@ mod tests {
     fn find_annotation_uuid_closest_when_duplicates() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann_at_0 = super::IndexableAnnotation {
             char_start: 0,
@@ -4779,7 +4877,7 @@ mod tests {
     fn find_annotation_uuid_with_null_body() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let ann = make_annotation("note", None);
         store.upsert_annotations("a.md", &[ann]).unwrap();
@@ -4846,9 +4944,9 @@ mod tests {
         let a = make_node("a.md", "A", &["rust", "coding"], json!({}));
         let b = make_node("b.md", "B", &["rust"], json!({}));
         let c = make_node("c.md", "C", &["python"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 2).unwrap();
-        store.upsert_node(&c, 3).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 2, None).unwrap();
+        store.upsert_node(&c, 3, None).unwrap();
 
         let results = store.search_tags("rust", 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -4860,7 +4958,7 @@ mod tests {
     fn search_tags_empty_query_returns_empty() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["rust"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         assert!(store.search_tags("", 10).unwrap().is_empty());
     }
 
@@ -4868,7 +4966,7 @@ mod tests {
     fn search_tags_no_match_returns_empty() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["rust"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         assert!(store.search_tags("zzz", 10).unwrap().is_empty());
     }
 
@@ -4876,7 +4974,7 @@ mod tests {
     fn search_tags_substring_match() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["project/lit"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         let results = store.search_tags("proj", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tag, "project/lit");
@@ -4886,7 +4984,7 @@ mod tests {
     fn search_tags_limit_enforced() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["alpha", "beta", "gamma"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         let results = store.search_tags("a", 2).unwrap();
         assert!(results.len() <= 2);
     }
@@ -4896,8 +4994,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["alpha", "beta"], json!({}));
         let b = make_node("b.md", "B", &["beta"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 2).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 2, None).unwrap();
         // both contain "a" or "b" — "beta" has count=2, "alpha" has count=1
         let results = store.search_tags("a", 10).unwrap();
         assert_eq!(results.len(), 2);
@@ -4913,9 +5011,9 @@ mod tests {
         let a = make_node("a.md", "Alpha", &["rust", "coding"], json!({}));
         let b = make_node("b.md", "Beta", &["rust"], json!({}));
         let c = make_node("c.md", "Charlie", &["python"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 2).unwrap();
-        store.upsert_node(&c, 3).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 2, None).unwrap();
+        store.upsert_node(&c, 3, None).unwrap();
 
         let results = store.list_pages_by_tag("rust", 10).unwrap();
         assert_eq!(results.len(), 2);
@@ -4929,7 +5027,7 @@ mod tests {
     fn list_pages_by_tag_nonexistent_returns_empty() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["rust"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         assert!(store.list_pages_by_tag("zzz", 10).unwrap().is_empty());
     }
 
@@ -4937,7 +5035,7 @@ mod tests {
     fn list_pages_by_tag_exact_match_only() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &["rust-lang"], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         assert!(store.list_pages_by_tag("rust", 10).unwrap().is_empty());
     }
 
@@ -4946,8 +5044,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let b = make_node("b.md", "Zebra", &["tag"], json!({}));
         let a = make_node("a.md", "Apple", &["tag"], json!({}));
-        store.upsert_node(&b, 1).unwrap();
-        store.upsert_node(&a, 2).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
+        store.upsert_node(&a, 2, None).unwrap();
         let results = store.list_pages_by_tag("tag", 10).unwrap();
         assert_eq!(results[0].title, "Apple");
         assert_eq!(results[1].title, "Zebra");
@@ -5008,7 +5106,7 @@ mod tests {
     fn delete_node_removes_positions() {
         use super::super::types::Position;
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha", &[], json!({})), 1, None).unwrap();
         let mut positions = HashMap::new();
         positions.insert("A".to_string(), Position { x: 1.0, y: 2.0 });
         store.save_positions(&positions).unwrap();
@@ -5069,7 +5167,7 @@ mod tests {
     fn fetch_existing_annotations_propagates_row_error() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1000).unwrap();
+        store.upsert_node(&node, 1000, None).unwrap();
 
         // Recreate the annotations table without NOT NULL on uuid so we can
         // insert a row with NULL uuid, which will fail deserialization
@@ -5106,7 +5204,7 @@ mod tests {
     fn upsert_annotations_update_applies_user_uuid() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         // First insert: no user-specified uuid → auto-generated v4 UUID
         let anns = vec![make_annotation("note", Some("body"))];
@@ -5276,7 +5374,7 @@ mod tests {
     fn upsert_node_writes_materialization_materialized() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "Alpha", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let mat: String = store.conn.query_row(
             "SELECT materialization FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
@@ -5291,7 +5389,7 @@ mod tests {
         ).unwrap();
 
         let node_ghost = make_node("Ghost", "Ghost Page", &[], json!({}));
-        store.upsert_node(&node_ghost, 1).unwrap();
+        store.upsert_node(&node_ghost, 1, None).unwrap();
         let mat_promoted: String = store.conn.query_row(
             "SELECT materialization FROM nodes WHERE id = 'Ghost'", [], |r| r.get(0),
         ).unwrap();
@@ -5348,7 +5446,7 @@ mod tests {
     fn upsert_shadow_does_not_overwrite_materialized_node() {
         let store = Store::open_memory().unwrap();
         let node = make_node("some.md", "Some Page", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         store.upsert_shadow("some.md", "Shadow Title", Materialization::Shadow).unwrap();
 
@@ -5381,7 +5479,7 @@ mod tests {
     fn prune_shadows_leaves_non_bib_nodes_alone() {
         let store = Store::open_memory().unwrap();
         let node = make_node("page.md", "Page", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_shadow("bib:x", "X", Materialization::Shadow).unwrap();
 
         let keep: HashSet<String> = HashSet::new();
@@ -5415,8 +5513,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
         let b = make_node("b.md", "B", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
-        store.upsert_node(&b, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
+        store.upsert_node(&b, 1, None).unwrap();
 
         store.insert_edge("a.md", "bib:smith2024", "ctx", "smith2024", 3, EdgeKind::Citation).unwrap();
         store.insert_edge("b.md", "bib:smith2024", "ctx", "smith2024", 7, EdgeKind::Citation).unwrap();
@@ -5437,8 +5535,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let paper = make_node("paper.md", "Paper", &[], json!({"citekey": "smith2024"}));
         let other = make_node("other.md", "Other", &[], json!({}));
-        store.upsert_node(&paper, 1).unwrap();
-        store.upsert_node(&other, 1).unwrap();
+        store.upsert_node(&paper, 1, None).unwrap();
+        store.upsert_node(&other, 1, None).unwrap();
 
         let pages = store.citekey_pages().unwrap();
         assert_eq!(pages, vec![("smith2024".into(), "paper.md".into())]);
@@ -5448,7 +5546,7 @@ mod tests {
     fn citekey_pages_empty_when_no_citekeys() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let pages = store.citekey_pages().unwrap();
         assert!(pages.is_empty());
@@ -5459,8 +5557,8 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let paper = make_node("paper.md", "Paper", &[], json!({"citekey": "smith2024"}));
         let other = make_node("other.md", "Other", &[], json!({}));
-        store.upsert_node(&paper, 1).unwrap();
-        store.upsert_node(&other, 1).unwrap();
+        store.upsert_node(&paper, 1, None).unwrap();
+        store.upsert_node(&other, 1, None).unwrap();
 
         let result = store.page_for_citekey("smith2024").unwrap();
         assert_eq!(result, Some("paper.md".to_string()));
@@ -5470,7 +5568,7 @@ mod tests {
     fn page_for_citekey_returns_none_for_absent_key() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
 
         let result = store.page_for_citekey("nonexistent").unwrap();
         assert_eq!(result, None);
@@ -5480,7 +5578,7 @@ mod tests {
     fn all_nodes_metadata_returns_materialization() {
         let store = Store::open_memory().unwrap();
         let node = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&node, 1).unwrap();
+        store.upsert_node(&node, 1, None).unwrap();
         store.upsert_stub("Ghost").unwrap();
         store.upsert_shadow("bib:x", "X", Materialization::Shadow).unwrap();
 
@@ -5495,7 +5593,7 @@ mod tests {
     fn citing_pages_matches_on_raw_target() {
         let store = Store::open_memory().unwrap();
         let a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         store.upsert_shadow("bib:smith2024", "Smith", Materialization::Shadow).unwrap();
 
         // Edge target is the resolved bib: node id, raw_target is the raw key
@@ -5549,7 +5647,7 @@ mod tests {
 
         // Create a materialized node and a shadow node
         let a = make_node("a.md", "A", &[], json!({}));
-        store.upsert_node(&a, 1).unwrap();
+        store.upsert_node(&a, 1, None).unwrap();
         store.upsert_shadow("bib:smith2024", "Smith (2024)", Materialization::Shadow).unwrap();
 
         // Insert a citation edge with a valid target (bib:smith2024 has a node)
@@ -5874,8 +5972,8 @@ mod tests {
     #[test]
     fn list_all_cardbox_annotations_returns_all() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
-        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1, None).unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1, None).unwrap();
         let anns_a = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
             date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
@@ -5910,10 +6008,16 @@ mod tests {
         }
     }
 
+    /// Test helper: create a node with body and upsert it in one call.
+    fn upsert_node_with_body(store: &Store, id: &str, title: &str, tags: &[&str], body: &str, mtime: i64) {
+        let node = make_node_with_body(id, title, tags, body);
+        store.upsert_node(&node, mtime, Some(&node.body)).unwrap();
+    }
+
     #[test]
     fn search_content_empty_query_returns_empty() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "some body text"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "some body text", 1);
         let results = store.search_content("", 10).unwrap();
         assert!(results.is_empty());
     }
@@ -5921,7 +6025,7 @@ mod tests {
     #[test]
     fn search_content_whitespace_only_query_returns_empty() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "some body text"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "some body text", 1);
         let results = store.search_content("   ", 10).unwrap();
         assert!(results.is_empty());
     }
@@ -5929,8 +6033,8 @@ mod tests {
     #[test]
     fn search_content_matches_body() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "The quick brown fox jumps over the lazy dog"), 1).unwrap();
-        store.upsert_node(&make_node_with_body("b.md", "Beta", &[], "A completely different text about cats"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "The quick brown fox jumps over the lazy dog", 1);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], "A completely different text about cats", 1);
         let results = store.search_content("brown fox", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -5940,8 +6044,8 @@ mod tests {
     #[test]
     fn search_content_matches_title() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Quantum Mechanics", &[], "body about physics"), 1).unwrap();
-        store.upsert_node(&make_node_with_body("b.md", "Classical Music", &[], "body about symphonies"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Quantum Mechanics", &[], "body about physics", 1);
+        upsert_node_with_body(&store, "b.md", "Classical Music", &[], "body about symphonies", 1);
         let results = store.search_content("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -5950,8 +6054,8 @@ mod tests {
     #[test]
     fn search_content_matches_tags() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &["physics", "science"], "body text"), 1).unwrap();
-        store.upsert_node(&make_node_with_body("b.md", "Beta", &["music"], "body text two"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics", "science"], "body text", 1);
+        upsert_node_with_body(&store, "b.md", "Beta", &["music"], "body text two", 1);
         let results = store.search_content("physics", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -5961,14 +6065,10 @@ mod tests {
     fn search_content_bm25_ranking_title_beats_body() {
         let store = Store::open_memory().unwrap();
         // "quantum" in title should rank higher than "quantum" buried in body
-        store.upsert_node(&make_node_with_body(
-            "title_match.md", "Quantum Physics", &[],
-            "This note is about physics principles and theories"
-        ), 1).unwrap();
-        store.upsert_node(&make_node_with_body(
-            "body_match.md", "Some Other Topic", &[],
-            "This note mentions quantum mechanics in passing among other topics"
-        ), 1).unwrap();
+        upsert_node_with_body(&store, "title_match.md", "Quantum Physics", &[],
+            "This note is about physics principles and theories", 1);
+        upsert_node_with_body(&store, "body_match.md", "Some Other Topic", &[],
+            "This note mentions quantum mechanics in passing among other topics", 1);
         let results = store.search_content("quantum", 10).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, "title_match.md", "title match should rank first");
@@ -5977,10 +6077,8 @@ mod tests {
     #[test]
     fn search_content_snippet_has_highlight_marks() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body(
-            "a.md", "Alpha", &[],
-            "The quick brown fox jumps over the lazy dog in the meadow"
-        ), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[],
+            "The quick brown fox jumps over the lazy dog in the meadow", 1);
         let results = store.search_content("brown fox", 10).unwrap();
         assert!(!results.is_empty());
         // snippet() wraps matches in <mark> tags
@@ -5990,10 +6088,8 @@ mod tests {
     #[test]
     fn search_content_snippet_title_only_match_has_highlight() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body(
-            "a.md", "Quantum Entanglement Explained", &[],
-            "This is a generic body with no relation to the title topic"
-        ), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Quantum Entanglement Explained", &[],
+            "This is a generic body with no relation to the title topic", 1);
         let results = store.search_content("Entanglement", 10).unwrap();
         assert!(!results.is_empty());
         // When the match is only in the title, snippet() with column -1 should still highlight it
@@ -6007,8 +6103,8 @@ mod tests {
     #[test]
     fn search_content_short_query_like_fallback() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "Go is a programming language"), 1).unwrap();
-        store.upsert_node(&make_node_with_body("b.md", "Beta", &[], "Python is great"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "Go is a programming language", 1);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], "Python is great", 1);
         // "Go" is < 3 chars, triggers LIKE fallback
         let results = store.search_content("Go", 10).unwrap();
         assert!(!results.is_empty());
@@ -6018,14 +6114,10 @@ mod tests {
     #[test]
     fn search_content_mixed_short_long_terms_uses_fts_with_post_filter() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body(
-            "a.md", "Alpha", &[],
-            "AI and transformer models are revolutionizing natural language processing"
-        ), 1).unwrap();
-        store.upsert_node(&make_node_with_body(
-            "b.md", "Beta", &[],
-            "The transformer architecture was introduced in 2017"
-        ), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[],
+            "AI and transformer models are revolutionizing natural language processing", 1);
+        upsert_node_with_body(&store, "b.md", "Beta", &[],
+            "The transformer architecture was introduced in 2017", 1);
         // "AI" is 2 chars (short), "transformer" is 11 chars (FTS-eligible).
         // Should use FTS for "transformer" (with ranking + highlights) then post-filter for "AI".
         let results = store.search_content("AI transformer", 10).unwrap();
@@ -6042,7 +6134,7 @@ mod tests {
     #[test]
     fn search_content_like_metachar_only_query_returns_empty() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "some body text"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "some body text", 1);
         // "%_" consists only of LIKE metacharacters; after sanitization every term is empty
         let results = store.search_content("%_", 10).unwrap();
         assert!(results.is_empty(), "query of only LIKE metacharacters should match nothing");
@@ -6051,7 +6143,7 @@ mod tests {
     #[test]
     fn search_content_excludes_stubs() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "body text here"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "body text here", 1);
         store.upsert_stub("stub_node").unwrap();
         let results = store.search_content("stub", 10).unwrap();
         // stub_node should not appear
@@ -6062,10 +6154,8 @@ mod tests {
     fn search_content_respects_limit() {
         let store = Store::open_memory().unwrap();
         for i in 0..5 {
-            store.upsert_node(&make_node_with_body(
-                &format!("note{i}.md"), &format!("Note {i}"), &[],
-                "common search term appears here"
-            ), 1).unwrap();
+            upsert_node_with_body(&store, &format!("note{i}.md"), &format!("Note {i}"), &[],
+                "common search term appears here", 1);
         }
         let results = store.search_content("common search", 3).unwrap();
         assert!(results.len() <= 3);
@@ -6074,11 +6164,9 @@ mod tests {
     #[test]
     fn search_content_cjk_query() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body(
-            "a.md", "Chinese Note", &[],
-            "This note discusses 量子力学 and its applications"
-        ), 1).unwrap();
-        store.upsert_node(&make_node_with_body("b.md", "Other", &[], "No CJK here"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Chinese Note", &[],
+            "This note discusses 量子力学 and its applications", 1);
+        upsert_node_with_body(&store, "b.md", "Other", &[], "No CJK here", 1);
         let results = store.search_content("量子力学", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -6087,9 +6175,9 @@ mod tests {
     #[test]
     fn search_content_update_reindexes_fts() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "original body text"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "original body text", 1);
         // Update the node with new body
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "completely rewritten content"), 2).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "completely rewritten content", 2);
         // Old text should not match
         let old_results = store.search_content("original", 10).unwrap();
         assert!(old_results.is_empty());
@@ -6102,7 +6190,7 @@ mod tests {
     #[test]
     fn search_content_delete_removes_from_fts() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "searchable body text"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "searchable body text", 1);
         let results = store.search_content("searchable", 10).unwrap();
         assert_eq!(results.len(), 1);
         store.delete_node("a.md").unwrap();
@@ -6113,7 +6201,7 @@ mod tests {
     #[test]
     fn search_content_excludes_shadows_in_like_path() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "body text here"), 1).unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "body text here", 1);
         // Shadow node with a title that matches a short query (triggers LIKE fallback)
         store.upsert_shadow("bib:sm2024", "Sm", Materialization::Shadow).unwrap();
         // "Sm" is < 3 chars, so search_content takes the LIKE fallback path
@@ -6125,9 +6213,93 @@ mod tests {
     }
 
     #[test]
+    fn v21_to_v22_migration_adds_notes_fts() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Build a v21 database with a node and a sync entry.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT '', materialization TEXT NOT NULL DEFAULT 'materialized'
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '',
+                    source_line INTEGER DEFAULT 0, edge_kind TEXT NOT NULL DEFAULT 'wikilink');
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL, uuid TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL);
+                CREATE TABLE bib_items (
+                    id INTEGER PRIMARY KEY, cite_key TEXT NOT NULL UNIQUE, entry_type TEXT NOT NULL,
+                    title TEXT, authors TEXT, year TEXT, doi TEXT, isbn TEXT, arxiv_id TEXT, url TEXT,
+                    journal TEXT, publisher TEXT, abstract TEXT, issn TEXT, volume TEXT, number TEXT,
+                    pages TEXT, file TEXT, tags TEXT, raw_bibtex TEXT, source_file TEXT, source_line INTEGER,
+                    deleted_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    oclc TEXT, work_type TEXT, series TEXT, lccn TEXT, editors TEXT
+                );
+                CREATE TABLE bib_source_files (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL,
+                    last_ingested TEXT NOT NULL DEFAULT (datetime('now')));
+                CREATE TABLE bib_references (parent_key TEXT NOT NULL, child_key TEXT NOT NULL,
+                    position INTEGER, PRIMARY KEY (parent_key, child_key));
+                INSERT INTO meta(key, value) VALUES ('schema_version', '21');",
+            ).unwrap();
+
+            conn.execute(
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                 VALUES ('a.md', 'Alpha', 'p1', '{}', 100, 0)",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO sync(path, mtime) VALUES ('a.md', 42)",
+                [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // notes_fts table should exist
+        let fts_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes_fts'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(fts_count, 1, "notes_fts table should exist after v22 migration");
+
+        // sync mtimes should be reset to 0
+        let max_mtime: i64 = store.conn.query_row(
+            "SELECT COALESCE(MAX(mtime), 0) FROM sync", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(max_mtime, 0, "all sync mtimes should be reset to 0 after v22 migration");
+
+        // Pre-existing data survives
+        let title: String = store.conn.query_row(
+            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(title, "Alpha");
+    }
+
+    #[test]
     fn list_all_cardbox_annotations_excludes_orphans() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1, None).unwrap();
         let anns = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
@@ -6157,7 +6329,7 @@ mod tests {
             assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
             // Insert a node so FTS backfill has data to work with
             let node = make_node("a.md", "A", &["tag1"], json!({}));
-            store.upsert_node(&node, 1000).unwrap();
+            store.upsert_node(&node, 1000, None).unwrap();
         }
 
         // Now roll back schema_version to 21 (simulating: ALTER TABLE body

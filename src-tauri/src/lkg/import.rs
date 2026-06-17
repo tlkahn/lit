@@ -224,7 +224,7 @@ pub fn import_graph_data(
                     first_paragraph: n.first_paragraph.clone(),
                     body: String::new(),
                 };
-                store.upsert_node(&parsed, 0)?;
+                store.upsert_node(&parsed, 0, None)?;
             }
         }
 
@@ -583,7 +583,7 @@ mod tests {
             first_paragraph: "".into(),
             body: String::new(),
         };
-        store.upsert_node(&node, 0).unwrap();
+        store.upsert_node(&node, 0, None).unwrap();
     }
 
     // --- E10: import_graph_data inserts edges ---

@@ -514,6 +514,9 @@ export interface EnrichResult {
   references_appended: number;
   shadow_nodes_created: number;
   references_linked: number;
+  candidates: BibEntry[];
+  providers_searched: string[];
+  providers_failed: string[];
 }
 
 export async function enrichBibEntry(
@@ -521,6 +524,16 @@ export async function enrichBibEntry(
   workspacePath: string,
 ): Promise<EnrichResult> {
   return invoke<EnrichResult>("enrich_bib_entry", { bibKey, workspacePath });
+}
+
+export async function applyEnrichmentCandidate(
+  bibKey: string,
+  candidate: BibEntry,
+  workspacePath: string,
+): Promise<EnrichResult> {
+  return invoke<EnrichResult>("apply_enrichment_candidate", {
+    bibKey, candidate, workspacePath,
+  });
 }
 
 // PDF download / link

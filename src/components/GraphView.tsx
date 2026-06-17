@@ -164,9 +164,11 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         }
         if (result.shadow_nodes_created > 0)
           parts.push(`${result.shadow_nodes_created} shadow nodes created`);
-        show(
-          `Enriched ${bibKey}${parts.length > 0 ? ": " + parts.join(". ") : ""}`,
-        );
+        if (parts.length === 0) {
+          show(`No new metadata found for @${bibKey}`);
+        } else {
+          show(`Enriched ${bibKey}: ${parts.join(". ")}`);
+        }
       } catch (err) {
         show(
           err instanceof Error ? err.message : String(err),

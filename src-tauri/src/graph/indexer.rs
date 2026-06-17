@@ -275,7 +275,7 @@ pub fn index_workspace_with_progress(
 
     for (i, node) in all_nodes.iter().enumerate() {
         let mtime = file_mtimes.get(&node.id).copied().unwrap_or(0);
-        store.upsert_node(node, mtime)?;
+        store.upsert_node(node, mtime, Some(&node.body))?;
         nodes_indexed += 1;
 
         // Always call upsert even with empty vec so orphaned annotations get cleaned up.
@@ -513,7 +513,7 @@ pub fn incremental_reindex(
                     changed_stems.push(normalize_stem(path));
                 }
 
-                store.upsert_node(&node, mtime)?;
+                store.upsert_node(&node, mtime, Some(&node.body))?;
                 stem_lookup.insert(&node.id, &new_aliases);
                 nodes_indexed += 1;
 
@@ -6606,5 +6606,22 @@ mod tests {
             items.iter().any(|e| e.key == "doe2022"),
             "new bib entry must be ingested during batch_reindex"
         );
+    }
+
+    #[test]
+    fn index_workspace_populates_notes_fts() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "---\ntitle: Alpha\n---\nQuantum mechanics intro");
+        write_md(dir.path(), "b.md", "---\ntitle: Beta\n---\nClassical physics");
+        let store = Store::open_memory().unwrap();
+        index_workspace(&store, dir.path(), false).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM notes_fts", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 2, "notes_fts should have one row per indexed file");
+        let matches: Vec<String> = store.conn.prepare(
+            "SELECT node_id FROM notes_fts WHERE notes_fts MATCH 'Quantum'",
+        ).unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(matches, vec!["a.md"]);
     }
 }
