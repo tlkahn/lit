@@ -138,7 +138,7 @@ function PdfPageNav() {
         data-testid="status-bar-pdf-prev"
         disabled={currentPage <= 0}
         onClick={handlePrev}
-        className="px-0.5 hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed"
+        className="select-none px-0.5 hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed"
       >
         ‹
       </button>
@@ -147,7 +147,7 @@ function PdfPageNav() {
         data-testid="status-bar-pdf-next"
         disabled={currentPage >= pageCount - 1}
         onClick={handleNext}
-        className="px-0.5 hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed"
+        className="select-none px-0.5 hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed"
       >
         ›
       </button>
