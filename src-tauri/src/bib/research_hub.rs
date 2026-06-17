@@ -212,6 +212,44 @@ pub fn create_enabled_providers(
         .collect()
 }
 
+/// Build a config and provider list from an `AppHandle`.
+///
+/// Reads user preferences and credential store to construct a
+/// `research_hub::Config` and the set of enabled providers.  Shared by
+/// `search_papers` and `enrich_entry` so the wiring logic lives in one
+/// place.
+pub fn providers_from_app_handle(
+    app_handle: &tauri::AppHandle,
+    client: reqwest::Client,
+) -> (Arc<research_hub::Config>, Vec<Arc<dyn research_hub::Provider>>) {
+    use tauri::Manager;
+
+    let prefs = crate::preferences::read_preferences(app_handle);
+    let cred_store = app_handle.state::<Arc<dyn crate::commands::credential::CredentialStore>>();
+    let config = build_config(&prefs, cred_store.as_ref());
+
+    let enabled: HashSet<String> = prefs
+        .extra
+        .get("search.enabledProviders")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            legal_provider_ids()
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
+
+    let config = Arc::new(config);
+    let providers = create_enabled_providers(client, config.clone(), &enabled);
+    (config, providers)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

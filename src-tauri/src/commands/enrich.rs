@@ -12,8 +12,10 @@ use crate::bib::convert::{
 use rusqlite::Connection;
 
 use crate::bib::db::{self, UpsertOutcome};
+use crate::bib::research_hub::providers_from_app_handle;
 use crate::bib::semantic_scholar::{
-    lookup_by_doi_with_base as s2_lookup_by_doi_with_base, s2_paper_to_bib_entry,
+    lookup_by_doi_with_base as s2_lookup_by_doi_with_base,
+    lookup_by_paper_id_with_base, s2_paper_to_bib_entry,
     s2_ref_to_bib_entry, search_by_title_with_base, S2Paper, S2Reference,
 };
 use crate::bib::types::BibEntry;
@@ -23,6 +25,45 @@ use crate::commands::page::lookup_graph_index;
 
 const MAX_REFERENCES: usize = 30;
 
+/// Normalize a string for Jaccard similarity: lowercase, replace punctuation
+/// with spaces (using the same heuristic as `title_match::normalize_title`),
+/// split into word set.
+fn normalize_for_similarity(s: &str) -> HashSet<String> {
+    s.to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_punctuation()
+                || (!c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace())
+            {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .map(String::from)
+        .collect()
+}
+
+/// Compute Jaccard similarity on lowercased, punctuation-stripped word sets.
+///
+/// Returns `|A intersect B| / |A union B|`. Two empty strings yield 1.0;
+/// one empty and one non-empty yield 0.0.
+pub fn title_similarity(a: &str, b: &str) -> f64 {
+    let set_a = normalize_for_similarity(a);
+    let set_b = normalize_for_similarity(b);
+    if set_a.is_empty() && set_b.is_empty() {
+        return 1.0;
+    }
+    if set_a.is_empty() || set_b.is_empty() {
+        return 0.0;
+    }
+    let intersection = set_a.intersection(&set_b).count();
+    let union = set_a.union(&set_b).count();
+    intersection as f64 / union as f64
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EnrichResult {
     pub entry: BibEntry,
@@ -31,6 +72,13 @@ pub struct EnrichResult {
     pub references_appended: usize,
     pub shadow_nodes_created: usize,
     pub references_linked: usize,
+    /// Candidate matches when no auto-merge occurred (best score < 0.85).
+    /// Empty when auto-merge succeeded.
+    pub candidates: Vec<BibEntry>,
+    /// Provider IDs that were successfully queried.
+    pub providers_searched: Vec<String>,
+    /// Provider IDs that failed during the search.
+    pub providers_failed: Vec<String>,
 }
 
 /// Mutable counters passed to [`link_ref`] to track bookkeeping across calls.
@@ -75,10 +123,79 @@ fn link_ref(
     Ok(())
 }
 
-/// Merge enrichment fields from CrossRef and S2 sources into an existing entry.
-/// Only adds fields that are missing (None or empty) on the existing entry.
-/// CrossRef takes priority over S2 when both provide a field.
-/// Returns a HashMap of BibTeX field names to raw values.
+/// Result of scoring and selecting the best match from search results.
+#[derive(Debug)]
+pub struct MatchResult {
+    /// The best entry when auto-merged (score >= 0.85), or None.
+    pub best_entry: Option<BibEntry>,
+    /// Candidate entries when no auto-merge occurred (best < 0.85).
+    pub candidates: Vec<BibEntry>,
+}
+
+const AUTO_MERGE_THRESHOLD: f64 = 0.85;
+
+/// Score search results against the existing title and select the best match.
+///
+/// - If the top result has Jaccard similarity >= 0.85, it is auto-merged
+///   and `candidates` is empty.
+/// - Otherwise, all results within 0.05 of the best score are returned
+///   as candidates for the user to pick from.
+pub fn select_best_match(
+    existing_title: &str,
+    search_result: &research_hub::SearchResult,
+    existing_keys: &HashSet<String>,
+) -> MatchResult {
+    use crate::bib::research_hub::paper_to_bib_entry;
+
+    if search_result.papers.is_empty() {
+        return MatchResult {
+            best_entry: None,
+            candidates: vec![],
+        };
+    }
+
+    let mut scored: Vec<(f64, BibEntry)> = search_result
+        .papers
+        .iter()
+        .map(|paper| {
+            let entry = paper_to_bib_entry(paper, existing_keys);
+            let score = title_similarity(existing_title, &entry.title);
+            (score, entry)
+        })
+        .collect();
+
+    // Sort descending by score
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let best_score = scored[0].0;
+
+    if best_score >= AUTO_MERGE_THRESHOLD {
+        let (_, best_entry) = scored.remove(0);
+        MatchResult {
+            best_entry: Some(best_entry),
+            candidates: vec![],
+        }
+    } else {
+        let threshold = best_score - 0.05;
+        let candidates: Vec<BibEntry> = scored
+            .into_iter()
+            .filter(|(score, _)| *score >= threshold)
+            .map(|(_, entry)| entry)
+            .collect();
+        MatchResult {
+            best_entry: None,
+            candidates,
+        }
+    }
+}
+
+/// Merge enrichment fields from up to two sources into an existing entry.
+/// `crossref` is the preferred source; `s2` fills gaps when CrossRef does not
+/// have a value. Only adds fields that are missing (None or empty) on the
+/// existing entry. Returns a HashMap of BibTeX field names to raw values.
 pub fn merge_enrichment_fields(
     existing: &BibEntry,
     crossref: Option<&BibEntry>,
@@ -126,7 +243,7 @@ async fn fetch_crossref(doi: &str) -> Result<CslItem, String> {
 async fn fetch_s2(
     doi: Option<&str>,
     title: &str,
-) -> Result<(S2Paper, BibEntry), String> {
+) -> Result<S2Paper, String> {
     fetch_s2_with_base(doi, title, &HTTP_CLIENT, "https://api.semanticscholar.org").await
 }
 
@@ -135,7 +252,7 @@ async fn fetch_s2_with_base(
     title: &str,
     client: &reqwest::Client,
     base_url: &str,
-) -> Result<(S2Paper, BibEntry), String> {
+) -> Result<S2Paper, String> {
     let title_is_empty = title.trim().is_empty();
 
     let paper = if let Some(doi) = doi {
@@ -162,14 +279,95 @@ async fn fetch_s2_with_base(
             );
         }
         let papers = search_by_title_with_base(client, title, base_url).await?;
-        papers
+        let search_hit = papers
             .into_iter()
             .next()
-            .ok_or_else(|| "No results found on Semantic Scholar".to_string())?
+            .ok_or_else(|| "No results found on Semantic Scholar".to_string())?;
+
+        // The search endpoint does not return references. Follow up with a
+        // full paper lookup by paperId to get reference data.
+        if let Some(ref paper_id) = search_hit.paper_id {
+            lookup_by_paper_id_with_base(client, paper_id, base_url)
+                .await
+                .unwrap_or(search_hit)
+        } else {
+            search_hit
+        }
     };
 
-    let entry = s2_paper_to_bib_entry(&paper, &HashSet::new());
-    Ok((paper, entry))
+    Ok(paper)
+}
+
+/// Link references from S2 and CrossRef sources to a parent bib entry.
+/// Returns `(references_found, counters)` for the caller to include in
+/// `EnrichResult`.
+fn link_references_from_sources(
+    conn: &Connection,
+    parent_key: &str,
+    crossref_csl: Option<&CslItem>,
+    s2_paper: Option<&S2Paper>,
+    precomputed_keys: Option<HashSet<String>>,
+) -> Result<(usize, LinkCounters), String> {
+    let crossref_refs: &[CrossrefReference] = crossref_csl
+        .and_then(|c| c.reference.as_deref())
+        .unwrap_or(&[]);
+    let s2_refs = s2_paper
+        .and_then(|p| p.references.as_deref())
+        .unwrap_or(&[]);
+
+    let references_found = count_distinct_references(s2_refs, crossref_refs);
+    let mut counters = LinkCounters::default();
+    let has_any_refs = !s2_refs.is_empty() || !crossref_refs.is_empty();
+
+    if has_any_refs {
+        // Clear stale reference edges so re-enrichment is idempotent
+        db::delete_references_for(conn, parent_key)
+            .map_err(|e| e.to_string())?;
+
+        let mut used_keys = match precomputed_keys {
+            Some(keys) => keys,
+            None => db::all_live_keys(conn).map_err(|e| e.to_string())?,
+        };
+
+        let mut seen_identities: HashSet<String> = HashSet::new();
+
+        // S2 references first (they take priority)
+        for r in s2_refs.iter().take(MAX_REFERENCES) {
+            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
+            if let Some(identity) = ref_identity_key(
+                ref_entry.doi.as_deref(),
+                &ref_entry.title,
+                &ref_entry.year,
+            ) {
+                seen_identities.insert(identity);
+            }
+            link_ref(conn, parent_key, &ref_entry, &mut used_keys, &mut counters)?;
+        }
+
+        // Crossref references: fill gaps, skip duplicates by identity
+        let remaining_slots = MAX_REFERENCES.saturating_sub(counters.position);
+        for cr in crossref_refs.iter().take(remaining_slots) {
+            let cr_doi = cr.doi.as_deref().map(normalize_doi);
+            let cr_title = cr
+                .article_title
+                .as_deref()
+                .map(strip_jats)
+                .unwrap_or_default();
+            let cr_year = cr.year.as_deref().unwrap_or_default();
+            if let Some(identity) =
+                ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year)
+            {
+                if !seen_identities.insert(identity) {
+                    continue;
+                }
+            }
+
+            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
+            link_ref(conn, parent_key, &ref_entry, &mut used_keys, &mut counters)?;
+        }
+    }
+
+    Ok((references_found, counters))
 }
 
 /// Compute a normalized identity key for a reference, used to deduplicate
@@ -240,14 +438,31 @@ fn count_distinct_references(
     seen.len() + no_identity
 }
 
-/// Core enrichment logic, callable without Tauri IPC state.
+/// Core enrichment logic, callable outside Tauri command handlers.
 ///
-/// Fetches metadata from CrossRef and Semantic Scholar, merges new fields into
-/// the DB entry, and links S2 references as child bib entries. Callers are
-/// responsible for issuing `notify_bib_changed` after a successful call.
+/// Three code paths:
+///
+/// **Path A (DOI fast path):** When `existing.doi` is present, use it for
+/// authoritative lookup via CrossRef + S2 concurrently. This is more
+/// reliable than title matching and handles empty-title entries.
+///
+/// **Path B (title search):** When no DOI but the title is non-empty, use
+/// `meta_search` to discover metadata across all enabled providers, score
+/// results via Jaccard title similarity, and auto-merge strong matches
+/// (>= 0.85). When no strong match is found but candidates exist, do
+/// best-effort enrichment with the top candidate to avoid silent failure.
+///
+/// **Path C (no DOI, no title):** Return an error.
+///
+/// After enrichment, reference linking is performed via CrossRef and
+/// Semantic Scholar by DOI when one is available.
+///
+/// Callers are responsible for issuing `notify_bib_changed` after a
+/// successful call.
 pub(crate) async fn enrich_entry(
     bib_key: &str,
     gi: &Arc<crate::graph::indexer::GraphIndex>,
+    app_handle: &tauri::AppHandle,
 ) -> Result<EnrichResult, String> {
     let existing = {
         let store = gi.store();
@@ -256,92 +471,197 @@ pub(crate) async fn enrich_entry(
             .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
     };
 
-    // Fetch from CrossRef and S2 concurrently (both best-effort)
-    let crossref_fut = async {
-        if let Some(ref doi) = existing.doi {
-            fetch_crossref(doi).await.ok()
+    // ── Path A: DOI fast path ───────────────────────────────────────
+    // When the entry already has a DOI, use it for authoritative lookup
+    // via CrossRef + S2 (the pre-meta_search behavior). This is more
+    // reliable than title matching and handles empty-title entries.
+    if let Some(ref doi) = existing.doi {
+        let crossref_fut = async { fetch_crossref(doi).await.ok() };
+        let s2_fut = async { fetch_s2(Some(doi), &existing.title).await.ok() };
+        let (crossref_csl, s2_paper) = tokio::join!(crossref_fut, s2_fut);
+
+        let crossref_entry = crossref_csl.as_ref().map(csl_to_bib_entry);
+        let s2_entry = s2_paper.as_ref().map(|p| s2_paper_to_bib_entry(p, &HashSet::new()));
+
+        // Merge fields from both sources (CrossRef preferred, S2 fills gaps)
+        let new_fields = merge_enrichment_fields(
+            &existing,
+            crossref_entry.as_ref(),
+            s2_entry.as_ref(),
+        );
+        let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
+
+        if !new_fields.is_empty() {
+            let store = gi.store();
+            let modified = db::update_bib_fields(&store.conn, bib_key, &new_fields)
+                .map_err(|e| e.to_string())?;
+            if !modified {
+                fields_added.clear();
+            }
+        }
+
+        // Link references
+        let (references_found, counters) = {
+            let store = gi.store();
+            link_references_from_sources(
+                &store.conn,
+                bib_key,
+                crossref_csl.as_ref(),
+                s2_paper.as_ref(),
+                None,
+            )?
+        };
+
+        // Re-read entry from DB
+        let updated_entry = {
+            let store = gi.store();
+            db::get_bib_item(&store.conn, bib_key)
+                .map_err(|e| e.to_string())?
+                .unwrap_or(existing)
+        };
+
+        // Report which providers succeeded vs failed
+        let mut providers_searched = vec![];
+        let mut providers_failed = vec![];
+        if crossref_csl.is_some() {
+            providers_searched.push("crossref".to_string());
         } else {
-            None
+            providers_failed.push("crossref".to_string());
         }
-    };
-    let s2_fut = async {
-        fetch_s2(existing.doi.as_deref(), &existing.title).await.ok()
-    };
-    let (crossref_csl, s2_result) = tokio::join!(crossref_fut, s2_fut);
-
-    let crossref_entry = crossref_csl.as_ref().map(csl_to_bib_entry);
-    let crossref_refs: &[CrossrefReference] = crossref_csl
-        .as_ref()
-        .and_then(|c| c.reference.as_deref())
-        .unwrap_or(&[]);
-    let s2_entry = s2_result.as_ref().map(|(_, e)| e);
-    let s2_paper = s2_result.as_ref().map(|(p, _)| p);
-
-    // Merge enrichment fields
-    let new_fields = merge_enrichment_fields(&existing, crossref_entry.as_ref(), s2_entry);
-    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
-
-    // Update entry fields via DB if any new fields were found
-    if !new_fields.is_empty() {
-        let store = gi.store();
-        let modified = db::update_bib_fields(&store.conn, bib_key, &new_fields)
-            .map_err(|e| e.to_string())?;
-        if !modified {
-            fields_added.clear();
+        if s2_paper.is_some() {
+            providers_searched.push("semantic_scholar".to_string());
+        } else {
+            providers_failed.push("semantic_scholar".to_string());
         }
+
+        return Ok(EnrichResult {
+            entry: updated_entry,
+            fields_added,
+            references_found,
+            references_appended: counters.references_appended,
+            shadow_nodes_created: counters.shadow_nodes_created,
+            references_linked: counters.references_linked,
+            candidates: vec![],
+            providers_searched,
+            providers_failed,
+        });
     }
 
-    // Append references from S2 and Crossref as minimal BibEntries via DB
-    let mut counters = LinkCounters::default();
+    // ── Path C: No DOI and no title ─────────────────────────────────
+    let title_is_empty = existing.title.trim().is_empty();
+    if title_is_empty {
+        return Err(
+            "Cannot enrich: entry has no DOI and no title".to_string(),
+        );
+    }
 
-    let s2_refs = s2_paper
-        .and_then(|p| p.references.as_deref())
-        .unwrap_or(&[]);
-    let references_found = count_distinct_references(s2_refs, crossref_refs);
-    let has_any_refs = !s2_refs.is_empty() || !crossref_refs.is_empty();
+    // ── Path B: No DOI, has title -> meta_search ────────────────────
+    let (config, providers) = providers_from_app_handle(app_handle, HTTP_CLIENT.clone());
 
-    if has_any_refs {
+    // Search for the title across all enabled providers
+    let search_result = research_hub::meta_search(
+        &existing.title,
+        &providers,
+        &config,
+        Some(research_hub::SearchType::Title),
+        10, // limit: fetch up to 10 results for scoring
+        0,  // offset
+        research_hub::SortOrder::Relevance,
+    )
+    .await;
+
+    let providers_searched = search_result.providers_searched.clone();
+    let providers_failed = search_result.providers_failed.clone();
+
+    // Score results against existing title and select best match
+    let mut used_keys = {
         let store = gi.store();
+        db::all_live_keys(&store.conn).map_err(|e| e.to_string())?
+    };
+    let match_result = select_best_match(&existing.title, &search_result, &used_keys);
 
-        // Clear stale reference edges so re-enrichment is idempotent
-        db::delete_references_for(&store.conn, bib_key)
-            .map_err(|e| e.to_string())?;
+    let mut fields_added: Vec<String> = vec![];
+    let mut counters = LinkCounters::default();
+    let mut references_found = 0usize;
+    let candidates;
 
-        let mut used_keys = db::all_live_keys(&store.conn)
-            .map_err(|e| e.to_string())?;
+    // Determine the entry to merge from: strong match or best-effort fallback
+    let merge_entry: Option<&BibEntry>;
 
-        let mut seen_identities: HashSet<String> = HashSet::new();
+    if let Some(ref best_entry) = match_result.best_entry {
+        // Strong match (>= 0.85): auto-merge
+        merge_entry = Some(best_entry);
+        candidates = vec![];
+    } else if !match_result.candidates.is_empty() {
+        // TODO(candidate-selection-ui): When the candidate picker UI is built,
+        // return candidates for user selection instead of auto-merging the top one.
+        // For now, use the top candidate for best-effort enrichment to avoid
+        // silent enrichment failure (P1 regression).
+        merge_entry = Some(&match_result.candidates[0]);
+        candidates = match_result.candidates.clone();
+    } else {
+        merge_entry = None;
+        candidates = vec![];
+    }
 
-        // S2 references first (they take priority)
-        for r in s2_refs.iter().take(MAX_REFERENCES) {
-            let ref_entry = s2_ref_to_bib_entry(r, &used_keys);
-            if let Some(identity) = ref_identity_key(
-                ref_entry.doi.as_deref(),
-                &ref_entry.title,
-                &ref_entry.year,
-            ) {
-                seen_identities.insert(identity);
+    if let Some(entry_to_merge) = merge_entry {
+        let new_fields = merge_enrichment_fields(&existing, Some(entry_to_merge), None);
+        fields_added = new_fields.keys().cloned().collect();
+
+        if !new_fields.is_empty() {
+            let store = gi.store();
+            let modified = db::update_bib_fields(&store.conn, bib_key, &new_fields)
+                .map_err(|e| e.to_string())?;
+            if !modified {
+                fields_added.clear();
             }
-            link_ref(&store.conn, bib_key, &ref_entry, &mut used_keys, &mut counters)?;
         }
 
-        // Crossref references: fill gaps, skip duplicates by identity
-        let remaining_slots = MAX_REFERENCES.saturating_sub(counters.position);
-        for cr in crossref_refs.iter().take(remaining_slots) {
-            // Skip if this Crossref ref's identity was already seen
-            // (from S2 or an earlier Crossref ref). Check-and-insert in
-            // one call: HashSet::insert returns false if already present.
-            let cr_doi = cr.doi.as_deref().map(normalize_doi);
-            let cr_title = cr.article_title.as_deref().map(strip_jats).unwrap_or_default();
-            let cr_year = cr.year.as_deref().unwrap_or_default();
-            if let Some(identity) = ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year) {
-                if !seen_identities.insert(identity) {
-                    continue;
-                }
-            }
+        // Reference linking
+        let enriched_doi = new_fields
+            .get("doi")
+            .cloned()
+            .or_else(|| existing.doi.clone());
 
-            let ref_entry = crossref_ref_to_bib_entry(cr, &used_keys);
-            link_ref(&store.conn, bib_key, &ref_entry, &mut used_keys, &mut counters)?;
+        if let Some(ref doi) = enriched_doi {
+            // DOI available: use CrossRef + S2 concurrently
+            let crossref_fut = async { fetch_crossref(doi).await.ok() };
+            let s2_fut = async { fetch_s2(Some(doi), &existing.title).await.ok() };
+            let (crossref_csl, s2_paper) = tokio::join!(crossref_fut, s2_fut);
+
+            let (found, link_counters) = {
+                let store = gi.store();
+                link_references_from_sources(
+                    &store.conn,
+                    bib_key,
+                    crossref_csl.as_ref(),
+                    s2_paper.as_ref(),
+                    Some(std::mem::take(&mut used_keys)),
+                )?
+            };
+            references_found = found;
+            counters = link_counters;
+        } else {
+            // No DOI: fall back to S2 title-based reference discovery.
+            // CrossRef requires a DOI so we skip it. fetch_s2(None, title)
+            // does a title search followed by a paperId lookup to get
+            // references.
+            let s2_paper = fetch_s2(None, &existing.title).await.ok();
+
+            if s2_paper.is_some() {
+                let (found, link_counters) = {
+                    let store = gi.store();
+                    link_references_from_sources(
+                        &store.conn,
+                        bib_key,
+                        None,
+                        s2_paper.as_ref(),
+                        Some(std::mem::take(&mut used_keys)),
+                    )?
+                };
+                references_found = found;
+                counters = link_counters;
+            }
         }
     }
 
@@ -360,6 +680,9 @@ pub(crate) async fn enrich_entry(
         references_appended: counters.references_appended,
         shadow_nodes_created: counters.shadow_nodes_created,
         references_linked: counters.references_linked,
+        candidates,
+        providers_searched,
+        providers_failed,
     })
 }
 
@@ -374,7 +697,7 @@ pub async fn enrich_bib_entry(
     let gi = lookup_graph_index(&graph_state, &root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
 
-    let result = enrich_entry(&bib_key, &gi).await?;
+    let result = enrich_entry(&bib_key, &gi, &app_handle).await?;
 
     crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
 
@@ -422,26 +745,199 @@ mod tests {
         entry
     }
 
+    // ── title_similarity ─────────────────────────────────────────
+
+    #[test]
+    fn title_similarity_exact_match() {
+        assert_eq!(
+            title_similarity("Attention Is All You Need", "Attention Is All You Need"),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn title_similarity_case_insensitive() {
+        assert_eq!(title_similarity("HELLO WORLD", "hello world"), 1.0);
+    }
+
+    #[test]
+    fn title_similarity_subtitle_variation() {
+        let score = title_similarity(
+            "Attention Is All You Need",
+            "Attention Is All You Need: A Transformer Architecture",
+        );
+        // 5/8 words overlap => Jaccard ~0.625
+        assert!(
+            score > 0.5 && score < 1.0,
+            "subtitle variation should be high but not 1.0, got {}",
+            score,
+        );
+    }
+
+    #[test]
+    fn title_similarity_punctuation_diffs() {
+        assert_eq!(
+            title_similarity("Hello, World! A Study", "Hello World A Study"),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn title_similarity_unicode_dash() {
+        // em-dash should be stripped as punctuation
+        assert_eq!(
+            title_similarity("Title \u{2014} Subtitle", "Title Subtitle"),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn title_similarity_completely_different() {
+        assert_eq!(
+            title_similarity("quantum computing advances", "organic chemistry basics"),
+            0.0,
+        );
+    }
+
+    #[test]
+    fn title_similarity_empty_strings() {
+        assert_eq!(title_similarity("", ""), 1.0);
+        assert_eq!(title_similarity("", "hello"), 0.0);
+        assert_eq!(title_similarity("hello", ""), 0.0);
+    }
+
+    // ── select_best_match ──────────────────────────────────────────
+
+    fn make_search_result_for_matching(
+        papers: Vec<research_hub::Paper>,
+    ) -> research_hub::SearchResult {
+        let total_results = papers.len();
+        research_hub::SearchResult {
+            query: "test".to_string(),
+            search_type: "TITLE".to_string(),
+            papers,
+            total_results,
+            offset: 0,
+            sort: "relevance".to_string(),
+            total_hits: None,
+            provider_hits: vec![],
+            providers_searched: vec!["openalex".to_string()],
+            providers_failed: vec![],
+        }
+    }
+
+    fn make_paper_with_title(title: &str) -> research_hub::Paper {
+        research_hub::Paper {
+            title: title.to_string(),
+            authors: vec!["Author, A".to_string()],
+            year: Some(2024),
+            source: "openalex".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn select_best_match_strong_match_auto_merges() {
+        // Title with >= 0.85 similarity should auto-merge
+        let sr = make_search_result_for_matching(vec![
+            make_paper_with_title("Attention Is All You Need"),
+        ]);
+        let keys = HashSet::new();
+        let result = select_best_match("Attention Is All You Need", &sr, &keys);
+        assert!(result.best_entry.is_some(), "should auto-merge exact match");
+        assert!(result.candidates.is_empty(), "candidates should be empty on auto-merge");
+    }
+
+    #[test]
+    fn select_best_match_weak_match_returns_candidates() {
+        // Completely different title -> candidate, not auto-merge
+        let sr = make_search_result_for_matching(vec![
+            make_paper_with_title("Quantum Computing Fundamentals"),
+        ]);
+        let keys = HashSet::new();
+        let result = select_best_match("Attention Is All You Need", &sr, &keys);
+        assert!(result.best_entry.is_none(), "should not auto-merge weak match");
+        assert!(!result.candidates.is_empty(), "should return candidates");
+    }
+
+    #[test]
+    fn select_best_match_empty_results() {
+        let sr = make_search_result_for_matching(vec![]);
+        let keys = HashSet::new();
+        let result = select_best_match("Anything", &sr, &keys);
+        assert!(result.best_entry.is_none());
+        assert!(result.candidates.is_empty());
+    }
+
+    #[test]
+    fn select_best_match_multiple_close_matches_all_returned() {
+        // Two similarly weak matches should both appear as candidates
+        let sr = make_search_result_for_matching(vec![
+            make_paper_with_title("Machine Learning Survey A"),
+            make_paper_with_title("Machine Learning Survey B"),
+        ]);
+        let keys = HashSet::new();
+        let result = select_best_match("Machine Learning Survey", &sr, &keys);
+        // Both titles have similar Jaccard to query (3/4 and 3/4)
+        // but neither is exactly the query, so < 0.85
+        // Actually 3/4 = 0.75 < 0.85, so candidates
+        assert!(result.best_entry.is_none());
+        assert_eq!(result.candidates.len(), 2, "both close matches should be candidates");
+    }
+
+    #[test]
+    fn select_best_match_strong_with_close_second_still_auto_merges() {
+        // Best is exact match (1.0), second is close but should not prevent auto-merge
+        let sr = make_search_result_for_matching(vec![
+            make_paper_with_title("Attention Is All You Need"),
+            make_paper_with_title("Attention Is All You Need: Extended"),
+        ]);
+        let keys = HashSet::new();
+        let result = select_best_match("Attention Is All You Need", &sr, &keys);
+        assert!(result.best_entry.is_some(), "should auto-merge best match even with close second");
+        assert!(result.candidates.is_empty());
+    }
+
+    #[test]
+    fn select_best_match_exactly_at_threshold() {
+        // Construct a case where Jaccard is exactly 6/7 ~= 0.857 >= 0.85
+        // Query: "a b c d e f", Result: "a b c d e f g" => 6/7 = 0.857
+        let sr = make_search_result_for_matching(vec![
+            make_paper_with_title("a b c d e f g"),
+        ]);
+        let keys = HashSet::new();
+        let result = select_best_match("a b c d e f", &sr, &keys);
+        assert!(result.best_entry.is_some(), "0.857 >= 0.85 should auto-merge");
+    }
+
+    #[test]
+    fn select_best_match_just_below_threshold() {
+        // Jaccard = 5/7 ~= 0.714 < 0.85
+        let sr = make_search_result_for_matching(vec![
+            make_paper_with_title("a b c d e x y"),
+        ]);
+        let keys = HashSet::new();
+        let result = select_best_match("a b c d e f g", &sr, &keys);
+        assert!(result.best_entry.is_none(), "0.714 < 0.85 should not auto-merge");
+        assert_eq!(result.candidates.len(), 1);
+    }
+
     // ── merge_enrichment_fields ────────────────────────────────────
 
     #[test]
-    fn merge_crossref_priority_over_s2() {
+    fn merge_single_source_fills_missing_fields() {
         let existing = make_entry(|_| {});
 
-        let crossref = make_entry(|e| {
-            e.abstract_text = Some("CrossRef abstract".to_string());
-            e.doi = Some("10.1/crossref".to_string());
+        let source = make_entry(|e| {
+            e.abstract_text = Some("Source abstract".to_string());
+            e.doi = Some("10.1/source".to_string());
+            e.url = Some("https://example.com".to_string());
         });
 
-        let s2 = make_entry(|e| {
-            e.abstract_text = Some("S2 abstract".to_string());
-            e.url = Some("https://s2.example.com".to_string());
-        });
-
-        let merged = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
-        assert_eq!(merged.get("abstract").unwrap(), "CrossRef abstract");
-        assert_eq!(merged.get("doi").unwrap(), "10.1/crossref");
-        assert_eq!(merged.get("url").unwrap(), "https://s2.example.com");
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
+        assert_eq!(merged.get("abstract").unwrap(), "Source abstract");
+        assert_eq!(merged.get("doi").unwrap(), "10.1/source");
+        assert_eq!(merged.get("url").unwrap(), "https://example.com");
     }
 
     #[test]
@@ -450,28 +946,28 @@ mod tests {
             e.doi = Some("10.1/existing".to_string());
         });
 
-        let crossref = make_entry(|e| {
-            e.doi = Some("10.1/crossref".to_string());
+        let source = make_entry(|e| {
+            e.doi = Some("10.1/source".to_string());
         });
 
-        let merged = merge_enrichment_fields(&existing, Some(&crossref), None);
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
         assert!(!merged.contains_key("doi"));
     }
 
     #[test]
-    fn merge_falls_back_to_s2_when_no_crossref() {
+    fn merge_source_provides_abstract() {
         let existing = make_entry(|_| {});
 
-        let s2 = make_entry(|e| {
-            e.abstract_text = Some("S2 abstract".to_string());
+        let source = make_entry(|e| {
+            e.abstract_text = Some("Source abstract".to_string());
         });
 
-        let merged = merge_enrichment_fields(&existing, None, Some(&s2));
-        assert_eq!(merged.get("abstract").unwrap(), "S2 abstract");
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
+        assert_eq!(merged.get("abstract").unwrap(), "Source abstract");
     }
 
     #[test]
-    fn merge_both_none_returns_empty() {
+    fn merge_none_source_returns_empty() {
         let existing = make_entry(|_| {});
         let merged = merge_enrichment_fields(&existing, None, None);
         assert!(merged.is_empty());
@@ -532,28 +1028,24 @@ mod tests {
             e.entry_type = "inproceedings".to_string();
         });
 
-        let crossref = make_entry(|e| {
+        let source = make_entry(|e| {
             e.journal = Some("Conference 2024".to_string());
         });
 
-        let merged = merge_enrichment_fields(&existing, Some(&crossref), None);
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
         assert_eq!(merged.get("journal").unwrap(), "Conference 2024");
     }
 
     #[test]
-    fn merge_skips_empty_string_values_from_sources() {
+    fn merge_skips_empty_string_values_from_source() {
         let existing = make_entry(|_| {});
 
-        let crossref = make_entry(|e| {
+        let source = make_entry(|e| {
             e.doi = Some("".to_string());
         });
 
-        let s2 = make_entry(|e| {
-            e.doi = Some("10.1/s2".to_string());
-        });
-
-        let merged = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
-        assert_eq!(merged.get("doi").unwrap(), "10.1/s2");
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
+        assert!(!merged.contains_key("doi"), "empty string should not be merged");
     }
 
     // ── fetch_crossref rejects invalid DOIs ─────────────────────────
@@ -665,9 +1157,140 @@ mod tests {
         let result =
             fetch_s2_with_base(None, "quantum computing", &client, &mock_server.uri()).await;
         assert!(result.is_ok(), "expected Ok for nonempty title, got: {:?}", result);
-        let (paper, entry) = result.unwrap();
+        let paper = result.unwrap();
         assert_eq!(paper.title.as_deref(), Some("Quantum Computing Advances"));
-        assert_eq!(entry.doi, Some("10.1234/qc2023".to_string()));
+    }
+
+    // ── fetch_s2 no-DOI path: follow-up paperId lookup for refs ───
+
+    #[tokio::test]
+    async fn fetch_s2_no_doi_follows_up_with_paper_id_lookup() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        // Step 1: title search returns a paper with paperId but no references
+        let search_body = r#"{
+            "total": 1,
+            "offset": 0,
+            "data": [{
+                "paperId": "s2paper42",
+                "title": "Book Without DOI",
+                "year": 2022,
+                "externalIds": {"CorpusId": 999}
+            }]
+        }"#;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(search_body))
+            .mount(&mock_server)
+            .await;
+
+        // Step 2: paperId lookup returns the full paper with references
+        let paper_body = r#"{
+            "paperId": "s2paper42",
+            "title": "Book Without DOI",
+            "year": 2022,
+            "externalIds": {"CorpusId": 999},
+            "references": [
+                {
+                    "paperId": "ref1",
+                    "title": "Referenced Paper A",
+                    "year": 2020,
+                    "authors": [{"authorId": "a1", "name": "R. Author"}]
+                },
+                {
+                    "paperId": "ref2",
+                    "title": "Referenced Paper B",
+                    "year": 2019,
+                    "authors": [{"authorId": "a2", "name": "S. Writer"}]
+                }
+            ]
+        }"#;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/s2paper42"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(paper_body))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result =
+            fetch_s2_with_base(None, "Book Without DOI", &client, &mock_server.uri()).await;
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+
+        let paper = result.unwrap();
+        // The follow-up lookup should have returned references
+        let refs = paper.references.as_ref().expect("references should be present from paperId lookup");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].title.as_deref(), Some("Referenced Paper A"));
+        assert_eq!(refs[1].title.as_deref(), Some("Referenced Paper B"));
+    }
+
+    #[tokio::test]
+    async fn fetch_s2_no_doi_paper_id_lookup_fails_falls_back_to_search_hit() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        // Title search returns a paper with paperId
+        let search_body = r#"{
+            "total": 1,
+            "offset": 0,
+            "data": [{
+                "paperId": "s2paper99",
+                "title": "Fallback Paper",
+                "year": 2021,
+                "externalIds": {"CorpusId": 888}
+            }]
+        }"#;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(search_body))
+            .mount(&mock_server)
+            .await;
+
+        // paperId lookup fails with 500
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/s2paper99"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result =
+            fetch_s2_with_base(None, "Fallback Paper", &client, &mock_server.uri()).await;
+        assert!(result.is_ok(), "should fall back to search hit, got: {:?}", result);
+
+        let paper = result.unwrap();
+        // Should still have the search hit data, just no references
+        assert_eq!(paper.title.as_deref(), Some("Fallback Paper"));
+        assert!(paper.references.is_none(), "search hit should have no references");
+    }
+
+    #[tokio::test]
+    async fn fetch_s2_no_doi_search_hit_without_paper_id_skips_followup() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        // Title search returns a paper without paperId
+        let search_body = r#"{
+            "total": 1,
+            "offset": 0,
+            "data": [{
+                "title": "No PaperId Paper",
+                "year": 2020,
+                "externalIds": {"CorpusId": 777}
+            }]
+        }"#;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(search_body))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result =
+            fetch_s2_with_base(None, "No PaperId Paper", &client, &mock_server.uri()).await;
+        assert!(result.is_ok(), "should succeed with search hit, got: {:?}", result);
+
+        let paper = result.unwrap();
+        assert_eq!(paper.title.as_deref(), Some("No PaperId Paper"));
+        assert!(paper.references.is_none(), "no paperId means no follow-up lookup");
     }
 
     // ── merge_receives_crossref fields via parse_crossref_body ────
@@ -774,12 +1397,17 @@ mod tests {
             references_appended: 10,
             shadow_nodes_created: 8,
             references_linked: 10,
+            candidates: vec![],
+            providers_searched: vec!["openalex".to_string()],
+            providers_failed: vec![],
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["references_appended"], 10);
         assert_eq!(json["references_found"], 50);
         assert_eq!(json["shadow_nodes_created"], 8);
         assert_eq!(json["references_linked"], 10);
+        assert_eq!(json["providers_searched"], serde_json::json!(["openalex"]));
+        assert!(json["candidates"].as_array().unwrap().is_empty());
     }
 
     // ── references_appended capping contract ──────────────────────
@@ -803,14 +1431,10 @@ mod tests {
         fs::write(&bib_path, content).unwrap();
         let cache = BibCache::new();
 
-        // Simulate CrossRef result
-        let crossref = make_entry(|e| {
+        // Simulate enrichment source
+        let source = make_entry(|e| {
             e.abstract_text = Some("Enriched abstract".to_string());
             e.url = Some("https://enriched.example.com".to_string());
-        });
-
-        // Simulate S2 result
-        let s2 = make_entry(|e| {
             e.journal = Some("Nature".to_string());
         });
 
@@ -818,8 +1442,8 @@ mod tests {
             &make_entry(|e| {
                 e.doi = Some("10.1/existing".to_string());
             }),
-            Some(&crossref),
-            Some(&s2),
+            Some(&source),
+            None,
         );
 
         assert!(new_fields.contains_key("abstract"));
@@ -875,11 +1499,11 @@ mod tests {
         let existing = make_entry(|e| {
             e.doi = None; // simulate stale parse missing the doi
         });
-        let crossref = make_entry(|e| {
+        let source = make_entry(|e| {
             e.doi = Some("10.1/x".to_string());
         });
 
-        let new_fields = merge_enrichment_fields(&existing, Some(&crossref), None);
+        let new_fields = merge_enrichment_fields(&existing, Some(&source), None);
         assert!(!new_fields.is_empty(), "merge should propose doi");
 
         let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
@@ -906,11 +1530,11 @@ mod tests {
         let existing = make_entry(|e| {
             e.doi = None;
         });
-        let crossref = make_entry(|e| {
+        let source = make_entry(|e| {
             e.doi = Some("10.1/x".to_string());
         });
 
-        let new_fields = merge_enrichment_fields(&existing, Some(&crossref), None);
+        let new_fields = merge_enrichment_fields(&existing, Some(&source), None);
         assert!(!new_fields.is_empty(), "merge should propose doi");
 
         let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
@@ -941,18 +1565,14 @@ mod tests {
         });
         db::upsert_bib_item(&store.conn, &existing, None, None, false).unwrap();
 
-        // Simulate CrossRef result
-        let crossref = make_entry(|e| {
+        // Simulate enrichment source
+        let source = make_entry(|e| {
             e.abstract_text = Some("Enriched abstract".to_string());
             e.url = Some("https://enriched.example.com".to_string());
-        });
-
-        // Simulate S2 result
-        let s2 = make_entry(|e| {
             e.journal = Some("Nature".to_string());
         });
 
-        let new_fields = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
+        let new_fields = merge_enrichment_fields(&existing, Some(&source), None);
         assert!(new_fields.contains_key("abstract"));
         assert!(new_fields.contains_key("url"));
         assert!(new_fields.contains_key("journal"));
@@ -1030,9 +1650,15 @@ mod tests {
             references_appended: 5,
             shadow_nodes_created: 3,
             references_linked: 5,
+            candidates: vec![make_entry(|e| e.title = "Candidate".to_string())],
+            providers_searched: vec!["openalex".to_string()],
+            providers_failed: vec!["crossref".to_string()],
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["references_linked"], 5);
+        assert_eq!(json["candidates"].as_array().unwrap().len(), 1);
+        assert_eq!(json["providers_searched"], serde_json::json!(["openalex"]));
+        assert_eq!(json["providers_failed"], serde_json::json!(["crossref"]));
     }
 
     // ── Enrich references linked via DB ─────────────────────────────
@@ -2131,6 +2757,271 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].key, "ref_a2024");
         assert_eq!(refs[1].key, "ref_b2024");
+    }
+
+    // ── Two-source merge_enrichment_fields ─────────────────────────
+
+    #[test]
+    fn merge_two_sources_crossref_preferred() {
+        // When both CrossRef and S2 provide a value, CrossRef wins
+        let existing = make_entry(|_| {});
+        let crossref = make_entry(|e| {
+            e.abstract_text = Some("CrossRef abstract".to_string());
+            e.doi = Some("10.1/crossref-doi".to_string());
+        });
+        let s2 = make_entry(|e| {
+            e.abstract_text = Some("S2 abstract".to_string());
+            e.journal = Some("S2 Journal".to_string());
+        });
+
+        let merged = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
+        // CrossRef wins for abstract since both have it
+        assert_eq!(merged.get("abstract").unwrap(), "CrossRef abstract");
+        // S2 fills the gap for journal since CrossRef doesn't have it
+        assert_eq!(merged.get("journal").unwrap(), "S2 Journal");
+        assert_eq!(merged.get("doi").unwrap(), "10.1/crossref-doi");
+    }
+
+    #[test]
+    fn merge_two_sources_s2_fills_crossref_gaps() {
+        let existing = make_entry(|_| {});
+        let crossref = make_entry(|e| {
+            e.doi = Some("10.1/x".to_string());
+            e.journal = None; // CrossRef doesn't have journal
+        });
+        let s2 = make_entry(|e| {
+            e.journal = Some("S2 Journal".to_string());
+            e.url = Some("https://s2.example.com".to_string());
+        });
+
+        let merged = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
+        assert_eq!(merged.get("doi").unwrap(), "10.1/x");
+        assert_eq!(merged.get("journal").unwrap(), "S2 Journal");
+        assert_eq!(merged.get("url").unwrap(), "https://s2.example.com");
+    }
+
+    #[test]
+    fn merge_two_sources_both_none_returns_empty() {
+        let existing = make_entry(|_| {});
+        let merged = merge_enrichment_fields(&existing, None, None);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn merge_two_sources_crossref_only() {
+        // When only crossref is provided (s2=None), same as single-source
+        let existing = make_entry(|_| {});
+        let crossref = make_entry(|e| {
+            e.doi = Some("10.1/cr".to_string());
+        });
+        let merged = merge_enrichment_fields(&existing, Some(&crossref), None);
+        assert_eq!(merged.get("doi").unwrap(), "10.1/cr");
+    }
+
+    #[test]
+    fn merge_two_sources_s2_only() {
+        // When only s2 is provided (crossref=None), s2 fills
+        let existing = make_entry(|_| {});
+        let s2 = make_entry(|e| {
+            e.journal = Some("S2 Only Journal".to_string());
+        });
+        let merged = merge_enrichment_fields(&existing, None, Some(&s2));
+        assert_eq!(merged.get("journal").unwrap(), "S2 Only Journal");
+    }
+
+    #[test]
+    fn merge_two_sources_crossref_empty_string_s2_fills() {
+        // CrossRef has empty string for a field, S2 has a real value => S2 wins
+        let existing = make_entry(|_| {});
+        let crossref = make_entry(|e| {
+            e.journal = Some("".to_string()); // empty string
+        });
+        let s2 = make_entry(|e| {
+            e.journal = Some("S2 Journal".to_string());
+        });
+        let merged = merge_enrichment_fields(&existing, Some(&crossref), Some(&s2));
+        assert_eq!(merged.get("journal").unwrap(), "S2 Journal");
+    }
+
+    // ── link_references_from_sources helper ─────────────────────────
+
+    #[test]
+    fn link_references_from_sources_basic() {
+        use crate::bib::convert::StringOrSeq;
+        use crate::bib::db;
+        use crate::bib::semantic_scholar::{S2Author, S2ExternalIds, S2Reference};
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Build S2 result with 1 ref
+        let s2_paper = S2Paper {
+            paper_id: Some("s2_parent".to_string()),
+            title: Some("Parent Paper".to_string()),
+            year: Some(2024),
+            authors: None,
+            external_ids: None,
+            abstract_text: None,
+            references: Some(vec![S2Reference {
+                paper_id: Some("s2_ref1".to_string()),
+                external_ids: Some(S2ExternalIds {
+                    doi: Some("10.1/ref1".to_string()),
+                    arxiv: None, pubmed: None, pubmed_central: None, mag: None, corpus_id: None,
+                }),
+                title: Some("S2 Ref Paper".to_string()),
+                year: Some(2020),
+                authors: Some(vec![S2Author { author_id: None, name: Some("A. Author".to_string()) }]),
+            }]),
+            venue: None,
+            url: None,
+            reference_count: None,
+            citation_count: None,
+            tldr: None,
+            journal: None,
+            open_access_pdf: None,
+        };
+        // Build a CrossRef CSL item with 1 ref
+        let crossref_csl = CslItem {
+            doi: Some("10.1/parent".to_string()),
+            title: Some(StringOrSeq::Seq(vec!["Parent Paper".to_string()])),
+            author: None,
+            item_type: Some("journal-article".to_string()),
+            container_title: None,
+            issued: None,
+            reference: Some(vec![CrossrefReference {
+                doi: Some("10.1/crref1".to_string()),
+                article_title: Some("CR Ref Paper".to_string()),
+                author: Some("B. Author".to_string()),
+                year: Some("2021".to_string()),
+                volume: None, first_page: None, journal_title: None,
+            }]),
+            volume: None,
+            issue: None,
+            page: None,
+            publisher: None,
+            issn: None,
+            isbn: None,
+            abstract_text: None,
+            url: None,
+            subject: None,
+        };
+
+        let (refs_found, counters) = link_references_from_sources(
+            &store.conn,
+            "parent2024",
+            Some(&crossref_csl),
+            Some(&s2_paper),
+            None,
+        ).unwrap();
+
+        // 2 distinct references (different DOIs)
+        assert_eq!(refs_found, 2);
+        assert_eq!(counters.references_linked, 2);
+        assert_eq!(counters.shadow_nodes_created, 2);
+
+        let refs = db::get_references_for(&store.conn, "parent2024").unwrap();
+        assert_eq!(refs.len(), 2);
+    }
+
+    #[test]
+    fn link_references_from_sources_no_refs() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        let parent = make_entry(|e| {
+            e.key = "parent2024".to_string();
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // No sources at all
+        let (refs_found, counters) = link_references_from_sources(
+            &store.conn,
+            "parent2024",
+            None,
+            None,
+            None,
+        ).unwrap();
+
+        assert_eq!(refs_found, 0);
+        assert_eq!(counters.references_linked, 0);
+    }
+
+    /// Regression test: when no DOI is available, reference linking should
+    /// still work via S2 title-based discovery (the `else` branch in Path B).
+    /// This test verifies that `link_references_from_sources` works correctly
+    /// with S2-only data (no CrossRef), which is the codepath exercised when
+    /// `enriched_doi` is `None`.
+    #[test]
+    fn link_references_from_sources_s2_only_no_crossref() {
+        use crate::bib::db;
+        use crate::bib::semantic_scholar::{S2Author, S2Reference};
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        // Insert parent (no DOI -- the case this bug fix targets)
+        let parent = make_entry(|e| {
+            e.key = "book2024".to_string();
+            e.title = "A Book Without DOI".to_string();
+            e.doi = None;
+        });
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+
+        // Build S2 result with references (as would come from paperId lookup)
+        let s2_paper = S2Paper {
+            paper_id: Some("s2_book".to_string()),
+            title: Some("A Book Without DOI".to_string()),
+            year: Some(2024),
+            authors: None,
+            external_ids: None,
+            abstract_text: None,
+            references: Some(vec![
+                S2Reference {
+                    paper_id: Some("ref1".to_string()),
+                    external_ids: None,
+                    title: Some("Chapter Reference A".to_string()),
+                    year: Some(2020),
+                    authors: Some(vec![S2Author { author_id: None, name: Some("A. Author".to_string()) }]),
+                },
+                S2Reference {
+                    paper_id: Some("ref2".to_string()),
+                    external_ids: None,
+                    title: Some("Chapter Reference B".to_string()),
+                    year: Some(2019),
+                    authors: Some(vec![S2Author { author_id: None, name: Some("B. Writer".to_string()) }]),
+                },
+            ]),
+            venue: None,
+            url: None,
+            reference_count: None,
+            citation_count: None,
+            tldr: None,
+            journal: None,
+            open_access_pdf: None,
+        };
+        // Call link_references_from_sources with no CrossRef (None), S2 only
+        let (refs_found, counters) = link_references_from_sources(
+            &store.conn,
+            "book2024",
+            None,           // no CrossRef
+            Some(&s2_paper),
+            None,
+        ).unwrap();
+
+        assert_eq!(refs_found, 2, "should find 2 references from S2");
+        assert_eq!(counters.references_linked, 2, "both should be linked");
+        assert_eq!(counters.shadow_nodes_created, 2, "both should create shadow nodes");
+
+        let refs = db::get_references_for(&store.conn, "book2024").unwrap();
+        assert_eq!(refs.len(), 2, "parent should have 2 reference edges");
     }
 
     #[test]

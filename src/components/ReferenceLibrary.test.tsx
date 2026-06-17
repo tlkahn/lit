@@ -1312,6 +1312,9 @@ describe("ReferenceLibrary", () => {
       references_appended: 5,
       shadow_nodes_created: 3,
       references_linked: 5,
+      candidates: [],
+      providers_searched: [],
+      providers_failed: [],
     };
 
     it("shows 'Fetch details' button for shadow materialization entries", async () => {

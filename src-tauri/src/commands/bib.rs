@@ -268,7 +268,7 @@ pub async fn materialize_citation(
     // 8. Best-effort enrichment (online fields + references).
     //    Runs AFTER existence guards so a duplicate-materialize fast-fails
     //    without network I/O or bib_references churn.
-    match crate::commands::enrich::enrich_entry(&bib_key, &gi).await {
+    match crate::commands::enrich::enrich_entry(&bib_key, &gi, &app_handle).await {
         Ok(_enrich_result) => {
             crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
         }
