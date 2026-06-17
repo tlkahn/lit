@@ -53,6 +53,7 @@ pub fn parse_md_file(
         tags,
         frontmatter: fm_json,
         first_paragraph,
+        body: body.clone(),
     };
 
     Ok((node, links, body, blanked))
@@ -1196,6 +1197,11 @@ impl GraphIndex {
     pub fn list_pages_by_tag(&self, tag: &str, limit: i64) -> Result<Vec<super::types::TagPageResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.list_pages_by_tag(tag, limit)
+    }
+
+    pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.search_content(query, limit)
     }
 
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {

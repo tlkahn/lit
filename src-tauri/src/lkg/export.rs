@@ -252,6 +252,7 @@ mod tests {
             tags: vec!["t1".into()],
             frontmatter: json!({"aliases": ["AL"], "tags": ["t1"]}),
             first_paragraph: "Intro".into(),
+            body: String::new(),
         };
         store.upsert_node(&node, 0).unwrap();
         store.upsert_stub("ghost").unwrap();
@@ -279,6 +280,7 @@ mod tests {
             tags: vec![],
             frontmatter: json!({}),
             first_paragraph: "".into(),
+            body: String::new(),
         };
         store.upsert_node(&node, 0).unwrap();
     }

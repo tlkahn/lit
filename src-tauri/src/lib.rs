@@ -368,6 +368,7 @@ pub fn run() {
             commands::graph::get_unlinked_mentions,
             commands::graph::link_unlinked_mention,
             commands::graph::search_tags,
+            commands::graph::search_content,
             commands::graph::list_pages_by_tag,
             commands::graph::ensure_graph_ready,
             commands::graph::get_graph_positions,

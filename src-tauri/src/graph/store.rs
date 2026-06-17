@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 21;
+pub const CURRENT_SCHEMA_VERSION: i64 = 22;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -178,7 +178,8 @@ impl Store {
                 "schema version from the future — resetting store"
             );
             self.conn.execute_batch(
-                "DROP TABLE IF EXISTS bib_references;
+                "DROP TABLE IF EXISTS notes_fts;
+                 DROP TABLE IF EXISTS bib_references;
                  DROP TABLE IF EXISTS bib_source_files;
                  DROP TABLE IF EXISTS bib_items;
                  DROP TABLE IF EXISTS conversation_messages;
@@ -551,6 +552,28 @@ impl Store {
             )?;
         }
 
+        if version < 22 {
+            info!(from = version, to = 22, "migrating schema: adding body column + notes_fts");
+            self.conn.execute_batch(
+                "ALTER TABLE nodes ADD COLUMN body TEXT DEFAULT '';"
+            )?;
+            self.conn.execute_batch(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+                     title, body, tags_text,
+                     tokenize = 'trigram case_sensitive 0'
+                 );"
+            )?;
+            // Backfill FTS from existing nodes data
+            self.conn.execute_batch(
+                "INSERT INTO notes_fts(rowid, title, body, tags_text)
+                     SELECT rowid, COALESCE(title, ''), COALESCE(body, ''), COALESCE(tags_text, '')
+                     FROM nodes WHERE is_stub = 0;"
+            )?;
+            self.conn.execute_batch(
+                "UPDATE meta SET value = '22' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -578,9 +601,15 @@ impl Store {
         let fm_json = serde_json::to_string(&node.frontmatter).unwrap_or_default();
         let tags_text = node.tags.join(" ");
 
+        // Delete old FTS entry before upserting (if the node already exists)
         self.conn.execute(
-            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized')
+            "DELETE FROM notes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?1)",
+            [&node.id],
+        )?;
+
+        self.conn.execute(
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized', ?7)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 first_paragraph = excluded.first_paragraph,
@@ -588,8 +617,17 @@ impl Store {
                 mtime = excluded.mtime,
                 is_stub = excluded.is_stub,
                 tags_text = excluded.tags_text,
-                materialization = excluded.materialization",
-            rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text],
+                materialization = excluded.materialization,
+                body = excluded.body",
+            rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text, node.body],
+        )?;
+
+        // Insert new FTS entry
+        self.conn.execute(
+            "INSERT INTO notes_fts(rowid, title, body, tags_text)
+             SELECT rowid, title, COALESCE(body, ''), COALESCE(tags_text, '')
+             FROM nodes WHERE id = ?1",
+            [&node.id],
         )?;
 
         self.conn
@@ -742,6 +780,10 @@ impl Store {
 
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
         self.with_savepoint("delete_node", || {
+            self.conn.execute(
+                "DELETE FROM notes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?1)",
+                [id],
+            )?;
             self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -1249,6 +1291,93 @@ impl Store {
         Ok(results)
     }
 
+    // --- Content search (FTS5) ---
+
+    pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<super::types::SearchResult>, GraphError> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let has_short_term = terms.iter().any(|t| t.chars().count() < 3);
+
+        if has_short_term {
+            // LIKE fallback for short queries (< 3 chars cannot use trigram tokenizer)
+            let mut conditions = Vec::new();
+            let mut params: Vec<rusqlite::types::Value> = Vec::new();
+            let mut idx = 1;
+
+            for term in &terms {
+                let clean = term.replace('%', "").replace('_', "");
+                conditions.push(format!(
+                    "(n.title LIKE ?{idx} OR n.body LIKE ?{idx} OR n.tags_text LIKE ?{idx})"
+                ));
+                params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
+                idx += 1;
+            }
+
+            let where_clause = conditions.join(" AND ");
+            let sql = format!(
+                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), '')
+                 FROM nodes n
+                 WHERE n.is_stub = 0 AND {where_clause}
+                 ORDER BY length(n.body) ASC
+                 LIMIT ?{idx}"
+            );
+            params.push(rusqlite::types::Value::Integer(limit));
+
+            let mut stmt = self.conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+            let results = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok(super::types::SearchResult {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        score: row.get(2)?,
+                        excerpt: row.get(3)?,
+                        first_match_line: None,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(results)
+        } else {
+            // FTS5 trigram search with snippet highlighting
+            let fts_query: String = query
+                .split_whitespace()
+                .map(|w| format!("\"{}\"", w.replace('"', "")))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let sql = "SELECT n.id, n.title, f.rank,
+                        COALESCE(
+                            snippet(notes_fts, 1, '<mark>', '</mark>', '...', 64),
+                            snippet(notes_fts, 0, '<mark>', '</mark>', '...', 64),
+                            snippet(notes_fts, 2, '<mark>', '</mark>', '...', 64),
+                            ''
+                        )
+                 FROM notes_fts f
+                 JOIN nodes n ON n.rowid = f.rowid
+                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0
+                 ORDER BY rank
+                 LIMIT ?2";
+
+            let mut stmt = self.conn.prepare(sql)?;
+            let results = stmt
+                .query_map(rusqlite::params![fts_query, limit], |row| {
+                    Ok(super::types::SearchResult {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        score: row.get(2)?,
+                        excerpt: row.get(3)?,
+                        first_match_line: None,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(results)
+        }
+    }
+
     // --- Tags ---
 
     pub fn search_tags(&self, query: &str, limit: i64) -> Result<Vec<TagSearchResult>, GraphError> {
@@ -1718,6 +1847,7 @@ mod tests {
             tags: tags.iter().map(|s| s.to_string()).collect(),
             frontmatter: fm,
             first_paragraph: format!("First paragraph of {title}"),
+            body: String::new(),
         }
     }
 
@@ -1744,6 +1874,7 @@ mod tests {
         assert!(tables.contains(&"meta".to_string()));
         assert!(tables.contains(&"bib_items".to_string()));
         assert!(tables.contains(&"bib_source_files".to_string()));
+        assert!(tables.contains(&"notes_fts".to_string()));
     }
 
     // --- with_savepoint ---
@@ -3425,8 +3556,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_one() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 21);
+    fn schema_version_is_twenty_two() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
     }
 
     #[test]
@@ -5685,6 +5816,161 @@ mod tests {
         assert!(results[0].original.is_none());
         assert_eq!(results[1].source_page_id, "b.md");
         assert_eq!(results[1].source_page_title, "Beta");
+    }
+
+    // --- search_content ---
+
+    fn make_node_with_body(id: &str, title: &str, tags: &[&str], body: &str) -> ParsedNode {
+        ParsedNode {
+            id: id.into(),
+            title: title.into(),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            frontmatter: json!({}),
+            first_paragraph: String::new(),
+            body: body.into(),
+        }
+    }
+
+    #[test]
+    fn search_content_empty_query_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "some body text"), 1).unwrap();
+        let results = store.search_content("", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_content_matches_body() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "The quick brown fox jumps over the lazy dog"), 1).unwrap();
+        store.upsert_node(&make_node_with_body("b.md", "Beta", &[], "A completely different text about cats"), 1).unwrap();
+        let results = store.search_content("brown fox", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+        assert!(results[0].excerpt.contains("brown"));
+    }
+
+    #[test]
+    fn search_content_matches_title() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Quantum Mechanics", &[], "body about physics"), 1).unwrap();
+        store.upsert_node(&make_node_with_body("b.md", "Classical Music", &[], "body about symphonies"), 1).unwrap();
+        let results = store.search_content("Quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_matches_tags() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &["physics", "science"], "body text"), 1).unwrap();
+        store.upsert_node(&make_node_with_body("b.md", "Beta", &["music"], "body text two"), 1).unwrap();
+        let results = store.search_content("physics", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_bm25_ranking_title_beats_body() {
+        let store = Store::open_memory().unwrap();
+        // "quantum" in title should rank higher than "quantum" buried in body
+        store.upsert_node(&make_node_with_body(
+            "title_match.md", "Quantum Physics", &[],
+            "This note is about physics principles and theories"
+        ), 1).unwrap();
+        store.upsert_node(&make_node_with_body(
+            "body_match.md", "Some Other Topic", &[],
+            "This note mentions quantum mechanics in passing among other topics"
+        ), 1).unwrap();
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "title_match.md", "title match should rank first");
+    }
+
+    #[test]
+    fn search_content_snippet_has_highlight_marks() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body(
+            "a.md", "Alpha", &[],
+            "The quick brown fox jumps over the lazy dog in the meadow"
+        ), 1).unwrap();
+        let results = store.search_content("brown fox", 10).unwrap();
+        assert!(!results.is_empty());
+        // snippet() wraps matches in <mark> tags
+        assert!(results[0].excerpt.contains("<mark>"), "excerpt should contain <mark> highlight: {}", results[0].excerpt);
+    }
+
+    #[test]
+    fn search_content_short_query_like_fallback() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "Go is a programming language"), 1).unwrap();
+        store.upsert_node(&make_node_with_body("b.md", "Beta", &[], "Python is great"), 1).unwrap();
+        // "Go" is < 3 chars, triggers LIKE fallback
+        let results = store.search_content("Go", 10).unwrap();
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|r| r.id == "a.md"));
+    }
+
+    #[test]
+    fn search_content_excludes_stubs() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "body text here"), 1).unwrap();
+        store.upsert_stub("stub_node").unwrap();
+        let results = store.search_content("stub", 10).unwrap();
+        // stub_node should not appear
+        assert!(results.iter().all(|r| r.id != "stub_node"));
+    }
+
+    #[test]
+    fn search_content_respects_limit() {
+        let store = Store::open_memory().unwrap();
+        for i in 0..5 {
+            store.upsert_node(&make_node_with_body(
+                &format!("note{i}.md"), &format!("Note {i}"), &[],
+                "common search term appears here"
+            ), 1).unwrap();
+        }
+        let results = store.search_content("common search", 3).unwrap();
+        assert!(results.len() <= 3);
+    }
+
+    #[test]
+    fn search_content_cjk_query() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body(
+            "a.md", "Chinese Note", &[],
+            "This note discusses 量子力学 and its applications"
+        ), 1).unwrap();
+        store.upsert_node(&make_node_with_body("b.md", "Other", &[], "No CJK here"), 1).unwrap();
+        let results = store.search_content("量子力学", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_update_reindexes_fts() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "original body text"), 1).unwrap();
+        // Update the node with new body
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "completely rewritten content"), 2).unwrap();
+        // Old text should not match
+        let old_results = store.search_content("original", 10).unwrap();
+        assert!(old_results.is_empty());
+        // New text should match
+        let new_results = store.search_content("rewritten", 10).unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_delete_removes_from_fts() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "searchable body text"), 1).unwrap();
+        let results = store.search_content("searchable", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        store.delete_node("a.md").unwrap();
+        let results = store.search_content("searchable", 10).unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]

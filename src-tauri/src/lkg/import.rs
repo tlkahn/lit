@@ -222,6 +222,7 @@ pub fn import_graph_data(
                     tags: n.tags.clone(),
                     frontmatter: n.frontmatter.clone(),
                     first_paragraph: n.first_paragraph.clone(),
+                    body: String::new(),
                 };
                 store.upsert_node(&parsed, 0)?;
             }
@@ -580,6 +581,7 @@ mod tests {
             tags: vec![],
             frontmatter: json!({}),
             first_paragraph: "".into(),
+            body: String::new(),
         };
         store.upsert_node(&node, 0).unwrap();
     }

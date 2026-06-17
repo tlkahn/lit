@@ -67,6 +67,7 @@ pub struct ParsedNode {
     pub tags: Vec<String>,
     pub frontmatter: serde_json::Value,
     pub first_paragraph: String,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -347,6 +348,7 @@ mod tests {
             tags: vec!["person".into()],
             frontmatter: json!({"title": "Alice"}),
             first_paragraph: "First paragraph.".into(),
+            body: String::new(),
         };
         let value = serde_json::to_value(&node).expect("serialize");
         assert_eq!(value["id"], "People/Alice.md");
