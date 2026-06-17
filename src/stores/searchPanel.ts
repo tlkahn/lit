@@ -71,12 +71,11 @@ export const useSearchPanelStore = create<SearchPanelState>((set, get) => ({
     const id = ++requestId;
     set({ isLoading: true });
     try {
-      const results = await searchContentFiltered(query, filter);
-      if (id !== requestId) return; // stale
-      set({ results, totalCount: results.length, isLoading: false, selectedIndex: 0, navigatedResultId: null });
-    } catch (err) {
+      const results = await searchContentFiltered(query, filter, 100);
       if (id !== requestId) return;
-      console.error("[searchPanel] search failed:", err);
+      set({ results, totalCount: results.length, isLoading: false, selectedIndex: 0, navigatedResultId: null });
+    } catch {
+      if (id !== requestId) return;
       set({ results: [], totalCount: 0, isLoading: false });
     }
   },

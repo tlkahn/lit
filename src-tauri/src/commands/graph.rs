@@ -681,7 +681,7 @@ pub fn search_content_filtered(
     let default_filter = crate::graph::types::SearchFilter::default();
     let filter = filter.as_ref().unwrap_or(&default_filter);
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let results = gi.search_content_filtered(&query, filter, limit.unwrap_or(20))?;
+        let results = gi.search_content_filtered(&query, filter, limit.unwrap_or(100))?;
         serde_json::to_value(results)
             .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })

@@ -42,8 +42,6 @@ const SearchResultRow = memo(function SearchResultRow({
     ? result.id.slice(0, result.id.lastIndexOf("/"))
     : "";
 
-  const matchCount = countMatches(result.excerpt);
-
   return (
     <div
       role="option"
@@ -60,9 +58,9 @@ const SearchResultRow = memo(function SearchResultRow({
     >
       <div className="flex items-center gap-1.5">
         <span className="truncate font-medium text-text-normal">{result.title}</span>
-        {matchCount > 1 && (
+        {result.first_match_line != null && (
           <span className="shrink-0 rounded bg-bg-hover px-1 py-0.5 text-[10px] leading-none text-text-faint">
-            {matchCount}
+            :{result.first_match_line}
           </span>
         )}
       </div>
@@ -409,14 +407,14 @@ export function SearchPanel() {
   const virtualizer = useVirtualizer({
     count: results.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 72,
+    estimateSize: () => 48,
     overscan: 5,
   });
 
   const navigateToResult = useCallback(
     (id: string, line?: number) => {
       navigateToNote(id, line ?? 1, { flash: true });
-      setNavigatedResultId(id);
+      setNavigatedResultId(`${id}:${line ?? 0}`);
     },
     [setNavigatedResultId],
   );
@@ -580,9 +578,10 @@ export function SearchPanel() {
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const result = results[virtualRow.index];
               if (!result) return null;
+              const resultKey = `${result.id}:${result.first_match_line ?? 0}`;
               return (
                 <div
-                  key={result.id}
+                  key={resultKey}
                   data-index={virtualRow.index}
                   style={{
                     position: "absolute",
@@ -595,7 +594,7 @@ export function SearchPanel() {
                   <SearchResultRow
                     result={result}
                     isSelected={virtualRow.index === selectedIndex}
-                    isNavigated={result.id === navigatedResultId}
+                    isNavigated={resultKey === navigatedResultId}
                     onNavigate={navigateToResult}
                   />
                 </div>

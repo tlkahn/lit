@@ -82,6 +82,77 @@ fn find_first_match_line(body: &str, terms: &[&str]) -> Option<u64> {
     }
 }
 
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn highlight_terms_in_line(line: &str, terms: &[&str]) -> String {
+    let line_lower = line.to_lowercase();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for term in terms {
+        let lower_term = term.to_lowercase();
+        if lower_term.is_empty() {
+            continue;
+        }
+        let mut start = 0;
+        while let Some(pos) = line_lower[start..].find(&lower_term) {
+            let abs_start = start + pos;
+            let abs_end = abs_start + term.len();
+            ranges.push((abs_start, abs_end));
+            start = abs_start + 1;
+        }
+    }
+    if ranges.is_empty() {
+        return html_escape(line);
+    }
+    ranges.sort_by_key(|&(a, _)| a);
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    let mut out = String::new();
+    let mut cursor = 0;
+    for (s, e) in &merged {
+        if cursor < *s {
+            out.push_str(&html_escape(&line[cursor..*s]));
+        }
+        out.push_str("<mark>");
+        out.push_str(&html_escape(&line[*s..*e]));
+        out.push_str("</mark>");
+        cursor = *e;
+    }
+    if cursor < line.len() {
+        out.push_str(&html_escape(&line[cursor..]));
+    }
+    out
+}
+
+fn find_matching_lines(body: &str, terms: &[&str]) -> Vec<(u64, String)> {
+    body.split('\n')
+        .enumerate()
+        .filter(|(_, line)| {
+            let lower = line.to_lowercase();
+            terms.iter().any(|t| lower.contains(&t.to_lowercase()))
+        })
+        .map(|(i, line)| ((i as u64) + 1, highlight_terms_in_line(line, terms)))
+        .collect()
+}
+
 /// Build additional WHERE clauses and parameter values from a `SearchFilter`.
 ///
 /// `param_offset` is the 1-based index of the next available `?N` placeholder.
@@ -1405,17 +1476,13 @@ impl Store {
 
     // --- Content search (FTS5) ---
 
-    pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<super::types::SearchResult>, GraphError> {
-        self.search_content_filtered(query, &SearchFilter::default(), limit)
-    }
-
-    /// Like `search_content` but with optional facet filters (folder, tags, date range).
-    pub fn search_content_filtered(
+    /// Intermediate doc-match result used by both search_content and search_content_filtered.
+    fn find_matching_docs(
         &self,
         query: &str,
         filter: &SearchFilter,
         limit: i64,
-    ) -> Result<Vec<super::types::SearchResult>, GraphError> {
+    ) -> Result<Vec<(super::types::SearchResult, String)>, GraphError> {
         if query.is_empty() {
             return Ok(vec![]);
         }
@@ -1428,7 +1495,6 @@ impl Store {
         let (fts_terms, short_terms) = partition_terms(&terms);
 
         if fts_terms.is_empty() {
-            // All terms are short — pure LIKE fallback
             let mut conditions = Vec::new();
             let mut params: Vec<rusqlite::types::Value> = Vec::new();
             let mut idx = 1;
@@ -1469,27 +1535,20 @@ impl Store {
                 params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
             let results = stmt
                 .query_map(param_refs.as_slice(), |row| {
-                    let body: String = row.get(4)?;
                     Ok((super::types::SearchResult {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         score: row.get(2)?,
                         excerpt: row.get(3)?,
                         first_match_line: None,
-                    }, body))
+                    }, row.get::<_, String>(4)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(results.into_iter().map(|(mut r, body)| {
-                r.first_match_line = find_first_match_line(&body, &terms);
-                r
-            }).collect())
+            Ok(results)
         } else {
-            // FTS5 trigram search with snippet highlighting (only FTS-eligible terms)
             let fts_query = build_fts_query(&fts_terms);
-
             let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
 
-            // Build filter clauses starting at ?3 (after fts_query=?1, fetch_limit=?2)
             let (filter_clauses, filter_params, _) = build_filter_clauses(filter, 3);
             let filter_sql = filter_clauses.join(" ");
 
@@ -1528,8 +1587,7 @@ impl Store {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            // Post-filter: every short term must appear (case-insensitive) in title, body, or tags
-            let results: Vec<super::types::SearchResult> = rows
+            let results: Vec<_> = rows
                 .into_iter()
                 .filter(|(result, body, tags_text)| {
                     short_terms.iter().all(|st| {
@@ -1539,14 +1597,61 @@ impl Store {
                             || tags_text.to_lowercase().contains(&lower)
                     })
                 })
-                .map(|(mut result, body, _)| {
-                    result.first_match_line = find_first_match_line(&body, &terms);
-                    result
-                })
+                .map(|(result, body, _)| (result, body))
                 .take(limit as usize)
                 .collect();
             Ok(results)
         }
+    }
+
+    /// Document-level content search (used by Command Palette via contentProvider).
+    pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<super::types::SearchResult>, GraphError> {
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let docs = self.find_matching_docs(query, &SearchFilter::default(), limit)?;
+        Ok(docs.into_iter().map(|(mut r, body)| {
+            r.first_match_line = find_first_match_line(&body, &terms);
+            r
+        }).collect())
+    }
+
+    /// Line-level content search (used by the dedicated search panel).
+    /// Returns one SearchResult per matching line within each document.
+    pub fn search_content_filtered(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: i64,
+    ) -> Result<Vec<super::types::SearchResult>, GraphError> {
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let docs = self.find_matching_docs(query, filter, limit)?;
+        let mut results = Vec::new();
+        for (doc, body) in docs {
+            let lines = find_matching_lines(&body, &terms);
+            if lines.is_empty() {
+                results.push(super::types::SearchResult {
+                    id: doc.id,
+                    title: doc.title,
+                    score: doc.score,
+                    excerpt: doc.excerpt,
+                    first_match_line: Some(1),
+                });
+            } else {
+                for (line_num, highlighted) in lines {
+                    results.push(super::types::SearchResult {
+                        id: doc.id.clone(),
+                        title: doc.title.clone(),
+                        score: doc.score,
+                        excerpt: highlighted,
+                        first_match_line: Some(line_num),
+                    });
+                }
+            }
+            if results.len() >= limit as usize {
+                results.truncate(limit as usize);
+                break;
+            }
+        }
+        Ok(results)
     }
 
     /// Return distinct folder prefixes from materialized node IDs.
@@ -6780,5 +6885,139 @@ mod tests {
             Some(3),
             "expected 1-based line 3 where 'Go' appears (LIKE path)"
         );
+    }
+
+    // --- Phase A: highlight_terms_in_line ---
+
+    #[test]
+    fn highlight_basic() {
+        assert_eq!(
+            highlight_terms_in_line("quantum mechanics", &["quantum"]),
+            "<mark>quantum</mark> mechanics"
+        );
+    }
+
+    #[test]
+    fn highlight_case_insensitive() {
+        assert_eq!(
+            highlight_terms_in_line("Quantum QUANTUM", &["quantum"]),
+            "<mark>Quantum</mark> <mark>QUANTUM</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_multi_term() {
+        assert_eq!(
+            highlight_terms_in_line("quantum physics theory", &["quantum", "theory"]),
+            "<mark>quantum</mark> physics <mark>theory</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_overlapping() {
+        assert_eq!(
+            highlight_terms_in_line("abcde", &["abc", "cde"]),
+            "<mark>abcde</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_html_escape() {
+        assert_eq!(
+            highlight_terms_in_line("a < b & quantum", &["quantum"]),
+            "a &lt; b &amp; <mark>quantum</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_no_match() {
+        assert_eq!(
+            highlight_terms_in_line("hello world", &["quantum"]),
+            "hello world"
+        );
+    }
+
+    // --- Phase B: find_matching_lines ---
+
+    #[test]
+    fn find_matching_lines_multi() {
+        let body = "line one\nquantum here\nline three\nnew quantum";
+        let lines = find_matching_lines(body, &["quantum"]);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, 2);
+        assert!(lines[0].1.contains("<mark>quantum</mark>"));
+        assert_eq!(lines[1].0, 4);
+        assert!(lines[1].1.contains("<mark>quantum</mark>"));
+    }
+
+    #[test]
+    fn find_matching_lines_none() {
+        let body = "hello world\nnothing here";
+        let lines = find_matching_lines(body, &["quantum"]);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn find_matching_lines_single() {
+        let lines = find_matching_lines("quantum", &["quantum"]);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], (1, "<mark>quantum</mark>".to_string()));
+    }
+
+    // --- Phase C: search_content stays document-level ---
+
+    #[test]
+    fn search_content_stays_document_level() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum line one\nquantum line two\nquantum line three";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1, "search_content must return one result per doc");
+    }
+
+    // --- Phase D: search_content_filtered returns line-level ---
+
+    #[test]
+    fn search_content_filtered_returns_line_level_results() {
+        let store = Store::open_memory().unwrap();
+        let body = "line one\nquantum here\nline three\nnew quantum";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1000);
+        let results = store.search_content_filtered("quantum", &SearchFilter::default(), 20).unwrap();
+        assert_eq!(results.len(), 2, "should return one result per matching line");
+        assert_eq!(results[0].first_match_line, Some(2));
+        assert_eq!(results[1].first_match_line, Some(4));
+        assert!(results[0].excerpt.contains("<mark>quantum</mark>"));
+        assert!(results[1].excerpt.contains("<mark>quantum</mark>"));
+    }
+
+    #[test]
+    fn search_content_filtered_title_only_fallback() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Quantum Physics", &[], "no match in body", 1000);
+        let results = store.search_content_filtered("Quantum", &SearchFilter::default(), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_filtered_limit_caps_lines() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum one\nquantum two\nquantum three\nquantum four\nquantum five";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], body, 1000);
+        let results = store.search_content_filtered("quantum", &SearchFilter::default(), 3).unwrap();
+        assert_eq!(results.len(), 3, "limit should cap total line-level results");
+    }
+
+    #[test]
+    fn search_content_filtered_folder_filter_with_lines() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum one\nquantum two";
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &[], body, 1000);
+        upsert_node_with_body(&store, "notes/b.md", "Beta", &[], body, 1000);
+        let filter = SearchFilter { folder_prefix: Some("projects/".into()), ..Default::default() };
+        let results = store.search_content_filtered("quantum", &filter, 20).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.id == "projects/a.md"));
     }
 }
