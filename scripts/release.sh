@@ -63,6 +63,8 @@ release_upload_dmg "$TAG"
 release_upload_checksums "$TAG"
 release_deploy_website "$TAG"
 
+release_clean_artifacts "$TAG"
+
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  Release $TAG complete!"

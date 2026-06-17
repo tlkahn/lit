@@ -329,3 +329,11 @@ release_deploy_website() {
   echo "── Deploying website..."
   bash "$REPO_ROOT/scripts/deploy-website.sh" "$tag"
 }
+
+release_clean_artifacts() {
+  local tag="$1"
+  echo "── Cleaning build artifacts from repo root..."
+  rm -f "$REPO_ROOT/Lit_"*"_aarch64.dmg"
+  rm -f "$REPO_ROOT/Lit_"*"_aarch64.dmg.sha256"
+  rm -f "$REPO_ROOT/latest.json"
+}
