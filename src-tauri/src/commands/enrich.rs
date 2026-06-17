@@ -236,6 +236,28 @@ pub fn merge_enrichment_fields(
     result
 }
 
+/// Merge enrichment fields from up to two sources and persist any new fields
+/// to the DB. Returns `(new_fields, fields_added)` where `fields_added` is
+/// empty when the DB row was not actually modified (idempotent update).
+fn merge_and_persist(
+    conn: &Connection,
+    bib_key: &str,
+    existing: &BibEntry,
+    source_a: Option<&BibEntry>,
+    source_b: Option<&BibEntry>,
+) -> Result<(HashMap<String, String>, Vec<String>), String> {
+    let new_fields = merge_enrichment_fields(existing, source_a, source_b);
+    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
+    if !new_fields.is_empty() {
+        let modified = db::update_bib_fields(conn, bib_key, &new_fields)
+            .map_err(|e| e.to_string())?;
+        if !modified {
+            fields_added.clear();
+        }
+    }
+    Ok((new_fields, fields_added))
+}
+
 async fn fetch_crossref(doi: &str) -> Result<CslItem, String> {
     fetch_crossref_csl_item(doi).await
 }
@@ -370,6 +392,54 @@ fn link_references_from_sources(
     Ok((references_found, counters))
 }
 
+/// Fetch references from CrossRef and/or Semantic Scholar, then link them to
+/// a parent bib entry. When a DOI is available, both sources are fetched
+/// concurrently; otherwise only S2 title search is used.
+///
+/// `precomputed_keys` is forwarded to [`link_references_from_sources`]; pass
+/// `None` when the caller has no pre-fetched keys (the helper will fetch them
+/// internally).
+///
+/// Returns `(references_found, counters)`.
+async fn fetch_and_link_references(
+    enriched_doi: Option<&str>,
+    title: &str,
+    gi: &Arc<crate::graph::indexer::GraphIndex>,
+    bib_key: &str,
+    precomputed_keys: Option<HashSet<String>>,
+) -> Result<(usize, LinkCounters), String> {
+    if let Some(doi) = enriched_doi {
+        // DOI available: CrossRef + S2 concurrently
+        let crossref_fut = async { fetch_crossref(doi).await.ok() };
+        let s2_fut = async { fetch_s2(Some(doi), title).await.ok() };
+        let (crossref_csl, s2_paper) = tokio::join!(crossref_fut, s2_fut);
+
+        let store = gi.store();
+        link_references_from_sources(
+            &store.conn,
+            bib_key,
+            crossref_csl.as_ref(),
+            s2_paper.as_ref(),
+            precomputed_keys,
+        )
+    } else {
+        // No DOI: S2 title search only
+        let s2_paper = fetch_s2(None, title).await.ok();
+        if s2_paper.is_some() {
+            let store = gi.store();
+            link_references_from_sources(
+                &store.conn,
+                bib_key,
+                None,
+                s2_paper.as_ref(),
+                precomputed_keys,
+            )
+        } else {
+            Ok((0, LinkCounters::default()))
+        }
+    }
+}
+
 /// Compute a normalized identity key for a reference, used to deduplicate
 /// across S2 and Crossref passes. Returns `Some("doi:<normalized>")` when a
 /// DOI is present, or `Some("ty:<normalized_title>|<year>")` when both title
@@ -484,33 +554,14 @@ pub(crate) async fn enrich_entry(
         let s2_entry = s2_paper.as_ref().map(|p| s2_paper_to_bib_entry(p, &HashSet::new()));
 
         // Merge fields from both sources (CrossRef preferred, S2 fills gaps)
-        let new_fields = merge_enrichment_fields(
-            &existing,
-            crossref_entry.as_ref(),
-            s2_entry.as_ref(),
-        );
-        let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
-
-        if !new_fields.is_empty() {
+        let (_new_fields, fields_added) = {
             let store = gi.store();
-            let modified = db::update_bib_fields(&store.conn, bib_key, &new_fields)
-                .map_err(|e| e.to_string())?;
-            if !modified {
-                fields_added.clear();
-            }
-        }
+            merge_and_persist(&store.conn, bib_key, &existing, crossref_entry.as_ref(), s2_entry.as_ref())?
+        };
 
         // Link references
-        let (references_found, counters) = {
-            let store = gi.store();
-            link_references_from_sources(
-                &store.conn,
-                bib_key,
-                crossref_csl.as_ref(),
-                s2_paper.as_ref(),
-                None,
-            )?
-        };
+        let (references_found, counters) =
+            fetch_and_link_references(existing.doi.as_deref(), &existing.title, gi, bib_key, None).await?;
 
         // Re-read entry from DB
         let updated_entry = {
@@ -605,17 +656,11 @@ pub(crate) async fn enrich_entry(
     }
 
     if let Some(entry_to_merge) = merge_entry {
-        let new_fields = merge_enrichment_fields(&existing, Some(entry_to_merge), None);
-        fields_added = new_fields.keys().cloned().collect();
-
-        if !new_fields.is_empty() {
+        let (new_fields, fa) = {
             let store = gi.store();
-            let modified = db::update_bib_fields(&store.conn, bib_key, &new_fields)
-                .map_err(|e| e.to_string())?;
-            if !modified {
-                fields_added.clear();
-            }
-        }
+            merge_and_persist(&store.conn, bib_key, &existing, Some(entry_to_merge), None)?
+        };
+        fields_added = fa;
 
         // Reference linking
         let enriched_doi = new_fields
@@ -623,46 +668,15 @@ pub(crate) async fn enrich_entry(
             .cloned()
             .or_else(|| existing.doi.clone());
 
-        if let Some(ref doi) = enriched_doi {
-            // DOI available: use CrossRef + S2 concurrently
-            let crossref_fut = async { fetch_crossref(doi).await.ok() };
-            let s2_fut = async { fetch_s2(Some(doi), &existing.title).await.ok() };
-            let (crossref_csl, s2_paper) = tokio::join!(crossref_fut, s2_fut);
-
-            let (found, link_counters) = {
-                let store = gi.store();
-                link_references_from_sources(
-                    &store.conn,
-                    bib_key,
-                    crossref_csl.as_ref(),
-                    s2_paper.as_ref(),
-                    Some(std::mem::take(&mut used_keys)),
-                )?
-            };
-            references_found = found;
-            counters = link_counters;
-        } else {
-            // No DOI: fall back to S2 title-based reference discovery.
-            // CrossRef requires a DOI so we skip it. fetch_s2(None, title)
-            // does a title search followed by a paperId lookup to get
-            // references.
-            let s2_paper = fetch_s2(None, &existing.title).await.ok();
-
-            if s2_paper.is_some() {
-                let (found, link_counters) = {
-                    let store = gi.store();
-                    link_references_from_sources(
-                        &store.conn,
-                        bib_key,
-                        None,
-                        s2_paper.as_ref(),
-                        Some(std::mem::take(&mut used_keys)),
-                    )?
-                };
-                references_found = found;
-                counters = link_counters;
-            }
-        }
+        let (found, link_counters) = fetch_and_link_references(
+            enriched_doi.as_deref(),
+            &existing.title,
+            gi,
+            bib_key,
+            Some(std::mem::take(&mut used_keys)),
+        ).await?;
+        references_found = found;
+        counters = link_counters;
     }
 
     // Re-read the entry from DB to get the enriched version
@@ -723,71 +737,23 @@ pub async fn apply_enrichment_candidate(
             .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
     };
 
-    let new_fields = merge_enrichment_fields(&existing, Some(&candidate), None);
-    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
-
-    if !new_fields.is_empty() {
+    let (new_fields, fields_added) = {
         let store = gi.store();
-        let modified = db::update_bib_fields(&store.conn, &bib_key, &new_fields)
-            .map_err(|e| e.to_string())?;
-        if !modified {
-            fields_added.clear();
-        }
-    }
-
-    let mut counters = LinkCounters::default();
-    let mut references_found = 0usize;
+        merge_and_persist(&store.conn, &bib_key, &existing, Some(&candidate), None)?
+    };
 
     let enriched_doi = new_fields
         .get("doi")
         .cloned()
         .or_else(|| existing.doi.clone());
 
-    if let Some(ref doi) = enriched_doi {
-        let crossref_fut = async { fetch_crossref(doi).await.ok() };
-        let s2_fut = async { fetch_s2(Some(doi), &existing.title).await.ok() };
-        let (crossref_csl, s2_paper) = tokio::join!(crossref_fut, s2_fut);
-
-        let mut used_keys = {
-            let store = gi.store();
-            db::all_live_keys(&store.conn).map_err(|e| e.to_string())?
-        };
-
-        let (found, link_counters) = {
-            let store = gi.store();
-            link_references_from_sources(
-                &store.conn,
-                &bib_key,
-                crossref_csl.as_ref(),
-                s2_paper.as_ref(),
-                Some(std::mem::take(&mut used_keys)),
-            )?
-        };
-        references_found = found;
-        counters = link_counters;
-    } else {
-        let s2_paper = fetch_s2(None, &existing.title).await.ok();
-
-        if s2_paper.is_some() {
-            let mut used_keys = {
-                let store = gi.store();
-                db::all_live_keys(&store.conn).map_err(|e| e.to_string())?
-            };
-
-            let (found, link_counters) = {
-                let store = gi.store();
-                link_references_from_sources(
-                    &store.conn,
-                    &bib_key,
-                    None,
-                    s2_paper.as_ref(),
-                    Some(std::mem::take(&mut used_keys)),
-                )?
-            };
-            references_found = found;
-            counters = link_counters;
-        }
-    }
+    let (references_found, counters) = fetch_and_link_references(
+        enriched_doi.as_deref(),
+        &existing.title,
+        &gi,
+        &bib_key,
+        None,
+    ).await?;
 
     let updated_entry = {
         let store = gi.store();
