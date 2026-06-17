@@ -1,15 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 
 use crate::bib::research_hub::{
-    build_config, create_enabled_providers, legal_provider_ids, legal_provider_info,
-    paper_to_bib_entry_with_pdf, ProviderInfo,
+    legal_provider_info, paper_to_bib_entry_with_pdf, providers_from_app_handle, ProviderInfo,
 };
 use crate::bib::types::BibEntry;
-use crate::commands::credential::CredentialStore;
 use crate::recognize::resolve::isbn::{self, IsbnPath};
 use crate::recognize::resolve::BaseUrls;
 
@@ -80,28 +76,7 @@ pub async fn search_papers(
     search_type: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<PaperSearchResult, String> {
-    let prefs = crate::preferences::read_preferences(&app_handle);
-
-    let store = app_handle.state::<Arc<dyn CredentialStore>>();
-    let config = build_config(&prefs, store.as_ref());
-
-    let enabled: HashSet<String> = prefs
-        .extra
-        .get("search.enabledProviders")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            legal_provider_ids().iter().map(|s| s.to_string()).collect()
-        });
-
-    let client = CLIENT.clone();
-    let config = Arc::new(config);
-    let providers = create_enabled_providers(client, config.clone(), &enabled);
+    let (config, providers) = providers_from_app_handle(&app_handle, CLIENT.clone());
 
     if providers.is_empty() {
         return Ok(PaperSearchResult {

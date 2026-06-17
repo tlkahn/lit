@@ -276,6 +276,49 @@ pub(crate) async fn lookup_by_doi_with_base(
     parse_s2_response(&body)
 }
 
+pub(crate) async fn lookup_by_paper_id_with_base(
+    client: &reqwest::Client,
+    paper_id: &str,
+    base_url: &str,
+) -> Result<S2Paper, String> {
+    let url = format!(
+        "{}/graph/v1/paper/{}?fields={}",
+        base_url, paper_id, S2_PAPER_FIELDS
+    );
+
+    let response = client.get(&url).send().await.map_err(|e| {
+        if e.is_timeout() {
+            "Request timed out".to_string()
+        } else {
+            format!("HTTP request failed: {}", e)
+        }
+    })?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(format!("Paper not found on Semantic Scholar: {}", paper_id));
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(
+            "Rate limited by Semantic Scholar API. Please wait and try again, or apply for an API key at https://www.semanticscholar.org/product/api#api-key-form"
+                .to_string(),
+        );
+    }
+    if !status.is_success() {
+        return Err(format!(
+            "Semantic Scholar API returned status {}",
+            status.as_u16()
+        ));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    parse_s2_response(&body)
+}
+
 pub async fn search_by_title(
     client: &reqwest::Client,
     title: &str,
@@ -971,6 +1014,79 @@ mod tests {
         }"#;
         let paper = parse_s2_response(body).unwrap();
         assert_eq!(extract_oa_pdf_url(&paper), None);
+    }
+
+    // ── Group 8: lookup_by_paper_id_with_base ───────────────────────
+
+    #[tokio::test]
+    async fn lookup_by_paper_id_success() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = r#"{
+            "paperId": "abc123",
+            "title": "Full Paper With Refs",
+            "year": 2023,
+            "externalIds": {"DOI": "10.1038/test123", "CorpusId": 42},
+            "references": [
+                {
+                    "paperId": "ref1",
+                    "externalIds": {"DOI": "10.1/ref1", "CorpusId": 100},
+                    "title": "A reference",
+                    "year": 2020,
+                    "authors": [{"authorId": "a1", "name": "R. Author"}]
+                }
+            ]
+        }"#;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/abc123"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let paper = lookup_by_paper_id_with_base(&client, "abc123", &mock_server.uri())
+            .await
+            .unwrap();
+
+        assert_eq!(paper.paper_id.as_deref(), Some("abc123"));
+        assert_eq!(paper.title.as_deref(), Some("Full Paper With Refs"));
+        assert_eq!(paper.year, Some(2023));
+        let refs = paper.references.as_ref().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].title.as_deref(), Some("A reference"));
+    }
+
+    #[tokio::test]
+    async fn lookup_by_paper_id_404() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/nonexistent"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = lookup_by_paper_id_with_base(&client, "nonexistent", &mock_server.uri()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn lookup_by_paper_id_429() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/graph/v1/paper/abc123"))
+            .respond_with(wiremock::ResponseTemplate::new(429))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = lookup_by_paper_id_with_base(&client, "abc123", &mock_server.uri()).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Rate limited"), "expected rate limited error, got: {}", err);
     }
 
     #[tokio::test]
