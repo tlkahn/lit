@@ -555,13 +555,14 @@ impl Store {
         if version < 22 {
             info!(from = version, to = 22, "migrating schema: adding notes_fts");
             self.conn.execute_batch(
-                "ALTER TABLE nodes ADD COLUMN body TEXT;
+                "BEGIN;
                  CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
                      title, body, tags_text, node_id UNINDEXED,
                      tokenize = 'trigram case_sensitive 0'
                  );
                  UPDATE sync SET mtime = 0;
-                 UPDATE meta SET value = '22' WHERE key = 'schema_version';"
+                 UPDATE meta SET value = '22' WHERE key = 'schema_version';
+                 COMMIT;"
             )?;
         }
 
@@ -593,8 +594,8 @@ impl Store {
         let tags_text = node.tags.join(" ");
 
         self.conn.execute(
-            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized', ?7)
+            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized')
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 first_paragraph = excluded.first_paragraph,
@@ -602,9 +603,8 @@ impl Store {
                 mtime = excluded.mtime,
                 is_stub = excluded.is_stub,
                 tags_text = excluded.tags_text,
-                materialization = excluded.materialization,
-                body = excluded.body",
-            rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text, body],
+                materialization = excluded.materialization",
+            rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text],
         )?;
 
         self.conn
@@ -5811,6 +5811,90 @@ mod tests {
         assert!(results[0].original.is_none());
         assert_eq!(results[1].source_page_id, "b.md");
         assert_eq!(results[1].source_page_title, "Beta");
+    }
+
+    #[test]
+    fn v21_to_v22_migration_adds_notes_fts() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Build a v21 database with a node and a sync entry.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0,
+                    tags_text TEXT DEFAULT '', materialization TEXT NOT NULL DEFAULT 'materialized'
+                );
+                CREATE TABLE tags (node_id TEXT, tag TEXT);
+                CREATE TABLE aliases (node_id TEXT, alias TEXT);
+                CREATE TABLE edges (source TEXT, target TEXT, context TEXT, raw_target TEXT DEFAULT '',
+                    source_line INTEGER DEFAULT 0, edge_kind TEXT NOT NULL DEFAULT 'wikilink');
+                CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE annotations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                    certainty TEXT NOT NULL, body TEXT, date TEXT,
+                    source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                    scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL, uuid TEXT NOT NULL
+                );
+                CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                    body, node_id UNINDEXED, annotation_type UNINDEXED,
+                    tokenize = 'trigram case_sensitive 0'
+                );
+                CREATE TABLE node_positions (node_id TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL);
+                CREATE TABLE bib_items (
+                    id INTEGER PRIMARY KEY, cite_key TEXT NOT NULL UNIQUE, entry_type TEXT NOT NULL,
+                    title TEXT, authors TEXT, year TEXT, doi TEXT, isbn TEXT, arxiv_id TEXT, url TEXT,
+                    journal TEXT, publisher TEXT, abstract TEXT, issn TEXT, volume TEXT, number TEXT,
+                    pages TEXT, file TEXT, tags TEXT, raw_bibtex TEXT, source_file TEXT, source_line INTEGER,
+                    deleted_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    oclc TEXT, work_type TEXT, series TEXT, lccn TEXT, editors TEXT
+                );
+                CREATE TABLE bib_source_files (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL,
+                    last_ingested TEXT NOT NULL DEFAULT (datetime('now')));
+                CREATE TABLE bib_references (parent_key TEXT NOT NULL, child_key TEXT NOT NULL,
+                    position INTEGER, PRIMARY KEY (parent_key, child_key));
+                INSERT INTO meta(key, value) VALUES ('schema_version', '21');",
+            ).unwrap();
+
+            conn.execute(
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub)
+                 VALUES ('a.md', 'Alpha', 'p1', '{}', 100, 0)",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO sync(path, mtime) VALUES ('a.md', 42)",
+                [],
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // notes_fts table should exist
+        let fts_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes_fts'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(fts_count, 1, "notes_fts table should exist after v22 migration");
+
+        // sync mtimes should be reset to 0
+        let max_mtime: i64 = store.conn.query_row(
+            "SELECT COALESCE(MAX(mtime), 0) FROM sync", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(max_mtime, 0, "all sync mtimes should be reset to 0 after v22 migration");
+
+        // Pre-existing data survives
+        let title: String = store.conn.query_row(
+            "SELECT title FROM nodes WHERE id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(title, "Alpha");
     }
 
     #[test]
