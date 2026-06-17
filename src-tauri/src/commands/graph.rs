@@ -670,6 +670,38 @@ pub fn search_content(
 }
 
 #[tauri::command]
+pub fn search_content_filtered(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    query: String,
+    filter: Option<crate::graph::types::SearchFilter>,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let default_filter = crate::graph::types::SearchFilter::default();
+    let filter = filter.as_ref().unwrap_or(&default_filter);
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.search_content_filtered(&query, filter, limit.unwrap_or(20))?;
+        serde_json::to_value(results)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
+pub fn list_folders(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let results = gi.list_folders(limit.unwrap_or(200))?;
+        serde_json::to_value(results)
+            .map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
 pub fn list_pages_by_tag(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,

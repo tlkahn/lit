@@ -219,6 +219,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         if (totalItems > 0) {
           setActiveIndex((prev) => (prev - 1 + totalItems) % totalItems);
         }
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prefix === "/") {
+        e.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent("lit:open-search-panel-with-query", {
+            detail: { query },
+          }),
+        );
+        onClose();
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (allResults[activeIndex]) {
@@ -381,6 +389,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             </div>
           )}
         </div>
+
+        {prefix === "/" && query && (
+          <div className="border-t border-bg-hover px-4 py-1.5 text-xs text-text-faint" data-testid="search-panel-bridge-hint">
+            <kbd className="rounded bg-bg-hover px-1 py-0.5 text-[10px]">
+              {typeof navigator !== "undefined" && navigator.platform?.includes("Mac") ? "Cmd" : "Ctrl"}+Enter
+            </kbd>{" "}
+            Open in search panel
+          </div>
+        )}
       </div>
     </div>
   );

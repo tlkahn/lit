@@ -13,7 +13,7 @@ use super::citations::extract_citations_blanked;
 use super::links::{blank_code, extract_wikilinks_blanked, WikiLink};
 use super::resolve::StemLookup;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchFilter, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -1196,6 +1196,16 @@ impl GraphIndex {
     pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
         let store = self.store.lock().unwrap();
         store.search_content(query, limit)
+    }
+
+    pub fn search_content_filtered(&self, query: &str, filter: &SearchFilter, limit: i64) -> Result<Vec<SearchResult>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.search_content_filtered(query, filter, limit)
+    }
+
+    pub fn list_folders(&self, limit: i64) -> Result<Vec<String>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_folders(limit)
     }
 
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<super::types::AnnotationSearchResult>, GraphError> {

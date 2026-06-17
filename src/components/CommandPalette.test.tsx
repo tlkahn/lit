@@ -1293,6 +1293,84 @@ describe("CommandPalette", () => {
     });
   });
 
+  describe("CommandPalette to search panel bridge", () => {
+    it("Cmd+Enter in /mode dispatches lit:open-search-panel-with-query and closes", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_content") return [
+          { id: "a.md", title: "Alpha", score: 1.0, excerpt: "<mark>hello</mark>" },
+        ];
+        return [];
+      });
+      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "/hello" },
+      });
+      await advanceDebounce();
+
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), {
+        key: "Enter",
+        metaKey: true,
+      });
+
+      const bridgeEvent = dispatchSpy.mock.calls.find(
+        (call) => (call[0] as CustomEvent).type === "lit:open-search-panel-with-query",
+      );
+      expect(bridgeEvent).toBeDefined();
+      expect((bridgeEvent![0] as CustomEvent).detail).toEqual({ query: "hello" });
+      expect(onClose).toHaveBeenCalled();
+      dispatchSpy.mockRestore();
+    });
+
+    it("Cmd+Enter without /prefix does NOT dispatch bridge event", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_annotations") return mockResults;
+        return [];
+      });
+      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@hello" },
+      });
+      await advanceDebounce();
+
+      fireEvent.keyDown(screen.getByTestId("command-palette-input"), {
+        key: "Enter",
+        metaKey: true,
+      });
+
+      const bridgeEvent = dispatchSpy.mock.calls.find(
+        (call) => (call[0] as CustomEvent).type === "lit:open-search-panel-with-query",
+      );
+      expect(bridgeEvent).toBeUndefined();
+      dispatchSpy.mockRestore();
+    });
+
+    it("shows bridge hint footer when in /mode with a query", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "search_content") return [
+          { id: "a.md", title: "Alpha", score: 1.0, excerpt: "<mark>test</mark>" },
+        ];
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "/test" },
+      });
+      await advanceDebounce();
+      expect(screen.getByTestId("search-panel-bridge-hint")).toBeInTheDocument();
+      expect(screen.getByTestId("search-panel-bridge-hint")).toHaveTextContent("Open in search panel");
+    });
+
+    it("does not show bridge hint in non-/mode", () => {
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@test" },
+      });
+      expect(screen.queryByTestId("search-panel-bridge-hint")).not.toBeInTheDocument();
+    });
+  });
+
   describe("fuse-fracture registration", () => {
     it("ensureRegistered registers fuse-fracture commands", () => {
       render(<CommandPalette open={true} onClose={onClose} />);

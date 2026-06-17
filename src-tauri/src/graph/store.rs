@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, SearchFilter, Stats, TagPageResult, TagSearchResult};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 23;
 
@@ -45,6 +45,50 @@ fn partition_terms<'a>(terms: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
 /// Strip LIKE metacharacters (`%`, `_`) from a term for safe use in LIKE patterns.
 fn sanitize_like_term(term: &str) -> String {
     term.replace('%', "").replace('_', "")
+}
+
+/// Build additional WHERE clauses and parameter values from a `SearchFilter`.
+///
+/// `param_offset` is the 1-based index of the next available `?N` placeholder.
+/// Returns `(clauses, params, next_offset)` where `clauses` is a vector of SQL
+/// fragments (each starting with `AND`) and `params` holds the matching values.
+fn build_filter_clauses(
+    filter: &SearchFilter,
+    param_offset: usize,
+) -> (Vec<String>, Vec<rusqlite::types::Value>, usize) {
+    let mut clauses = Vec::new();
+    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+    let mut idx = param_offset;
+
+    if let Some(ref prefix) = filter.folder_prefix {
+        clauses.push(format!("AND n.id LIKE ?{idx}"));
+        params.push(rusqlite::types::Value::Text(format!("{prefix}%")));
+        idx += 1;
+    }
+
+    if let Some(ref tags) = filter.tags {
+        for tag in tags {
+            clauses.push(format!(
+                "AND EXISTS (SELECT 1 FROM tags WHERE node_id = n.id AND tag = ?{idx})"
+            ));
+            params.push(rusqlite::types::Value::Text(tag.clone()));
+            idx += 1;
+        }
+    }
+
+    if let Some(after) = filter.mtime_after {
+        clauses.push(format!("AND n.mtime > ?{idx}"));
+        params.push(rusqlite::types::Value::Integer(after));
+        idx += 1;
+    }
+
+    if let Some(before) = filter.mtime_before {
+        clauses.push(format!("AND n.mtime < ?{idx}"));
+        params.push(rusqlite::types::Value::Integer(before));
+        idx += 1;
+    }
+
+    (clauses, params, idx)
 }
 
 pub struct Store {
@@ -1433,6 +1477,169 @@ impl Store {
                 .collect();
             Ok(results)
         }
+    }
+
+    /// Like `search_content` but with optional facet filters (folder, tags, date range).
+    pub fn search_content_filtered(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: i64,
+    ) -> Result<Vec<super::types::SearchResult>, GraphError> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let (fts_terms, short_terms) = partition_terms(&terms);
+
+        if fts_terms.is_empty() {
+            // All terms are short — pure LIKE fallback
+            let mut conditions = Vec::new();
+            let mut params: Vec<rusqlite::types::Value> = Vec::new();
+            let mut idx = 1;
+
+            for term in &terms {
+                let clean = sanitize_like_term(term);
+                if clean.is_empty() {
+                    continue;
+                }
+                conditions.push(format!(
+                    "(n.title LIKE ?{idx} OR n.body LIKE ?{idx} OR n.tags_text LIKE ?{idx})"
+                ));
+                params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
+                idx += 1;
+            }
+
+            if conditions.is_empty() {
+                return Ok(vec![]);
+            }
+
+            let (filter_clauses, filter_params, next_idx) = build_filter_clauses(filter, idx);
+            params.extend(filter_params);
+            idx = next_idx;
+
+            let filter_sql = filter_clauses.join(" ");
+            let where_clause = conditions.join(" AND ");
+            let sql = format!(
+                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), '')
+                 FROM nodes n
+                 WHERE n.is_stub = 0 AND n.materialization = 'materialized' AND {where_clause} {filter_sql}
+                 ORDER BY length(n.body) ASC
+                 LIMIT ?{idx}"
+            );
+            params.push(rusqlite::types::Value::Integer(limit));
+
+            let mut stmt = self.conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+            let results = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok(super::types::SearchResult {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        score: row.get(2)?,
+                        excerpt: row.get(3)?,
+                        first_match_line: None,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(results)
+        } else {
+            // FTS5 trigram search with snippet highlighting (only FTS-eligible terms)
+            let fts_query = build_fts_query(&fts_terms);
+
+            let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
+
+            // Build filter clauses starting at ?3 (after fts_query=?1, fetch_limit=?2)
+            let (filter_clauses, filter_params, _) = build_filter_clauses(filter, 3);
+            let filter_sql = filter_clauses.join(" ");
+
+            let sql = format!(
+                "SELECT n.id, n.title, f.rank,
+                        snippet(notes_fts, -1, '<mark>', '</mark>', '...', 64),
+                        COALESCE(n.body, ''), COALESCE(n.tags_text, '')
+                 FROM notes_fts f
+                 JOIN nodes n ON n.id = f.node_id
+                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0 {filter_sql}
+                 ORDER BY rank
+                 LIMIT ?2"
+            );
+
+            let mut all_params: Vec<rusqlite::types::Value> = Vec::new();
+            all_params.push(rusqlite::types::Value::Text(fts_query));
+            all_params.push(rusqlite::types::Value::Integer(fetch_limit));
+            all_params.extend(filter_params);
+
+            let mut stmt = self.conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                all_params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+            let rows = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok((
+                        super::types::SearchResult {
+                            id: row.get(0)?,
+                            title: row.get(1)?,
+                            score: row.get(2)?,
+                            excerpt: row.get(3)?,
+                            first_match_line: None,
+                        },
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            // Post-filter: every short term must appear (case-insensitive) in title, body, or tags
+            let results: Vec<super::types::SearchResult> = rows
+                .into_iter()
+                .filter(|(result, body, tags_text)| {
+                    short_terms.iter().all(|st| {
+                        let lower = st.to_lowercase();
+                        result.title.to_lowercase().contains(&lower)
+                            || body.to_lowercase().contains(&lower)
+                            || tags_text.to_lowercase().contains(&lower)
+                    })
+                })
+                .map(|(result, _, _)| result)
+                .take(limit as usize)
+                .collect();
+            Ok(results)
+        }
+    }
+
+    /// Return distinct folder prefixes from materialized node IDs.
+    /// Each folder prefix ends with `/`. Root-level files are excluded.
+    /// Results are sorted alphabetically and capped at `limit`.
+    pub fn list_folders(&self, limit: i64) -> Result<Vec<String>, GraphError> {
+        // Use a recursive CTE to extract all intermediate path segments from node IDs.
+        // For "a/b/c.md" we want both "a/" and "a/b/".
+        let sql = "
+            WITH RECURSIVE parts(id, prefix) AS (
+                SELECT id,
+                       SUBSTR(id, 1, INSTR(id, '/'))
+                FROM nodes
+                WHERE is_stub = 0 AND materialization = 'materialized'
+                  AND INSTR(id, '/') > 0
+                UNION ALL
+                SELECT p.id,
+                       p.prefix || SUBSTR(SUBSTR(p.id, LENGTH(p.prefix) + 1), 1, INSTR(SUBSTR(p.id, LENGTH(p.prefix) + 1), '/'))
+                FROM parts p
+                WHERE INSTR(SUBSTR(p.id, LENGTH(p.prefix) + 1), '/') > 0
+            )
+            SELECT DISTINCT prefix FROM parts
+            ORDER BY prefix ASC
+            LIMIT ?1
+        ";
+        let mut stmt = self.conn.prepare(sql)?;
+        let folders = stmt
+            .query_map(rusqlite::params![limit], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(folders)
     }
 
     // --- Tags ---
@@ -6373,5 +6580,155 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fts_count, 1, "notes_fts table should exist");
+    }
+
+    // --- search_content_filtered tests ---
+
+    #[test]
+    fn search_content_filtered_empty_filter_matches_all() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "The quick brown fox", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], "A slow brown bear", 1000);
+        let filter = SearchFilter::default();
+        let results = store.search_content_filtered("brown", &filter, 10).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_content_filtered_folder_only() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &[], "The quick brown fox", 1000);
+        upsert_node_with_body(&store, "notes/b.md", "Beta", &[], "A quick brown bear", 1000);
+        let filter = SearchFilter { folder_prefix: Some("projects/".into()), ..Default::default() };
+        let results = store.search_content_filtered("brown", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projects/a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_tag_only() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics"], "quantum mechanics overview", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &["music"], "quantum computing primer", 1000);
+        let filter = SearchFilter { tags: Some(vec!["physics".into()]), ..Default::default() };
+        let results = store.search_content_filtered("quantum", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_multiple_tags_and_semantics() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics", "quantum"], "particle theory research", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &["physics"], "classical mechanics overview", 1000);
+        let filter = SearchFilter {
+            tags: Some(vec!["physics".into(), "quantum".into()]),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("theory", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_date_range_only() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "common search term", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], "common search term", 5000);
+        upsert_node_with_body(&store, "c.md", "Gamma", &[], "common search term", 9000);
+        let filter = SearchFilter {
+            mtime_after: Some(2000),
+            mtime_before: Some(6000),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("common search", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "b.md");
+    }
+
+    #[test]
+    fn search_content_filtered_combined_facets() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &["rust"], "async await patterns", 5000);
+        upsert_node_with_body(&store, "projects/b.md", "Beta", &["rust"], "ownership and borrowing", 1000);
+        upsert_node_with_body(&store, "notes/c.md", "Gamma", &["rust"], "async runtime internals", 5000);
+        let filter = SearchFilter {
+            folder_prefix: Some("projects/".into()),
+            tags: Some(vec!["rust".into()]),
+            mtime_after: Some(3000),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("async", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projects/a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_empty_results() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics"], "quantum mechanics", 1000);
+        let filter = SearchFilter {
+            folder_prefix: Some("nonexistent/".into()),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("quantum", &filter, 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_content_filtered_short_query_like_path_with_filter() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Go Lang", &["lang"], "Go is a programming language", 1000);
+        upsert_node_with_body(&store, "notes/b.md", "Go Board", &["game"], "Go is also a board game", 1000);
+        let filter = SearchFilter {
+            folder_prefix: Some("projects/".into()),
+            ..Default::default()
+        };
+        // "Go" is < 3 chars -> LIKE path
+        let results = store.search_content_filtered("Go", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projects/a.md");
+    }
+
+    // --- list_folders tests ---
+
+    #[test]
+    fn list_folders_returns_distinct_prefixes() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &[], "body", 1);
+        upsert_node_with_body(&store, "projects/b.md", "Beta", &[], "body", 1);
+        upsert_node_with_body(&store, "notes/c.md", "Gamma", &[], "body", 1);
+        upsert_node_with_body(&store, "top.md", "Delta", &[], "body", 1);
+        let folders = store.list_folders(100).unwrap();
+        assert_eq!(folders, vec!["notes/", "projects/"]);
+    }
+
+    #[test]
+    fn list_folders_nested_paths() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a/b/c.md", "Deep", &[], "body", 1);
+        upsert_node_with_body(&store, "a/d.md", "Shallow", &[], "body", 1);
+        let folders = store.list_folders(100).unwrap();
+        assert!(folders.contains(&"a/b/".to_string()));
+        assert!(folders.contains(&"a/".to_string()));
+    }
+
+    #[test]
+    fn list_folders_excludes_stubs() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "real/a.md", "Alpha", &[], "body", 1);
+        store.upsert_stub("stubs/phantom").unwrap();
+        let folders = store.list_folders(100).unwrap();
+        assert_eq!(folders, vec!["real/"]);
+    }
+
+    #[test]
+    fn list_folders_respects_limit() {
+        let store = Store::open_memory().unwrap();
+        for i in 0..10 {
+            upsert_node_with_body(&store, &format!("folder{i}/note.md"), "N", &[], "body", 1);
+        }
+        let folders = store.list_folders(3).unwrap();
+        assert_eq!(folders.len(), 3);
     }
 }
