@@ -79,7 +79,6 @@ import {
   getBacklinks,
   getForwardLinks,
   getCitingPages,
-  searchPages,
   searchPagesByTitle,
   searchContent,
   getGraphStats,
@@ -615,10 +614,6 @@ describe("ipc", () => {
         case "get_citing_pages":
           return [
             { source_id: "a.md", source_title: "Alpha", context: "as argued in [@smith2024]", source_line: 12 },
-          ];
-        case "search_pages":
-          return [
-            { id: "a.md", title: "Alpha", score: -1.5, excerpt: "[Alpha] note", first_match_line: 7 },
           ];
         case "search_pages_by_title":
           return [
@@ -1292,25 +1287,6 @@ describe("ipc", () => {
     expect(cp[0]!.source_line).toBe(12);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_citing_pages", { bibKey: "smith2024" });
-  });
-
-  it("searchPages returns results", async () => {
-    const results = await searchPages("Alpha");
-    expect(results).toHaveLength(1);
-    expect(results[0]!.id).toBe("a.md");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alpha", limit: null });
-  });
-
-  it("searchPages passes limit when provided", async () => {
-    await searchPages("Alpha", 5);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("search_pages", { query: "Alpha", limit: 5 });
-  });
-
-  it("searchPages includes first_match_line when present", async () => {
-    const results = await searchPages("Alpha");
-    expect(results[0]!.first_match_line).toBe(7);
   });
 
   it("searchPagesByTitle result has first_match_line undefined when absent", async () => {
