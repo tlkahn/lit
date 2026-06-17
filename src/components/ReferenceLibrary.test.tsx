@@ -3710,3 +3710,189 @@ describe("bibEntryToEditFields", () => {
     expect(bibEntryToEditFields(entry).authors).toBe("A; B; C");
   });
 });
+
+describe("EnrichCandidatePicker integration", () => {
+  const candidateA: BibEntry = {
+    key: "smith2020",
+    authors: ["Smith, John", "Doe, Jane"],
+    title: "A Great Paper (CrossRef)",
+    year: "2020",
+    entry_type: "article",
+    line_number: 0,
+    journal: "Nature",
+    doi: "10.1000/xyz",
+  };
+
+  const candidateB: BibEntry = {
+    key: "smith2020alt",
+    authors: ["Smith, J."],
+    title: "A Great Paper (S2)",
+    year: "2020",
+    entry_type: "book",
+    line_number: 0,
+  };
+
+  const enrichResultWithCandidates = {
+    entry: sanderson,
+    fields_added: [],
+    references_found: 0,
+    references_appended: 0,
+    shadow_nodes_created: 0,
+    references_linked: 0,
+    candidates: [candidateA, candidateB],
+    providers_searched: ["CrossRef", "S2"],
+    providers_failed: ["OpenAlex"],
+  };
+
+  const applyResult = {
+    entry: { ...sanderson, abstract_text: "Applied abstract" },
+    fields_added: ["abstract", "journal"],
+    references_found: 5,
+    references_appended: 5,
+    shadow_nodes_created: 3,
+    references_linked: 5,
+    candidates: [],
+    providers_searched: ["CrossRef"],
+    providers_failed: [],
+  };
+
+  it("enrich with candidates opens the picker", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "enrich_bib_entry") return enrichResultWithCandidates;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("fetch-details-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("enrich-picker-dialog")).toBeInTheDocument();
+    });
+    expect(screen.getByText("A Great Paper (CrossRef)")).toBeInTheDocument();
+    expect(screen.getByText("A Great Paper (S2)")).toBeInTheDocument();
+  });
+
+  it("apply candidate calls IPC and shows toast", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "enrich_bib_entry") return enrichResultWithCandidates;
+      if (cmd === "apply_enrichment_candidate") return applyResult;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("fetch-details-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("enrich-picker-dialog")).toBeInTheDocument();
+    });
+
+    // Click first Apply button
+    const applyBtns = screen.getAllByTestId("enrich-apply-btn");
+    await user.click(applyBtns[0]!);
+
+    // Picker should be closed
+    await waitFor(() => {
+      expect(screen.queryByTestId("enrich-picker-dialog")).not.toBeInTheDocument();
+    });
+
+    // IPC should have been called with correct args
+    await waitFor(() => {
+      const call = invokedCommands.find((c) => c.cmd === "apply_enrichment_candidate");
+      expect(call).toBeTruthy();
+      expect(call!.args).toMatchObject({
+        bibKey: "sanderson2009",
+        candidate: candidateA,
+        workspacePath: "/workspace",
+      });
+    });
+
+    // Success toast
+    await waitFor(() => {
+      const msg = useStatusMessageStore.getState().message;
+      expect(msg).toMatch(/sanderson2009/);
+    });
+  });
+
+  it("close picker without applying does not call IPC", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "enrich_bib_entry") return enrichResultWithCandidates;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("fetch-details-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("enrich-picker-dialog")).toBeInTheDocument();
+    });
+
+    // Press Escape to close
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("enrich-picker-dialog")).not.toBeInTheDocument();
+    });
+
+    // apply_enrichment_candidate should NOT have been called
+    expect(invokedCommands.find((c) => c.cmd === "apply_enrichment_candidate")).toBeUndefined();
+  });
+
+  it("apply candidate error shows error toast", async () => {
+    const user = userEvent.setup();
+    bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
+    mockInvoke((cmd, args) => {
+      invokedCommands.push({ cmd, args });
+      if (cmd === "list_bib_entries") return fixture;
+      if (cmd === "get_citing_pages") return citingFixture;
+      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+      if (cmd === "enrich_bib_entry") return enrichResultWithCandidates;
+      if (cmd === "apply_enrichment_candidate") throw new Error("Apply failed");
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    await user.click(screen.getByText("The Saiva Age"));
+    await user.click(screen.getByTestId("fetch-details-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("enrich-picker-dialog")).toBeInTheDocument();
+    });
+
+    const applyBtns = screen.getAllByTestId("enrich-apply-btn");
+    await user.click(applyBtns[0]!);
+
+    await waitFor(() => {
+      expect(useStatusMessageStore.getState().message).toMatch(/Apply failed/);
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+  });
+});
