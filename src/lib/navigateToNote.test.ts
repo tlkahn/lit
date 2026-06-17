@@ -67,7 +67,7 @@ describe("navigateToNote", () => {
     );
     expect(scrollEvent).toBeDefined();
     expect((scrollEvent![0] as CustomEvent).detail).toEqual({
-      line: 15,
+      line: 14,
       cursor: true,
     });
     expect(mockSelectPageAtLine).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe("navigateToNote", () => {
     );
     expect(scrollEvent).toBeDefined();
     expect((scrollEvent![0] as CustomEvent).detail).toEqual({
-      line: 20,
+      line: 19,
       cursor: true,
       flash: true,
     });

@@ -55,6 +55,33 @@ fn escape_like_term(term: &str) -> String {
         .replace('_', "\\_")
 }
 
+/// Find the 1-based line number of the first occurrence of any search term in
+/// `body` (case-insensitive).  Returns `Some(1)` as a fallback when no body
+/// match is found (e.g. title-only match).
+///
+/// The rest of the codebase (source_line, pendingCursorLine, doc.line()) uses
+/// 1-based line numbers, so we follow that convention.
+fn find_first_match_line(body: &str, terms: &[&str]) -> Option<u64> {
+    let body_lower = body.to_lowercase();
+    let mut earliest: Option<usize> = None;
+    for term in terms {
+        let lower_term = term.to_lowercase();
+        if let Some(pos) = body_lower.find(&lower_term) {
+            earliest = Some(match earliest {
+                Some(prev) => prev.min(pos),
+                None => pos,
+            });
+        }
+    }
+    match earliest {
+        Some(byte_offset) => {
+            let line = body[..byte_offset].matches('\n').count() + 1;
+            Some(line as u64)
+        }
+        None => Some(1),
+    }
+}
+
 /// Build additional WHERE clauses and parameter values from a `SearchFilter`.
 ///
 /// `param_offset` is the 1-based index of the next available `?N` placeholder.
@@ -1429,7 +1456,7 @@ impl Store {
             let filter_sql = filter_clauses.join(" ");
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), '')
+                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), ''), COALESCE(n.body, '')
                  FROM nodes n
                  WHERE n.is_stub = 0 AND n.materialization = 'materialized' AND {where_clause} {filter_sql}
                  ORDER BY length(n.body) ASC
@@ -1442,16 +1469,20 @@ impl Store {
                 params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
             let results = stmt
                 .query_map(param_refs.as_slice(), |row| {
-                    Ok(super::types::SearchResult {
+                    let body: String = row.get(4)?;
+                    Ok((super::types::SearchResult {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         score: row.get(2)?,
                         excerpt: row.get(3)?,
                         first_match_line: None,
-                    })
+                    }, body))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(results)
+            Ok(results.into_iter().map(|(mut r, body)| {
+                r.first_match_line = find_first_match_line(&body, &terms);
+                r
+            }).collect())
         } else {
             // FTS5 trigram search with snippet highlighting (only FTS-eligible terms)
             let fts_query = build_fts_query(&fts_terms);
@@ -1508,7 +1539,10 @@ impl Store {
                             || tags_text.to_lowercase().contains(&lower)
                     })
                 })
-                .map(|(result, _, _)| result)
+                .map(|(mut result, body, _)| {
+                    result.first_match_line = find_first_match_line(&body, &terms);
+                    result
+                })
                 .take(limit as usize)
                 .collect();
             Ok(results)
@@ -6676,5 +6710,75 @@ mod tests {
         }
         let folders = store.list_folders(3).unwrap();
         assert_eq!(folders.len(), 3);
+    }
+
+    // --- first_match_line tests ---
+    // These tests verify that search_content / search_content_filtered
+    // returns the 1-based line number of the first match within the body,
+    // matching the codebase convention (source_line, pendingCursorLine, doc.line()).
+
+    #[test]
+    fn search_content_returns_first_match_line_for_body_match() {
+        let store = Store::open_memory().unwrap();
+        let body = "line one\nline two\nquantum mechanics\nline four";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].first_match_line,
+            Some(3),
+            "expected 1-based line 3 where 'quantum' appears"
+        );
+    }
+
+    #[test]
+    fn search_content_first_match_line_on_first_line() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum physics intro\nsecond line\nthird line";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_first_match_line_title_only_match_returns_one() {
+        let store = Store::open_memory().unwrap();
+        let body = "no matching text here\njust regular lines";
+        upsert_node_with_body(&store, "a.md", "Quantum Notes", &[], body, 1);
+        let results = store.search_content("Quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        // Title match — no body line to point to, default to line 1
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_filtered_returns_first_match_line() {
+        let store = Store::open_memory().unwrap();
+        let body = "header text\nsummary\nthe quantum realm\nfooter";
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics"], body, 1000);
+        let filter = SearchFilter { tags: Some(vec!["physics".into()]), ..Default::default() };
+        let results = store.search_content_filtered("quantum", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].first_match_line,
+            Some(3),
+            "expected 1-based line 3 where 'quantum' appears in body"
+        );
+    }
+
+    #[test]
+    fn search_content_short_query_returns_first_match_line() {
+        // Short terms (<3 chars) use the LIKE fallback path
+        let store = Store::open_memory().unwrap();
+        let body = "first line\nsecond line\nGo language\nfourth line";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("Go", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].first_match_line,
+            Some(3),
+            "expected 1-based line 3 where 'Go' appears (LIKE path)"
+        );
     }
 }

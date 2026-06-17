@@ -399,6 +399,7 @@ export function SearchPanel() {
 
   const navigateToResult = useCallback(
     (id: string, line?: number) => {
+      console.log("[SearchPanel] navigateToResult", { id, line });
       navigateToNote(id, line ?? 1, { flash: true });
       setNavigatedResultId(id);
     },

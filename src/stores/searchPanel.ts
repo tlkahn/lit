@@ -72,6 +72,7 @@ export const useSearchPanelStore = create<SearchPanelState>((set, get) => ({
     set({ isLoading: true });
     try {
       const results = await searchContentFiltered(query, filter);
+      console.log("[searchPanel] results", results.map(r => ({ id: r.id, first_match_line: r.first_match_line })));
       if (id !== requestId) return; // stale
       set({ results, totalCount: results.length, isLoading: false, selectedIndex: 0, navigatedResultId: null });
     } catch (err) {

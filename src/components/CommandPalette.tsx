@@ -221,6 +221,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         }
       } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prefix === "/") {
         e.preventDefault();
+        console.log("[CommandPalette] bridge: transferring to search panel", { query, prefix });
         window.dispatchEvent(
           new CustomEvent("lit:open-search-panel-with-query", {
             detail: { query },
