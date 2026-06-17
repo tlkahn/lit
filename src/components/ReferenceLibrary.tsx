@@ -490,9 +490,11 @@ export function ReferenceLibrary() {
         }
         if (result.shadow_nodes_created > 0)
           parts.push(`${result.shadow_nodes_created} shadow nodes created`);
-        show(
-          `Enriched ${entry.key}${parts.length > 0 ? ": " + parts.join(". ") : ""}`,
-        );
+        if (parts.length === 0) {
+          show(`No new metadata found for @${entry.key}`);
+        } else {
+          show(`Enriched ${entry.key}: ${parts.join(". ")}`);
+        }
       } catch (err) {
         show(
           err instanceof Error ? err.message : String(err),
