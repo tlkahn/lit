@@ -174,7 +174,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   useEffect(() => {
     const handler = (e: Event) => {
       const { query } = (e as CustomEvent<{ query: string }>).detail;
-      console.log("[Sidebar] bridge received, switching to search tab with query:", query);
       setTab("search");
       useSearchPanelStore.getState().setQuery(query);
       // Focus the search input after React renders the tab switch

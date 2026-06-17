@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { listen } from "@tauri-apps/api/event";
 import { useSearchPanelStore } from "../stores/searchPanel";
 import { listFolders, searchTags, type TagSearchResult } from "../lib/ipc";
 import { navigateToNote } from "../lib/navigateToNote";
@@ -390,6 +391,21 @@ export function SearchPanel() {
     return () => window.removeEventListener("lit:focus-search-panel", handler);
   }, []);
 
+  // Re-run search when the graph index updates (file saved, created, deleted)
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:graph-updated", () => {
+      const { query: q } = useSearchPanelStore.getState();
+      if (q.trim()) {
+        useSearchPanelStore.getState().executeSearch();
+      }
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
+
   const virtualizer = useVirtualizer({
     count: results.length,
     getScrollElement: () => scrollRef.current,
@@ -399,7 +415,6 @@ export function SearchPanel() {
 
   const navigateToResult = useCallback(
     (id: string, line?: number) => {
-      console.log("[SearchPanel] navigateToResult", { id, line });
       navigateToNote(id, line ?? 1, { flash: true });
       setNavigatedResultId(id);
     },

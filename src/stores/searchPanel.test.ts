@@ -358,4 +358,33 @@ describe("searchPanel store", () => {
     // If it were in seconds it would be ~1_700_000_000 (< 1 trillion).
     expect(filterSent.mtime_after!).toBeGreaterThan(1_000_000_000_000);
   });
+
+  // --- refreshOnGraphUpdate ---
+
+  it("executeSearch re-runs when called with an active query (simulating graph-updated)", async () => {
+    let callCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") {
+        callCount++;
+        if (callCount === 1) return [makeResult("v1.md", "Version 1")];
+        return [makeResult("v1.md", "Version 1"), makeResult("v2.md", "Version 2")];
+      }
+      return null;
+    });
+
+    // Set up an active search
+    useSearchPanelStore.getState().setQuery("test");
+    vi.advanceTimersByTime(200);
+    await vi.runAllTimersAsync();
+    expect(useSearchPanelStore.getState().results).toHaveLength(1);
+    expect(useSearchPanelStore.getState().results[0]!.id).toBe("v1.md");
+    expect(callCount).toBe(1);
+
+    // Directly call executeSearch (what the graph-updated listener should do)
+    await useSearchPanelStore.getState().executeSearch();
+
+    expect(callCount).toBe(2);
+    expect(useSearchPanelStore.getState().results).toHaveLength(2);
+    expect(useSearchPanelStore.getState().results[1]!.id).toBe("v2.md");
+  });
 });
