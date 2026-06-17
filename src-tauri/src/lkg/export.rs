@@ -253,7 +253,7 @@ mod tests {
             frontmatter: json!({"aliases": ["AL"], "tags": ["t1"]}),
             first_paragraph: "Intro".into(),
         };
-        store.upsert_node(&node, 0).unwrap();
+        store.upsert_node(&node, 0, None).unwrap();
         store.upsert_stub("ghost").unwrap();
 
         let nodes = collect_bundle_nodes(&store).unwrap();
@@ -280,7 +280,7 @@ mod tests {
             frontmatter: json!({}),
             first_paragraph: "".into(),
         };
-        store.upsert_node(&node, 0).unwrap();
+        store.upsert_node(&node, 0, None).unwrap();
     }
 
     // --- D2: collect_bundle_edges ---

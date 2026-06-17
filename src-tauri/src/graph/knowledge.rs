@@ -622,11 +622,11 @@ mod tests {
     /// A--cite-->bib:ref1(shadow)
     fn build_test_graph() -> (Store, KnowledgeGraph) {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
-        store.upsert_node(&make_node("D", "Delta"), 1).unwrap();
-        store.upsert_node(&make_node("E", "Echo"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
+        store.upsert_node(&make_node("D", "Delta"), 1, None).unwrap();
+        store.upsert_node(&make_node("E", "Echo"), 1, None).unwrap();
         store.upsert_stub("F").unwrap();
         store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
 
@@ -803,8 +803,8 @@ mod tests {
     #[test]
     fn from_store_duplicate_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
         store.insert_edge("A", "B", "ctx1", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "B", "ctx2", "", 0, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -814,8 +814,8 @@ mod tests {
     #[test]
     fn from_store_includes_citation_edges_in_petgraph() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -831,7 +831,7 @@ mod tests {
     #[test]
     fn from_store_node_materialization_preserved() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
         store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         let idx_a = kg.id_to_index["A"];
@@ -1207,8 +1207,8 @@ mod tests {
     #[test]
     fn paths_does_not_traverse_through_stub() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("X", "X"), 1).unwrap();
-        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_node(&make_node("X", "X"), 1, None).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1, None).unwrap();
         store.upsert_stub("S").unwrap();
         store.insert_edge("X", "S", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("S", "Y", "", "", 0, EdgeKind::Wikilink).unwrap();
@@ -1359,7 +1359,7 @@ mod tests {
     #[test]
     fn pagerank_single_node() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("X", "Solo"), 1).unwrap();
+        store.upsert_node(&make_node("X", "Solo"), 1, None).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
         let scores = kg.pagerank(0.85);
         assert_eq!(scores.len(), 1);
@@ -1450,9 +1450,9 @@ mod tests {
     #[test]
     fn backlinks_returns_incoming_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         store.insert_edge("A", "B", "ctx1", "b", 10, EdgeKind::Wikilink).unwrap();
         store.insert_edge("C", "B", "ctx2", "b", 20, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1492,8 +1492,8 @@ mod tests {
     #[test]
     fn full_subgraph_deduplicates_multi_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
         store.insert_edge("A", "B", "ctx1", "b", 1, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "B", "ctx2", "b", 5, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1507,8 +1507,8 @@ mod tests {
     #[test]
     fn induced_subgraph_deduplicates_multi_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
         store.insert_edge("A", "B", "ctx1", "b", 1, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "B", "ctx2", "b", 5, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1522,9 +1522,9 @@ mod tests {
     #[test]
     fn backlink_source_ids_returns_unique_sources() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         store.insert_edge("A", "C", "ctx1", "c", 1, EdgeKind::Wikilink).unwrap();
         store.insert_edge("B", "C", "ctx2", "c", 2, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "C", "ctx3", "c", 3, EdgeKind::Wikilink).unwrap(); // duplicate source A
@@ -1553,9 +1553,9 @@ mod tests {
     #[test]
     fn forward_links_returns_outgoing_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         store.insert_edge("A", "B", "ctx1", "b", 5, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "C", "ctx2", "c", 15, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1641,8 +1641,8 @@ mod tests {
     #[test]
     fn neighbors_excludes_citation_edges_between_materialized_nodes() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
         // Insert citation edge FIRST so it wins the (source,target) dedup race
         // if the filter is missing — this makes the test reliably catch the bug.
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
@@ -1661,9 +1661,9 @@ mod tests {
     #[test]
     fn subgraph_excludes_citation_edges_between_materialized_nodes() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         // Insert citation edge FIRST so it wins the (source,target) dedup race
         // if the filter is missing — this makes the test reliably catch the bug.
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
@@ -1686,8 +1686,8 @@ mod tests {
         // This is a regression guard: the fix for induced_subgraph must not break
         // the include_citations=true path, which has its own edge collection.
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
         store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "bib:ref1", "cite", "ref1", 0, EdgeKind::Citation).unwrap();
@@ -1744,9 +1744,9 @@ mod tests {
     #[test]
     fn backlinks_excludes_citation_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("C", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1759,9 +1759,9 @@ mod tests {
     #[test]
     fn forward_links_excludes_citation_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1774,9 +1774,9 @@ mod tests {
     #[test]
     fn backlink_source_ids_excludes_citation_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1, None).unwrap();
         store.insert_edge("A", "C", "wiki", "c", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("B", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1792,10 +1792,10 @@ mod tests {
         // A->X wikilink, B->X wikilink, A->X citation (duplicate kind shouldn't matter)
         // shared(A,B,true) should find X via wikilink only
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.upsert_node(&make_node("X", "X"), 1).unwrap();
-        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
+        store.upsert_node(&make_node("X", "X"), 1, None).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1, None).unwrap();
         store.insert_edge("A", "X", "wiki", "x", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("B", "X", "wiki", "x", 0, EdgeKind::Wikilink).unwrap();
         // A also cites Y; B cites Y — but citation edges shouldn't count
@@ -1812,9 +1812,9 @@ mod tests {
     #[test]
     fn paths_excludes_citation_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         // B->C is only a citation — no wikilink path exists
         store.insert_edge("B", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
@@ -1829,15 +1829,15 @@ mod tests {
         // Build a graph with only wikilinks, compute pagerank.
         // Then build the same graph with an extra citation edge and verify scores are identical.
         let store1 = Store::open_memory().unwrap();
-        store1.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store1.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store1.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store1.upsert_node(&make_node("B", "B"), 1, None).unwrap();
         store1.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         let kg1 = KnowledgeGraph::from_store(&store1).unwrap();
         let scores1 = kg1.pagerank(0.85);
 
         let store2 = Store::open_memory().unwrap();
-        store2.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store2.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store2.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store2.upsert_node(&make_node("B", "B"), 1, None).unwrap();
         store2.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store2.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         let kg2 = KnowledgeGraph::from_store(&store2).unwrap();
@@ -1850,9 +1850,9 @@ mod tests {
     #[test]
     fn bfs_collect_ignores_citation_edges() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "A"), 1).unwrap();
-        store.upsert_node(&make_node("B", "B"), 1).unwrap();
-        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.upsert_node(&make_node("A", "A"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "C", "cite", "c", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1869,8 +1869,8 @@ mod tests {
     #[test]
     fn full_subgraph_filtered_wikilink_wins_over_citation_dedup() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
         // Insert citation FIRST so it would win the iteration race under the old dedup
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
@@ -1889,9 +1889,9 @@ mod tests {
     #[test]
     fn induced_subgraph_filtered_wikilink_wins_over_citation_dedup() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         // Insert citation FIRST so it would win the iteration race under the old dedup
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
@@ -1913,7 +1913,7 @@ mod tests {
     #[test]
     fn full_subgraph_filtered_citation_survives_when_no_wikilink() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
         store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
         store.insert_edge("A", "bib:ref1", "cite", "ref1", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
@@ -1943,6 +1943,7 @@ mod tests {
                                 first_paragraph: String::new(),
                             },
                             1,
+                            None,
                         )
                         .unwrap();
                 } else {
@@ -2006,9 +2007,9 @@ mod tests {
     #[test]
     fn collect_induced_edges_wikilink_only() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         store.insert_edge("A", "C", "wiki", "c", 0, EdgeKind::Wikilink).unwrap();
@@ -2027,9 +2028,9 @@ mod tests {
     #[test]
     fn collect_induced_edges_all_kinds_dedup_prefers_wikilink() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
         // Insert citation FIRST so it would win under naive first-wins dedup
         store.insert_edge("A", "B", "cite", "b", 0, EdgeKind::Citation).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
@@ -2054,10 +2055,10 @@ mod tests {
     #[test]
     fn collect_induced_edges_excludes_nodes_outside_visited() {
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
-        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
-        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
-        store.upsert_node(&make_node("D", "Delta"), 1).unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1, None).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1, None).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1, None).unwrap();
+        store.upsert_node(&make_node("D", "Delta"), 1, None).unwrap();
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("B", "C", "wiki", "c", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("C", "D", "wiki", "d", 0, EdgeKind::Wikilink).unwrap();
@@ -2087,8 +2088,8 @@ mod tests {
         // Shadow node reachable via wikilink (not citation) should be filtered
         // by induced_subgraph when include_citations=false.
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("X", "X"), 1).unwrap();
-        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_node(&make_node("X", "X"), 1, None).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1, None).unwrap();
         store.upsert_shadow("Sh", "Shadow Node", Materialization::Shadow).unwrap();
         store.insert_edge("X", "Y", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("X", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
@@ -2109,8 +2110,8 @@ mod tests {
     fn shared_excludes_shadow_neighbor() {
         // The only common neighbor is a shadow node -- result should be empty.
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("X", "X"), 1).unwrap();
-        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_node(&make_node("X", "X"), 1, None).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1, None).unwrap();
         store.upsert_shadow("Sh", "Shadow Node", Materialization::Shadow).unwrap();
         store.insert_edge("X", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("Y", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
@@ -2128,8 +2129,8 @@ mod tests {
     fn paths_does_not_traverse_through_shadow() {
         // Path X->Sh->Y exists via wikilinks, but Sh is shadow so the path should be blocked.
         let store = Store::open_memory().unwrap();
-        store.upsert_node(&make_node("X", "X"), 1).unwrap();
-        store.upsert_node(&make_node("Y", "Y"), 1).unwrap();
+        store.upsert_node(&make_node("X", "X"), 1, None).unwrap();
+        store.upsert_node(&make_node("Y", "Y"), 1, None).unwrap();
         store.upsert_shadow("Sh", "Shadow Node", Materialization::Shadow).unwrap();
         store.insert_edge("X", "Sh", "", "", 0, EdgeKind::Wikilink).unwrap();
         store.insert_edge("Sh", "Y", "", "", 0, EdgeKind::Wikilink).unwrap();

@@ -223,7 +223,7 @@ pub fn import_graph_data(
                     frontmatter: n.frontmatter.clone(),
                     first_paragraph: n.first_paragraph.clone(),
                 };
-                store.upsert_node(&parsed, 0)?;
+                store.upsert_node(&parsed, 0, None)?;
             }
         }
 
@@ -581,7 +581,7 @@ mod tests {
             frontmatter: json!({}),
             first_paragraph: "".into(),
         };
-        store.upsert_node(&node, 0).unwrap();
+        store.upsert_node(&node, 0, None).unwrap();
     }
 
     // --- E10: import_graph_data inserts edges ---
