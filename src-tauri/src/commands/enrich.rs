@@ -704,6 +704,113 @@ pub async fn enrich_bib_entry(
     Ok(result)
 }
 
+#[tauri::command]
+pub async fn apply_enrichment_candidate(
+    bib_key: String,
+    candidate: BibEntry,
+    workspace_path: String,
+    graph_state: State<'_, Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<EnrichResult, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+
+    let existing = {
+        let store = gi.store();
+        db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Entry '{}' not found in workspace", bib_key))?
+    };
+
+    let new_fields = merge_enrichment_fields(&existing, Some(&candidate), None);
+    let mut fields_added: Vec<String> = new_fields.keys().cloned().collect();
+
+    if !new_fields.is_empty() {
+        let store = gi.store();
+        let modified = db::update_bib_fields(&store.conn, &bib_key, &new_fields)
+            .map_err(|e| e.to_string())?;
+        if !modified {
+            fields_added.clear();
+        }
+    }
+
+    let mut counters = LinkCounters::default();
+    let mut references_found = 0usize;
+
+    let enriched_doi = new_fields
+        .get("doi")
+        .cloned()
+        .or_else(|| existing.doi.clone());
+
+    if let Some(ref doi) = enriched_doi {
+        let crossref_fut = async { fetch_crossref(doi).await.ok() };
+        let s2_fut = async { fetch_s2(Some(doi), &existing.title).await.ok() };
+        let (crossref_csl, s2_paper) = tokio::join!(crossref_fut, s2_fut);
+
+        let mut used_keys = {
+            let store = gi.store();
+            db::all_live_keys(&store.conn).map_err(|e| e.to_string())?
+        };
+
+        let (found, link_counters) = {
+            let store = gi.store();
+            link_references_from_sources(
+                &store.conn,
+                &bib_key,
+                crossref_csl.as_ref(),
+                s2_paper.as_ref(),
+                Some(std::mem::take(&mut used_keys)),
+            )?
+        };
+        references_found = found;
+        counters = link_counters;
+    } else {
+        let s2_paper = fetch_s2(None, &existing.title).await.ok();
+
+        if s2_paper.is_some() {
+            let mut used_keys = {
+                let store = gi.store();
+                db::all_live_keys(&store.conn).map_err(|e| e.to_string())?
+            };
+
+            let (found, link_counters) = {
+                let store = gi.store();
+                link_references_from_sources(
+                    &store.conn,
+                    &bib_key,
+                    None,
+                    s2_paper.as_ref(),
+                    Some(std::mem::take(&mut used_keys)),
+                )?
+            };
+            references_found = found;
+            counters = link_counters;
+        }
+    }
+
+    let updated_entry = {
+        let store = gi.store();
+        db::get_bib_item(&store.conn, &bib_key)
+            .map_err(|e| e.to_string())?
+            .unwrap_or(existing)
+    };
+
+    crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+
+    Ok(EnrichResult {
+        entry: updated_entry,
+        fields_added,
+        references_found,
+        references_appended: counters.references_appended,
+        shadow_nodes_created: counters.shadow_nodes_created,
+        references_linked: counters.references_linked,
+        candidates: vec![],
+        providers_searched: vec![],
+        providers_failed: vec![],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,6 +850,47 @@ mod tests {
         };
         overrides(&mut entry);
         entry
+    }
+
+    // ── apply_enrichment_candidate core logic ─────────────────────
+
+    #[test]
+    fn apply_enrichment_candidate_merges_fields_preserves_existing() {
+        use crate::bib::db;
+        use crate::graph::store::Store;
+
+        let store = Store::open_memory().unwrap();
+
+        let existing = make_entry(|e| {
+            e.key = "sparse2024".to_string();
+            e.title = "Sparse Paper".to_string();
+            e.year = "2024".to_string();
+            e.doi = None;
+            e.abstract_text = None;
+            e.journal = None;
+        });
+        db::upsert_bib_item(&store.conn, &existing, None, None, false).unwrap();
+
+        let candidate = make_entry(|e| {
+            e.doi = Some("10.1/candidate".to_string());
+            e.abstract_text = Some("Candidate abstract".to_string());
+            e.journal = Some("Nature".to_string());
+        });
+
+        let new_fields = merge_enrichment_fields(&existing, Some(&candidate), None);
+        assert!(new_fields.contains_key("doi"));
+        assert!(new_fields.contains_key("abstract"));
+        assert!(new_fields.contains_key("journal"));
+
+        let updated = db::update_bib_fields(&store.conn, "sparse2024", &new_fields).unwrap();
+        assert!(updated);
+
+        let fetched = db::get_bib_item(&store.conn, "sparse2024").unwrap().unwrap();
+        assert_eq!(fetched.doi, Some("10.1/candidate".to_string()));
+        assert_eq!(fetched.abstract_text, Some("Candidate abstract".to_string()));
+        assert_eq!(fetched.journal, Some("Nature".to_string()));
+        assert_eq!(fetched.title, "Sparse Paper");
+        assert_eq!(fetched.year, "2024");
     }
 
     // ── title_similarity ─────────────────────────────────────────
