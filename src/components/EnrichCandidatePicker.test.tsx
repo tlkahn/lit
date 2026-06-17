@@ -258,6 +258,7 @@ describe("EnrichCandidatePicker", () => {
 
   it("Enter applies the selected candidate", () => {
     render(<EnrichCandidatePicker {...defaultProps} />);
+    (document.activeElement as HTMLElement)?.blur();
     fireEvent.keyDown(document, { key: "ArrowDown" });
     fireEvent.keyDown(document, { key: "Enter" });
     expect(defaultProps.onApply).toHaveBeenCalledTimes(1);
@@ -266,6 +267,7 @@ describe("EnrichCandidatePicker", () => {
 
   it("Enter applies first candidate when no arrows pressed", () => {
     render(<EnrichCandidatePicker {...defaultProps} />);
+    (document.activeElement as HTMLElement)?.blur();
     fireEvent.keyDown(document, { key: "Enter" });
     expect(defaultProps.onApply).toHaveBeenCalledWith(candidateA);
   });
@@ -295,6 +297,18 @@ describe("EnrichCandidatePicker", () => {
     expect(defaultProps.onApply).not.toHaveBeenCalled();
     // Simulate native click on the focused Cancel button.
     fireEvent.click(cancelBtn);
+    expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Enter on focused Close X button does not fire onApply", () => {
+    const { container } = render(
+      <EnrichCandidatePicker {...defaultProps} />,
+    );
+    const closeBtn = container.querySelector("[data-testid='enrich-picker-close']") as HTMLButtonElement;
+    closeBtn.focus();
+    fireEvent.keyDown(document, { key: "Enter" });
+    expect(defaultProps.onApply).not.toHaveBeenCalled();
+    fireEvent.click(closeBtn);
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
 

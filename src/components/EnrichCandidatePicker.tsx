@@ -61,22 +61,13 @@ export function EnrichCandidatePicker({
           e.preventDefault();
           setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
           break;
-        case "Enter": {
-          const active = document.activeElement;
-          if (
-            active instanceof HTMLButtonElement &&
-            active.hasAttribute("data-enrich-action")
-          ) {
-            // A specific action button (Apply / Cancel) is focused —
-            // defer to the native button click handler.
-            break;
-          }
+        case "Enter":
+          if (document.activeElement instanceof HTMLButtonElement) break;
           e.preventDefault();
           if (candidates.length > 0) {
             onApply(candidates[selectedIndex]!);
           }
           break;
-        }
       }
     },
     [onClose, onApply, candidates, selectedIndex],
@@ -114,6 +105,7 @@ export function EnrichCandidatePicker({
             className="rounded p-1 text-text-muted hover:bg-bg-secondary"
             onClick={onClose}
             data-testid="enrich-picker-close"
+
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 4l8 8M12 4l-8 8" />
@@ -202,7 +194,7 @@ export function EnrichCandidatePicker({
                 {/* Apply button */}
                 <button
                   data-testid="enrich-apply-btn"
-                  data-enrich-action="apply"
+
                   onClick={() => onApply(candidate)}
                   className="shrink-0 rounded bg-interactive-accent px-3 py-1.5 text-xs text-white hover:opacity-90"
                 >
@@ -217,7 +209,7 @@ export function EnrichCandidatePicker({
         <div className="flex justify-end px-5 pb-5 pt-3">
           <button
             data-testid="enrich-picker-cancel-btn"
-            data-enrich-action="cancel"
+
             onClick={onClose}
             className="rounded px-3 py-1.5 text-sm text-text-muted hover:bg-bg-secondary"
           >
