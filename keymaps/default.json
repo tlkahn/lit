@@ -34,5 +34,5 @@
   { "key": "Mod-Shift-y", "command": "companion.toggleSync" },
   { "key": "Mod-Enter", "command": "app.fireAnnotation", "when": "editorFocus" },
   { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" },
-  { "key": "Mod-Shift-z", "command": "app.toggleFocusMode" }
+  { "key": "Mod-Shift-z", "command": "app.toggleFocusMode", "when": "!editorFocus" }
 ]
