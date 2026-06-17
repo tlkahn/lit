@@ -203,11 +203,12 @@ fn highlight_terms_in_line(line: &str, terms: &[&str]) -> String {
 /// **all** terms appear (AND semantics), so within a matched document we highlight every
 /// line that mentions at least one term to give the user full context.
 fn find_matching_lines(body: &str, terms: &[&str]) -> Vec<(u64, String)> {
+    let lower_terms: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
     body.split('\n')
         .enumerate()
         .filter(|(_, line)| {
             let lower = line.to_lowercase();
-            terms.iter().any(|t| lower.contains(&t.to_lowercase()))
+            lower_terms.iter().any(|lt| lower.contains(lt.as_str()))
         })
         .map(|(i, line)| ((i as u64) + 1, highlight_terms_in_line(line, terms)))
         .collect()
