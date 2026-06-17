@@ -1637,6 +1637,9 @@ impl Store {
 
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
         let terms: Vec<&str> = query.split_whitespace().collect();
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
         let (fts_terms, short_terms) = partition_terms(&terms);
         let has_short_term = !short_terms.is_empty();
 
@@ -1647,9 +1650,16 @@ impl Store {
 
             for term in &terms {
                 let clean = sanitize_like_term(term);
+                if clean.is_empty() {
+                    continue;
+                }
                 conditions.push(format!("a.body LIKE ?{idx}"));
                 params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
                 idx += 1;
+            }
+
+            if conditions.is_empty() && type_filter.is_none() {
+                return Ok(vec![]);
             }
 
             if let Some(tf) = type_filter {
