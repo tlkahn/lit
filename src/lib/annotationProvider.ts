@@ -3,8 +3,7 @@ import {
   TYPE_ICON,
   truncateBody,
 } from "../editor/livePreview/annotationConstants";
-import { useWorkspaceStore } from "../stores/workspace";
-import { globalJumpTracker } from "../editor/jumpTracker";
+import { navigateToNote } from "./navigateToNote";
 import type { PaletteProvider, PaletteResult, PaletteFilterOption } from "./paletteRegistry";
 
 const FILTER_OPTIONS: PaletteFilterOption[] = [
@@ -46,21 +45,6 @@ export const annotationProvider: PaletteProvider = {
 
   onSelect(result: PaletteResult): void {
     const data = result.data as { node_id: string; source_line: number };
-    const { currentPagePath, selectPageAtLine } = useWorkspaceStore.getState();
-
-    globalJumpTracker.recordJump(
-      { notePath: currentPagePath ?? "", line: 1, col: 0 },
-      { notePath: data.node_id, line: data.source_line, col: 0 },
-    );
-
-    if (data.node_id === currentPagePath) {
-      window.dispatchEvent(
-        new CustomEvent("lit:scroll-to-line", {
-          detail: { line: data.source_line, cursor: true },
-        }),
-      );
-    } else {
-      selectPageAtLine(data.node_id, data.source_line);
-    }
+    navigateToNote(data.node_id, data.source_line);
   },
 };

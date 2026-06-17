@@ -37,7 +37,7 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
   useEffect(() => {
     if (!view) return;
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ line: number; cursor?: boolean }>).detail;
+      const detail = (e as CustomEvent<{ line: number; cursor?: boolean; flash?: boolean }>).detail;
       const doc = view.state.doc;
       const lineNumber = Math.min(detail.line + 1, doc.lines);
       const pos = doc.line(lineNumber).from;
@@ -46,6 +46,30 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
         ...(detail.cursor ? { selection: EditorSelection.cursor(pos) } : {}),
       });
       if (detail.cursor) view.focus();
+
+      // Flash the target line for visual orientation
+      if (detail.flash === true) {
+        requestAnimationFrame(() => {
+          try {
+            const lineBlock = view.lineBlockAt(pos);
+            const domNode = view.domAtPos(lineBlock.from)?.node;
+            const lineEl = domNode instanceof HTMLElement
+              ? domNode.closest(".cm-line")
+              : domNode?.parentElement?.closest(".cm-line");
+            if (lineEl) {
+              lineEl.classList.remove("cm-line-flash");
+              // Force reflow to restart animation if same line
+              void (lineEl as HTMLElement).offsetWidth;
+              lineEl.classList.add("cm-line-flash");
+              lineEl.addEventListener("animationend", () => {
+                lineEl.classList.remove("cm-line-flash");
+              }, { once: true });
+            }
+          } catch {
+            // Non-critical visual effect — ignore DOM errors (e.g. in test environments)
+          }
+        });
+      }
     };
     window.addEventListener("lit:scroll-to-line", handler);
     return () => window.removeEventListener("lit:scroll-to-line", handler);

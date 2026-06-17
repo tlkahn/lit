@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension};
 use tracing::{debug, info};
 
 use super::error::GraphError;
-use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
+use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, SearchFilter, Stats, TagPageResult, TagSearchResult};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 23;
 
@@ -45,6 +45,218 @@ fn partition_terms<'a>(terms: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
 /// Strip LIKE metacharacters (`%`, `_`) from a term for safe use in LIKE patterns.
 fn sanitize_like_term(term: &str) -> String {
     term.replace('%', "").replace('_', "")
+}
+
+/// Escape LIKE metacharacters (`%`, `_`, `\`) in a term using `\` as the escape
+/// character.  The caller must add `ESCAPE '\'` to the SQL statement.
+fn escape_like_term(term: &str) -> String {
+    term.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Build a mapping from each byte offset in `lowered` back to the corresponding
+/// byte offset in `original`.  Entry `map[i]` (for `i` in `0..=lowered.len()`)
+/// gives the byte offset in `original` that corresponds to lowered byte `i`.
+///
+/// Both strings must have been produced from the same source via
+/// `original` -> `original.to_lowercase()` == `lowered`.
+fn build_lower_to_orig_map(original: &str, lowered: &str) -> Vec<usize> {
+    let mut map = vec![0usize; lowered.len() + 1];
+    let mut orig_iter = original.char_indices().peekable();
+    let mut low_iter = lowered.char_indices().peekable();
+
+    loop {
+        match (orig_iter.peek(), low_iter.peek()) {
+            (Some(&(orig_byte, orig_ch)), Some(&(low_byte, _))) => {
+                // Map the start of this lowered char to the start of the original char.
+                map[low_byte] = orig_byte;
+                // A single original char may lowercase into multiple chars (e.g. 'İ' → "i\u{307}").
+                let orig_lower: String = orig_ch.to_lowercase().collect();
+                let orig_lower_bytes = orig_lower.len();
+                // Advance past all lowered chars that came from this single original char.
+                let mut consumed = 0;
+                while consumed < orig_lower_bytes {
+                    if let Some(&(_, lc)) = low_iter.peek() {
+                        consumed += lc.len_utf8();
+                        low_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                orig_iter.next();
+            }
+            _ => break,
+        }
+    }
+    // Sentinel: map the end-of-lowered to end-of-original.
+    map[lowered.len()] = original.len();
+    map
+}
+
+/// Find the 1-based line number of the first occurrence of any search term in
+/// `body` (case-insensitive).  Returns `Some(1)` as a fallback when no body
+/// match is found (e.g. title-only match).
+///
+/// The rest of the codebase (source_line, pendingCursorLine, doc.line()) uses
+/// 1-based line numbers, so we follow that convention.
+fn find_first_match_line(body: &str, terms: &[&str]) -> Option<u64> {
+    let body_lower = body.to_lowercase();
+    let mut earliest: Option<usize> = None; // byte offset in body_lower
+    for term in terms {
+        let lower_term = term.to_lowercase();
+        if let Some(pos) = body_lower.find(&lower_term) {
+            earliest = Some(match earliest {
+                Some(prev) => prev.min(pos),
+                None => pos,
+            });
+        }
+    }
+    match earliest {
+        Some(low_offset) => {
+            // Map the lowered byte offset back to the original string.
+            let map = build_lower_to_orig_map(body, &body_lower);
+            let orig_offset = map[low_offset];
+            let line = body[..orig_offset].matches('\n').count() + 1;
+            Some(line as u64)
+        }
+        None => Some(1),
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn highlight_terms_in_line(line: &str, terms: &[&str]) -> String {
+    let line_lower = line.to_lowercase();
+    let map = build_lower_to_orig_map(line, &line_lower);
+    // Collect ranges in *original* line byte offsets.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for term in terms {
+        let lower_term = term.to_lowercase();
+        if lower_term.is_empty() {
+            continue;
+        }
+        let lt_len = lower_term.len();
+        let mut start = 0usize; // byte offset in line_lower
+        while start + lt_len <= line_lower.len() {
+            if let Some(pos) = line_lower[start..].find(&lower_term) {
+                let abs_start = start + pos;
+                let abs_end = abs_start + lt_len;
+                // Map back to original string byte offsets.
+                ranges.push((map[abs_start], map[abs_end]));
+                // Advance past the first char of the match (char-aware).
+                start = abs_start
+                    + line_lower[abs_start..]
+                        .chars()
+                        .next()
+                        .map_or(1, |c| c.len_utf8());
+            } else {
+                break;
+            }
+        }
+    }
+    if ranges.is_empty() {
+        return html_escape(line);
+    }
+    ranges.sort_by_key(|&(a, _)| a);
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    let mut out = String::new();
+    let mut cursor = 0;
+    for (s, e) in &merged {
+        if cursor < *s {
+            out.push_str(&html_escape(&line[cursor..*s]));
+        }
+        out.push_str("<mark>");
+        out.push_str(&html_escape(&line[*s..*e]));
+        out.push_str("</mark>");
+        cursor = *e;
+    }
+    if cursor < line.len() {
+        out.push_str(&html_escape(&line[cursor..]));
+    }
+    out
+}
+
+/// Return every line in `body` that contains **any** of the given terms (OR semantics).
+///
+/// This is intentional: `find_matching_docs` already narrows results to documents where
+/// **all** terms appear (AND semantics), so within a matched document we highlight every
+/// line that mentions at least one term to give the user full context.
+fn find_matching_lines(body: &str, terms: &[&str]) -> Vec<(u64, String)> {
+    let lower_terms: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+    body.split('\n')
+        .enumerate()
+        .filter(|(_, line)| {
+            let lower = line.to_lowercase();
+            lower_terms.iter().any(|lt| lower.contains(lt.as_str()))
+        })
+        .map(|(i, line)| ((i as u64) + 1, highlight_terms_in_line(line, terms)))
+        .collect()
+}
+
+/// Build additional WHERE clauses and parameter values from a `SearchFilter`.
+///
+/// `param_offset` is the 1-based index of the next available `?N` placeholder.
+/// Returns `(clauses, params, next_offset)` where `clauses` is a vector of SQL
+/// fragments (each starting with `AND`) and `params` holds the matching values.
+fn build_filter_clauses(
+    filter: &SearchFilter,
+    param_offset: usize,
+) -> (Vec<String>, Vec<rusqlite::types::Value>, usize) {
+    let mut clauses = Vec::new();
+    let mut params: Vec<rusqlite::types::Value> = Vec::new();
+    let mut idx = param_offset;
+
+    if let Some(ref prefix) = filter.folder_prefix {
+        clauses.push(format!("AND n.id LIKE ?{idx} ESCAPE '\\'"));
+        let escaped = escape_like_term(prefix);
+        params.push(rusqlite::types::Value::Text(format!("{escaped}%")));
+        idx += 1;
+    }
+
+    if let Some(ref tags) = filter.tags {
+        for tag in tags {
+            clauses.push(format!(
+                "AND EXISTS (SELECT 1 FROM tags WHERE node_id = n.id AND tag = ?{idx})"
+            ));
+            params.push(rusqlite::types::Value::Text(tag.clone()));
+            idx += 1;
+        }
+    }
+
+    if let Some(after) = filter.mtime_after {
+        clauses.push(format!("AND n.mtime >= ?{idx}"));
+        params.push(rusqlite::types::Value::Integer(after));
+        idx += 1;
+    }
+
+    if let Some(before) = filter.mtime_before {
+        clauses.push(format!("AND n.mtime <= ?{idx}"));
+        params.push(rusqlite::types::Value::Integer(before));
+        idx += 1;
+    }
+
+    (clauses, params, idx)
 }
 
 pub struct Store {
@@ -1325,7 +1537,17 @@ impl Store {
 
     // --- Content search (FTS5) ---
 
-    pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<super::types::SearchResult>, GraphError> {
+    /// Intermediate doc-match result used by both `search_content` and `search_content_filtered`.
+    ///
+    /// Uses **AND** semantics: a document is returned only when **all** query terms appear
+    /// in its title, body, or tags. Individual matching lines within a document are then
+    /// selected with OR semantics by `find_matching_lines`.
+    fn find_matching_docs(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: i64,
+    ) -> Result<Vec<(super::types::SearchResult, String)>, GraphError> {
         if query.is_empty() {
             return Ok(vec![]);
         }
@@ -1335,11 +1557,9 @@ impl Store {
             return Ok(vec![]);
         }
 
-        // Partition terms: trigram FTS5 requires >= 3 chars per term
         let (fts_terms, short_terms) = partition_terms(&terms);
 
         if fts_terms.is_empty() {
-            // All terms are short — pure LIKE fallback
             let mut conditions = Vec::new();
             let mut params: Vec<rusqlite::types::Value> = Vec::new();
             let mut idx = 1;
@@ -1359,11 +1579,17 @@ impl Store {
             if conditions.is_empty() {
                 return Ok(vec![]);
             }
+
+            let (filter_clauses, filter_params, next_idx) = build_filter_clauses(filter, idx);
+            params.extend(filter_params);
+            idx = next_idx;
+
+            let filter_sql = filter_clauses.join(" ");
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), '')
+                "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), ''), COALESCE(n.body, '')
                  FROM nodes n
-                 WHERE n.is_stub = 0 AND n.materialization = 'materialized' AND {where_clause}
+                 WHERE n.is_stub = 0 AND n.materialization = 'materialized' AND {where_clause} {filter_sql}
                  ORDER BY length(n.body) ASC
                  LIMIT ?{idx}"
             );
@@ -1374,35 +1600,44 @@ impl Store {
                 params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
             let results = stmt
                 .query_map(param_refs.as_slice(), |row| {
-                    Ok(super::types::SearchResult {
+                    Ok((super::types::SearchResult {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         score: row.get(2)?,
                         excerpt: row.get(3)?,
                         first_match_line: None,
-                    })
+                    }, row.get::<_, String>(4)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(results)
         } else {
-            // FTS5 trigram search with snippet highlighting (only FTS-eligible terms)
             let fts_query = build_fts_query(&fts_terms);
-
-            // Fetch extra rows when post-filtering, so we still return up to `limit` results
             let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
 
-            let sql = "SELECT n.id, n.title, f.rank,
+            let (filter_clauses, filter_params, _) = build_filter_clauses(filter, 3);
+            let filter_sql = filter_clauses.join(" ");
+
+            let sql = format!(
+                "SELECT n.id, n.title, f.rank,
                         snippet(notes_fts, -1, '<mark>', '</mark>', '...', 64),
                         COALESCE(n.body, ''), COALESCE(n.tags_text, '')
                  FROM notes_fts f
                  JOIN nodes n ON n.id = f.node_id
-                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0
+                 WHERE notes_fts MATCH ?1 AND n.is_stub = 0 AND n.materialization = 'materialized' {filter_sql}
                  ORDER BY rank
-                 LIMIT ?2";
+                 LIMIT ?2"
+            );
 
-            let mut stmt = self.conn.prepare(sql)?;
+            let mut all_params: Vec<rusqlite::types::Value> = Vec::new();
+            all_params.push(rusqlite::types::Value::Text(fts_query));
+            all_params.push(rusqlite::types::Value::Integer(fetch_limit));
+            all_params.extend(filter_params);
+
+            let mut stmt = self.conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                all_params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
             let rows = stmt
-                .query_map(rusqlite::params![fts_query, fetch_limit], |row| {
+                .query_map(param_refs.as_slice(), |row| {
                     Ok((
                         super::types::SearchResult {
                             id: row.get(0)?,
@@ -1417,8 +1652,7 @@ impl Store {
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            // Post-filter: every short term must appear (case-insensitive) in title, body, or tags
-            let results: Vec<super::types::SearchResult> = rows
+            let results: Vec<_> = rows
                 .into_iter()
                 .filter(|(result, body, tags_text)| {
                     short_terms.iter().all(|st| {
@@ -1428,11 +1662,100 @@ impl Store {
                             || tags_text.to_lowercase().contains(&lower)
                     })
                 })
-                .map(|(result, _, _)| result)
+                .map(|(result, body, _)| (result, body))
                 .take(limit as usize)
                 .collect();
             Ok(results)
         }
+    }
+
+    /// Document-level content search (used by Command Palette via contentProvider).
+    pub fn search_content(&self, query: &str, limit: i64) -> Result<Vec<super::types::SearchResult>, GraphError> {
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let docs = self.find_matching_docs(query, &SearchFilter::default(), limit)?;
+        Ok(docs.into_iter().map(|(mut r, body)| {
+            r.first_match_line = find_first_match_line(&body, &terms);
+            r
+        }).collect())
+    }
+
+    /// Line-level content search (used by the dedicated search panel).
+    /// Returns one SearchResult per matching line within each document.
+    ///
+    /// `limit` controls both the SQL doc-level LIMIT passed to `find_matching_docs`
+    /// and the line-level result cap applied below.  A single highly-matching doc
+    /// could fill the line budget early, leaving some fetched doc bodies unused.
+    /// This is an acceptable trade-off: the query targets a local in-process SQLite
+    /// DB where fetching ~100 rows (including body text) is typically <1 ms thanks
+    /// to the OS page cache, and the early-exit `break` below avoids unnecessary
+    /// line-scanning work.  An adaptive fetch-more loop would add significant
+    /// complexity for negligible real-world gain.
+    pub fn search_content_filtered(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: i64,
+    ) -> Result<Vec<super::types::SearchResult>, GraphError> {
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        let docs = self.find_matching_docs(query, filter, limit)?;
+        let mut results = Vec::new();
+        for (doc, body) in docs {
+            let lines = find_matching_lines(&body, &terms);
+            if lines.is_empty() {
+                results.push(super::types::SearchResult {
+                    id: doc.id,
+                    title: doc.title,
+                    score: doc.score,
+                    excerpt: html_escape(&doc.excerpt),
+                    first_match_line: Some(1),
+                });
+            } else {
+                for (line_num, highlighted) in lines {
+                    results.push(super::types::SearchResult {
+                        id: doc.id.clone(),
+                        title: doc.title.clone(),
+                        score: doc.score,
+                        excerpt: highlighted,
+                        first_match_line: Some(line_num),
+                    });
+                }
+            }
+            if results.len() >= limit as usize {
+                results.truncate(limit as usize);
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Return distinct folder prefixes from materialized node IDs.
+    /// Each folder prefix ends with `/`. Root-level files are excluded.
+    /// Results are sorted alphabetically and capped at `limit`.
+    pub fn list_folders(&self, limit: i64) -> Result<Vec<String>, GraphError> {
+        // Use a recursive CTE to extract all intermediate path segments from node IDs.
+        // For "a/b/c.md" we want both "a/" and "a/b/".
+        let sql = "
+            WITH RECURSIVE parts(id, prefix) AS (
+                SELECT id,
+                       SUBSTR(id, 1, INSTR(id, '/'))
+                FROM nodes
+                WHERE is_stub = 0 AND materialization = 'materialized'
+                  AND INSTR(id, '/') > 0
+                UNION ALL
+                SELECT p.id,
+                       p.prefix || SUBSTR(SUBSTR(p.id, LENGTH(p.prefix) + 1), 1, INSTR(SUBSTR(p.id, LENGTH(p.prefix) + 1), '/'))
+                FROM parts p
+                WHERE INSTR(SUBSTR(p.id, LENGTH(p.prefix) + 1), '/') > 0
+            )
+            SELECT DISTINCT prefix FROM parts
+            ORDER BY prefix ASC
+            LIMIT ?1
+        ";
+        let mut stmt = self.conn.prepare(sql)?;
+        let folders = stmt
+            .query_map(rusqlite::params![limit], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(folders)
     }
 
     // --- Tags ---
@@ -6213,6 +6536,49 @@ mod tests {
     }
 
     #[test]
+    fn search_content_excludes_shadows_in_fts_path() {
+        let store = Store::open_memory().unwrap();
+        // Create a materialized node so the FTS table is not empty
+        upsert_node_with_body(&store, "a.md", "Alpha Research", &[], "The transformer architecture revolutionized deep learning", 1);
+        // Create a shadow node and manually inject an FTS entry for it
+        // (simulates a scenario where a non-materialized node ends up indexed)
+        store.upsert_shadow("bib:shadow2024", "Shadow Research", Materialization::Shadow).unwrap();
+        store.conn.execute(
+            "INSERT INTO notes_fts(node_id, title, body, tags_text) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["bib:shadow2024", "Shadow Research", "The transformer model is powerful", ""],
+        ).unwrap();
+
+        // "transformer" is >= 3 chars, so this takes the FTS branch
+        let results = store.search_content("transformer", 10).unwrap();
+        assert!(
+            results.iter().all(|r| r.id != "bib:shadow2024"),
+            "shadow node should not appear in FTS search results"
+        );
+        assert_eq!(results.len(), 1, "only the materialized node should appear");
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_excludes_shadows_in_fts_path() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha Research", &[], "The transformer architecture revolutionized deep learning", 1);
+        store.upsert_shadow("bib:shadow2024", "Shadow Research", Materialization::Shadow).unwrap();
+        store.conn.execute(
+            "INSERT INTO notes_fts(node_id, title, body, tags_text) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["bib:shadow2024", "Shadow Research", "The transformer model is powerful", ""],
+        ).unwrap();
+
+        // search_content_filtered with default filter should also exclude shadows in FTS path
+        let results = store.search_content_filtered("transformer", &SearchFilter::default(), 10).unwrap();
+        assert!(
+            results.iter().all(|r| r.id != "bib:shadow2024"),
+            "shadow node should not appear in filtered FTS search results"
+        );
+        assert_eq!(results.len(), 1, "only the materialized node should appear");
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
     fn v21_to_v22_migration_adds_notes_fts() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
@@ -6373,5 +6739,484 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fts_count, 1, "notes_fts table should exist");
+    }
+
+    // --- search_content_filtered tests ---
+
+    #[test]
+    fn search_content_filtered_empty_filter_matches_all() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "The quick brown fox", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], "A slow brown bear", 1000);
+        let filter = SearchFilter::default();
+        let results = store.search_content_filtered("brown", &filter, 10).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn search_content_filtered_folder_only() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &[], "The quick brown fox", 1000);
+        upsert_node_with_body(&store, "notes/b.md", "Beta", &[], "A quick brown bear", 1000);
+        let filter = SearchFilter { folder_prefix: Some("projects/".into()), ..Default::default() };
+        let results = store.search_content_filtered("brown", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projects/a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_tag_only() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics"], "quantum mechanics overview", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &["music"], "quantum computing primer", 1000);
+        let filter = SearchFilter { tags: Some(vec!["physics".into()]), ..Default::default() };
+        let results = store.search_content_filtered("quantum", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_multiple_tags_and_semantics() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics", "quantum"], "particle theory research", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &["physics"], "classical mechanics overview", 1000);
+        let filter = SearchFilter {
+            tags: Some(vec!["physics".into(), "quantum".into()]),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("theory", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_date_range_only() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], "common search term", 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], "common search term", 5000);
+        upsert_node_with_body(&store, "c.md", "Gamma", &[], "common search term", 9000);
+        let filter = SearchFilter {
+            mtime_after: Some(2000),
+            mtime_before: Some(6000),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("common search", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "b.md");
+    }
+
+    #[test]
+    fn search_content_filtered_combined_facets() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &["rust"], "async await patterns", 5000);
+        upsert_node_with_body(&store, "projects/b.md", "Beta", &["rust"], "ownership and borrowing", 1000);
+        upsert_node_with_body(&store, "notes/c.md", "Gamma", &["rust"], "async runtime internals", 5000);
+        let filter = SearchFilter {
+            folder_prefix: Some("projects/".into()),
+            tags: Some(vec!["rust".into()]),
+            mtime_after: Some(3000),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("async", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projects/a.md");
+    }
+
+    #[test]
+    fn search_content_filtered_empty_results() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics"], "quantum mechanics", 1000);
+        let filter = SearchFilter {
+            folder_prefix: Some("nonexistent/".into()),
+            ..Default::default()
+        };
+        let results = store.search_content_filtered("quantum", &filter, 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_content_filtered_short_query_like_path_with_filter() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Go Lang", &["lang"], "Go is a programming language", 1000);
+        upsert_node_with_body(&store, "notes/b.md", "Go Board", &["game"], "Go is also a board game", 1000);
+        let filter = SearchFilter {
+            folder_prefix: Some("projects/".into()),
+            ..Default::default()
+        };
+        // "Go" is < 3 chars -> LIKE path
+        let results = store.search_content_filtered("Go", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projects/a.md");
+    }
+
+    // --- list_folders tests ---
+
+    #[test]
+    fn list_folders_returns_distinct_prefixes() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &[], "body", 1);
+        upsert_node_with_body(&store, "projects/b.md", "Beta", &[], "body", 1);
+        upsert_node_with_body(&store, "notes/c.md", "Gamma", &[], "body", 1);
+        upsert_node_with_body(&store, "top.md", "Delta", &[], "body", 1);
+        let folders = store.list_folders(100).unwrap();
+        assert_eq!(folders, vec!["notes/", "projects/"]);
+    }
+
+    #[test]
+    fn list_folders_nested_paths() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a/b/c.md", "Deep", &[], "body", 1);
+        upsert_node_with_body(&store, "a/d.md", "Shallow", &[], "body", 1);
+        let folders = store.list_folders(100).unwrap();
+        assert!(folders.contains(&"a/b/".to_string()));
+        assert!(folders.contains(&"a/".to_string()));
+    }
+
+    #[test]
+    fn list_folders_excludes_stubs() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "real/a.md", "Alpha", &[], "body", 1);
+        store.upsert_stub("stubs/phantom").unwrap();
+        let folders = store.list_folders(100).unwrap();
+        assert_eq!(folders, vec!["real/"]);
+    }
+
+    #[test]
+    fn list_folders_respects_limit() {
+        let store = Store::open_memory().unwrap();
+        for i in 0..10 {
+            upsert_node_with_body(&store, &format!("folder{i}/note.md"), "N", &[], "body", 1);
+        }
+        let folders = store.list_folders(3).unwrap();
+        assert_eq!(folders.len(), 3);
+    }
+
+    // --- first_match_line tests ---
+    // These tests verify that search_content / search_content_filtered
+    // returns the 1-based line number of the first match within the body,
+    // matching the codebase convention (source_line, pendingCursorLine, doc.line()).
+
+    #[test]
+    fn search_content_returns_first_match_line_for_body_match() {
+        let store = Store::open_memory().unwrap();
+        let body = "line one\nline two\nquantum mechanics\nline four";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].first_match_line,
+            Some(3),
+            "expected 1-based line 3 where 'quantum' appears"
+        );
+    }
+
+    #[test]
+    fn search_content_first_match_line_on_first_line() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum physics intro\nsecond line\nthird line";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_first_match_line_title_only_match_returns_one() {
+        let store = Store::open_memory().unwrap();
+        let body = "no matching text here\njust regular lines";
+        upsert_node_with_body(&store, "a.md", "Quantum Notes", &[], body, 1);
+        let results = store.search_content("Quantum", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        // Title match — no body line to point to, default to line 1
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_filtered_returns_first_match_line() {
+        let store = Store::open_memory().unwrap();
+        let body = "header text\nsummary\nthe quantum realm\nfooter";
+        upsert_node_with_body(&store, "a.md", "Alpha", &["physics"], body, 1000);
+        let filter = SearchFilter { tags: Some(vec!["physics".into()]), ..Default::default() };
+        let results = store.search_content_filtered("quantum", &filter, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].first_match_line,
+            Some(3),
+            "expected 1-based line 3 where 'quantum' appears in body"
+        );
+    }
+
+    #[test]
+    fn search_content_short_query_returns_first_match_line() {
+        // Short terms (<3 chars) use the LIKE fallback path
+        let store = Store::open_memory().unwrap();
+        let body = "first line\nsecond line\nGo language\nfourth line";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("Go", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].first_match_line,
+            Some(3),
+            "expected 1-based line 3 where 'Go' appears (LIKE path)"
+        );
+    }
+
+    // --- Phase A: highlight_terms_in_line ---
+
+    #[test]
+    fn highlight_basic() {
+        assert_eq!(
+            highlight_terms_in_line("quantum mechanics", &["quantum"]),
+            "<mark>quantum</mark> mechanics"
+        );
+    }
+
+    #[test]
+    fn highlight_case_insensitive() {
+        assert_eq!(
+            highlight_terms_in_line("Quantum QUANTUM", &["quantum"]),
+            "<mark>Quantum</mark> <mark>QUANTUM</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_multi_term() {
+        assert_eq!(
+            highlight_terms_in_line("quantum physics theory", &["quantum", "theory"]),
+            "<mark>quantum</mark> physics <mark>theory</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_overlapping() {
+        assert_eq!(
+            highlight_terms_in_line("abcde", &["abc", "cde"]),
+            "<mark>abcde</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_html_escape() {
+        assert_eq!(
+            highlight_terms_in_line("a < b & quantum", &["quantum"]),
+            "a &lt; b &amp; <mark>quantum</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_no_match() {
+        assert_eq!(
+            highlight_terms_in_line("hello world", &["quantum"]),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn highlight_capital_sharp_s() {
+        // ẞ (U+1E9E, 3 bytes) lowercases to ß (U+00DF, 2 bytes).
+        // "Straẞe" (8 bytes) lowercases to "straße" (7 bytes).
+        // Old code used line_lower offsets to slice line, producing "Straẞ" (7 bytes)
+        // instead of "Straẞe" (8 bytes) — a truncated highlight.
+        assert_eq!(
+            highlight_terms_in_line("hello Straẞe end", &["straße"]),
+            "hello <mark>Straẞe</mark> end"
+        );
+    }
+
+    #[test]
+    fn highlight_capital_sharp_s_term_len_bug() {
+        // Also tests the abs_end = abs_start + term.len() bug:
+        // term "straße" is 7 bytes, lower_term "straße" is also 7 bytes — same here.
+        // But with original term "STRASSE" (7 bytes) vs lower_term "strasse" (7 bytes)
+        // searching for "strasse" in "Straẞe".to_lowercase() = "straße" won't match
+        // (different strings). So we test with matching term "straße".
+        assert_eq!(
+            highlight_terms_in_line("Straẞe", &["straße"]),
+            "<mark>Straẞe</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_multibyte_before_match() {
+        // CJK characters before the match term — ensures byte offset mapping works
+        // when chars before the match are multi-byte.
+        assert_eq!(
+            highlight_terms_in_line("日本語 hello world", &["hello"]),
+            "日本語 <mark>hello</mark> world"
+        );
+    }
+
+    #[test]
+    fn highlight_mixed_unicode_repeated() {
+        // Multiple occurrences after multi-byte chars.
+        assert_eq!(
+            highlight_terms_in_line("café café", &["café"]),
+            "<mark>café</mark> <mark>café</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_after_byte_width_change() {
+        // ẞ before a match: "ẞ abc" lowercases to "ß abc" (one fewer byte).
+        // Old code would use lowered offset for "abc" (byte 3 in lowered) to
+        // index into original (where "abc" starts at byte 4), causing misalignment.
+        assert_eq!(
+            highlight_terms_in_line("ẞ abc", &["abc"]),
+            "ẞ <mark>abc</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_advance_by_term_len() {
+        // "aaa" searched for "aa": should find one match at position 0,
+        // then advance by 1 char (not by 1 byte unconditionally), finding
+        // the overlap at position 1 is attempted but the merged range
+        // covers it. The key: old code did `start = abs_start + 1` which
+        // could land mid-char for multi-byte; new code advances by one char.
+        // For ASCII this still yields `<mark>aa</mark>a` (overlapping "aa"
+        // at 0..2 and 1..3 merge to 0..3 = "aaa").
+        // Actually: first match at 0..2, advance to 1, second match at 1..3.
+        // Merged: 0..3 = "aaa".
+        assert_eq!(
+            highlight_terms_in_line("aaa", &["aa"]),
+            "<mark>aaa</mark>"
+        );
+    }
+
+    #[test]
+    fn highlight_lower_term_len_for_end() {
+        // Verify end offset uses lowered term length, not original term length.
+        // Search term "CAFÉ" (5 bytes uppercase) lowercases to "café" (5 bytes) —
+        // same length here, but this test ensures the code path uses lower_term.len().
+        // More critically: term "STRAẞE" (8 bytes) lowercases to "straße" (7 bytes).
+        // If end offset used term.len() (8) instead of lower_term.len() (7), the
+        // range in line_lower would overshoot.
+        assert_eq!(
+            highlight_terms_in_line("ich wohne in der straße", &["STRAẞE"]),
+            "ich wohne in der <mark>straße</mark>"
+        );
+    }
+
+    #[test]
+    fn find_first_match_line_byte_width_change() {
+        // ẞ on line 1 causes lowered string to be 1 byte shorter.
+        // Old code used body_lower offset to index body, potentially
+        // counting newlines at the wrong position.
+        let body = "ẞtraße\nhello world\nthird line";
+        assert_eq!(find_first_match_line(body, &["hello"]), Some(2));
+    }
+
+    #[test]
+    fn find_first_match_line_cjk_before_match() {
+        let body = "日本語\n中文\nhello world";
+        assert_eq!(find_first_match_line(body, &["hello"]), Some(3));
+    }
+
+    // --- Phase B: find_matching_lines ---
+
+    #[test]
+    fn find_matching_lines_multi() {
+        let body = "line one\nquantum here\nline three\nnew quantum";
+        let lines = find_matching_lines(body, &["quantum"]);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, 2);
+        assert!(lines[0].1.contains("<mark>quantum</mark>"));
+        assert_eq!(lines[1].0, 4);
+        assert!(lines[1].1.contains("<mark>quantum</mark>"));
+    }
+
+    #[test]
+    fn find_matching_lines_none() {
+        let body = "hello world\nnothing here";
+        let lines = find_matching_lines(body, &["quantum"]);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn find_matching_lines_single() {
+        let lines = find_matching_lines("quantum", &["quantum"]);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], (1, "<mark>quantum</mark>".to_string()));
+    }
+
+    // --- Phase C: search_content stays document-level ---
+
+    #[test]
+    fn search_content_stays_document_level() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum line one\nquantum line two\nquantum line three";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1);
+        let results = store.search_content("quantum", 10).unwrap();
+        assert_eq!(results.len(), 1, "search_content must return one result per doc");
+    }
+
+    // --- Phase D: search_content_filtered returns line-level ---
+
+    #[test]
+    fn search_content_filtered_returns_line_level_results() {
+        let store = Store::open_memory().unwrap();
+        let body = "line one\nquantum here\nline three\nnew quantum";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1000);
+        let results = store.search_content_filtered("quantum", &SearchFilter::default(), 20).unwrap();
+        assert_eq!(results.len(), 2, "should return one result per matching line");
+        assert_eq!(results[0].first_match_line, Some(2));
+        assert_eq!(results[1].first_match_line, Some(4));
+        assert!(results[0].excerpt.contains("<mark>quantum</mark>"));
+        assert!(results[1].excerpt.contains("<mark>quantum</mark>"));
+    }
+
+    #[test]
+    fn search_content_filtered_title_only_fallback() {
+        let store = Store::open_memory().unwrap();
+        upsert_node_with_body(&store, "a.md", "Quantum Physics", &[], "no match in body", 1000);
+        let results = store.search_content_filtered("Quantum", &SearchFilter::default(), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_filtered_html_escapes_fallback_excerpt() {
+        let store = Store::open_memory().unwrap();
+        // Body contains raw HTML; search for a short (< 3 char) term that matches the
+        // title but NOT the body, so:
+        //   1. find_matching_docs takes the short-query (LIKE) path, giving SUBSTR(body) as excerpt
+        //   2. find_matching_lines returns empty (term absent from body) -> fallback branch
+        // The fallback must html_escape the raw excerpt to prevent XSS.
+        upsert_node_with_body(&store, "a.md", "ZQ Doc", &[], "<b>bold</b> text", 1000);
+        let results = store.search_content_filtered("ZQ", &SearchFilter::default(), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        // The fallback excerpt must be HTML-escaped to prevent XSS via dangerouslySetInnerHTML.
+        assert!(
+            results[0].excerpt.contains("&lt;b&gt;"),
+            "excerpt should HTML-escape '<b>' but got: {}",
+            results[0].excerpt
+        );
+        assert!(
+            !results[0].excerpt.contains("<b>"),
+            "excerpt must not contain raw '<b>' tag but got: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
+    fn search_content_filtered_limit_caps_lines() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum one\nquantum two\nquantum three\nquantum four\nquantum five";
+        upsert_node_with_body(&store, "a.md", "Alpha", &[], body, 1000);
+        upsert_node_with_body(&store, "b.md", "Beta", &[], body, 1000);
+        let results = store.search_content_filtered("quantum", &SearchFilter::default(), 3).unwrap();
+        assert_eq!(results.len(), 3, "limit should cap total line-level results");
+    }
+
+    #[test]
+    fn search_content_filtered_folder_filter_with_lines() {
+        let store = Store::open_memory().unwrap();
+        let body = "quantum one\nquantum two";
+        upsert_node_with_body(&store, "projects/a.md", "Alpha", &[], body, 1000);
+        upsert_node_with_body(&store, "notes/b.md", "Beta", &[], body, 1000);
+        let filter = SearchFilter { folder_prefix: Some("projects/".into()), ..Default::default() };
+        let results = store.search_content_filtered("quantum", &filter, 20).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.id == "projects/a.md"));
     }
 }

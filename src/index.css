@@ -57,6 +57,15 @@
   animation: card-focus-ring 1.5s ease-out forwards;
 }
 
+@keyframes line-flash {
+  0%   { background-color: color-mix(in srgb, var(--interactive-accent) 30%, transparent); }
+  100% { background-color: transparent; }
+}
+
+.cm-line-flash {
+  animation: line-flash 1.5s ease-out forwards;
+}
+
 html, body, #root {
   height: 100%;
   overflow: hidden;

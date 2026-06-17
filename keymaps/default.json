@@ -8,7 +8,7 @@
   { "key": "Mod-Shift-e", "command": "editor.openInExternalEditor", "when": "editorFocus" },
   { "key": "Ctrl--", "command": "editor.navigateBack", "when": "editorFocus" },
   { "key": "Ctrl-Shift--", "command": "editor.navigateForward", "when": "editorFocus" },
-  { "key": "Mod-Shift-f", "command": "app.toggleFocusMode" },
+  { "key": "Mod-Shift-f", "command": "workbench.focusSearch" },
   { "key": "Ctrl-`", "command": "panel.toggleBottom" },
   { "key": "Mod-Shift-a", "command": "panel.toggleAnnotations" },
   { "key": "Mod-p", "command": "app.commandPalette" },
@@ -33,5 +33,6 @@
   { "key": "Mod-Shift-o", "command": "companion.open" },
   { "key": "Mod-Shift-y", "command": "companion.toggleSync" },
   { "key": "Mod-Enter", "command": "app.fireAnnotation", "when": "editorFocus" },
-  { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" }
+  { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" },
+  { "key": "Mod-Shift-z", "command": "app.toggleFocusMode", "when": "!editorFocus" }
 ]

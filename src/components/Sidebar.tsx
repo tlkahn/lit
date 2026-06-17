@@ -10,7 +10,9 @@ import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
 import { TrashPanel } from "./TrashPanel";
 import { ReferenceLibrary } from "./ReferenceLibrary";
+import { SearchPanel } from "./SearchPanel";
 import { SortDropdown } from "./SortDropdown";
+import { useSearchPanelStore } from "../stores/searchPanel";
 import type { PageMeta } from "../lib/ipc";
 
 function buildTree(pages: PageMeta[]): FolderNode {
@@ -161,6 +163,28 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     onTrash: (relativePath) => deletePageAction(relativePath),
   });
 
+  // Allow programmatic switching to the search tab from anywhere (e.g. Cmd+Shift+F)
+  useEffect(() => {
+    const handler = () => setTab("search");
+    window.addEventListener("lit:focus-search-panel", handler);
+    return () => window.removeEventListener("lit:focus-search-panel", handler);
+  }, [setTab]);
+
+  // Bridge: CommandPalette "Cmd+Enter" transfers query to search panel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { query } = (e as CustomEvent<{ query: string }>).detail;
+      setTab("search");
+      useSearchPanelStore.getState().setQuery(query);
+      // Focus the search input after React renders the tab switch
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("lit:focus-search-panel"));
+      });
+    };
+    window.addEventListener("lit:open-search-panel-with-query", handler);
+    return () => window.removeEventListener("lit:open-search-panel-with-query", handler);
+  }, [setTab]);
+
   return (
     <aside className="flex h-full shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }}>
       <div className="flex items-center border-b border-border">
@@ -211,6 +235,18 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           }`}
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󱉟'}</span>
+        </button>
+        <button
+          onClick={() => setTab("search")}
+          title="Search"
+          aria-label="Search"
+          className={`flex-1 px-3 py-2 text-sm font-medium ${
+            tab === "search"
+              ? "border-b-2 border-interactive-accent text-text-normal"
+              : "text-text-faint hover:text-text-muted"
+          }`}
+        >
+          <span className="nerd-font text-base" aria-hidden="true">{''}</span>
         </button>
       </div>
       {tab === "files" ? (
@@ -283,6 +319,12 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         style={{ display: tab === "references" ? "flex" : "none" }}
       >
         <ReferenceLibrary />
+      </div>
+      <div
+        className="flex flex-1 flex-col overflow-hidden"
+        style={{ display: tab === "search" ? "flex" : "none" }}
+      >
+        <SearchPanel />
       </div>
     </aside>
   );

@@ -81,6 +81,9 @@ import {
   getCitingPages,
   searchPagesByTitle,
   searchContent,
+  searchContentFiltered,
+  listFolders,
+  type SearchFilter,
   getGraphStats,
   getGraphNeighbors,
   getGraphPaths,
@@ -623,6 +626,12 @@ describe("ipc", () => {
           return [
             { id: "a.md", title: "Alpha", score: -2.3, excerpt: "the <mark>quick</mark> brown fox", first_match_line: 3 },
           ];
+        case "search_content_filtered":
+          return [
+            { id: "a.md", title: "Alpha", score: -2.3, excerpt: "the <mark>quick</mark> brown fox", first_match_line: 3 },
+          ];
+        case "list_folders":
+          return ["notes/", "projects/"];
         case "get_graph_stats":
           return { nodes: 5, stubs: 1, edges: 3, tags: 2 };
         case "get_graph_neighbors":
@@ -1329,6 +1338,52 @@ describe("ipc", () => {
   it("searchContent includes first_match_line when present", async () => {
     const results = await searchContent("quick");
     expect(results[0]!.first_match_line).toBe(3);
+  });
+
+  it("searchContentFiltered calls search_content_filtered with filter", async () => {
+    const filter: SearchFilter = { folder_prefix: "projects/", tags: ["rust"] };
+    const results = await searchContentFiltered("query", filter);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.id).toBe("a.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_content_filtered", {
+      query: "query",
+      filter,
+      limit: null,
+    });
+  });
+
+  it("searchContentFiltered passes null filter when omitted", async () => {
+    await searchContentFiltered("query");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_content_filtered", {
+      query: "query",
+      filter: null,
+      limit: null,
+    });
+  });
+
+  it("searchContentFiltered passes limit when provided", async () => {
+    await searchContentFiltered("query", undefined, 5);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_content_filtered", {
+      query: "query",
+      filter: null,
+      limit: 5,
+    });
+  });
+
+  it("listFolders returns folder list", async () => {
+    const folders = await listFolders();
+    expect(folders).toEqual(["notes/", "projects/"]);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_folders", { limit: null });
+  });
+
+  it("listFolders passes limit when provided", async () => {
+    await listFolders(10);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_folders", { limit: 10 });
   });
 
   it("getGraphStats returns stats", async () => {
