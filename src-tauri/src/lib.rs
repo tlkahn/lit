@@ -437,6 +437,7 @@ pub fn run() {
             commands::academic_export::detect_pandoc,
             commands::academic_export::export_document,
             commands::enrich::enrich_bib_entry,
+            commands::enrich::apply_enrichment_candidate,
             commands::pdf_download::download_entry_pdf,
             commands::pdf_link::link_entry_pdf,
             commands::recognize::recognize_pdf,
