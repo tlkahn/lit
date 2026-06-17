@@ -25,6 +25,28 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
     })
 }
 
+/// Build an FTS5 trigram query string: split on whitespace, quote each term, join with spaces.
+fn build_fts_query(terms: &[&str]) -> String {
+    terms
+        .iter()
+        .map(|w| format!("\"{}\"", w.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Partition whitespace-split terms into FTS-eligible (>= 3 chars) and short (< 3 chars).
+/// Returns `(fts_terms, short_terms)`.
+fn partition_terms<'a>(terms: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
+    let fts = terms.iter().copied().filter(|t| t.chars().count() >= 3).collect();
+    let short = terms.iter().copied().filter(|t| t.chars().count() < 3).collect();
+    (fts, short)
+}
+
+/// Strip LIKE metacharacters (`%`, `_`) from a term for safe use in LIKE patterns.
+fn sanitize_like_term(term: &str) -> String {
+    term.replace('%', "").replace('_', "")
+}
+
 pub struct Store {
     pub(crate) conn: Connection,
 }
@@ -554,18 +576,28 @@ impl Store {
 
         if version < 22 {
             info!(from = version, to = 22, "migrating schema: adding body column + notes_fts");
-            self.conn.execute_batch(
-                "ALTER TABLE nodes ADD COLUMN body TEXT DEFAULT '';"
+            // Step 1: Add body column (idempotent — skip if column already exists)
+            let has_body: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('nodes') WHERE name = 'body'",
+                [],
+                |row| row.get(0),
             )?;
+            if !has_body {
+                self.conn.execute_batch(
+                    "ALTER TABLE nodes ADD COLUMN body TEXT DEFAULT '';"
+                )?;
+            }
+            // Step 2: Create FTS table (idempotent via IF NOT EXISTS)
             self.conn.execute_batch(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
                      title, body, tags_text,
                      tokenize = 'trigram case_sensitive 0'
                  );"
             )?;
-            // Backfill FTS from existing nodes data
+            // Step 3: Backfill FTS from existing nodes data (idempotent — clear first)
             self.conn.execute_batch(
-                "INSERT INTO notes_fts(rowid, title, body, tags_text)
+                "DELETE FROM notes_fts;
+                 INSERT INTO notes_fts(rowid, title, body, tags_text)
                      SELECT rowid, COALESCE(title, ''), COALESCE(body, ''), COALESCE(tags_text, '')
                      FROM nodes WHERE is_stub = 0;"
             )?;
@@ -601,60 +633,62 @@ impl Store {
         let fm_json = serde_json::to_string(&node.frontmatter).unwrap_or_default();
         let tags_text = node.tags.join(" ");
 
-        // Delete old FTS entry before upserting (if the node already exists)
-        self.conn.execute(
-            "DELETE FROM notes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?1)",
-            [&node.id],
-        )?;
-
-        self.conn.execute(
-            "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized', ?7)
-             ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
-                first_paragraph = excluded.first_paragraph,
-                frontmatter = excluded.frontmatter,
-                mtime = excluded.mtime,
-                is_stub = excluded.is_stub,
-                tags_text = excluded.tags_text,
-                materialization = excluded.materialization,
-                body = excluded.body",
-            rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text, node.body],
-        )?;
-
-        // Insert new FTS entry
-        self.conn.execute(
-            "INSERT INTO notes_fts(rowid, title, body, tags_text)
-             SELECT rowid, title, COALESCE(body, ''), COALESCE(tags_text, '')
-             FROM nodes WHERE id = ?1",
-            [&node.id],
-        )?;
-
-        self.conn
-            .execute("DELETE FROM tags WHERE node_id = ?1", [&node.id])?;
-        for tag in &node.tags {
+        self.with_savepoint("upsert_node", || {
+            // Delete old FTS entry before upserting (if the node already exists)
             self.conn.execute(
-                "INSERT INTO tags(node_id, tag) VALUES (?1, ?2)",
-                rusqlite::params![node.id, tag],
+                "DELETE FROM notes_fts WHERE rowid = (SELECT rowid FROM nodes WHERE id = ?1)",
+                [&node.id],
             )?;
-        }
 
-        self.conn
-            .execute("DELETE FROM aliases WHERE node_id = ?1", [&node.id])?;
-        let aliases = extract_aliases(&node.frontmatter);
-        for alias in &aliases {
             self.conn.execute(
-                "INSERT INTO aliases(node_id, alias) VALUES (?1, ?2)",
-                rusqlite::params![node.id, alias],
+                "INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization, body)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, 'materialized', ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    first_paragraph = excluded.first_paragraph,
+                    frontmatter = excluded.frontmatter,
+                    mtime = excluded.mtime,
+                    is_stub = excluded.is_stub,
+                    tags_text = excluded.tags_text,
+                    materialization = excluded.materialization,
+                    body = excluded.body",
+                rusqlite::params![node.id, node.title, node.first_paragraph, fm_json, mtime, tags_text, node.body],
             )?;
-        }
 
-        self.conn.execute(
-            "INSERT OR REPLACE INTO sync(path, mtime) VALUES (?1, ?2)",
-            rusqlite::params![node.id, mtime],
-        )?;
+            // Insert new FTS entry
+            self.conn.execute(
+                "INSERT INTO notes_fts(rowid, title, body, tags_text)
+                 SELECT rowid, title, COALESCE(body, ''), COALESCE(tags_text, '')
+                 FROM nodes WHERE id = ?1",
+                [&node.id],
+            )?;
 
-        Ok(())
+            self.conn
+                .execute("DELETE FROM tags WHERE node_id = ?1", [&node.id])?;
+            for tag in &node.tags {
+                self.conn.execute(
+                    "INSERT INTO tags(node_id, tag) VALUES (?1, ?2)",
+                    rusqlite::params![node.id, tag],
+                )?;
+            }
+
+            self.conn
+                .execute("DELETE FROM aliases WHERE node_id = ?1", [&node.id])?;
+            let aliases = extract_aliases(&node.frontmatter);
+            for alias in &aliases {
+                self.conn.execute(
+                    "INSERT INTO aliases(node_id, alias) VALUES (?1, ?2)",
+                    rusqlite::params![node.id, alias],
+                )?;
+            }
+
+            self.conn.execute(
+                "INSERT OR REPLACE INTO sync(path, mtime) VALUES (?1, ?2)",
+                rusqlite::params![node.id, mtime],
+            )?;
+
+            Ok(())
+        })
     }
 
     pub fn upsert_stub(&self, id: &str) -> Result<(), GraphError> {
@@ -1276,11 +1310,13 @@ impl Store {
              WHERE (title LIKE '%' || ?1 || '%' COLLATE NOCASE
                 OR id LIKE '%' || ?1 || '%' COLLATE NOCASE)
                AND is_stub = 0
+               AND materialization = 'materialized'
              UNION
              SELECT a.node_id, n.title FROM aliases a
              JOIN nodes n ON n.id = a.node_id
              WHERE a.alias LIKE '%' || ?1 || '%' COLLATE NOCASE
                AND n.is_stub = 0
+               AND n.materialization = 'materialized'
              LIMIT ?2"
         )?;
         let results = stmt
@@ -1299,16 +1335,24 @@ impl Store {
         }
 
         let terms: Vec<&str> = query.split_whitespace().collect();
-        let has_short_term = terms.iter().any(|t| t.chars().count() < 3);
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
 
-        if has_short_term {
-            // LIKE fallback for short queries (< 3 chars cannot use trigram tokenizer)
+        // Partition terms: trigram FTS5 requires >= 3 chars per term
+        let (fts_terms, short_terms) = partition_terms(&terms);
+
+        if fts_terms.is_empty() {
+            // All terms are short — pure LIKE fallback
             let mut conditions = Vec::new();
             let mut params: Vec<rusqlite::types::Value> = Vec::new();
             let mut idx = 1;
 
             for term in &terms {
-                let clean = term.replace('%', "").replace('_', "");
+                let clean = sanitize_like_term(term);
+                if clean.is_empty() {
+                    continue;
+                }
                 conditions.push(format!(
                     "(n.title LIKE ?{idx} OR n.body LIKE ?{idx} OR n.tags_text LIKE ?{idx})"
                 ));
@@ -1316,11 +1360,14 @@ impl Store {
                 idx += 1;
             }
 
+            if conditions.is_empty() {
+                return Ok(vec![]);
+            }
             let where_clause = conditions.join(" AND ");
             let sql = format!(
                 "SELECT n.id, n.title, 0.0, COALESCE(SUBSTR(n.body, 1, 200), '')
                  FROM nodes n
-                 WHERE n.is_stub = 0 AND {where_clause}
+                 WHERE n.is_stub = 0 AND n.materialization = 'materialized' AND {where_clause}
                  ORDER BY length(n.body) ASC
                  LIMIT ?{idx}"
             );
@@ -1342,20 +1389,15 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(results)
         } else {
-            // FTS5 trigram search with snippet highlighting
-            let fts_query: String = query
-                .split_whitespace()
-                .map(|w| format!("\"{}\"", w.replace('"', "")))
-                .collect::<Vec<_>>()
-                .join(" ");
+            // FTS5 trigram search with snippet highlighting (only FTS-eligible terms)
+            let fts_query = build_fts_query(&fts_terms);
+
+            // Fetch extra rows when post-filtering, so we still return up to `limit` results
+            let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
 
             let sql = "SELECT n.id, n.title, f.rank,
-                        COALESCE(
-                            snippet(notes_fts, 1, '<mark>', '</mark>', '...', 64),
-                            snippet(notes_fts, 0, '<mark>', '</mark>', '...', 64),
-                            snippet(notes_fts, 2, '<mark>', '</mark>', '...', 64),
-                            ''
-                        )
+                        snippet(notes_fts, -1, '<mark>', '</mark>', '...', 64),
+                        COALESCE(n.body, ''), COALESCE(n.tags_text, '')
                  FROM notes_fts f
                  JOIN nodes n ON n.rowid = f.rowid
                  WHERE notes_fts MATCH ?1 AND n.is_stub = 0
@@ -1363,17 +1405,36 @@ impl Store {
                  LIMIT ?2";
 
             let mut stmt = self.conn.prepare(sql)?;
-            let results = stmt
-                .query_map(rusqlite::params![fts_query, limit], |row| {
-                    Ok(super::types::SearchResult {
-                        id: row.get(0)?,
-                        title: row.get(1)?,
-                        score: row.get(2)?,
-                        excerpt: row.get(3)?,
-                        first_match_line: None,
-                    })
+            let rows = stmt
+                .query_map(rusqlite::params![fts_query, fetch_limit], |row| {
+                    Ok((
+                        super::types::SearchResult {
+                            id: row.get(0)?,
+                            title: row.get(1)?,
+                            score: row.get(2)?,
+                            excerpt: row.get(3)?,
+                            first_match_line: None,
+                        },
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
+
+            // Post-filter: every short term must appear (case-insensitive) in title, body, or tags
+            let results: Vec<super::types::SearchResult> = rows
+                .into_iter()
+                .filter(|(result, body, tags_text)| {
+                    short_terms.iter().all(|st| {
+                        let lower = st.to_lowercase();
+                        result.title.to_lowercase().contains(&lower)
+                            || body.to_lowercase().contains(&lower)
+                            || tags_text.to_lowercase().contains(&lower)
+                    })
+                })
+                .map(|(result, _, _)| result)
+                .take(limit as usize)
+                .collect();
             Ok(results)
         }
     }
@@ -1576,7 +1637,8 @@ impl Store {
 
     pub fn search_annotations(&self, query: &str, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
         let terms: Vec<&str> = query.split_whitespace().collect();
-        let has_short_term = terms.iter().any(|t| t.chars().count() < 3);
+        let (fts_terms, short_terms) = partition_terms(&terms);
+        let has_short_term = !short_terms.is_empty();
 
         if has_short_term {
             let mut conditions = Vec::new();
@@ -1584,7 +1646,7 @@ impl Store {
             let mut idx = 1;
 
             for term in &terms {
-                let clean = term.replace('%', "").replace('_', "");
+                let clean = sanitize_like_term(term);
                 conditions.push(format!("a.body LIKE ?{idx}"));
                 params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
                 idx += 1;
@@ -1614,11 +1676,7 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(results)
         } else {
-            let fts_query: String = query
-                .split_whitespace()
-                .map(|w| format!("\"{}\"", w.replace('"', "")))
-                .collect::<Vec<_>>()
-                .join(" ");
+            let fts_query = build_fts_query(&fts_terms);
 
             let (sql, params_count) = if type_filter.is_some() {
                 (
@@ -3531,6 +3589,17 @@ mod tests {
         let results = store.search_titles("agentic", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "agentic-design.md");
+    }
+
+    #[test]
+    fn search_titles_excludes_shadows() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("real-note.md", "Smith Analysis", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_shadow("bib:smith2024", "Smith 2024", Materialization::Shadow).unwrap();
+        let results = store.search_titles("Smith", 10).unwrap();
+        assert_eq!(results.len(), 1, "only the materialized node should appear");
+        assert_eq!(results[0].0, "real-note.md");
     }
 
     #[test]
@@ -5840,6 +5909,14 @@ mod tests {
     }
 
     #[test]
+    fn search_content_whitespace_only_query_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "some body text"), 1).unwrap();
+        let results = store.search_content("   ", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
     fn search_content_matches_body() {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "The quick brown fox jumps over the lazy dog"), 1).unwrap();
@@ -5901,6 +5978,23 @@ mod tests {
     }
 
     #[test]
+    fn search_content_snippet_title_only_match_has_highlight() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body(
+            "a.md", "Quantum Entanglement Explained", &[],
+            "This is a generic body with no relation to the title topic"
+        ), 1).unwrap();
+        let results = store.search_content("Entanglement", 10).unwrap();
+        assert!(!results.is_empty());
+        // When the match is only in the title, snippet() with column -1 should still highlight it
+        assert!(
+            results[0].excerpt.contains("<mark>"),
+            "title-only match excerpt should contain <mark> highlight: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
     fn search_content_short_query_like_fallback() {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "Go is a programming language"), 1).unwrap();
@@ -5909,6 +6003,39 @@ mod tests {
         let results = store.search_content("Go", 10).unwrap();
         assert!(!results.is_empty());
         assert!(results.iter().any(|r| r.id == "a.md"));
+    }
+
+    #[test]
+    fn search_content_mixed_short_long_terms_uses_fts_with_post_filter() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body(
+            "a.md", "Alpha", &[],
+            "AI and transformer models are revolutionizing natural language processing"
+        ), 1).unwrap();
+        store.upsert_node(&make_node_with_body(
+            "b.md", "Beta", &[],
+            "The transformer architecture was introduced in 2017"
+        ), 1).unwrap();
+        // "AI" is 2 chars (short), "transformer" is 11 chars (FTS-eligible).
+        // Should use FTS for "transformer" (with ranking + highlights) then post-filter for "AI".
+        let results = store.search_content("AI transformer", 10).unwrap();
+        assert_eq!(results.len(), 1, "only the note containing both AI and transformer should match");
+        assert_eq!(results[0].id, "a.md");
+        // FTS snippet should have <mark> highlights for the FTS-eligible term "transformer"
+        assert!(
+            results[0].excerpt.contains("<mark>"),
+            "excerpt should contain <mark> highlight from FTS: {}",
+            results[0].excerpt
+        );
+    }
+
+    #[test]
+    fn search_content_like_metachar_only_query_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "some body text"), 1).unwrap();
+        // "%_" consists only of LIKE metacharacters; after sanitization every term is empty
+        let results = store.search_content("%_", 10).unwrap();
+        assert!(results.is_empty(), "query of only LIKE metacharacters should match nothing");
     }
 
     #[test]
@@ -5974,6 +6101,20 @@ mod tests {
     }
 
     #[test]
+    fn search_content_excludes_shadows_in_like_path() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node_with_body("a.md", "Alpha", &[], "body text here"), 1).unwrap();
+        // Shadow node with a title that matches a short query (triggers LIKE fallback)
+        store.upsert_shadow("bib:sm2024", "Sm", Materialization::Shadow).unwrap();
+        // "Sm" is < 3 chars, so search_content takes the LIKE fallback path
+        let results = store.search_content("Sm", 10).unwrap();
+        assert!(
+            results.iter().all(|r| r.id != "bib:sm2024"),
+            "shadow node should not appear in LIKE fallback search results"
+        );
+    }
+
+    #[test]
     fn list_all_cardbox_annotations_excludes_orphans() {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
@@ -5990,5 +6131,65 @@ mod tests {
         let results = store.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1, "orphan annotation should be excluded by JOIN");
         assert_eq!(results[0].uuid, "u1");
+    }
+
+    #[test]
+    fn migration_v22_is_idempotent_after_partial_failure() {
+        // Simulate a partial v22 migration: body column already added but
+        // schema_version still at 21 (ALTER TABLE succeeded, version bump didn't).
+        // Re-running migrate() must not crash with "duplicate column name: body".
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("partial_v22.db");
+
+        // First, create a fully-migrated store so all tables exist at v22
+        {
+            let store = Store::open(&db_path).unwrap();
+            assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+            // Insert a node so FTS backfill has data to work with
+            let node = make_node("a.md", "A", &["tag1"], json!({}));
+            store.upsert_node(&node, 1000).unwrap();
+        }
+
+        // Now roll back schema_version to 21 (simulating: ALTER TABLE body
+        // succeeded but version bump failed). The body column and notes_fts
+        // table already exist from the first run.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute(
+                "UPDATE meta SET value = '21' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Reopen — this triggers migrate() which hits `version < 22` again.
+        // Without the idempotency fix, this panics with "duplicate column name: body".
+        let store = Store::open(&db_path).unwrap();
+        assert_eq!(
+            store.schema_version().unwrap(),
+            CURRENT_SCHEMA_VERSION,
+            "schema version should reach current after re-running v22 migration"
+        );
+
+        // Verify FTS still works after the idempotent re-migration
+        let has_body: bool = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('nodes') WHERE name = 'body'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(has_body, "body column should exist on nodes table");
+
+        let fts_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_count, 1, "notes_fts table should exist");
     }
 }
