@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { CardboxAnnotation, GroupInfo, CardNote } from "../lib/ipc";
+import { useCardboxUndoStore } from "./cardboxUndo";
+import type { UndoEntry } from "./cardboxUndo";
 import {
   listAllAnnotations,
   readCardboxLayout,
@@ -20,7 +22,27 @@ import {
   exportCardNote,
   setCardColor as setCardColorIpc,
   clearCardColor as clearCardColorIpc,
+  batchSetCardColor as batchSetCardColorIpc,
+  batchClearCardColor as batchClearCardColorIpc,
+  batchPinCards as batchPinCardsIpc,
+  batchUnpinCards as batchUnpinCardsIpc,
 } from "../lib/ipc";
+
+function pushUndo(entry: UndoEntry & { coalesceKey?: string }) {
+  if (useCardboxUndoStore.getState().isReplaying) return;
+  const store = useCardboxUndoStore.getState();
+  if (entry.coalesceKey) {
+    const top = store.undoStack[store.undoStack.length - 1];
+    if (top && top.__coalesceKey === entry.coalesceKey) {
+      // Replace redo closure, keep original undo closure
+      const merged: UndoEntry = { ...top, redo: entry.redo, __coalesceKey: entry.coalesceKey };
+      store.replaceTop(merged);
+      return;
+    }
+  }
+  const withKey: UndoEntry = { ...entry, __coalesceKey: entry.coalesceKey };
+  store.pushUndo(withKey);
+}
 
 export interface CardboxStore {
   annotations: CardboxAnnotation[];
@@ -68,6 +90,12 @@ export interface CardboxStore {
   setCardColor: (uuid: string, color: string) => Promise<void>;
   clearCardColor: (uuid: string) => Promise<void>;
   toggleColor: (color: string) => void;
+  batchSetColor: (uuids: string[], color: string) => Promise<void>;
+  batchClearColor: (uuids: string[]) => Promise<void>;
+  batchPin: (uuids: string[]) => Promise<void>;
+  batchUnpin: (uuids: string[]) => Promise<void>;
+  batchLink: (uuids: string[]) => Promise<void>;
+  batchCreateGroup: (cardUuids: string[], name: string) => Promise<void>;
 }
 
 export const useCardboxStore = create<CardboxStore>((set, get) => ({
@@ -228,20 +256,36 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   addLink: async (a, b) => {
     if (a === b) return;
     const norm: [string, string] = a <= b ? [a, b] : [b, a];
-    set((s) => {
-      if (s.links.some(([x, y]) => x === norm[0] && y === norm[1])) return s;
-      return { links: [...s.links, norm] };
+    const already = get().links.some(([x, y]) => x === norm[0] && y === norm[1]);
+    if (already) return;
+    pushUndo({
+      description: "Add link",
+      undo: async () => { await get().removeLink(a, b); },
+      redo: async () => { await get().addLink(a, b); },
     });
+    set((s) => ({ links: [...s.links, norm] }));
     await addCardboxLink(a, b);
   },
   removeLink: async (a, b) => {
     const norm: [string, string] = a <= b ? [a, b] : [b, a];
+    const exists = get().links.some(([x, y]) => x === norm[0] && y === norm[1]);
+    if (!exists) return;
+    pushUndo({
+      description: "Remove link",
+      undo: async () => { await get().addLink(a, b); },
+      redo: async () => { await get().removeLink(a, b); },
+    });
     set((s) => ({
       links: s.links.filter(([x, y]) => !(x === norm[0] && y === norm[1])),
     }));
     await removeCardboxLink(a, b);
   },
   createGroup: async (groupId, name, cardUuids, afterEntry) => {
+    pushUndo({
+      description: "Create group",
+      undo: async () => { await get().dissolveGroup(groupId); },
+      redo: async () => { await get().createGroup(groupId, name, cardUuids, afterEntry); },
+    });
     set((s) => {
       const cardSet = new Set(cardUuids);
       // Find afterEntry position BEFORE removal
@@ -278,6 +322,15 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await createCardboxGroup(groupId, name, cardUuids, afterEntry);
   },
   renameGroup: async (groupId, name) => {
+    const group = get().groups[groupId];
+    if (!group) return;
+    const prevName = group.name;
+    if (prevName === name) return;
+    pushUndo({
+      description: "Rename group",
+      undo: async () => { await get().renameGroup(groupId, prevName); },
+      redo: async () => { await get().renameGroup(groupId, name); },
+    });
     set((s) => {
       if (!s.groups[groupId]) return s;
       return { groups: { ...s.groups, [groupId]: { ...s.groups[groupId], name } } };
@@ -285,6 +338,25 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await renameCardboxGroup(groupId, name);
   },
   dissolveGroup: async (groupId) => {
+    const group = get().groups[groupId];
+    if (!group) return;
+    const capturedName = group.name;
+    const capturedOrder = [...group.order];
+    const capturedCollapsed = group.collapsed;
+    const groupEntry = `group:${groupId}`;
+    const orderArr = get().order;
+    const groupIdx = orderArr.indexOf(groupEntry);
+    const afterEntry = groupIdx > 0 ? orderArr[groupIdx - 1] : undefined;
+    pushUndo({
+      description: "Dissolve group",
+      undo: async () => {
+        await get().createGroup(groupId, capturedName, capturedOrder, afterEntry);
+        if (capturedCollapsed) {
+          await get().toggleGroupCollapse(groupId);
+        }
+      },
+      redo: async () => { await get().dissolveGroup(groupId); },
+    });
     set((s) => {
       const group = s.groups[groupId];
       if (!group) return s;
@@ -305,6 +377,30 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await dissolveCardboxGroup(groupId);
   },
   moveCardToGroup: async (cardUuid, targetGroupId, index) => {
+    // Capture source location for undo
+    const prevGroups = get().groups;
+    let sourceGroupId: string | null = null;
+    let sourceIndex: number | undefined;
+    for (const [gid, info] of Object.entries(prevGroups)) {
+      const idx = info.order.indexOf(cardUuid);
+      if (idx >= 0) {
+        sourceGroupId = gid;
+        sourceIndex = idx;
+        break;
+      }
+    }
+    const topLevelIdx = sourceGroupId === null ? get().order.indexOf(cardUuid) : -1;
+    pushUndo({
+      description: "Move card to group",
+      undo: async () => {
+        if (sourceGroupId) {
+          await get().moveCardBetweenGroups(cardUuid, targetGroupId, sourceGroupId, sourceIndex);
+        } else {
+          await get().removeCardFromGroup(cardUuid, targetGroupId, topLevelIdx >= 0 ? topLevelIdx : undefined);
+        }
+      },
+      redo: async () => { await get().moveCardToGroup(cardUuid, targetGroupId, index); },
+    });
     set((s) => {
       if (!s.groups[targetGroupId]) return s;
       // Remove card from top-level order and all group orders
@@ -325,6 +421,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await moveCardToGroupIpc(cardUuid, targetGroupId, index);
   },
   removeCardFromGroup: async (cardUuid, groupId, topLevelIndex) => {
+    const group = get().groups[groupId];
+    if (!group) return;
+    const prevIndex = group.order.indexOf(cardUuid);
+    pushUndo({
+      description: "Remove card from group",
+      undo: async () => { await get().moveCardToGroup(cardUuid, groupId, prevIndex >= 0 ? prevIndex : undefined); },
+      redo: async () => { await get().removeCardFromGroup(cardUuid, groupId, topLevelIndex); },
+    });
     set((s) => {
       const group = s.groups[groupId];
       if (!group) return s;
@@ -410,13 +514,22 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await moveCardToGroupIpc(cardUuid, targetGroupId, index);
   },
   pinCard: async (uuid) => {
-    set((s) => {
-      if (s.pinned.includes(uuid)) return s;
-      return { pinned: [...s.pinned, uuid] };
+    if (get().pinned.includes(uuid)) return;
+    pushUndo({
+      description: "Pin card",
+      undo: async () => { await get().unpinCard(uuid); },
+      redo: async () => { await get().pinCard(uuid); },
     });
+    set((s) => ({ pinned: [...s.pinned, uuid] }));
     await pinCardboxCard(uuid);
   },
   unpinCard: async (uuid) => {
+    if (!get().pinned.includes(uuid)) return;
+    pushUndo({
+      description: "Unpin card",
+      undo: async () => { await get().pinCard(uuid); },
+      redo: async () => { await get().unpinCard(uuid); },
+    });
     set((s) => ({
       pinned: s.pinned.filter((id) => id !== uuid),
     }));
@@ -424,8 +537,20 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   },
   setPinned: (pinned) => set({ pinned }),
   setNote: async (uuid, body) => {
+    const prevNote = get().notes[uuid];
+    const prevBody = prevNote?.body;
+    const trimmed = body.trim();
+    if (prevBody === trimmed) return;
+    pushUndo({
+      description: "Set note",
+      coalesceKey: `setNote:${uuid}`,
+      undo: async () => {
+        if (prevBody) { await get().setNote(uuid, prevBody); }
+        else { await get().clearNote(uuid); }
+      },
+      redo: async () => { await get().setNote(uuid, body); },
+    });
     set((s) => {
-      const trimmed = body.trim();
       if (!trimmed) {
         const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
         return { notes: rest };
@@ -437,6 +562,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     await setCardNote(uuid, body);
   },
   clearNote: async (uuid) => {
+    const prevNote = get().notes[uuid];
+    if (!prevNote) return;
+    const prevBody = prevNote.body;
+    pushUndo({
+      description: "Clear note",
+      undo: async () => { await get().setNote(uuid, prevBody); },
+      redo: async () => { await get().clearNote(uuid); },
+    });
     set((s) => {
       const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
       return { notes: rest };
@@ -447,12 +580,29 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     return exportCardNote(uuid);
   },
   setCardColor: async (uuid, color) => {
+    const prevColor = get().colors[uuid];
+    if (prevColor === color) return;
+    pushUndo({
+      description: "Set card color",
+      undo: async () => {
+        if (prevColor) { await get().setCardColor(uuid, prevColor); }
+        else { await get().clearCardColor(uuid); }
+      },
+      redo: async () => { await get().setCardColor(uuid, color); },
+    });
     set((s) => ({
       colors: { ...s.colors, [uuid]: color },
     }));
     await setCardColorIpc(uuid, color);
   },
   clearCardColor: async (uuid) => {
+    const prevColor = get().colors[uuid];
+    if (!prevColor) return;
+    pushUndo({
+      description: "Clear card color",
+      undo: async () => { await get().setCardColor(uuid, prevColor); },
+      redo: async () => { await get().clearCardColor(uuid); },
+    });
     set((s) => {
       const { [uuid]: _, ...rest } = s.colors; // eslint-disable-line @typescript-eslint/no-unused-vars
       return { colors: rest };
@@ -469,4 +619,130 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       }
       return { activeColors: next };
     }),
+
+  batchSetColor: async (uuids, color) => {
+    const prevColors: Record<string, string | undefined> = {};
+    const currentColors = get().colors;
+    for (const uuid of uuids) {
+      prevColors[uuid] = currentColors[uuid];
+    }
+    pushUndo({
+      description: `Set color on ${uuids.length} cards`,
+      undo: async () => {
+        for (const [uuid, prev] of Object.entries(prevColors)) {
+          if (prev) { await get().setCardColor(uuid, prev); }
+          else { await get().clearCardColor(uuid); }
+        }
+      },
+      redo: async () => { await get().batchSetColor(uuids, color); },
+    });
+    set((s) => {
+      const next = { ...s.colors };
+      for (const uuid of uuids) next[uuid] = color;
+      return { colors: next };
+    });
+    await batchSetCardColorIpc(uuids.map((uuid) => ({ uuid, color })));
+  },
+
+  batchClearColor: async (uuids) => {
+    const prevColors: Record<string, string> = {};
+    const currentColors = get().colors;
+    for (const uuid of uuids) {
+      if (currentColors[uuid]) prevColors[uuid] = currentColors[uuid];
+    }
+    if (Object.keys(prevColors).length > 0) {
+      pushUndo({
+        description: `Clear color on ${uuids.length} cards`,
+        undo: async () => {
+          for (const [uuid, prev] of Object.entries(prevColors)) {
+            await get().setCardColor(uuid, prev);
+          }
+        },
+        redo: async () => { await get().batchClearColor(uuids); },
+      });
+    }
+    set((s) => {
+      const next = { ...s.colors };
+      for (const uuid of uuids) delete next[uuid];
+      return { colors: next };
+    });
+    await batchClearCardColorIpc(uuids);
+  },
+
+  batchPin: async (uuids) => {
+    const pinnedSet = new Set(get().pinned);
+    const actuallyAdded = uuids.filter((u) => !pinnedSet.has(u));
+    if (actuallyAdded.length > 0) {
+      pushUndo({
+        description: `Pin ${actuallyAdded.length} cards`,
+        undo: async () => { await get().batchUnpin(actuallyAdded); },
+        redo: async () => { await get().batchPin(actuallyAdded); },
+      });
+    }
+    set((s) => {
+      const pinnedSet = new Set(s.pinned);
+      const toAdd = uuids.filter((u) => !pinnedSet.has(u));
+      if (toAdd.length === 0) return s;
+      return { pinned: [...s.pinned, ...toAdd] };
+    });
+    await batchPinCardsIpc(uuids);
+  },
+
+  batchUnpin: async (uuids) => {
+    const pinnedSet = new Set(get().pinned);
+    const actuallyRemoved = uuids.filter((u) => pinnedSet.has(u));
+    if (actuallyRemoved.length > 0) {
+      pushUndo({
+        description: `Unpin ${actuallyRemoved.length} cards`,
+        undo: async () => { await get().batchPin(actuallyRemoved); },
+        redo: async () => { await get().batchUnpin(actuallyRemoved); },
+      });
+    }
+    set((s) => {
+      const removeSet = new Set(uuids);
+      return { pinned: s.pinned.filter((u) => !removeSet.has(u)) };
+    });
+    await batchUnpinCardsIpc(uuids);
+  },
+
+  batchLink: async (uuids) => {
+    // Generate all unique pairs and add links optimistically
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < uuids.length; i++) {
+      for (let j = i + 1; j < uuids.length; j++) {
+        const a = uuids[i]!, b = uuids[j]!;
+        const norm: [string, string] = a <= b ? [a, b] : [b, a];
+        pairs.push(norm);
+      }
+    }
+    const existingSet = new Set(get().links.map(([x, y]) => `${x}:${y}`));
+    const newPairs = pairs.filter(([x, y]) => !existingSet.has(`${x}:${y}`));
+    if (newPairs.length > 0) {
+      pushUndo({
+        description: `Link ${uuids.length} cards`,
+        undo: async () => {
+          for (const [a, b] of newPairs) {
+            await get().removeLink(a, b);
+          }
+        },
+        redo: async () => { await get().batchLink(uuids); },
+      });
+    }
+    set((s) => {
+      const existing = new Set(s.links.map(([x, y]) => `${x}:${y}`));
+      const toAdd = pairs.filter(([x, y]) => !existing.has(`${x}:${y}`));
+      if (toAdd.length === 0) return s;
+      return { links: [...s.links, ...toAdd] };
+    });
+    // IPC: call addCardboxLink per pair (no batch IPC for links)
+    for (const [a, b] of pairs) {
+      await addCardboxLink(a, b);
+    }
+  },
+
+  batchCreateGroup: async (cardUuids, name) => {
+    const groupId = crypto.randomUUID();
+    const afterEntry = cardUuids.length > 0 ? cardUuids[cardUuids.length - 1] : undefined;
+    await get().createGroup(groupId, name, cardUuids, afterEntry);
+  },
 }));

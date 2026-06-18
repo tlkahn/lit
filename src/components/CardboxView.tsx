@@ -11,14 +11,18 @@ import type { DragStartEvent, DragEndEvent, DragOverEvent } from "@dnd-kit/core"
 import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
 import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { useCardboxStore } from "../stores/cardbox";
+import { useCardboxUndoStore } from "../stores/cardboxUndo";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
+import { useCardboxSelection } from "../hooks/useCardboxSelection";
 import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
 import { SortableGroup } from "./SortableGroup";
 import { LinkPicker } from "./LinkPicker";
 import { GroupPicker } from "./GroupPicker";
+import { CardboxShortcutsOverlay } from "./CardboxShortcutsOverlay";
+import { BatchToolbar } from "./BatchToolbar";
 import { makeCardboxCollision } from "../lib/cardboxCollision";
 import { parseActiveId, parseOverId } from "../lib/dndIds";
 import type { ParsedActiveId } from "../lib/dndIds";
@@ -74,11 +78,22 @@ export default function CardboxView() {
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
+  const batchSetColor = useCardboxStore((s) => s.batchSetColor);
+  const batchClearColor = useCardboxStore((s) => s.batchClearColor);
+  const batchPin = useCardboxStore((s) => s.batchPin);
+  const batchUnpin = useCardboxStore((s) => s.batchUnpin);
+  const batchLink = useCardboxStore((s) => s.batchLink);
+  const batchCreateGroup = useCardboxStore((s) => s.batchCreateGroup);
+  const undo = useCardboxUndoStore((s) => s.undo);
+  const redo = useCardboxUndoStore((s) => s.redo);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+
+  const { selectedUuids, selectedCount, isSelected, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   const [groupPickerCardUuid, setGroupPickerCardUuid] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -96,6 +111,7 @@ export default function CardboxView() {
 
   useEffect(() => {
     fetchAnnotations().then(() => loadLayout());
+    useCardboxUndoStore.getState().clear();
   }, [fetchAnnotations, loadLayout]);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -109,6 +125,10 @@ export default function CardboxView() {
       saveLayout();
     }
   }, [saveLayout]);
+
+  useEffect(() => {
+    clearSelection();
+  }, [searchQuery, activeTypes, activeColors, clearSelection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,6 +263,20 @@ export default function CardboxView() {
     [order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned],
   );
 
+  const orderedUuids = useMemo(
+    () => renderEntries.flatMap((e) =>
+      e.kind === "card" ? [e.annotation.uuid] : e.cards.map((c) => c.uuid),
+    ),
+    [renderEntries],
+  );
+
+  const handleSelect = useCallback(
+    (uuid: string, event: React.MouseEvent) => {
+      handleCardClick(uuid, event, orderedUuids);
+    },
+    [handleCardClick, orderedUuids],
+  );
+
   const linkedCardsMap = useMemo(() => {
     const map = new Map<string, CardboxAnnotation[]>();
     for (const [uuid, linkedUuids] of linkMap) {
@@ -340,6 +374,11 @@ export default function CardboxView() {
       if (expandedUuid) enterConnections(expandedUuid);
     },
     onExitConnections: () => exitConnections(),
+    onShowShortcuts: () => setShortcutsOpen(true),
+    onSelectAll: () => selectAll(orderedUuids),
+    onClearSelection: clearSelection,
+    onUndo: () => { undo(); debouncedSave(); },
+    onRedo: () => { redo(); debouncedSave(); },
     expandedUuid,
     connectionsActive: !!connectionsForUuid,
     itemCount: sortedAnnotations.length,
@@ -455,7 +494,8 @@ export default function CardboxView() {
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const id = event.active.id as string;
     setDragState({ activeId: id, parsed: parseActiveId(id), overGroupId: null });
-  }, []);
+    clearSelection();
+  }, [clearSelection]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { over } = event;
@@ -783,6 +823,7 @@ export default function CardboxView() {
                       annotation={entry.annotation}
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
+                      isSelected={isSelected(entry.annotation.uuid)}
                       colorTag={colors[entry.annotation.uuid]}
                       onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
                       onNavigate={() => handleNavigate(entry.annotation)}
@@ -794,6 +835,7 @@ export default function CardboxView() {
                       onExportNote={() => handleExportNote(entry.annotation.uuid)}
                       onShowConnections={() => enterConnections(entry.annotation.uuid)}
                       onContextMenu={(e) => handleCardContextMenu(entry.annotation.uuid, e)}
+                      onSelect={handleSelect}
                     />
                   ) : (
                     <SortableGroup
@@ -818,6 +860,8 @@ export default function CardboxView() {
                       onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
                       onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
                       colors={colors}
+                      isCardSelected={isSelected}
+                      onCardSelect={handleSelect}
                     />
                   ),
                 )}
@@ -860,6 +904,52 @@ export default function CardboxView() {
         groups={groups}
         onSelect={handleGroupPickerSelect}
         onClose={() => setGroupPickerCardUuid(null)}
+      />
+
+      <CardboxShortcutsOverlay
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
+
+      <BatchToolbar
+        selectedCount={selectedCount}
+        onGroup={() => {
+          const uuids = [...selectedUuids];
+          batchCreateGroup(uuids, "New Group");
+          clearSelection();
+          debouncedSave();
+        }}
+        onLinkAll={() => {
+          const uuids = [...selectedUuids];
+          batchLink(uuids);
+          clearSelection();
+          debouncedSave();
+        }}
+        onSetColor={(color) => {
+          const uuids = [...selectedUuids];
+          batchSetColor(uuids, color);
+          clearSelection();
+          debouncedSave();
+        }}
+        onClearColor={() => {
+          const uuids = [...selectedUuids];
+          batchClearColor(uuids);
+          clearSelection();
+          debouncedSave();
+        }}
+        onPin={() => {
+          const uuids = [...selectedUuids];
+          batchPin(uuids);
+          clearSelection();
+          debouncedSave();
+        }}
+        onUnpin={() => {
+          const uuids = [...selectedUuids];
+          batchUnpin(uuids);
+          clearSelection();
+          debouncedSave();
+        }}
+        onClear={clearSelection}
       />
     </div>
   );

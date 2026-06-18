@@ -8,12 +8,17 @@ interface UseCardboxKeyboardOptions {
   onToggleNote?: () => void;
   onShowConnections?: () => void;
   onExitConnections?: () => void;
+  onShowShortcuts?: () => void;
+  onSelectAll?: () => void;
+  onClearSelection?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
   expandedUuid: string | null;
   connectionsActive?: boolean;
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -31,9 +36,36 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     const tag = (document.activeElement as HTMLElement)?.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT" || (document.activeElement as HTMLElement)?.isContentEditable) return;
 
-    if (e.key === "Escape" && connectionsActive) {
+    // Cmd+Z: undo
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
       e.preventDefault();
-      onExitConnections?.();
+      onUndo?.();
+      return;
+    }
+
+    // Cmd+Shift+Z or Ctrl+Y: redo
+    if (((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "z") ||
+        (e.ctrlKey && e.key === "y")) {
+      e.preventDefault();
+      onRedo?.();
+      return;
+    }
+
+    // Cmd/Ctrl+A: select all
+    if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+      e.preventDefault();
+      onSelectAll?.();
+      return;
+    }
+
+    if (e.key === "Escape") {
+      if (connectionsActive) {
+        e.preventDefault();
+        onExitConnections?.();
+        return;
+      }
+      // Clear selection (no-op if empty)
+      onClearSelection?.();
       return;
     }
 
@@ -95,6 +127,12 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
           onShowConnections?.();
         }
         return;
+      case "?":
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          onShowShortcuts?.();
+        }
+        return;
       default:
         return;
     }
@@ -103,7 +141,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, expandedUuid, connectionsActive]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive]);
 
   return { gridRef, handleKeyDown };
 }

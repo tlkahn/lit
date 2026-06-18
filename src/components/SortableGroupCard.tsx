@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
@@ -10,6 +10,7 @@ interface SortableGroupCardProps {
   groupId: string;
   annotation: CardboxAnnotation;
   expanded: boolean;
+  isSelected?: boolean;
   colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
@@ -21,12 +22,14 @@ interface SortableGroupCardProps {
   note?: string;
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
+  onSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
 
 export const SortableGroupCard = memo(function SortableGroupCard({
   groupId,
   annotation,
   expanded,
+  isSelected,
   colorTag,
   onToggleExpand,
   onNavigate,
@@ -38,6 +41,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   note,
   onSetNote,
   onExportNote,
+  onSelect,
 }: SortableGroupCardProps) {
   const {
     attributes,
@@ -49,6 +53,16 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   } = useSortable({ id: makeGroupCardId(groupId, annotation.uuid) });
 
   const { contentRef, span } = useMasonrySpan();
+
+  const handleClickCapture = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.metaKey || e.ctrlKey || e.shiftKey) && onSelect) {
+        e.stopPropagation();
+        onSelect(annotation.uuid, e);
+      }
+    },
+    [annotation.uuid, onSelect],
+  );
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -67,11 +81,13 @@ export const SortableGroupCard = memo(function SortableGroupCard({
       {...attributes}
       {...listeners}
       onContextMenu={onContextMenu}
+      onClickCapture={handleClickCapture}
     >
       <div ref={contentRef} data-masonry-content="">
         <CardboxCard
           annotation={annotation}
           expanded={expanded}
+          isSelected={isSelected}
           colorTag={colorTag}
           onToggleExpand={onToggleExpand}
           onNavigate={onNavigate}

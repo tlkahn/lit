@@ -665,6 +665,94 @@ pub fn clear_card_color(
     })
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ColorEntry {
+    pub uuid: String,
+    pub color: String,
+}
+
+#[tauri::command]
+pub fn batch_set_card_color(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    entries: Vec<ColorEntry>,
+) -> Result<(), String> {
+    // Validate all colors upfront before touching layout
+    for entry in &entries {
+        if !VALID_COLORS.contains(&entry.color.as_str()) {
+            return Err(format!(
+                "Invalid color '{}'. Must be one of: {}",
+                entry.color,
+                VALID_COLORS.join(", ")
+            ));
+        }
+    }
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        for entry in &entries {
+            layout.colors.insert(entry.uuid.clone(), entry.color.clone());
+        }
+        layout.version = layout.version.max(4);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn batch_clear_card_color(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuids: Vec<String>,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        let mut changed = false;
+        for uuid in &uuids {
+            if layout.colors.remove(uuid).is_some() {
+                changed = true;
+            }
+        }
+        if changed {
+            layout.version = layout.version.max(4);
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn batch_pin_cards(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuids: Vec<String>,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        let pinned_set: HashSet<String> = layout.pinned.iter().cloned().collect();
+        let to_add: Vec<String> = uuids.iter()
+            .filter(|uuid| !pinned_set.contains(uuid.as_str()))
+            .cloned()
+            .collect();
+        if !to_add.is_empty() {
+            layout.pinned.extend(to_add);
+            layout.version = layout.version.max(3);
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn batch_unpin_cards(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    uuids: Vec<String>,
+) -> Result<(), String> {
+    with_cardbox_layout(&window, &workspace_state, |layout| {
+        let remove_set: HashSet<&str> = uuids.iter().map(|s| s.as_str()).collect();
+        let before = layout.pinned.len();
+        layout.pinned.retain(|u| !remove_set.contains(u.as_str()));
+        if layout.pinned.len() < before {
+            layout.version = layout.version.max(3);
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2236,5 +2324,129 @@ mod tests {
 
         let result = read_layout(dir.path());
         assert_eq!(result.version, 5);
+    }
+
+    // ---- Batch operation tests ----
+
+    #[test]
+    fn batch_set_card_color_applies_all() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout::default();
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let entries = vec![
+            ("uuid-1", "blue"),
+            ("uuid-2", "green"),
+            ("uuid-3", "pink"),
+        ];
+        for (uuid, color) in &entries {
+            assert!(super::VALID_COLORS.contains(color));
+            layout.colors.insert(uuid.to_string(), color.to_string());
+        }
+        layout.version = layout.version.max(4);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.colors.get("uuid-1").unwrap(), "blue");
+        assert_eq!(result.colors.get("uuid-2").unwrap(), "green");
+        assert_eq!(result.colors.get("uuid-3").unwrap(), "pink");
+        assert_eq!(result.version, 4);
+    }
+
+    #[test]
+    fn batch_set_card_color_rejects_invalid() {
+        let invalid = "red";
+        assert!(!super::VALID_COLORS.contains(&invalid));
+    }
+
+    #[test]
+    fn batch_clear_card_color_removes_all() {
+        let dir = create_workspace();
+        let mut layout = super::CardboxLayout::default();
+        layout.colors.insert("uuid-1".into(), "blue".into());
+        layout.colors.insert("uuid-2".into(), "green".into());
+        layout.colors.insert("uuid-3".into(), "pink".into());
+        layout.version = 4;
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let uuids = vec!["uuid-1", "uuid-2"];
+        for uuid in &uuids {
+            layout.colors.remove(*uuid);
+        }
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert!(!result.colors.contains_key("uuid-1"));
+        assert!(!result.colors.contains_key("uuid-2"));
+        assert!(result.colors.contains_key("uuid-3")); // untouched
+    }
+
+    #[test]
+    fn batch_pin_cards_adds_all() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout::default();
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let uuids = vec!["uuid-a", "uuid-b", "uuid-c"];
+        let pinned_set: std::collections::HashSet<String> =
+            layout.pinned.iter().cloned().collect();
+        let to_add: Vec<String> = uuids.iter()
+            .filter(|u| !pinned_set.contains(**u))
+            .map(|u| u.to_string())
+            .collect();
+        layout.pinned.extend(to_add);
+        layout.version = layout.version.max(3);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned, vec!["uuid-a", "uuid-b", "uuid-c"]);
+    }
+
+    #[test]
+    fn batch_pin_cards_idempotent() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            pinned: vec!["uuid-a".into()],
+            version: 3,
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let uuids = vec!["uuid-a", "uuid-b"];
+        let pinned_set: std::collections::HashSet<String> =
+            layout.pinned.iter().cloned().collect();
+        let to_add: Vec<String> = uuids.iter()
+            .filter(|u| !pinned_set.contains(**u))
+            .map(|u| u.to_string())
+            .collect();
+        layout.pinned.extend(to_add);
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned.iter().filter(|u| *u == "uuid-a").count(), 1);
+        assert!(result.pinned.contains(&"uuid-b".to_string()));
+    }
+
+    #[test]
+    fn batch_unpin_cards_removes_all() {
+        let dir = create_workspace();
+        let layout = super::CardboxLayout {
+            pinned: vec!["uuid-a".into(), "uuid-b".into(), "uuid-c".into()],
+            version: 3,
+            ..Default::default()
+        };
+        write_layout(dir.path(), &layout);
+
+        let mut layout = read_layout(dir.path());
+        let remove_set: std::collections::HashSet<&str> = ["uuid-a", "uuid-c"].iter().copied().collect();
+        layout.pinned.retain(|u| !remove_set.contains(u.as_str()));
+        write_layout(dir.path(), &layout);
+
+        let result = read_layout(dir.path());
+        assert_eq!(result.pinned, vec!["uuid-b"]);
     }
 }

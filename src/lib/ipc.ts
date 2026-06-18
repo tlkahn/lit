@@ -1399,6 +1399,27 @@ export async function clearCardColor(uuid: string): Promise<void> {
   return invoke<void>("clear_card_color", { uuid });
 }
 
+export interface ColorEntry {
+  uuid: string;
+  color: string;
+}
+
+export async function batchSetCardColor(entries: ColorEntry[]): Promise<void> {
+  return invoke<void>("batch_set_card_color", { entries });
+}
+
+export async function batchClearCardColor(uuids: string[]): Promise<void> {
+  return invoke<void>("batch_clear_card_color", { uuids });
+}
+
+export async function batchPinCards(uuids: string[]): Promise<void> {
+  return invoke<void>("batch_pin_cards", { uuids });
+}
+
+export async function batchUnpinCards(uuids: string[]): Promise<void> {
+  return invoke<void>("batch_unpin_cards", { uuids });
+}
+
 // Merge/Split preview commands
 
 export interface MergeInput {

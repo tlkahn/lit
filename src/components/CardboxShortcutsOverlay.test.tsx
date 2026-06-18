@@ -1,0 +1,49 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { CardboxShortcutsOverlay } from "./CardboxShortcutsOverlay";
+
+describe("CardboxShortcutsOverlay", () => {
+  it("renders shortcut entries when open", () => {
+    render(<CardboxShortcutsOverlay open={true} onClose={() => {}} />);
+    expect(screen.getByTestId("shortcuts-overlay-panel")).toBeInTheDocument();
+    const entries = screen.getAllByTestId("shortcut-entry");
+    expect(entries.length).toBeGreaterThanOrEqual(9);
+    // Verify known shortcuts are present
+    expect(screen.getByText("Navigate cards in grid")).toBeInTheDocument();
+    expect(screen.getByText("Toggle pin")).toBeInTheDocument();
+  });
+
+  it("does not render when closed", () => {
+    render(<CardboxShortcutsOverlay open={false} onClose={() => {}} />);
+    expect(screen.queryByTestId("shortcuts-overlay-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("shortcuts-overlay-backdrop")).not.toBeInTheDocument();
+  });
+
+  it("calls onClose when Escape is pressed", () => {
+    const onClose = vi.fn();
+    render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);
+    fireEvent.keyDown(screen.getByTestId("shortcuts-overlay-backdrop"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onClose when backdrop is clicked", () => {
+    const onClose = vi.fn();
+    render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);
+    fireEvent.click(screen.getByTestId("shortcuts-overlay-backdrop"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close when panel body is clicked", () => {
+    const onClose = vi.fn();
+    render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);
+    fireEvent.click(screen.getByTestId("shortcuts-overlay-panel"));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("calls onClose when ? is pressed (toggle off)", () => {
+    const onClose = vi.fn();
+    render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);
+    fireEvent.keyDown(screen.getByTestId("shortcuts-overlay-backdrop"), { key: "?" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
