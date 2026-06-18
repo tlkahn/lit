@@ -60,7 +60,17 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       onSelectAll?.();
       return;
     }
-  }, [onUndo, onRedo, onSelectAll]);
+
+    // Escape: clear selection (globally, regardless of focus)
+    // Connections-mode Escape stays on the grid-level handler
+    if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      if (!connectionsActive && onClearSelection) {
+        e.preventDefault();
+        onClearSelection();
+        return;
+      }
+    }
+  }, [onUndo, onRedo, onSelectAll, onClearSelection, connectionsActive]);
 
   useEffect(() => {
     document.addEventListener("keydown", globalHandler);
@@ -81,8 +91,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         onExitConnections?.();
         return;
       }
-      // Clear selection (no-op if empty)
-      onClearSelection?.();
+      // Selection clearing is handled by the global handler
       return;
     }
 
@@ -158,7 +167,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onClearSelection, expandedUuid, connectionsActive]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, expandedUuid, connectionsActive]);
 
   return { gridRef, handleKeyDown };
 }

@@ -134,12 +134,12 @@ export default function CardboxView() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
-      fetchAnnotations();
+      fetchAnnotations().then(() => clearSelection());
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
-  }, [fetchAnnotations]);
+  }, [fetchAnnotations, clearSelection]);
 
   const handleNavigate = useCallback((ann: CardboxAnnotation) => {
     window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "editor" }));
@@ -265,7 +265,11 @@ export default function CardboxView() {
 
   const orderedUuids = useMemo(
     () => renderEntries.flatMap((e) =>
-      e.kind === "card" ? [e.annotation.uuid] : e.cards.map((c) => c.uuid),
+      e.kind === "card"
+        ? [e.annotation.uuid]
+        : e.info.collapsed
+          ? []
+          : e.cards.map((c) => c.uuid),
     ),
     [renderEntries],
   );
