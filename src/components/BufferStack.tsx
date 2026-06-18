@@ -139,7 +139,7 @@ export function BufferStack() {
             transform: animatedIn ? "translateY(0)" : "translateY(4px)",
             transition: "opacity 100ms ease-out, transform 100ms ease-out",
           }}
-          className="z-50 min-w-[200px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 outline-none dark:border-border/10 dark:bg-bg-primary/70"
+          className="z-50 min-w-[200px] select-none rounded-lg border border-border/20 bg-bg-primary/80 p-1 shadow-lg shadow-black/10 backdrop-blur-xl backdrop-saturate-150 outline-none dark:border-border/10 dark:bg-bg-primary/70"
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();

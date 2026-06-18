@@ -12,10 +12,8 @@ interface BottomPanelProps {
   direction?: "bottom" | "left" | "right";
 }
 
-function getShadowClass(direction: "bottom" | "left" | "right"): string {
-  if (direction === "right") return "shadow-[-2px_0_4px_rgba(0,0,0,0.08)]";
-  if (direction === "left") return "shadow-[2px_0_4px_rgba(0,0,0,0.08)]";
-  return "shadow-[0_-2px_4px_rgba(0,0,0,0.08)]";
+function getShadowClass(_direction: "bottom" | "left" | "right"): string {
+  return "";
 }
 
 function clampPanelSize(
