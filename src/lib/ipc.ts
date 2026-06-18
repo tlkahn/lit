@@ -1264,6 +1264,10 @@ export async function listAnnotations(
 
 // Cardbox (annotation-centered view)
 
+/** Valid color-tag values — must match VALID_COLORS in src-tauri/src/commands/cardbox.rs */
+export const CARDBOX_COLORS = ["blue", "orange", "green", "purple", "pink", "cyan"] as const;
+export type CardboxColor = (typeof CARDBOX_COLORS)[number];
+
 export interface CardboxAnnotation {
   uuid: string;
   annotation_type: string;
@@ -1397,6 +1401,27 @@ export async function setCardColor(uuid: string, color: string): Promise<void> {
 
 export async function clearCardColor(uuid: string): Promise<void> {
   return invoke<void>("clear_card_color", { uuid });
+}
+
+export interface ColorEntry {
+  uuid: string;
+  color: string;
+}
+
+export async function batchSetCardColor(entries: ColorEntry[]): Promise<void> {
+  return invoke<void>("batch_set_card_color", { entries });
+}
+
+export async function batchClearCardColor(uuids: string[]): Promise<void> {
+  return invoke<void>("batch_clear_card_color", { uuids });
+}
+
+export async function batchPinCards(uuids: string[]): Promise<void> {
+  return invoke<void>("batch_pin_cards", { uuids });
+}
+
+export async function batchUnpinCards(uuids: string[]): Promise<void> {
+  return invoke<void>("batch_unpin_cards", { uuids });
 }
 
 // Merge/Split preview commands

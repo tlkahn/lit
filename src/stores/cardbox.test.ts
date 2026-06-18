@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useCardboxStore } from "./cardbox";
+import { useCardboxUndoStore } from "./cardboxUndo";
 import { mockInvoke } from "../test/tauri-mock";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 
@@ -814,5 +815,110 @@ describe("cardbox store", () => {
     useCardboxStore.setState({ pinned: ["u1", "stale-uuid"] });
     await useCardboxStore.getState().fetchAnnotations();
     expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
+  });
+
+  // --- batchMoveCards tests ---
+
+  describe("batchMoveCards", () => {
+    it("moves multiple top-level cards to a new position", () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3", "u4"],
+        groups: {},
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 2 });
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u2", "u4", "u1", "u3"]);
+    });
+
+    it("moves cards to the beginning", () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      useCardboxStore.getState().batchMoveCards(["u3"], { type: "topLevel", insertAtIndex: 0 });
+      expect(useCardboxStore.getState().order).toEqual(["u3", "u1", "u2"]);
+    });
+
+    it("moves top-level cards into a group", () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "group:g1", "u3"],
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "toGroup", groupId: "g1" });
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u2", "group:g1"]);
+      expect(s.groups.g1!.order).toEqual(["u4", "u1", "u3"]);
+    });
+
+    it("moves cards into a group at a specific index", () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "group:g1"],
+        groups: { g1: { name: "G", order: ["u3", "u4"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g1", index: 1 });
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u3", "u1", "u2", "u4"]);
+    });
+
+    it("moves cards from mixed origins (group + top-level) to top-level", () => {
+      useCardboxStore.setState({
+        order: ["u1", "group:g1", "u4"],
+        groups: { g1: { name: "G", order: ["u2", "u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "topLevel", insertAtIndex: 1 });
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["group:g1", "u1", "u2", "u4"]);
+      expect(s.groups.g1!.order).toEqual(["u3"]);
+    });
+
+    it("auto-dissolves a group left empty after removal", () => {
+      useCardboxStore.setState({
+        order: ["u1", "group:g1", "u3"],
+        groups: { g1: { name: "G", order: ["u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u2"], { type: "topLevel", insertAtIndex: 0 });
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1).toBeUndefined();
+      expect(s.order).not.toContain("group:g1");
+      expect(s.order).toContain("u2");
+    });
+
+    it("moves cards from multiple groups to top-level", () => {
+      useCardboxStore.setState({
+        order: ["group:g1", "group:g2"],
+        groups: {
+          g1: { name: "G1", order: ["u1", "u2"], collapsed: false },
+          g2: { name: "G2", order: ["u3", "u4"], collapsed: false },
+        },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 0 });
+      const s = useCardboxStore.getState();
+      expect(s.order[0]).toBe("u1");
+      expect(s.order[1]).toBe("u3");
+      expect(s.groups.g1!.order).toEqual(["u2"]);
+      expect(s.groups.g2!.order).toEqual(["u4"]);
+    });
+
+    it("clamps insertAtIndex to array length", () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2"],
+        groups: {},
+      });
+      useCardboxStore.getState().batchMoveCards(["u1"], { type: "topLevel", insertAtIndex: 100 });
+      const s = useCardboxStore.getState();
+      expect(s.order).toEqual(["u2", "u1"]);
+    });
+
+    it("pushes an undo entry that restores previous state", () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 1 });
+      expect(useCardboxStore.getState().order).toEqual(["u2", "u1", "u3"]);
+
+      const stack = useCardboxUndoStore.getState().undoStack;
+      expect(stack.length).toBeGreaterThan(0);
+    });
   });
 });

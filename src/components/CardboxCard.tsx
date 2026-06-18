@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
@@ -135,6 +135,7 @@ interface CardboxCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
   isPinned?: boolean;
+  isSelected?: boolean;
   colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
@@ -147,8 +148,21 @@ interface CardboxCardProps {
   onShowConnections?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const prevPinnedRef = useRef(isPinned);
+  const [justPinned, setJustPinned] = useState(false);
+
+  useEffect(() => {
+    if (isPinned && !prevPinnedRef.current) {
+      setJustPinned(true);
+      const timer = setTimeout(() => setJustPinned(false), 400);
+      prevPinnedRef.current = isPinned;
+      return () => clearTimeout(timer);
+    }
+    prevPinnedRef.current = isPinned;
+    setJustPinned(false);
+  }, [isPinned]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -168,7 +182,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   return (
     <div
       ref={cardRef}
-      className={`relative cursor-pointer rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}`}
+      className={`relative cursor-pointer rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
       onClick={onToggleExpand}
       onKeyDown={handleKeyDown}
       tabIndex={0}

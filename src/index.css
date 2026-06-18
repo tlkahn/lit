@@ -303,4 +303,15 @@ select:disabled {
 [data-testid="cardbox-card"][data-color-tag="cyan"]   { --tag-color: 0, 188, 212; }
 [data-testid="cardbox-card"][data-color-tag] {
   border-left: 4px solid rgba(var(--tag-color), 0.6);
+  transition: border-color 0.2s ease-out;
+}
+
+/* Pin pulse animation */
+@keyframes pin-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--interactive-accent); }
+  50%  { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.cardbox-pin-pulse {
+  animation: pin-pulse 0.4s ease-out;
 }
