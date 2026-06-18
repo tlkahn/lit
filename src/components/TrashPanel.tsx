@@ -28,7 +28,7 @@ export function TrashPanel() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-2 py-1">
+      <div className="flex items-center justify-between border-b border-border-subtle px-2 py-1">
         <span className="text-xs text-text-muted">{trashItems.length} item{trashItems.length !== 1 ? "s" : ""}</span>
         <button
           onClick={() => {

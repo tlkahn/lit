@@ -408,7 +408,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               onClick={() => setViewMode("editor")}
               aria-label="Editor"
               title="Editor (⌘1)"
-              className={`rounded px-2 py-0.5 text-xs ${viewMode === "editor" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+              className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "editor" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
             >
               Editor
             </button>
@@ -416,7 +416,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               onClick={() => setViewMode("mindmap")}
               aria-label="Mindmap"
               title="Mindmap (⌘2)"
-              className={`rounded px-2 py-0.5 text-xs ${viewMode === "mindmap" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+              className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "mindmap" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
             >
               Mindmap
             </button>
@@ -425,7 +425,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
                 onClick={() => setViewMode("graph")}
                 aria-label="Graph"
                 title="Graph (⌘3)"
-                className={`rounded px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+                className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
               >
                 Graph
               </button>
@@ -434,7 +434,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               onClick={() => setViewMode("cardbox")}
               aria-label="Cardbox"
               title="Cardbox (⌘4)"
-              className={`rounded px-2 py-0.5 text-xs ${viewMode === "cardbox" ? "bg-interactive-accent text-white" : "text-text-faint hover:text-text-muted"}`}
+              className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "cardbox" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
             >
               Cardbox
             </button>

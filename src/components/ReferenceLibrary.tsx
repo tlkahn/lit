@@ -919,7 +919,7 @@ export function ReferenceLibrary() {
                         data-testid="section-header"
                         role="heading"
                         aria-level={2}
-                        className="bg-bg-secondary px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-text-faint"
+                        className="px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-text-section-header"
                       >
                         {item.letter}
                       </div>

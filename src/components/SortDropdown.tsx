@@ -77,7 +77,7 @@ export function SortDropdown({ sortConfig, onSelectKey }: SortDropdownProps) {
           ref={menuRef}
           data-testid="sort-dropdown-menu"
           style={{ position: "fixed", left: 0, top: 0 }}
-          className="z-50 min-w-[160px] select-none rounded-lg border border-border/40 bg-bg-primary/80 p-1 shadow-xl shadow-black/20 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+          className="z-50 min-w-[160px] select-none rounded-lg border border-border/20 bg-bg-primary/80 p-1 shadow-lg shadow-black/10 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
         >
           {KEYS.map((key) => {
             const active = sortConfig.key === key;

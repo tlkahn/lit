@@ -95,7 +95,7 @@ const PageItem = memo(function PageItem({
       ) : (
         <button
           onClick={() => onSelect(page.relative_path)}
-          className={`w-full select-none truncate rounded px-2 py-1 text-start text-sm ${
+          className={`w-full select-none truncate rounded-md px-2 py-1 text-start text-sm ${
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
               : "text-text-normal hover:bg-bg-hover"
@@ -140,7 +140,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 28,
+    estimateSize: () => 32,
     overscan: 10,
   });
 
@@ -162,16 +162,16 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   });
 
   return (
-    <aside className="flex h-full shrink-0 flex-col border-e border-border bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }}>
-      <div className="flex items-center border-b border-border">
+    <aside className="flex h-full shrink-0 flex-col bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }}>
+      <div className="flex items-center border-b border-border-subtle">
         <button
           onClick={() => setTab("files")}
           title="Files"
           aria-label="Files"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "files"
-              ? "border-b-2 border-interactive-accent text-text-normal"
-              : "text-text-faint hover:text-text-muted"
+              ? "text-text-normal opacity-100"
+              : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
           }`}
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󰈙'}</span>
@@ -182,8 +182,8 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           aria-label="Outline"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "outline"
-              ? "border-b-2 border-interactive-accent text-text-normal"
-              : "text-text-faint hover:text-text-muted"
+              ? "text-text-normal opacity-100"
+              : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
           }`}
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󰲞'}</span>
@@ -194,8 +194,8 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           aria-label="Trash"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "trash"
-              ? "border-b-2 border-interactive-accent text-text-normal"
-              : "text-text-faint hover:text-text-muted"
+              ? "text-text-normal opacity-100"
+              : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
           }`}
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󰆴'}</span>
@@ -206,8 +206,8 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           aria-label="References"
           className={`flex-1 px-3 py-2 text-sm font-medium ${
             tab === "references"
-              ? "border-b-2 border-interactive-accent text-text-normal"
-              : "text-text-faint hover:text-text-muted"
+              ? "text-text-normal opacity-100"
+              : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
           }`}
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󱉟'}</span>
@@ -221,7 +221,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+              className="min-w-0 flex-1 rounded-md border-none bg-bg-hover px-2 py-1 text-sm text-text-normal"
               aria-label="Search pages"
             />
             <SortDropdown sortConfig={sortConfig} onSelectKey={selectSortKey} />
@@ -250,7 +250,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                     {row.type === "folder" ? (
                       <button
                         onClick={() => toggleCollapse(row.folderPath)}
-                        className="flex w-full min-w-0 items-center gap-1 rounded px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
+                        className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
                         style={{ paddingInlineStart: `${row.depth * 12 + 8}px` }}
                       >
                         <span className="text-xs">{row.isCollapsed ? "▸" : "▾"}</span>

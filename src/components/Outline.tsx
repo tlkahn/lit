@@ -17,7 +17,7 @@ export function Outline() {
       {headings.map((h, i) => (
         <button
           key={`${h.line}-${i}`}
-          className="w-full select-none truncate rounded py-0.5 text-start text-sm text-text-normal hover:bg-bg-hover"
+          className="w-full select-none truncate rounded-md py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
           style={{ paddingInlineStart: `${(h.level - 1) * 12 + 8}px` }}
           onClick={() => {
             window.dispatchEvent(
