@@ -44,6 +44,10 @@ function pushUndo(entry: UndoEntry & { coalesceKey?: string }) {
   store.pushUndo(withKey);
 }
 
+export type BatchMoveTarget =
+  | { type: "topLevel"; insertAtIndex: number }
+  | { type: "toGroup"; groupId: string; index?: number };
+
 export interface CardboxStore {
   annotations: CardboxAnnotation[];
   expandedUuid: string | null;
@@ -95,6 +99,7 @@ export interface CardboxStore {
   batchPin: (uuids: string[]) => Promise<void>;
   batchUnpin: (uuids: string[]) => Promise<void>;
   batchLink: (uuids: string[]) => Promise<void>;
+  batchMoveCards: (uuids: string[], target: BatchMoveTarget) => void;
   batchCreateGroup: (cardUuids: string[], name: string) => Promise<void>;
 }
 
@@ -766,6 +771,65 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     for (const [a, b] of newPairs) {
       await addCardboxLink(a, b);
     }
+  },
+
+  batchMoveCards: (uuids, target) => {
+    const uuidSet = new Set(uuids);
+    const prevOrder = [...get().order];
+    const prevGroups: Record<string, GroupInfo> = {};
+    for (const [gid, info] of Object.entries(get().groups)) {
+      prevGroups[gid] = { ...info, order: [...info.order] };
+    }
+
+    pushUndo({
+      description: `Move ${uuids.length} cards`,
+      undo: async () => {
+        set({ order: prevOrder, groups: prevGroups });
+        await get().saveLayout();
+      },
+      redo: async () => {
+        get().batchMoveCards(uuids, target);
+        await get().saveLayout();
+      },
+    });
+
+    set((s) => {
+      // Phase 1: Remove all dragged UUIDs from order and all groups
+      let order = s.order.filter((id) => !uuidSet.has(id));
+      const groups: Record<string, GroupInfo> = {};
+      const dissolvedGroupIds: string[] = [];
+
+      for (const [gid, info] of Object.entries(s.groups)) {
+        const filtered = info.order.filter((id) => !uuidSet.has(id));
+        if (filtered.length === 0) {
+          dissolvedGroupIds.push(gid);
+        } else {
+          groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
+        }
+      }
+
+      // Remove dissolved group entries from order
+      if (dissolvedGroupIds.length > 0) {
+        const dissolvedSet = new Set(dissolvedGroupIds.map((gid) => `group:${gid}`));
+        order = order.filter((id) => !dissolvedSet.has(id));
+      }
+
+      // Phase 2: Insert at target
+      if (target.type === "topLevel") {
+        const idx = Math.min(target.insertAtIndex, order.length);
+        order.splice(idx, 0, ...uuids);
+      } else {
+        const group = groups[target.groupId];
+        if (group) {
+          const targetOrder = [...group.order];
+          const insertIdx = target.index != null ? Math.min(target.index, targetOrder.length) : targetOrder.length;
+          targetOrder.splice(insertIdx, 0, ...uuids);
+          groups[target.groupId] = { ...group, order: targetOrder };
+        }
+      }
+
+      return { order, groups };
+    });
   },
 
   batchCreateGroup: async (cardUuids, name) => {

@@ -11,6 +11,7 @@ import type { DragStartEvent, DragEndEvent, DragOverEvent } from "@dnd-kit/core"
 import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
 import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { useCardboxStore } from "../stores/cardbox";
+import type { BatchMoveTarget } from "../stores/cardbox";
 import { useCardboxUndoStore } from "../stores/cardboxUndo";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -25,8 +26,9 @@ import { CardboxShortcutsOverlay } from "./CardboxShortcutsOverlay";
 import { BatchToolbar } from "./BatchToolbar";
 import { makeCardboxCollision } from "../lib/cardboxCollision";
 import { parseActiveId, parseOverId } from "../lib/dndIds";
-import type { ParsedActiveId } from "../lib/dndIds";
+import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
+import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
@@ -36,6 +38,7 @@ interface DragState {
   activeId: string;
   parsed: ParsedActiveId;
   overGroupId: string | null;
+  draggedUuids: string[];
 }
 
 export default function CardboxView() {
@@ -83,6 +86,7 @@ export default function CardboxView() {
   const batchPin = useCardboxStore((s) => s.batchPin);
   const batchUnpin = useCardboxStore((s) => s.batchUnpin);
   const batchLink = useCardboxStore((s) => s.batchLink);
+  const batchMoveCards = useCardboxStore((s) => s.batchMoveCards);
   const batchCreateGroup = useCardboxStore((s) => s.batchCreateGroup);
   const undo = useCardboxUndoStore((s) => s.undo);
   const redo = useCardboxUndoStore((s) => s.redo);
@@ -497,9 +501,15 @@ export default function CardboxView() {
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const id = event.active.id as string;
-    setDragState({ activeId: id, parsed: parseActiveId(id), overGroupId: null });
-    clearSelection();
-  }, [clearSelection]);
+    const parsed = parseActiveId(id);
+    const cardUuid = parsed.type === "topCard" ? parsed.uuid : parsed.type === "groupCard" ? parsed.uuid : null;
+    if (cardUuid && selectedUuids.has(cardUuid) && selectedUuids.size >= 2) {
+      setDragState({ activeId: id, parsed, overGroupId: null, draggedUuids: [...selectedUuids] });
+    } else {
+      setDragState({ activeId: id, parsed, overGroupId: null, draggedUuids: cardUuid ? [cardUuid] : [] });
+      clearSelection();
+    }
+  }, [clearSelection, selectedUuids]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { over } = event;
@@ -550,11 +560,50 @@ export default function CardboxView() {
     [renderEntries, order, annotations, setOrder],
   );
 
+  const computeBatchTarget = useCallback(
+    (dst: ParsedOverId, overIdStr: string): BatchMoveTarget | null => {
+      if (dst.type === "topCard" || dst.type === "group") {
+        const visibleIds = renderEntries.map((e) =>
+          e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
+        );
+        const visIdx = visibleIds.indexOf(overIdStr);
+        if (visIdx === -1) return null;
+        const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
+        const insertAfterItem = visIdx > 0 ? visibleIds[visIdx - 1] ?? null : null;
+        const insertAtIndex = insertAfterItem === null ? 0 : currentOrder.indexOf(insertAfterItem) + 1;
+        return { type: "topLevel", insertAtIndex };
+      }
+      if (dst.type === "groupDropZone") {
+        return { type: "toGroup", groupId: dst.groupId };
+      }
+      if (dst.type === "groupCard") {
+        const group = groups[dst.groupId];
+        const idx = group ? group.order.indexOf(dst.uuid) : undefined;
+        return { type: "toGroup", groupId: dst.groupId, index: idx != null && idx >= 0 ? idx : undefined };
+      }
+      return null;
+    },
+    [renderEntries, order, annotations, groups],
+  );
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      const prevDragState = dragState;
       setDragState(null);
       const { active, over } = event;
       if (!over || active.id === over.id) return;
+
+      // Multi-card drag path
+      if (prevDragState && prevDragState.draggedUuids.length > 1) {
+        const dst = parseOverId(over.id as string);
+        const target = computeBatchTarget(dst, over.id as string);
+        if (target) {
+          batchMoveCards(prevDragState.draggedUuids, target);
+          clearSelection();
+          debouncedSave();
+        }
+        return;
+      }
 
       const src = parseActiveId(active.id as string);
       const dst = parseOverId(over.id as string);
@@ -648,6 +697,7 @@ export default function CardboxView() {
       }
     },
     [
+      dragState,
       groups,
       order,
       annotations,
@@ -657,6 +707,9 @@ export default function CardboxView() {
       removeCardFromGroup,
       reorderWithinGroup,
       moveCardBetweenGroups,
+      batchMoveCards,
+      clearSelection,
+      computeBatchTarget,
       debouncedSave,
     ],
   );
@@ -690,6 +743,11 @@ export default function CardboxView() {
     if (!info) return null;
     return { name: info.name, cardCount: info.order.length };
   }, [dragState, groups]);
+
+  const draggedUuidsSet = useMemo(
+    () => dragState ? new Set(dragState.draggedUuids) : new Set<string>(),
+    [dragState],
+  );
 
   // ---------- Render ----------
 
@@ -795,6 +853,7 @@ export default function CardboxView() {
             No matching annotations
           </div>
         ) : (
+          <DraggedUuidsContext.Provider value={draggedUuidsSet}>
           <DndContext
             sensors={sensors}
             collisionDetection={collisionDetection}
@@ -871,16 +930,41 @@ export default function CardboxView() {
             </SortableContext>
             <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
               {overlayAnnotation ? (
-                <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
-                  <CardboxCard
-                    annotation={overlayAnnotation}
-                    expanded={false}
-                    isPinned={pinnedSet.has(overlayAnnotation.uuid)}
-                    colorTag={colors[overlayAnnotation.uuid]}
-                    onToggleExpand={() => {}}
-                    onNavigate={() => {}}
-                  />
-                </div>
+                dragState && dragState.draggedUuids.length > 1 ? (
+                  <div className="relative" style={{ transform: "scale(1.02)" }}>
+                    <div className="absolute inset-0 rounded-lg bg-bg-secondary border border-border" style={{ transform: "translate(8px, 8px)", opacity: 0.4 }} />
+                    {dragState.draggedUuids.length > 2 && (
+                      <div className="absolute inset-0 rounded-lg bg-bg-secondary border border-border" style={{ transform: "translate(4px, 4px)", opacity: 0.6 }} />
+                    )}
+                    <div className="relative opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+                      <CardboxCard
+                        annotation={overlayAnnotation}
+                        expanded={false}
+                        isPinned={pinnedSet.has(overlayAnnotation.uuid)}
+                        colorTag={colors[overlayAnnotation.uuid]}
+                        onToggleExpand={() => {}}
+                        onNavigate={() => {}}
+                      />
+                    </div>
+                    <div
+                      className="absolute flex items-center justify-center rounded-full bg-interactive-accent text-on-accent text-xs font-bold"
+                      style={{ top: -8, right: -8, width: 24, height: 24, zIndex: 1 }}
+                    >
+                      {dragState.draggedUuids.length}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
+                    <CardboxCard
+                      annotation={overlayAnnotation}
+                      expanded={false}
+                      isPinned={pinnedSet.has(overlayAnnotation.uuid)}
+                      colorTag={colors[overlayAnnotation.uuid]}
+                      onToggleExpand={() => {}}
+                      onNavigate={() => {}}
+                    />
+                  </div>
+                )
               ) : overlayGroup ? (
                 <div className="rounded bg-bg-secondary px-3 py-2 shadow-lg border border-border">
                   <span className="text-sm font-medium">{overlayGroup.name}</span>
@@ -889,6 +973,7 @@ export default function CardboxView() {
               ) : null}
             </DragOverlay>
           </DndContext>
+          </DraggedUuidsContext.Provider>
         )}
       </div>
 

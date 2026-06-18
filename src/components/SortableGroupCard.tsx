@@ -4,6 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
 import { useMasonrySpan } from "../hooks/useMasonrySpan";
 import { useSelectionClickCapture } from "../hooks/useSelectionClickCapture";
+import { useDraggedUuids } from "./DraggedUuidsContext";
 import { makeGroupCardId } from "../lib/dndIds";
 import { useCardboxSelectionStore } from "../stores/cardboxSelection";
 import type { CardboxAnnotation } from "../lib/ipc";
@@ -44,6 +45,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   onSelect,
 }: SortableGroupCardProps) {
   const isSelected = useCardboxSelectionStore((s) => s.selectedUuids.has(annotation.uuid));
+  const draggedUuids = useDraggedUuids();
   const {
     attributes,
     listeners,
@@ -53,6 +55,8 @@ export const SortableGroupCard = memo(function SortableGroupCard({
     isDragging,
   } = useSortable({ id: makeGroupCardId(groupId, annotation.uuid) });
 
+  const isGhostDragged = draggedUuids.has(annotation.uuid) && !isDragging;
+
   const { contentRef, span } = useMasonrySpan();
 
   const handleClickCapture = useSelectionClickCapture(annotation.uuid, onSelect);
@@ -60,7 +64,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? undefined,
-    opacity: isDragging ? 0.4 : 1,
+    opacity: isDragging ? 0.4 : isGhostDragged ? 0.3 : 1,
     gridRowEnd: `span ${span}`,
     zIndex: expanded ? 10 : undefined,
     position: expanded ? "relative" : undefined,
@@ -70,7 +74,11 @@ export const SortableGroupCard = memo(function SortableGroupCard({
     <div
       ref={setNodeRef}
       style={style}
-      className={isDragging ? "rounded-lg border-2 border-dashed border-border" : ""}
+      className={
+        isDragging ? "rounded-lg border-2 border-dashed border-border"
+        : isGhostDragged ? "rounded-lg border-2 border-dashed border-interactive-accent"
+        : ""
+      }
       {...attributes}
       {...listeners}
       onContextMenu={onContextMenu}
