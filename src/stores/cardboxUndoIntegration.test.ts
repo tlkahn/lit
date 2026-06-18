@@ -249,6 +249,60 @@ describe("cardbox undo integration", () => {
     });
   });
 
+  describe("batchMoveCards", () => {
+    it("batchMoveCards then undo restores original order and groups", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 1 });
+      expect(useCardboxStore.getState().order).toEqual(["u2", "u1", "u3"]);
+
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxStore.getState().order).toEqual(["u1", "u2", "u3"]);
+      expect(useCardboxStore.getState().groups).toEqual({});
+    });
+
+    it("batchMoveCards undo then redo re-applies the move", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "u3"],
+        groups: {},
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 1 });
+      const afterMove = [...useCardboxStore.getState().order];
+
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxStore.getState().order).toEqual(["u1", "u2", "u3"]);
+
+      await useCardboxUndoStore.getState().redo();
+      expect(useCardboxStore.getState().order).toEqual(afterMove);
+    });
+
+    it("batchMoveCards into group then undo restores cards to top level", async () => {
+      useCardboxStore.setState({
+        order: ["u1", "u2", "group:g1"],
+        groups: { g1: { name: "G", order: ["u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g1" });
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u3", "u1", "u2"]);
+      expect(useCardboxStore.getState().order).toEqual(["group:g1"]);
+
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxStore.getState().order).toEqual(["u1", "u2", "group:g1"]);
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u3"]);
+    });
+
+    it("batchMoveCards undo does not push a new undo entry (replayDepth guard)", async () => {
+      useCardboxStore.setState({ order: ["u1", "u2"], groups: {} });
+      useCardboxStore.getState().batchMoveCards(["u1"], { type: "topLevel", insertAtIndex: 1 });
+      expect(useCardboxUndoStore.getState().undoStack).toHaveLength(1);
+
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxUndoStore.getState().undoStack).toHaveLength(0);
+      expect(useCardboxUndoStore.getState().redoStack).toHaveLength(1);
+    });
+  });
+
   describe("replayDepth guard", () => {
     it("no undo entry pushed when replayDepth > 0", async () => {
       // Do an action that pushes undo

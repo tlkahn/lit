@@ -785,11 +785,35 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       description: `Move ${uuids.length} cards`,
       undo: async () => {
         set({ order: prevOrder, groups: prevGroups });
-        await get().saveLayout();
       },
       redo: async () => {
-        get().batchMoveCards(uuids, target);
-        await get().saveLayout();
+        set((s) => {
+          let order = s.order.filter((id) => !uuidSet.has(id));
+          const groups: Record<string, GroupInfo> = {};
+          const dissolvedGroupIds: string[] = [];
+          for (const [gid, info] of Object.entries(s.groups)) {
+            const filtered = info.order.filter((id) => !uuidSet.has(id));
+            if (filtered.length === 0) dissolvedGroupIds.push(gid);
+            else groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
+          }
+          if (dissolvedGroupIds.length > 0) {
+            const dissolvedSet = new Set(dissolvedGroupIds.map((gid) => `group:${gid}`));
+            order = order.filter((id) => !dissolvedSet.has(id));
+          }
+          if (target.type === "topLevel") {
+            const idx = Math.min(target.insertAtIndex, order.length);
+            order.splice(idx, 0, ...uuids);
+          } else {
+            const group = groups[target.groupId];
+            if (group) {
+              const targetOrder = [...group.order];
+              const insertIdx = target.index != null ? Math.min(target.index, targetOrder.length) : targetOrder.length;
+              targetOrder.splice(insertIdx, 0, ...uuids);
+              groups[target.groupId] = { ...group, order: targetOrder };
+            }
+          }
+          return { order, groups };
+        });
       },
     });
 
