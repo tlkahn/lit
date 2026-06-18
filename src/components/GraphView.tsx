@@ -19,6 +19,7 @@ import { useGraphTheme } from "../hooks/useGraphTheme";
 import { useGraphSearch } from "../hooks/useGraphSearch";
 import { useGraphData } from "../hooks/useGraphData";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
+import { IndexBuildingPlaceholder } from "./IndexBuildingPlaceholder";
 import { useGraphRenderer } from "../hooks/useGraphRenderer";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import type { GraphLike } from "../hooks/graphTypes";
@@ -57,6 +58,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
   const show = useStatusMessageStore((s) => s.show);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
@@ -202,6 +204,14 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
       onExitRef.current?.();
     }
   }, []);
+
+  if (!graphReady) {
+    return (
+      <div data-testid="graph-view" className="graph-view-container">
+        <IndexBuildingPlaceholder variant="centered" />
+      </div>
+    );
+  }
 
   return (
     <div

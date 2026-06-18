@@ -7,6 +7,7 @@ const { mockSelectPage, mockRecordJump, mockWorkspaceState } = vi.hoisted(() => 
   const mockRecordJump = vi.fn();
   const mockWorkspaceState = {
     currentPagePath: "other-page.md" as string | null,
+    graphReady: true,
     selectPage: mockSelectPage,
   };
   return { mockSelectPage, mockRecordJump, mockWorkspaceState };

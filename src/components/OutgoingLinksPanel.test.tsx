@@ -215,7 +215,7 @@ describe("OutgoingLinksPanel", () => {
 
       render(<OutgoingLinksPanel pageId="source.md" />);
 
-      expect(screen.getByTestId("outgoing-building")).toBeInTheDocument();
+      expect(screen.getByText("Building index...")).toBeInTheDocument();
       expect(screen.queryByText("This page does not link to any other pages")).not.toBeInTheDocument();
     });
 
@@ -227,7 +227,7 @@ describe("OutgoingLinksPanel", () => {
       });
 
       render(<OutgoingLinksPanel pageId="source.md" />);
-      expect(screen.getByTestId("outgoing-building")).toBeInTheDocument();
+      expect(screen.getByText("Building index...")).toBeInTheDocument();
 
       act(() => {
         useWorkspaceStore.setState({ graphReady: true });
@@ -236,7 +236,7 @@ describe("OutgoingLinksPanel", () => {
       await waitFor(() => {
         expect(screen.getByText("Arrived")).toBeInTheDocument();
       });
-      expect(screen.queryByTestId("outgoing-building")).not.toBeInTheDocument();
+      expect(screen.queryByText("Building index...")).not.toBeInTheDocument();
     });
   });
 

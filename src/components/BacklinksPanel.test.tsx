@@ -255,7 +255,7 @@ describe("BacklinksPanel", () => {
 
       render(<BacklinksPanel pageId="target.md" />);
 
-      expect(screen.getByTestId("backlinks-building")).toBeInTheDocument();
+      expect(screen.getByText("Building index...")).toBeInTheDocument();
       expect(screen.queryByText("No other pages link to this page")).not.toBeInTheDocument();
     });
 
@@ -277,7 +277,7 @@ describe("BacklinksPanel", () => {
       });
 
       render(<BacklinksPanel pageId="target.md" />);
-      expect(screen.getByTestId("backlinks-building")).toBeInTheDocument();
+      expect(screen.getByText("Building index...")).toBeInTheDocument();
 
       act(() => {
         useWorkspaceStore.setState({ graphReady: true });
@@ -286,7 +286,7 @@ describe("BacklinksPanel", () => {
       await waitFor(() => {
         expect(screen.getByText("Arrived")).toBeInTheDocument();
       });
-      expect(screen.queryByTestId("backlinks-building")).not.toBeInTheDocument();
+      expect(screen.queryByText("Building index...")).not.toBeInTheDocument();
     });
 
     it("does not call onCountChange when graphReady is false", () => {

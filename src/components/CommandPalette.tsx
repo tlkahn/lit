@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as registry from "../lib/paletteRegistry";
 import type { PaletteProvider, PaletteResult } from "../lib/paletteRegistry";
+import { useWorkspaceStore } from "../stores/workspace";
 import { annotationProvider } from "../lib/annotationProvider";
 import { fileProvider } from "../lib/fileProvider";
 import { tagProvider } from "../lib/tagProvider";
@@ -320,7 +321,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           )}
 
           {hasSearched && totalItems === 0 && !searchError && (
-            <div className="px-4 py-3 text-sm text-text-muted">No results</div>
+            <div className="px-4 py-3 text-sm text-text-muted">
+              {useWorkspaceStore.getState().graphReady ? "No results" : "Index is building..."}
+            </div>
           )}
 
           {searchError && (

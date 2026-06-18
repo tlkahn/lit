@@ -83,6 +83,7 @@ beforeEach(() => {
     viewStates: {},
     loading: false,
     error: null,
+    graphReady: true,
   });
 
   usePaneStore.setState({

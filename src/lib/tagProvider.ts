@@ -3,6 +3,10 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import type { PaletteProvider, PaletteResult } from "./paletteRegistry";
 
+function isGraphReady(): boolean {
+  return useWorkspaceStore.getState().graphReady;
+}
+
 export const tagProvider: PaletteProvider = {
   id: "tags",
   prefix: "#",
@@ -10,7 +14,7 @@ export const tagProvider: PaletteProvider = {
   priority: 30,
 
   async search(query: string): Promise<PaletteResult[]> {
-    if (!query) return [];
+    if (!query || !isGraphReady()) return [];
 
     if (query.startsWith(":")) {
       const tag = query.slice(1);

@@ -5,6 +5,7 @@ import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
 import { NODE_NOT_FOUND_PREFIX, type SubgraphResult } from "../lib/ipc";
 import type { UseGraphDataOptions } from "./useGraphData";
+import { useWorkspaceStore } from "../stores/workspace";
 
 const TWO_NODE_SUBGRAPH: SubgraphResult = {
   nodes: [
@@ -33,6 +34,7 @@ function makeInvokeHandler(subgraph: SubgraphResult = TWO_NODE_SUBGRAPH) {
 describe("useGraphData", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    useWorkspaceStore.setState({ graphReady: true });
     vi.spyOn(graphLayout, "resolveThemeColors").mockReturnValue({
       accentColor: "#0969da",
       dimColor: "#d1d9e0",

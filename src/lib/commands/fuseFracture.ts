@@ -50,16 +50,19 @@ export function initFuseFractureCommands(): void {
       icon: "↩️",
       when: () => useWorkspaceStore.getState().workspacePath != null,
       action: () => {
+        useWorkspaceStore.setState({ graphReady: false });
         undoLastOperation()
           .then((description) => {
             useStatusMessageStore.getState().show(`Undid: ${description}`);
             return rebuildGraphIndex();
           })
           .then(() => {
+            useWorkspaceStore.setState({ graphReady: true });
             useWorkspaceStore.getState().refreshPages();
             useWorkspaceStore.getState().triggerReload();
           })
           .catch((err) => {
+            useWorkspaceStore.setState({ graphReady: true });
             useStatusMessageStore.getState().show(String(err), "error");
           });
       },

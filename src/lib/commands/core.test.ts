@@ -4,6 +4,7 @@ import { _clear, getAllCommands } from "../commandRegistry";
 const mockWorkspaceState = vi.hoisted(() => ({
   workspacePath: "/tmp/vault" as string | null,
   currentPagePath: "hello.md" as string | null,
+  graphReady: true,
   refreshPages: vi.fn(),
 }));
 
@@ -16,7 +17,10 @@ const mockSetPreference = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 vi.mock("../../stores/workspace", () => ({
   useWorkspaceStore: Object.assign(
     (selector: (s: Record<string, unknown>) => unknown) => selector(mockWorkspaceState),
-    { getState: () => mockWorkspaceState },
+    {
+      getState: () => mockWorkspaceState,
+      setState: (partial: Record<string, unknown>) => Object.assign(mockWorkspaceState, partial),
+    },
   ),
 }));
 

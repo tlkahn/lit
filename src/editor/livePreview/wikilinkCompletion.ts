@@ -5,6 +5,7 @@ import type {
 } from "@codemirror/autocomplete";
 import { listPages, searchPagesByTitle, getPageHeadings } from "../../lib/ipc";
 import { extractHeadings } from "../../lib/headings";
+import { useWorkspaceStore } from "../../stores/workspace";
 
 export interface WikilinkTriggerInfo {
   from: number;
@@ -59,6 +60,8 @@ export function parseWikilinkTrigger(
 export async function wikilinkCompletionSource(
   context: CompletionContext,
 ): Promise<CompletionResult | null> {
+  if (!useWorkspaceStore.getState().graphReady) return null;
+
   const { state, pos } = context;
   const line = state.doc.lineAt(pos);
   const posInLine = pos - line.from;

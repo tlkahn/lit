@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import {
@@ -7,6 +7,16 @@ import {
   type WikilinkTriggerInfo,
 } from "./wikilinkCompletion";
 import { mockInvoke } from "../../test/tauri-mock";
+
+vi.mock("../../stores/workspace", () => ({
+  useWorkspaceStore: Object.assign(
+    (selector: (s: Record<string, unknown>) => unknown) =>
+      selector({ graphReady: true }),
+    {
+      getState: () => ({ graphReady: true }),
+    },
+  ),
+}));
 
 function trigger(doc: string, cursorPos?: number): WikilinkTriggerInfo | null {
   const state = EditorState.create({ doc });

@@ -13,6 +13,7 @@ import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMen
 import { useCardboxStore } from "../stores/cardbox";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
+import { IndexBuildingPlaceholder } from "./IndexBuildingPlaceholder";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { CardboxCard } from "./CardboxCard";
 import { SortableCard } from "./SortableCard";
@@ -75,6 +76,7 @@ export default function CardboxView() {
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
 
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
@@ -95,8 +97,8 @@ export default function CardboxView() {
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
 
   useEffect(() => {
-    fetchAnnotations().then(() => loadLayout());
-  }, [fetchAnnotations, loadLayout]);
+    if (graphReady) fetchAnnotations().then(() => loadLayout());
+  }, [graphReady, fetchAnnotations, loadLayout]);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debouncedSave = useCallback(() => {
@@ -114,7 +116,7 @@ export default function CardboxView() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
-      fetchAnnotations();
+      if (useWorkspaceStore.getState().graphReady) fetchAnnotations();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
@@ -648,6 +650,10 @@ export default function CardboxView() {
   }, [dragState, groups]);
 
   // ---------- Render ----------
+
+  if (!graphReady) {
+    return <IndexBuildingPlaceholder variant="centered" />;
+  }
 
   if (loading && annotations.length === 0) {
     return (

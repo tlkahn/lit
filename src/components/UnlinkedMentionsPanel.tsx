@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getUnlinkedMentions, linkUnlinkedMention, type UnlinkedMention } from "../lib/ipc";
 import { localeIndexOf } from "../lib/localeSearch";
 import { useWorkspaceStore } from "../stores/workspace";
+import { IndexBuildingPlaceholder } from "./IndexBuildingPlaceholder";
 
 function highlightMention(context: string, matchedText: string): (string | JSX.Element)[] {
   const match = localeIndexOf(context, matchedText);
@@ -26,6 +27,7 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight, ac
   const [entries, setEntries] = useState<UnlinkedMention[]>([]);
   const [loading, setLoading] = useState(true);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
   const pageIdRef = useRef(pageId);
   pageIdRef.current = pageId;
   const activeRef = useRef(active);
@@ -46,13 +48,14 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight, ac
   }, []);
 
   useEffect(() => {
-    fetchMentions();
-  }, [pageId, fetchMentions]);
+    if (graphReady) fetchMentions();
+  }, [pageId, graphReady, fetchMentions]);
 
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
+      if (!useWorkspaceStore.getState().graphReady) return;
       if (activeRef.current) {
         fetchMentions();
       } else {
@@ -84,6 +87,10 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight, ac
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 44,
   });
+
+  if (!graphReady) {
+    return <IndexBuildingPlaceholder variant="inline" />;
+  }
 
   const spinner = (size: string) => (
     <div className={`flex justify-center ${size === "lg" ? "py-2" : "py-1"}`}>

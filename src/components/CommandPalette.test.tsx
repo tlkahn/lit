@@ -56,6 +56,7 @@ const { mockSelectPageAtLine, mockSelectPage, mockRecordJump, mockWorkspaceState
   const mockWorkspaceState = {
     workspacePath: "/test/vault" as string | null,
     currentPagePath: "other-page.md" as string | null,
+    graphReady: true,
     selectPageAtLine: mockSelectPageAtLine,
     selectPage: mockSelectPage,
     refreshPages: vi.fn(),

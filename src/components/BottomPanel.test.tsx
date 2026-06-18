@@ -155,6 +155,7 @@ describe("BottomPanel", () => {
     });
 
     it("shows unlinked content when activeTab is unlinked and hasOpenedUnlinked", async () => {
+      useWorkspaceStore.setState({ graphReady: true });
       await act(async () => {
         render(<BottomPanel pageId="target.md" />);
       });
@@ -214,6 +215,7 @@ describe("BottomPanel", () => {
   describe("lazy mounting", () => {
     it("does not mount UnlinkedMentionsPanel until hasOpenedUnlinked is true", async () => {
       vi.mocked(getUnlinkedMentions).mockClear();
+      useWorkspaceStore.setState({ graphReady: true });
 
       render(<BottomPanel pageId="target.md" />);
 

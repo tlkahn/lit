@@ -7,6 +7,7 @@ import * as qualityTiers from "../lib/qualityTiers";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
 import { useStatusMessageStore } from "../stores/statusMessage";
+import { useWorkspaceStore } from "../stores/workspace";
 
 const mockSigmaKill = vi.fn();
 const mockSigmaOn = vi.fn();
@@ -47,6 +48,7 @@ describe("GraphView", () => {
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false });
     useStatusMessageStore.setState({ message: null, variant: "success" });
+    useWorkspaceStore.setState({ graphReady: true });
     resetListenMock();
     mockListen();
     mockInvoke((cmd) => {

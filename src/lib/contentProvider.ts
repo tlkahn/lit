@@ -1,5 +1,6 @@
 import { searchContent } from "./ipc";
 import { navigateToNote } from "./navigateToNote";
+import { useWorkspaceStore } from "../stores/workspace";
 import type { PaletteProvider, PaletteResult } from "./paletteRegistry";
 
 const SNIPPET_HIGHLIGHT_RE = /<\/?mark>/g;
@@ -16,7 +17,7 @@ export const contentProvider: PaletteProvider = {
   omniMode: "include",
 
   async search(query: string): Promise<PaletteResult[]> {
-    if (!query) return [];
+    if (!query || !useWorkspaceStore.getState().graphReady) return [];
     const results = await searchContent(query);
     return results.map((r) => ({
       id: `content-${r.id}`,

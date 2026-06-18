@@ -5,6 +5,7 @@ import { getFullSubgraph, getGraphPositions, getGraphSubgraph, NODE_NOT_FOUND_PR
 import type { SubgraphResult } from "../lib/ipc";
 import { applyPositions, nodeLabelFromPath, populateGraph, recolorSeed, resolveThemeColors } from "../lib/graphLayout";
 import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
+import { useWorkspaceStore } from "../stores/workspace";
 
 export interface UseGraphDataOptions {
   mode: "full" | "local";
@@ -98,6 +99,7 @@ const DEFAULT_TIER: TierSettings = {
 
 export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const { mode, depth, activePageId, showCitations = false } = options;
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
 
   const graphRef = useRef<Graph>(new Graph());
   const dimColorRef = useRef<string>("#d1d9e0");
@@ -138,6 +140,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const effectKey = mode === "local" ? activePageId : null;
 
   useEffect(() => {
+    if (!graphReady) return;
     let cancelled = false;
 
     async function initialBuild() {
@@ -163,7 +166,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     return () => {
       cancelled = true;
     };
-  }, [mode, depth, effectKey, showCitations]);
+  }, [graphReady, mode, depth, effectKey, showCitations]);
 
   useEffect(() => {
     let cancelled = false;

@@ -55,12 +55,15 @@ export function initCoreCommands(): void {
       icon: "🔄",
       when: hasWorkspace,
       action: () => {
+        useWorkspaceStore.setState({ graphReady: false });
         rebuildGraphIndex()
           .then((msg) => {
+            useWorkspaceStore.setState({ graphReady: true });
             useStatusMessageStore.getState().show(msg);
             useWorkspaceStore.getState().refreshPages();
           })
           .catch((err) => {
+            useWorkspaceStore.setState({ graphReady: true });
             useStatusMessageStore.getState().show(String(err), "error");
           });
       },

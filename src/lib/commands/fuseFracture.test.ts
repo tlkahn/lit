@@ -10,6 +10,7 @@ const mockGraphSelectionState = vi.hoisted(() => ({
 const mockWorkspaceState = vi.hoisted(() => ({
   workspacePath: "/tmp/vault" as string | null,
   currentPagePath: "hello.md" as string | null,
+  graphReady: true,
   refreshPages: vi.fn(),
   triggerReload: vi.fn(),
 }));
@@ -24,7 +25,10 @@ vi.mock("../../stores/graphSelection", () => ({
 vi.mock("../../stores/workspace", () => ({
   useWorkspaceStore: Object.assign(
     (selector: (s: Record<string, unknown>) => unknown) => selector(mockWorkspaceState),
-    { getState: () => mockWorkspaceState },
+    {
+      getState: () => mockWorkspaceState,
+      setState: (partial: Record<string, unknown>) => Object.assign(mockWorkspaceState, partial),
+    },
   ),
 }));
 

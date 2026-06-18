@@ -120,7 +120,7 @@ export function ensureCommandsRegistered() {
     id: "app.showGraphView",
     label: "Show Graph View",
     keywords: ["graph", "network", "visualize"],
-    when: () => usePreferencesStore.getState().graphViewEnabled,
+    when: () => usePreferencesStore.getState().graphViewEnabled && useWorkspaceStore.getState().graphReady,
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "graph" }));
     },
@@ -129,6 +129,7 @@ export function ensureCommandsRegistered() {
     id: "app.showCardboxView",
     label: "Show Cardbox View",
     keywords: ["cardbox", "annotations", "cards", "zettelkasten"],
+    when: () => useWorkspaceStore.getState().graphReady,
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:set-view-mode", { detail: "cardbox" }));
     },
@@ -137,7 +138,7 @@ export function ensureCommandsRegistered() {
     id: "app.showLocalGraph",
     label: "Show Local Graph",
     keywords: ["graph", "local", "neighborhood"],
-    when: () => usePreferencesStore.getState().graphViewEnabled && useWorkspaceStore.getState().currentPagePath != null,
+    when: () => usePreferencesStore.getState().graphViewEnabled && useWorkspaceStore.getState().graphReady && useWorkspaceStore.getState().currentPagePath != null,
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-graph-view", { detail: { mode: "local" } }));
     },

@@ -21,6 +21,7 @@ beforeEach(() => {
   useWorkspaceStore.setState({
     workspacePath: "/test",
     currentPagePath: "target.md",
+    graphReady: true,
   });
 });
 

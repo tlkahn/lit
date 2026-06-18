@@ -2,9 +2,11 @@ import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import { useSearchPanelStore } from "../stores/searchPanel";
+import { useWorkspaceStore } from "../stores/workspace";
 import { listFolders, searchTags, type TagSearchResult } from "../lib/ipc";
 import { navigateToNote } from "../lib/navigateToNote";
 import { getCurrentEditorView } from "../lib/editorViewRef";
+import { IndexBuildingPlaceholder } from "./IndexBuildingPlaceholder";
 
 // ---------------------------------------------------------------------------
 // SearchResultRow
@@ -327,6 +329,7 @@ export function SearchPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
   const query = useSearchPanelStore((s) => s.query);
   const filter = useSearchPanelStore((s) => s.filter);
   const results = useSearchPanelStore((s) => s.results);
@@ -377,6 +380,7 @@ export function SearchPanel() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
+      if (!useWorkspaceStore.getState().graphReady) return;
       const { query: q } = useSearchPanelStore.getState();
       if (q.trim()) {
         useSearchPanelStore.getState().executeSearch();
@@ -439,6 +443,10 @@ export function SearchPanel() {
     filter.mtime_after ||
     filter.mtime_before
   );
+
+  if (!graphReady) {
+    return <IndexBuildingPlaceholder variant="inline" />;
+  }
 
   return (
     <div
