@@ -34,7 +34,6 @@ interface SortableGroupProps {
   onCardContextMenu?: (cardUuid: string, e: React.MouseEvent) => void;
   onHeaderContextMenu?: (e: React.MouseEvent) => void;
   colors?: Record<string, string>;
-  isCardSelected?: (uuid: string) => boolean;
   onCardSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
 
@@ -59,7 +58,6 @@ export const SortableGroup = memo(function SortableGroup({
   onCardContextMenu,
   onHeaderContextMenu,
   colors,
-  isCardSelected,
   onCardSelect,
 }: SortableGroupProps) {
   const {
@@ -151,7 +149,6 @@ export const SortableGroup = memo(function SortableGroup({
                           groupId={groupId}
                           annotation={ann}
                           expanded={expandedUuid === ann.uuid}
-                          isSelected={isCardSelected?.(ann.uuid)}
                           colorTag={colors?.[ann.uuid]}
                           onToggleExpand={() => onToggleExpand(ann.uuid)}
                           onNavigate={() => onNavigate(ann)}

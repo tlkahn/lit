@@ -1,6 +1,5 @@
 import { memo, useState, useRef, useEffect } from "react";
-
-const COLORS = ["blue", "orange", "green", "purple", "pink", "cyan"] as const;
+import { CARDBOX_COLORS } from "../lib/ipc";
 
 interface BatchToolbarProps {
   selectedCount: number;
@@ -78,7 +77,7 @@ export const BatchToolbar = memo(function BatchToolbar({
             className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-border bg-bg-primary p-2 shadow-lg"
             data-testid="batch-color-popover"
           >
-            {COLORS.map((color) => (
+            {CARDBOX_COLORS.map((color) => (
               <button
                 key={color}
                 className="h-5 w-5 rounded-full border border-border transition-transform hover:scale-110"

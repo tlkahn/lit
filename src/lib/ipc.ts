@@ -1264,6 +1264,10 @@ export async function listAnnotations(
 
 // Cardbox (annotation-centered view)
 
+/** Valid color-tag values — must match VALID_COLORS in src-tauri/src/commands/cardbox.rs */
+export const CARDBOX_COLORS = ["blue", "orange", "green", "purple", "pink", "cyan"] as const;
+export type CardboxColor = (typeof CARDBOX_COLORS)[number];
+
 export interface CardboxAnnotation {
   uuid: string;
   annotation_type: string;

@@ -13,7 +13,7 @@ const MAX_UNDO_STACK = 50;
 interface CardboxUndoStore {
   undoStack: UndoEntry[];
   redoStack: UndoEntry[];
-  isReplaying: boolean;
+  replayDepth: number;
   pushUndo: (entry: UndoEntry) => void;
   replaceTop: (entry: UndoEntry) => void;
   undo: () => Promise<void>;
@@ -24,7 +24,7 @@ interface CardboxUndoStore {
 export const useCardboxUndoStore = create<CardboxUndoStore>((set, get) => ({
   undoStack: [],
   redoStack: [],
-  isReplaying: false,
+  replayDepth: 0,
 
   pushUndo: (entry) => {
     set((s) => {
@@ -51,7 +51,7 @@ export const useCardboxUndoStore = create<CardboxUndoStore>((set, get) => ({
     const entry = undoStack[undoStack.length - 1]!;
     set((s) => ({
       undoStack: s.undoStack.slice(0, -1),
-      isReplaying: true,
+      replayDepth: s.replayDepth + 1,
     }));
     try {
       await entry.undo();
@@ -59,7 +59,7 @@ export const useCardboxUndoStore = create<CardboxUndoStore>((set, get) => ({
       // Silently ignore -- consistent with IPC error handling in cardbox store
     } finally {
       set((s) => ({
-        isReplaying: false,
+        replayDepth: s.replayDepth - 1,
         redoStack: [...s.redoStack, entry],
       }));
     }
@@ -71,7 +71,7 @@ export const useCardboxUndoStore = create<CardboxUndoStore>((set, get) => ({
     const entry = redoStack[redoStack.length - 1]!;
     set((s) => ({
       redoStack: s.redoStack.slice(0, -1),
-      isReplaying: true,
+      replayDepth: s.replayDepth + 1,
     }));
     try {
       await entry.redo();
@@ -79,7 +79,7 @@ export const useCardboxUndoStore = create<CardboxUndoStore>((set, get) => ({
       // Silently ignore
     } finally {
       set((s) => ({
-        isReplaying: false,
+        replayDepth: s.replayDepth - 1,
         undoStack: [...s.undoStack, entry],
       }));
     }

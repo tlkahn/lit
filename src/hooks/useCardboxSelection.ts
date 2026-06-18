@@ -10,11 +10,6 @@ export function useCardboxSelection() {
 
   const selectedCount = selectedUuids.size;
 
-  const isSelected = useCallback(
-    (uuid: string) => selectedUuids.has(uuid),
-    [selectedUuids],
-  );
-
   const handleCardClick = useCallback(
     (uuid: string, event: React.MouseEvent | MouseEvent, orderedUuids: string[]) => {
       if (event.metaKey || event.ctrlKey) {
@@ -30,5 +25,5 @@ export function useCardboxSelection() {
     [toggleSelect, rangeSelect],
   );
 
-  return { selectedUuids, selectedCount, isSelected, handleCardClick, selectAll, clearSelection };
+  return { selectedUuids, selectedCount, handleCardClick, selectAll, clearSelection };
 }

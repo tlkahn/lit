@@ -1,4 +1,5 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { useModalLockStore } from "../stores/modalLock";
 
 interface UseCardboxKeyboardOptions {
   onExpand: (index: number) => void;
@@ -29,10 +30,12 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     return Math.max(1, Math.floor((gridWidth + 16) / (280 + 16)));
   }, []);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const grid = gridRef.current;
-    if (!grid) return;
+  // Global layer: Cmd+Z, Cmd+Shift+Z/Ctrl+Y, Cmd+A work regardless of focus
+  const globalHandler = useCallback((e: KeyboardEvent) => {
+    // Skip when a modal is open
+    if (useModalLockStore.getState().locked) return;
 
+    // Skip when focus is in an input/textarea/contentEditable
     const tag = (document.activeElement as HTMLElement)?.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT" || (document.activeElement as HTMLElement)?.isContentEditable) return;
 
@@ -57,6 +60,20 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       onSelectAll?.();
       return;
     }
+  }, [onUndo, onRedo, onSelectAll]);
+
+  useEffect(() => {
+    document.addEventListener("keydown", globalHandler);
+    return () => document.removeEventListener("keydown", globalHandler);
+  }, [globalHandler]);
+
+  // Grid layer: arrow navigation, Enter, L, P, N, C, ?, Escape
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const grid = gridRef.current;
+    if (!grid) return;
+
+    const tag = (document.activeElement as HTMLElement)?.tagName;
+    if (tag === "TEXTAREA" || tag === "INPUT" || (document.activeElement as HTMLElement)?.isContentEditable) return;
 
     if (e.key === "Escape") {
       if (connectionsActive) {
@@ -141,7 +158,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onClearSelection, expandedUuid, connectionsActive]);
 
   return { gridRef, handleKeyDown };
 }

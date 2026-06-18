@@ -1,16 +1,17 @@
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
 import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { useSelectionClickCapture } from "../hooks/useSelectionClickCapture";
 import { makeGroupCardId } from "../lib/dndIds";
+import { useCardboxSelectionStore } from "../stores/cardboxSelection";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 interface SortableGroupCardProps {
   groupId: string;
   annotation: CardboxAnnotation;
   expanded: boolean;
-  isSelected?: boolean;
   colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
@@ -29,7 +30,6 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   groupId,
   annotation,
   expanded,
-  isSelected,
   colorTag,
   onToggleExpand,
   onNavigate,
@@ -43,6 +43,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
   onExportNote,
   onSelect,
 }: SortableGroupCardProps) {
+  const isSelected = useCardboxSelectionStore((s) => s.selectedUuids.has(annotation.uuid));
   const {
     attributes,
     listeners,
@@ -54,15 +55,7 @@ export const SortableGroupCard = memo(function SortableGroupCard({
 
   const { contentRef, span } = useMasonrySpan();
 
-  const handleClickCapture = useCallback(
-    (e: React.MouseEvent) => {
-      if ((e.metaKey || e.ctrlKey || e.shiftKey) && onSelect) {
-        e.stopPropagation();
-        onSelect(annotation.uuid, e);
-      }
-    },
-    [annotation.uuid, onSelect],
-  );
+  const handleClickCapture = useSelectionClickCapture(annotation.uuid, onSelect);
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),

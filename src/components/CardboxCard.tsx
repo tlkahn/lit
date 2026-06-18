@@ -161,6 +161,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       return () => clearTimeout(timer);
     }
     prevPinnedRef.current = isPinned;
+    setJustPinned(false);
   }, [isPinned]);
 
   const handleKeyDown = useCallback(

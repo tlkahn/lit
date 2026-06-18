@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { BatchToolbar } from "./BatchToolbar";
+import { CARDBOX_COLORS } from "../lib/ipc";
 
 const defaultProps = {
   selectedCount: 3,
@@ -89,7 +90,7 @@ describe("BatchToolbar", () => {
   it("renders all 6 color swatches in popover", () => {
     render(<BatchToolbar {...defaultProps} />);
     fireEvent.click(screen.getByTestId("batch-color"));
-    for (const color of ["blue", "orange", "green", "purple", "pink", "cyan"]) {
+    for (const color of CARDBOX_COLORS) {
       expect(screen.getByTestId(`batch-color-${color}`)).toBeInTheDocument();
     }
   });

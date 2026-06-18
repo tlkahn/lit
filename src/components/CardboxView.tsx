@@ -88,7 +88,7 @@ export default function CardboxView() {
   const redo = useCardboxUndoStore((s) => s.redo);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
 
-  const { selectedUuids, selectedCount, isSelected, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
+  const { selectedUuids, selectedCount, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
 
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
@@ -377,8 +377,8 @@ export default function CardboxView() {
     onShowShortcuts: () => setShortcutsOpen(true),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
-    onUndo: () => { undo(); debouncedSave(); },
-    onRedo: () => { redo(); debouncedSave(); },
+    onUndo: async () => { await undo(); debouncedSave(); },
+    onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
     connectionsActive: !!connectionsForUuid,
     itemCount: sortedAnnotations.length,
@@ -823,7 +823,6 @@ export default function CardboxView() {
                       annotation={entry.annotation}
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
-                      isSelected={isSelected(entry.annotation.uuid)}
                       colorTag={colors[entry.annotation.uuid]}
                       onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
                       onNavigate={() => handleNavigate(entry.annotation)}
@@ -860,7 +859,6 @@ export default function CardboxView() {
                       onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
                       onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
                       colors={colors}
-                      isCardSelected={isSelected}
                       onCardSelect={handleSelect}
                     />
                   ),

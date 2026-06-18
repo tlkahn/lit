@@ -1,15 +1,16 @@
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
 import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { useSelectionClickCapture } from "../hooks/useSelectionClickCapture";
+import { useCardboxSelectionStore } from "../stores/cardboxSelection";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 interface SortableCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
   isPinned?: boolean;
-  isSelected?: boolean;
   colorTag?: string;
   onToggleExpand: () => void;
   onNavigate: () => void;
@@ -24,7 +25,8 @@ interface SortableCardProps {
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
 
-export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onShowConnections, onContextMenu, note, onSetNote, onExportNote, onSelect }: SortableCardProps) {
+export const SortableCard = memo(function SortableCard({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onShowConnections, onContextMenu, note, onSetNote, onExportNote, onSelect }: SortableCardProps) {
+  const isSelected = useCardboxSelectionStore((s) => s.selectedUuids.has(annotation.uuid));
   const {
     attributes,
     listeners,
@@ -36,15 +38,7 @@ export const SortableCard = memo(function SortableCard({ annotation, expanded, i
 
   const { contentRef, span } = useMasonrySpan();
 
-  const handleClickCapture = useCallback(
-    (e: React.MouseEvent) => {
-      if ((e.metaKey || e.ctrlKey || e.shiftKey) && onSelect) {
-        e.stopPropagation();
-        onSelect(annotation.uuid, e);
-      }
-    },
-    [annotation.uuid, onSelect],
-  );
+  const handleClickCapture = useSelectionClickCapture(annotation.uuid, onSelect);
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),

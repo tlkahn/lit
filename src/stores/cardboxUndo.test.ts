@@ -7,7 +7,7 @@ describe("cardboxUndo store", () => {
     useCardboxUndoStore.setState({
       undoStack: [],
       redoStack: [],
-      isReplaying: false,
+      replayDepth: 0,
     });
   });
 
@@ -85,34 +85,34 @@ describe("cardboxUndo store", () => {
     expect(s.undoStack[49]!.description).toBe("entry-50");
   });
 
-  it("isReplaying is true during undo execution, false after", async () => {
-    let replayingDuringUndo = false;
+  it("replayDepth > 0 during undo execution, 0 after", async () => {
+    let depthDuringUndo = 0;
     const entry = makeEntry("A", {
       undo: async () => {
-        replayingDuringUndo = useCardboxUndoStore.getState().isReplaying;
+        depthDuringUndo = useCardboxUndoStore.getState().replayDepth;
       },
     });
     useCardboxUndoStore.getState().pushUndo(entry);
     await useCardboxUndoStore.getState().undo();
-    expect(replayingDuringUndo).toBe(true);
-    expect(useCardboxUndoStore.getState().isReplaying).toBe(false);
+    expect(depthDuringUndo).toBeGreaterThan(0);
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(0);
   });
 
-  it("isReplaying is true during redo execution, false after", async () => {
-    let replayingDuringRedo = false;
+  it("replayDepth > 0 during redo execution, 0 after", async () => {
+    let depthDuringRedo = 0;
     const entry = makeEntry("A", {
       redo: async () => {
-        replayingDuringRedo = useCardboxUndoStore.getState().isReplaying;
+        depthDuringRedo = useCardboxUndoStore.getState().replayDepth;
       },
     });
     useCardboxUndoStore.getState().pushUndo(entry);
     await useCardboxUndoStore.getState().undo();
     await useCardboxUndoStore.getState().redo();
-    expect(replayingDuringRedo).toBe(true);
-    expect(useCardboxUndoStore.getState().isReplaying).toBe(false);
+    expect(depthDuringRedo).toBeGreaterThan(0);
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(0);
   });
 
-  it("isReplaying resets to false even if undo throws", async () => {
+  it("replayDepth resets to 0 even if undo throws", async () => {
     const entry = makeEntry("A", {
       undo: async () => {
         throw new Error("boom");
@@ -120,10 +120,10 @@ describe("cardboxUndo store", () => {
     });
     useCardboxUndoStore.getState().pushUndo(entry);
     await useCardboxUndoStore.getState().undo();
-    expect(useCardboxUndoStore.getState().isReplaying).toBe(false);
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(0);
   });
 
-  it("isReplaying resets to false even if redo throws", async () => {
+  it("replayDepth resets to 0 even if redo throws", async () => {
     const entry = makeEntry("A", {
       redo: async () => {
         throw new Error("boom");
@@ -132,7 +132,7 @@ describe("cardboxUndo store", () => {
     useCardboxUndoStore.getState().pushUndo(entry);
     await useCardboxUndoStore.getState().undo();
     await useCardboxUndoStore.getState().redo();
-    expect(useCardboxUndoStore.getState().isReplaying).toBe(false);
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(0);
   });
 
   it("clear() empties both stacks", () => {
@@ -171,5 +171,36 @@ describe("cardboxUndo store", () => {
   it("replaceTop no-ops on empty undoStack", () => {
     useCardboxUndoStore.getState().replaceTop(makeEntry("X"));
     expect(useCardboxUndoStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it("concurrent undo calls keep replayDepth > 0 until both complete", async () => {
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    const firstPromise = new Promise<void>((r) => { resolveFirst = r; });
+    const secondPromise = new Promise<void>((r) => { resolveSecond = r; });
+
+    const entryA = makeEntry("A", { undo: () => firstPromise });
+    const entryB = makeEntry("B", { undo: () => secondPromise });
+
+    useCardboxUndoStore.getState().pushUndo(entryA);
+    useCardboxUndoStore.getState().pushUndo(entryB);
+    expect(useCardboxUndoStore.getState().undoStack).toHaveLength(2);
+
+    // Fire two undos concurrently (without awaiting)
+    const p1 = useCardboxUndoStore.getState().undo(); // pops B
+    const p2 = useCardboxUndoStore.getState().undo(); // pops A
+
+    // Both are in-flight: replayDepth should be 2
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(2);
+
+    // Resolve first undo -- replayDepth drops to 1, still > 0
+    resolveFirst();
+    await p2; // p2 used entryA whose undo is firstPromise
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(1);
+
+    // Resolve second undo -- replayDepth drops to 0
+    resolveSecond();
+    await p1; // p1 used entryB whose undo is secondPromise
+    expect(useCardboxUndoStore.getState().replayDepth).toBe(0);
   });
 });

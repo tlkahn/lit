@@ -24,7 +24,7 @@ describe("cardbox undo integration", () => {
     useCardboxUndoStore.setState({
       undoStack: [],
       redoStack: [],
-      isReplaying: false,
+      replayDepth: 0,
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return [];
@@ -249,8 +249,8 @@ describe("cardbox undo integration", () => {
     });
   });
 
-  describe("isReplaying guard", () => {
-    it("no undo entry pushed when isReplaying is true", async () => {
+  describe("replayDepth guard", () => {
+    it("no undo entry pushed when replayDepth > 0", async () => {
       // Do an action that pushes undo
       await useCardboxStore.getState().pinCard("u1");
       expect(useCardboxUndoStore.getState().undoStack).toHaveLength(1);

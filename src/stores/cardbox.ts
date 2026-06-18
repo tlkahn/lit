@@ -29,7 +29,7 @@ import {
 } from "../lib/ipc";
 
 function pushUndo(entry: UndoEntry & { coalesceKey?: string }) {
-  if (useCardboxUndoStore.getState().isReplaying) return;
+  if (useCardboxUndoStore.getState().replayDepth > 0) return;
   const store = useCardboxUndoStore.getState();
   if (entry.coalesceKey) {
     const top = store.undoStack[store.undoStack.length - 1];
@@ -540,7 +540,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     const prevNote = get().notes[uuid];
     const prevBody = prevNote?.body;
     const trimmed = body.trim();
-    if (prevBody === trimmed) return;
+    if ((prevBody ?? "") === trimmed) return;
     pushUndo({
       description: "Set note",
       coalesceKey: `setNote:${uuid}`,
@@ -629,10 +629,24 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     pushUndo({
       description: `Set color on ${uuids.length} cards`,
       undo: async () => {
-        for (const [uuid, prev] of Object.entries(prevColors)) {
-          if (prev) { await get().setCardColor(uuid, prev); }
-          else { await get().clearCardColor(uuid); }
-        }
+        // Single set() — restore all previous colors in one pass
+        set((s) => {
+          const next = { ...s.colors };
+          for (const [uuid, prev] of Object.entries(prevColors)) {
+            if (prev) { next[uuid] = prev; }
+            else { delete next[uuid]; }
+          }
+          return { colors: next };
+        });
+        // Single batch IPC — split into set vs clear
+        const toSet = Object.entries(prevColors)
+          .filter(([, prev]) => prev !== undefined)
+          .map(([uuid, color]) => ({ uuid, color: color! }));
+        const toClear = Object.entries(prevColors)
+          .filter(([, prev]) => prev === undefined)
+          .map(([uuid]) => uuid);
+        if (toSet.length > 0) await batchSetCardColorIpc(toSet);
+        if (toClear.length > 0) await batchClearCardColorIpc(toClear);
       },
       redo: async () => { await get().batchSetColor(uuids, color); },
     });
@@ -654,9 +668,17 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       pushUndo({
         description: `Clear color on ${uuids.length} cards`,
         undo: async () => {
-          for (const [uuid, prev] of Object.entries(prevColors)) {
-            await get().setCardColor(uuid, prev);
-          }
+          // Single set() — restore all previous colors
+          set((s) => {
+            const next = { ...s.colors };
+            for (const [uuid, prev] of Object.entries(prevColors)) {
+              next[uuid] = prev;
+            }
+            return { colors: next };
+          });
+          // Single batch IPC
+          const entries = Object.entries(prevColors).map(([uuid, color]) => ({ uuid, color }));
+          if (entries.length > 0) await batchSetCardColorIpc(entries);
         },
         redo: async () => { await get().batchClearColor(uuids); },
       });
@@ -721,8 +743,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       pushUndo({
         description: `Link ${uuids.length} cards`,
         undo: async () => {
+          // Single set() — remove all pairs at once
+          set((s) => {
+            const removeSet = new Set(newPairs.map(([x, y]) => `${x}:${y}`));
+            return { links: s.links.filter(([x, y]) => !removeSet.has(`${x}:${y}`)) };
+          });
+          // IPC: sequential removeCardboxLink calls (no batch remove IPC exists)
           for (const [a, b] of newPairs) {
-            await get().removeLink(a, b);
+            await removeCardboxLink(a, b);
           }
         },
         redo: async () => { await get().batchLink(uuids); },
@@ -735,7 +763,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       return { links: [...s.links, ...toAdd] };
     });
     // IPC: call addCardboxLink per pair (no batch IPC for links)
-    for (const [a, b] of pairs) {
+    for (const [a, b] of newPairs) {
       await addCardboxLink(a, b);
     }
   },
