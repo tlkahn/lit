@@ -25,10 +25,10 @@ use crate::commands::page::lookup_graph_index;
 
 const MAX_REFERENCES: usize = 30;
 
-/// Normalize a string for Jaccard similarity: lowercase, replace punctuation
+/// Normalize a string for similarity comparison: lowercase, replace punctuation
 /// with spaces (using the same heuristic as `title_match::normalize_title`),
-/// split into word set.
-fn normalize_for_similarity(s: &str) -> HashSet<String> {
+/// split into words. Returns an owned `Vec<String>` preserving word order.
+fn normalize_words(s: &str) -> Vec<String> {
     s.to_lowercase()
         .chars()
         .map(|c| {
@@ -46,22 +46,68 @@ fn normalize_for_similarity(s: &str) -> HashSet<String> {
         .collect()
 }
 
-/// Compute Jaccard similarity on lowercased, punctuation-stripped word sets.
+/// Normalize a string into a deduplicated word set for Jaccard similarity.
+fn normalize_for_similarity(s: &str) -> HashSet<String> {
+    normalize_words(s).into_iter().collect()
+}
+
+/// Compute the ratio of the longest common subsequence (LCS) of words to the
+/// longer of the two word sequences. Returns a value in `[0.0, 1.0]`.
 ///
-/// Returns `|A intersect B| / |A union B|`. Two empty strings yield 1.0;
+/// Two empty strings yield 1.0; one empty and one non-empty yield 0.0.
+fn word_lcs_ratio(a: &str, b: &str) -> f64 {
+    let words_a = normalize_words(a);
+    let words_b = normalize_words(b);
+    let len_a = words_a.len();
+    let len_b = words_b.len();
+
+    if len_a == 0 && len_b == 0 {
+        return 1.0;
+    }
+    if len_a == 0 || len_b == 0 {
+        return 0.0;
+    }
+
+    // Standard DP table for LCS length
+    let mut dp = vec![vec![0usize; len_b + 1]; len_a + 1];
+    for i in 1..=len_a {
+        for j in 1..=len_b {
+            if words_a[i - 1] == words_b[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    let lcs_len = dp[len_a][len_b];
+    lcs_len as f64 / len_a.max(len_b) as f64
+}
+
+/// Compute title similarity as an equal-weight blend of Jaccard similarity
+/// (word-set overlap) and LCS word ratio (longest common subsequence of words,
+/// normalized by max length). This penalizes reordered or partially-matching
+/// titles compared to pure Jaccard.
+///
+/// Returns a value in `[0.0, 1.0]`. Two empty strings yield 1.0;
 /// one empty and one non-empty yield 0.0.
 pub fn title_similarity(a: &str, b: &str) -> f64 {
     let set_a = normalize_for_similarity(a);
     let set_b = normalize_for_similarity(b);
-    if set_a.is_empty() && set_b.is_empty() {
-        return 1.0;
-    }
-    if set_a.is_empty() || set_b.is_empty() {
-        return 0.0;
-    }
-    let intersection = set_a.intersection(&set_b).count();
-    let union = set_a.union(&set_b).count();
-    intersection as f64 / union as f64
+
+    let jaccard = if set_a.is_empty() && set_b.is_empty() {
+        1.0
+    } else if set_a.is_empty() || set_b.is_empty() {
+        0.0
+    } else {
+        let intersection = set_a.intersection(&set_b).count();
+        let union = set_a.union(&set_b).count();
+        intersection as f64 / union as f64
+    };
+
+    let lcs = word_lcs_ratio(a, b);
+
+    0.5 * jaccard + 0.5 * lcs
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,7 +118,7 @@ pub struct EnrichResult {
     pub references_appended: usize,
     pub shadow_nodes_created: usize,
     pub references_linked: usize,
-    /// Candidate matches when no auto-merge occurred (best score < 0.85).
+    /// Candidate matches when no auto-merge occurred (best title similarity < 0.85).
     /// Empty when auto-merge succeeded.
     pub candidates: Vec<BibEntry>,
     /// Provider IDs that were successfully queried.
@@ -126,9 +172,9 @@ fn link_ref(
 /// Result of scoring and selecting the best match from search results.
 #[derive(Debug)]
 pub struct MatchResult {
-    /// The best entry when auto-merged (score >= 0.85), or None.
+    /// The best entry when auto-merged (title similarity >= 0.85), or None.
     pub best_entry: Option<BibEntry>,
-    /// Candidate entries when no auto-merge occurred (best < 0.85).
+    /// Candidate entries when no auto-merge occurred (best title similarity < 0.85).
     pub candidates: Vec<BibEntry>,
 }
 
@@ -136,7 +182,7 @@ const AUTO_MERGE_THRESHOLD: f64 = 0.85;
 
 /// Score search results against the existing title and select the best match.
 ///
-/// - If the top result has Jaccard similarity >= 0.85, it is auto-merged
+/// - If the top result has title similarity >= 0.85, it is auto-merged
 ///   and `candidates` is empty.
 /// - Otherwise, all results within 0.05 of the best score are returned
 ///   as candidates for the user to pick from.
@@ -652,11 +698,7 @@ pub(crate) async fn enrich_entry(
         merge_entry = Some(best_entry);
         candidates = vec![];
     } else if !match_result.candidates.is_empty() {
-        // TODO(candidate-selection-ui): When the candidate picker UI is built,
-        // return candidates for user selection instead of auto-merging the top one.
-        // For now, use the top candidate for best-effort enrichment to avoid
-        // silent enrichment failure (P1 regression).
-        merge_entry = Some(&match_result.candidates[0]);
+        merge_entry = None;
         candidates = match_result.candidates.clone();
     } else {
         merge_entry = None;
@@ -888,7 +930,7 @@ mod tests {
             "Attention Is All You Need",
             "Attention Is All You Need: A Transformer Architecture",
         );
-        // 5/8 words overlap => Jaccard ~0.625
+        // Jaccard = 5/8 = 0.625, LCS ratio = 5/8 = 0.625, combined = 0.625
         assert!(
             score > 0.5 && score < 1.0,
             "subtitle variation should be high but not 1.0, got {}",
@@ -926,6 +968,39 @@ mod tests {
         assert_eq!(title_similarity("", ""), 1.0);
         assert_eq!(title_similarity("", "hello"), 0.0);
         assert_eq!(title_similarity("hello", ""), 0.0);
+    }
+
+    #[test]
+    fn title_similarity_lcs_penalizes_reordering() {
+        let score = title_similarity("A B C D", "D C B A");
+        // Jaccard alone would give 1.0 (identical word sets), but LCS
+        // penalizes the total reordering. LCS of [a,b,c,d] vs [d,c,b,a]
+        // is 1 (every pair is reversed). ratio = 1/4 = 0.25.
+        // Combined: 0.5 * 1.0 + 0.5 * 0.25 = 0.625
+        assert!(
+            (score - 0.625).abs() < 1e-9,
+            "reversed word order should be penalized, got {}",
+            score,
+        );
+    }
+
+    #[test]
+    fn title_similarity_generic_title_discrimination() {
+        let query = "Decentralized Collaborative Knowledge Management using Git";
+        let close = title_similarity(
+            query,
+            "Decentralized Knowledge Management using Git and Blockchain",
+        );
+        let generic = title_similarity(query, "Knowledge Management in Practice");
+        assert!(
+            close > generic,
+            "specific title overlap ({close}) should score higher than generic overlap ({generic})",
+        );
+        assert!(close > 0.6, "close match should score above 0.6, got {close}");
+        assert!(
+            generic < 0.4,
+            "generic overlap should score below 0.4, got {generic}",
+        );
     }
 
     // ── select_best_match ──────────────────────────────────────────
@@ -1000,9 +1075,8 @@ mod tests {
         ]);
         let keys = HashSet::new();
         let result = select_best_match("Machine Learning Survey", &sr, &keys);
-        // Both titles have similar Jaccard to query (3/4 and 3/4)
-        // but neither is exactly the query, so < 0.85
-        // Actually 3/4 = 0.75 < 0.85, so candidates
+        // Both titles have combined title similarity of 0.75 to query
+        // (Jaccard 3/4, LCS ratio 3/4) but neither >= 0.85, so candidates
         assert!(result.best_entry.is_none());
         assert_eq!(result.candidates.len(), 2, "both close matches should be candidates");
     }
@@ -1022,8 +1096,8 @@ mod tests {
 
     #[test]
     fn select_best_match_exactly_at_threshold() {
-        // Construct a case where Jaccard is exactly 6/7 ~= 0.857 >= 0.85
-        // Query: "a b c d e f", Result: "a b c d e f g" => 6/7 = 0.857
+        // Combined title similarity: Jaccard = 6/7, LCS ratio = 6/7
+        // (words in order match), combined = 6/7 ~= 0.857 >= 0.85
         let sr = make_search_result_for_matching(vec![
             make_paper_with_title("a b c d e f g"),
         ]);
@@ -1034,7 +1108,8 @@ mod tests {
 
     #[test]
     fn select_best_match_just_below_threshold() {
-        // Jaccard = 5/7 ~= 0.714 < 0.85
+        // Combined: Jaccard = 5/9 ~= 0.556, LCS ratio = 5/7 ~= 0.714,
+        // combined ~= 0.635 < 0.85
         let sr = make_search_result_for_matching(vec![
             make_paper_with_title("a b c d e x y"),
         ]);
