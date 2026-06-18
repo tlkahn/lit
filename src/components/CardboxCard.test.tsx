@@ -44,8 +44,8 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-type-badge")).toBeInTheDocument();
     expect(screen.getByTestId("card-body")).toBeInTheDocument();
     expect(screen.getByTestId("card-source")).toHaveTextContent("Test Document");
-    // Navigate link should not be visible in collapsed state (parent has opacity: 0)
-    expect(screen.getByTestId("card-navigate")).not.toBeVisible();
+    // Navigate link should not be in the document in collapsed state (conditionally rendered)
+    expect(screen.queryByTestId("card-navigate")).not.toBeInTheDocument();
   });
 
   it("renders expanded state with full body, original, date, and navigate link", () => {
@@ -346,8 +346,8 @@ describe("CardboxCard", () => {
         linkedCards={linkedCards}
       />,
     );
-    // The linked section is inside the grid-collapse area with opacity:0 / 0fr rows
-    expect(screen.getByTestId("card-linked-section")).not.toBeVisible();
+    // The linked section is conditionally rendered, not present when collapsed
+    expect(screen.queryByTestId("card-linked-section")).not.toBeInTheDocument();
   });
 
   it("remove button calls onRemoveLink", () => {

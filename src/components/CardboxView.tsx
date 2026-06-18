@@ -18,6 +18,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { useCardboxSelection } from "../hooks/useCardboxSelection";
 import { CardboxCard } from "./CardboxCard";
+import { CARD_HEIGHT } from "../lib/cardConstants";
 import { SortableCard } from "./SortableCard";
 import { SortableGroup } from "./SortableGroup";
 import { LinkPicker } from "./LinkPicker";
@@ -873,8 +874,8 @@ export default function CardboxView() {
                 className="grid"
                 style={{
                   gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                  gridAutoRows: "8px",
-                  columnGap: "1rem",
+                  gridAutoRows: "auto",
+                  gap: "1rem",
                   alignItems: "start",
                 }}
                 onKeyDown={handleGridKeyDown}
@@ -931,12 +932,12 @@ export default function CardboxView() {
             <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
               {overlayAnnotation ? (
                 dragState && dragState.draggedUuids.length > 1 ? (
-                  <div className="relative" style={{ transform: "scale(1.02)" }}>
+                  <div className="relative" style={{ transform: "scale(1.02)", height: CARD_HEIGHT }}>
                     <div className="absolute inset-0 rounded-lg bg-bg-secondary border border-border" style={{ transform: "translate(8px, 8px)", opacity: 0.4 }} />
                     {dragState.draggedUuids.length > 2 && (
                       <div className="absolute inset-0 rounded-lg bg-bg-secondary border border-border" style={{ transform: "translate(4px, 4px)", opacity: 0.6 }} />
                     )}
-                    <div className="relative opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
+                    <div className="relative opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", height: CARD_HEIGHT, overflow: "hidden" }}>
                       <CardboxCard
                         annotation={overlayAnnotation}
                         expanded={false}
@@ -954,7 +955,7 @@ export default function CardboxView() {
                     </div>
                   </div>
                 ) : (
-                  <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
+                  <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)", height: CARD_HEIGHT, overflow: "hidden" }}>
                     <CardboxCard
                       annotation={overlayAnnotation}
                       expanded={false}

@@ -183,6 +183,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     <div
       ref={cardRef}
       className={`relative cursor-pointer rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
+      style={{ height: "100%", overflow: expanded ? "visible" : "hidden" }}
       onClick={onToggleExpand}
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -251,16 +252,13 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         )}
       </div>
 
-      {/* Expanded content */}
-      <div
-        className="grid transition-all duration-200 ease-out"
-        style={{
-          gridTemplateRows: expanded ? "1fr" : "0fr",
-          opacity: expanded ? 1 : 0,
-        }}
-      >
-        <div className="overflow-hidden">
-          <div className="mt-3 space-y-2">
+      {/* Expanded content — absolute overlay so it doesn't disturb grid geometry */}
+      {expanded && (
+        <div
+          className="absolute left-0 right-0 rounded-b-lg border border-t-0 border-border bg-bg-primary p-4 shadow-lg"
+          style={{ top: "100%", zIndex: 20 }}
+        >
+          <div className="space-y-2">
             {annotation.date && (
               <div className="text-xs text-text-faint" data-testid="card-date">
                 {annotation.date}
@@ -337,7 +335,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 });

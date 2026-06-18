@@ -6,7 +6,6 @@ import { CSS } from "@dnd-kit/utilities";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { GroupHeader } from "./GroupHeader";
 import { SortableGroupCard } from "./SortableGroupCard";
-import { useMasonrySpan } from "../hooks/useMasonrySpan";
 import { makeGroupCardId, makeDroppableGroupId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import type { GroupInfo, CardNote } from "../lib/ipc";
@@ -82,14 +81,11 @@ export const SortableGroup = memo(function SortableGroup({
     [setSortableRef, setDroppableRef],
   );
 
-  const { contentRef, span } = useMasonrySpan();
-
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : 1,
     gridColumn: "1 / -1",
-    gridRowEnd: `span ${span}`,
   };
 
   const groupCardIds = cards.map((ann) => makeGroupCardId(groupId, ann.uuid));
@@ -103,7 +99,6 @@ export const SortableGroup = memo(function SortableGroup({
       {...attributes}
       {...listeners}
     >
-      <div ref={contentRef} data-masonry-content="">
         <div
           className="cardbox-group-container"
           data-drag-over={isDropTarget ? "true" : undefined}
@@ -137,8 +132,8 @@ export const SortableGroup = memo(function SortableGroup({
                       className="grid"
                       style={{
                         gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                        gridAutoRows: "8px",
-                        columnGap: "1rem",
+                        gridAutoRows: "auto",
+                        gap: "1rem",
                         padding: "0 12px 12px 12px",
                         alignItems: "start",
                       }}
@@ -170,7 +165,6 @@ export const SortableGroup = memo(function SortableGroup({
             </AnimatePresence>
           </LazyMotion>
         </div>
-      </div>
     </div>
   );
 });

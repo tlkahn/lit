@@ -2,7 +2,7 @@ import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
-import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { CARD_HEIGHT } from "../lib/cardConstants";
 import { useSelectionClickCapture } from "../hooks/useSelectionClickCapture";
 import { useDraggedUuids } from "./DraggedUuidsContext";
 import { makeGroupCardId } from "../lib/dndIds";
@@ -57,17 +57,16 @@ export const SortableGroupCard = memo(function SortableGroupCard({
 
   const isGhostDragged = draggedUuids.has(annotation.uuid) && !isDragging;
 
-  const { contentRef, span } = useMasonrySpan();
-
   const handleClickCapture = useSelectionClickCapture(annotation.uuid, onSelect);
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : isGhostDragged ? 0.3 : 1,
-    gridRowEnd: `span ${span}`,
+    height: CARD_HEIGHT,
+    overflow: "visible",
+    position: "relative",
     zIndex: expanded ? 10 : undefined,
-    position: expanded ? "relative" : undefined,
   };
 
   return (
@@ -84,23 +83,21 @@ export const SortableGroupCard = memo(function SortableGroupCard({
       onContextMenu={onContextMenu}
       onClickCapture={handleClickCapture}
     >
-      <div ref={contentRef} data-masonry-content="">
-        <CardboxCard
-          annotation={annotation}
-          expanded={expanded}
-          isSelected={isSelected}
-          colorTag={colorTag}
-          onToggleExpand={onToggleExpand}
-          onNavigate={onNavigate}
-          linkedCards={linkedCards}
-          onFocusCard={onFocusCard}
-          onRemoveLink={onRemoveLink}
-          note={note}
-          onSetNote={onSetNote}
-          onExportNote={onExportNote}
-          onShowConnections={onShowConnections}
-        />
-      </div>
+      <CardboxCard
+        annotation={annotation}
+        expanded={expanded}
+        isSelected={isSelected}
+        colorTag={colorTag}
+        onToggleExpand={onToggleExpand}
+        onNavigate={onNavigate}
+        linkedCards={linkedCards}
+        onFocusCard={onFocusCard}
+        onRemoveLink={onRemoveLink}
+        note={note}
+        onSetNote={onSetNote}
+        onExportNote={onExportNote}
+        onShowConnections={onShowConnections}
+      />
     </div>
   );
 });
