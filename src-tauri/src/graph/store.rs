@@ -25,13 +25,21 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
     })
 }
 
-/// Build an FTS5 trigram query string: split on whitespace, quote each term, join with spaces.
-fn build_fts_query(terms: &[&str]) -> String {
-    terms
+/// Build an FTS5 trigram query string: strip quotes, drop terms that become
+/// empty or shorter than 3 chars after stripping, quote each surviving term,
+/// join with spaces.  Returns `None` when no valid terms remain.
+fn build_fts_query(terms: &[&str]) -> Option<String> {
+    let parts: Vec<String> = terms
         .iter()
-        .map(|w| format!("\"{}\"", w.replace('"', "")))
-        .collect::<Vec<_>>()
-        .join(" ")
+        .map(|w| w.replace('"', ""))
+        .filter(|w| w.chars().count() >= 3)
+        .map(|w| format!("\"{w}\""))
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
 }
 
 /// Partition whitespace-split terms into FTS-eligible (>= 3 chars) and short (< 3 chars).
@@ -40,11 +48,6 @@ fn partition_terms<'a>(terms: &[&'a str]) -> (Vec<&'a str>, Vec<&'a str>) {
     let fts = terms.iter().copied().filter(|t| t.chars().count() >= 3).collect();
     let short = terms.iter().copied().filter(|t| t.chars().count() < 3).collect();
     (fts, short)
-}
-
-/// Strip LIKE metacharacters (`%`, `_`) from a term for safe use in LIKE patterns.
-fn sanitize_like_term(term: &str) -> String {
-    term.replace('%', "").replace('_', "")
 }
 
 /// Escape LIKE metacharacters (`%`, `_`, `\`) in a term using `\` as the escape
@@ -838,6 +841,7 @@ impl Store {
                      title, id_text, aliases_text, node_id UNINDEXED,
                      tokenize = 'trigram case_sensitive 0'
                  );
+                 DELETE FROM titles_fts;
                  INSERT INTO titles_fts(node_id, title, id_text, aliases_text)
                      SELECT n.id, COALESCE(n.title, ''), n.id,
                             COALESCE((SELECT group_concat(a.alias, ' ') FROM aliases a WHERE a.node_id = n.id), '')
@@ -1553,6 +1557,9 @@ impl Store {
         let (fts_terms, short_terms) = partition_terms(&terms);
 
         if fts_terms.is_empty() {
+            // All terms are < 3 chars — FTS5 trigram can't optimise these
+            // LIKE patterns, so query the regular `nodes` table directly
+            // (simple B-tree scan) instead of the FTS virtual table.
             let mut conditions = Vec::new();
             let mut params: Vec<rusqlite::types::Value> = Vec::new();
             let mut idx = 1;
@@ -1564,7 +1571,7 @@ impl Store {
                 }
                 let pattern = format!("%{escaped}%");
                 conditions.push(format!(
-                    "(title LIKE ?{idx} ESCAPE '\\' OR id_text LIKE ?{idx} ESCAPE '\\' OR aliases_text LIKE ?{idx} ESCAPE '\\')"
+                    "(n.title LIKE ?{idx} ESCAPE '\\' OR n.id LIKE ?{idx} ESCAPE '\\' OR a.alias LIKE ?{idx} ESCAPE '\\')"
                 ));
                 params.push(rusqlite::types::Value::Text(pattern));
                 idx += 1;
@@ -1576,7 +1583,13 @@ impl Store {
 
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT DISTINCT node_id, title FROM titles_fts WHERE {where_clause} LIMIT ?{idx}"
+                "SELECT DISTINCT n.id, COALESCE(n.title, '') \
+                 FROM nodes n \
+                 LEFT JOIN aliases a ON a.node_id = n.id \
+                 WHERE n.is_stub = 0 \
+                   AND n.materialization = 'materialized' \
+                   AND {where_clause} \
+                 LIMIT ?{idx}"
             );
             params.push(rusqlite::types::Value::Integer(limit));
 
@@ -1590,36 +1603,65 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(results)
         } else {
-            let fts_query = build_fts_query(&fts_terms);
-            let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
-
-            let sql =
-                "SELECT DISTINCT f.node_id, f.title
-                 FROM titles_fts f
-                 WHERE titles_fts MATCH ?1
-                 ORDER BY rank
-                 LIMIT ?2";
-
-            let mut stmt = self.conn.prepare(sql)?;
-            let rows = stmt
-                .query_map(rusqlite::params![fts_query, fetch_limit], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-
+            let fts_query = match build_fts_query(&fts_terms) {
+                Some(q) => q,
+                None => return Ok(vec![]),
+            };
             if short_terms.is_empty() {
+                let sql =
+                    "SELECT DISTINCT f.node_id, f.title
+                     FROM titles_fts f
+                     WHERE titles_fts MATCH ?1
+                     ORDER BY rank
+                     LIMIT ?2";
+
+                let mut stmt = self.conn.prepare(sql)?;
+                let rows = stmt
+                    .query_map(rusqlite::params![fts_query, limit], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
                 Ok(rows)
             } else {
+                let batch_size = limit.saturating_mul(4);
                 let lowered_short: Vec<String> = short_terms.iter().map(|t| t.to_lowercase()).collect();
-                let filtered: Vec<(String, String)> = rows
-                    .into_iter()
-                    .filter(|(id, title)| {
-                        let haystack = format!("{} {}", id, title).to_lowercase();
-                        lowered_short.iter().all(|s| haystack.contains(s.as_str()))
-                    })
-                    .take(limit as usize)
-                    .collect();
-                Ok(filtered)
+                let sql =
+                    "SELECT DISTINCT f.node_id, f.title, f.aliases_text
+                     FROM titles_fts f
+                     WHERE titles_fts MATCH ?1
+                     ORDER BY rank
+                     LIMIT ?2 OFFSET ?3";
+
+                let mut stmt = self.conn.prepare(sql)?;
+                let mut collected: Vec<(String, String)> = Vec::new();
+                let mut offset: i64 = 0;
+
+                loop {
+                    let rows = stmt
+                        .query_map(rusqlite::params![fts_query, batch_size, offset], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                        })?
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    let fetched = rows.len() as i64;
+
+                    for (id, title, aliases) in rows {
+                        let haystack = format!("{} {} {}", id, title, aliases).to_lowercase();
+                        if lowered_short.iter().all(|s| haystack.contains(s.as_str())) {
+                            collected.push((id, title));
+                            if collected.len() as i64 >= limit {
+                                return Ok(collected);
+                            }
+                        }
+                    }
+
+                    if fetched < batch_size {
+                        break; // FTS result set exhausted
+                    }
+                    offset += batch_size;
+                }
+
+                Ok(collected)
             }
         }
     }
@@ -1654,14 +1696,14 @@ impl Store {
             let mut idx = 1;
 
             for term in &terms {
-                let clean = sanitize_like_term(term);
-                if clean.is_empty() {
+                let escaped = escape_like_term(term);
+                if escaped.is_empty() {
                     continue;
                 }
                 conditions.push(format!(
-                    "(n.title LIKE ?{idx} OR n.body LIKE ?{idx} OR n.tags_text LIKE ?{idx})"
+                    "(n.title LIKE ?{idx} ESCAPE '\\' OR n.body LIKE ?{idx} ESCAPE '\\' OR n.tags_text LIKE ?{idx} ESCAPE '\\')"
                 ));
-                params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
+                params.push(rusqlite::types::Value::Text(format!("%{escaped}%")));
                 idx += 1;
             }
 
@@ -1700,8 +1742,11 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(results)
         } else {
-            let fts_query = build_fts_query(&fts_terms);
-            let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
+            let fts_query = match build_fts_query(&fts_terms) {
+                Some(q) => q,
+                None => return Ok(vec![]),
+            };
+            let fetch_limit = if short_terms.is_empty() { limit } else { limit.saturating_mul(4) };
 
             let (filter_clauses, filter_params, _) = build_filter_clauses(filter, 3);
             let filter_sql = filter_clauses.join(" ");
@@ -2057,12 +2102,12 @@ impl Store {
             let mut idx = 1;
 
             for term in &terms {
-                let clean = sanitize_like_term(term);
-                if clean.is_empty() {
+                let escaped = escape_like_term(term);
+                if escaped.is_empty() {
                     continue;
                 }
-                conditions.push(format!("a.body LIKE ?{idx}"));
-                params.push(rusqlite::types::Value::Text(format!("%{clean}%")));
+                conditions.push(format!("a.body LIKE ?{idx} ESCAPE '\\'"));
+                params.push(rusqlite::types::Value::Text(format!("%{escaped}%")));
                 idx += 1;
             }
 
@@ -2094,7 +2139,10 @@ impl Store {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(results)
         } else {
-            let fts_query = build_fts_query(&fts_terms);
+            let fts_query = match build_fts_query(&fts_terms) {
+                Some(q) => q,
+                None => return Ok(vec![]),
+            };
 
             let (sql, params_count) = if type_filter.is_some() {
                 (
@@ -4197,6 +4245,76 @@ mod tests {
     }
 
     #[test]
+    fn search_titles_mixed_terms_includes_aliases_in_postfilter() {
+        // Bug: when query has mixed long+short terms (e.g. "CC Compilers"),
+        // the FTS match finds the node via "Compilers" in the title, but the
+        // short-term post-filter only checks node_id and title — not aliases.
+        // "CC" appears only in the alias, so the node is incorrectly filtered out.
+        let store = Store::open_memory().unwrap();
+        let node = make_node("compilers.md", "Compilers", &[], json!({"aliases": ["CC"]}));
+        store.upsert_node(&node, 1, None).unwrap();
+        let results = store.search_titles("CC Compilers", 10).unwrap();
+        assert_eq!(results.len(), 1, "should find node when short term matches alias");
+        assert_eq!(results[0].0, "compilers.md");
+    }
+
+    #[test]
+    fn search_titles_quotes_only_returns_empty() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Hello World Test", &[], json!({}));
+        store.upsert_node(&node, 1, None).unwrap();
+        // A query of nothing but quotes should return empty, not an FTS5 error.
+        let results = store.search_titles("\"\"\"", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_titles_mixed_pagination_finds_sparse_matches() {
+        // Regression: when mixing FTS terms (>= 3 chars) with short LIKE terms
+        // (< 3 chars), a single-fetch approach with `limit * 4` rows could miss
+        // matches that appear later in the FTS result set.  The paginated loop
+        // should keep fetching until `limit` results are collected or FTS is
+        // exhausted.
+        let store = Store::open_memory().unwrap();
+        let limit: i64 = 5;
+
+        // Insert 30 nodes that match "Programming" (the FTS term) but NOT "Go"
+        // (the short post-filter term).  This ensures the first several batches
+        // are full of non-matching rows.
+        for i in 0..30 {
+            let id = format!("lang-{i}.md");
+            let title = format!("Programming Language {i}");
+            let node = make_node(&id, &title, &[], json!({}));
+            store.upsert_node(&node, 1, None).unwrap();
+        }
+
+        // Insert 5 nodes that match BOTH "Programming" AND "Go".
+        // FTS ordering (BM25) may rank these anywhere in the result set.
+        for i in 0..5 {
+            let id = format!("go-programming-{i}.md");
+            let title = format!("Go Programming Tutorial {i}");
+            let node = make_node(&id, &title, &[], json!({}));
+            store.upsert_node(&node, 1, None).unwrap();
+        }
+
+        // Query "Go Programming": "Programming" is the FTS term, "Go" is the
+        // short post-filter term.  Without pagination the Go-matching nodes
+        // could be pushed past the first `limit * 4 = 20` rows, returning
+        // fewer than `limit` results.
+        let results = store.search_titles("Go Programming", limit).unwrap();
+        assert_eq!(
+            results.len() as i64, limit,
+            "pagination should collect all {limit} sparse matches"
+        );
+        for (id, _title) in &results {
+            assert!(
+                id.starts_with("go-programming-"),
+                "every result should be a Go node, got: {id}"
+            );
+        }
+    }
+
+    #[test]
     fn source_line_column_exists() {
         let store = Store::open_memory().unwrap();
         let has_column: bool = store
@@ -4219,8 +4337,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_three() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
+    fn schema_version_is_twenty_four() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 24);
     }
 
     #[test]
