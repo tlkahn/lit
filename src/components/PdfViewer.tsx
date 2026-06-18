@@ -5,6 +5,7 @@ import { allowAssetScope } from "../lib/ipc";
 import { loadDocument, TextLayer, AnnotationLayer, setLayerDimensions } from "../lib/pdfjs";
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from "../lib/pdfjs";
 import { createPdfLinkService } from "../lib/pdfLinkService";
+import { useTrackpadPageNav } from "../hooks/useTrackpadPageNav";
 import { SpinnerSvg } from "./SpinnerSvg";
 import "./PdfTextAnnotationLayers.css";
 
@@ -401,6 +402,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   useEffect(() => {
     registerGetCurrentPage?.(() => currentPageRef.current);
   }, [registerGetCurrentPage]);
+
+  useTrackpadPageNav({ scrollContainerRef, currentPageRef, spaceHeldRef, pageCount, goToPage, enabled: canvasReady });
 
   // Grace period: only surface the spinner if the transition outlives
   // SPINNER_GRACE_MS, so fast page flips never flash it.
