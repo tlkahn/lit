@@ -2529,7 +2529,7 @@ describe("GraphView", () => {
         case "read_page":
           return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
         case "enrich_bib_entry":
-          return { entry: {}, fields_added: [], references_found: 150, references_appended: 30, shadow_nodes_created: 0 };
+          return { entry: { title: "Test Paper", key: "smith2024" }, fields_added: [], references_found: 150, references_appended: 30, shadow_nodes_created: 0, references_linked: 0, candidates: [], providers_searched: [], providers_failed: [] };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2567,7 +2567,7 @@ describe("GraphView", () => {
         case "read_page":
           return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
         case "enrich_bib_entry":
-          return { entry: {}, fields_added: [], references_found: 0, references_appended: 0, shadow_nodes_created: 0 };
+          return { entry: { title: "Test Paper", key: "smith2024" }, fields_added: ["doi"], references_found: 0, references_appended: 0, shadow_nodes_created: 0, references_linked: 0, candidates: [], providers_searched: [], providers_failed: [] };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2582,7 +2582,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(useStatusMessageStore.getState().message).toBe("Enriched smith2024");
+      expect(useStatusMessageStore.getState().message).toBe("Enriched smith2024: added doi");
     });
   });
 
