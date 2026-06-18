@@ -47,6 +47,7 @@ export function OutgoingLinksPanel({ pageId, onCountChange, contentHeight, activ
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
+      if (!useWorkspaceStore.getState().graphReady) return;
       if (activeRef.current) {
         fetchForwardLinks();
       } else {

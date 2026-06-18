@@ -61,6 +61,8 @@ interface CommandPaletteProps {
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   ensureRegistered();
 
+  const graphReady = useWorkspaceStore((s) => s.graphReady);
+
   const [rawInput, setRawInput] = useState("");
   const [sections, setSections] = useState<SectionedResults[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -107,6 +109,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (!graphReady) {
+      setSections([]);
+      setHasSearched(true);
+      setSearchError(null);
+      return;
+    }
 
     if (providerId) {
       if (!query) {
@@ -179,7 +188,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       requestIdRef.current++;
     };
-  }, [providerId, prefix, query, filter]);
+  }, [providerId, prefix, query, filter, graphReady]);
 
   const allResults = sections.flatMap((s) => s.results);
   const totalItems = allResults.length;
@@ -322,7 +331,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
           {hasSearched && totalItems === 0 && !searchError && (
             <div className="px-4 py-3 text-sm text-text-muted">
-              {useWorkspaceStore.getState().graphReady ? "No results" : "Index is building..."}
+              {graphReady ? "No results" : "Index is building..."}
             </div>
           )}
 

@@ -137,6 +137,7 @@ describe("CommandPalette", () => {
     onClose = vi.fn();
     mockWorkspaceState.workspacePath = "/test/vault";
     mockWorkspaceState.currentPagePath = "other-page.md";
+    mockWorkspaceState.graphReady = true;
     mockSelectPageAtLine.mockClear();
     mockSelectPage.mockClear();
     mockRecordJump.mockClear();
@@ -1377,6 +1378,72 @@ describe("CommandPalette", () => {
       render(<CommandPalette open={true} onClose={onClose} />);
       expect(hasCommand("lit.mergeDocuments")).toBe(true);
       expect(hasCommand("lit.splitDocument")).toBe(true);
+    });
+  });
+
+  describe("graphReady guard (centralized)", () => {
+    it('shows "Index is building..." when graphReady is false and search is performed', async () => {
+      mockWorkspaceState.graphReady = false;
+      mockInvoke(() => []);
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("Index is building...")).toBeInTheDocument();
+      expect(screen.queryByText("No results")).not.toBeInTheDocument();
+      mockWorkspaceState.graphReady = true;
+    });
+
+    it('reactively updates from "Index is building..." to "No results" when graphReady becomes true', async () => {
+      mockWorkspaceState.graphReady = false;
+      mockInvoke(() => []);
+      const { rerender } = render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(screen.getByText("Index is building...")).toBeInTheDocument();
+
+      // Simulate graphReady becoming true — the reactive hook subscription
+      // should cause the component to re-render and show "No results"
+      mockWorkspaceState.graphReady = true;
+      rerender(<CommandPalette open={true} onClose={onClose} />);
+      await advanceDebounce();
+      expect(screen.getByText("No results")).toBeInTheDocument();
+      expect(screen.queryByText("Index is building...")).not.toBeInTheDocument();
+    });
+
+    it("does not call providers when graphReady is false (prefix mode)", async () => {
+      mockWorkspaceState.graphReady = false;
+      let searchCalled = false;
+      mockInvoke(() => {
+        searchCalled = true;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "@silk" },
+      });
+      await advanceDebounce();
+      expect(searchCalled).toBe(false);
+      mockWorkspaceState.graphReady = true;
+    });
+
+    it("does not call providers when graphReady is false (omni mode)", async () => {
+      mockWorkspaceState.graphReady = false;
+      let searchCalled = false;
+      mockInvoke(() => {
+        searchCalled = true;
+        return [];
+      });
+      render(<CommandPalette open={true} onClose={onClose} />);
+      fireEvent.change(screen.getByTestId("command-palette-input"), {
+        target: { value: "silk" },
+      });
+      await advanceDebounce();
+      expect(searchCalled).toBe(false);
+      mockWorkspaceState.graphReady = true;
     });
   });
 });

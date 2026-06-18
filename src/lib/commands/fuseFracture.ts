@@ -3,6 +3,7 @@ import { useGraphSelectionStore } from "../../stores/graphSelection";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useStatusMessageStore } from "../../stores/statusMessage";
 import { readPage, previewSplit, undoLastOperation, rebuildGraphIndex } from "../ipc";
+import { withGraphRebuilding } from "../withGraphRebuilding";
 
 export function initFuseFractureCommands(): void {
   registerOnce("fuse-fracture", [
@@ -50,19 +51,16 @@ export function initFuseFractureCommands(): void {
       icon: "↩️",
       when: () => useWorkspaceStore.getState().workspacePath != null,
       action: () => {
-        useWorkspaceStore.setState({ graphReady: false });
-        undoLastOperation()
-          .then((description) => {
-            useStatusMessageStore.getState().show(`Undid: ${description}`);
-            return rebuildGraphIndex();
-          })
+        withGraphRebuilding(async () => {
+          const description = await undoLastOperation();
+          useStatusMessageStore.getState().show(`Undid: ${description}`);
+          await rebuildGraphIndex();
+        })
           .then(() => {
-            useWorkspaceStore.setState({ graphReady: true });
             useWorkspaceStore.getState().refreshPages();
             useWorkspaceStore.getState().triggerReload();
           })
           .catch((err) => {
-            useWorkspaceStore.setState({ graphReady: true });
             useStatusMessageStore.getState().show(String(err), "error");
           });
       },

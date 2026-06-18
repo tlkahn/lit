@@ -219,6 +219,30 @@ describe("OutgoingLinksPanel", () => {
       expect(screen.queryByText("This page does not link to any other pages")).not.toBeInTheDocument();
     });
 
+    it("does not fetch forward links on lit:graph-updated when graphReady is false", async () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      let fetchCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "get_forward_links") {
+          fetchCalled = true;
+          return [makeEntry()];
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      render(<OutgoingLinksPanel pageId="source.md" />);
+
+      // Emit graph-updated while graphReady is false
+      act(() => {
+        emitMockEvent("lit:graph-updated", {});
+      });
+
+      // Give any async call time to fire
+      await act(async () => {});
+      expect(fetchCalled).toBe(false);
+    });
+
     it("fetches forward links when graphReady becomes true", async () => {
       useWorkspaceStore.setState({ graphReady: false });
       mockInvoke((cmd) => {

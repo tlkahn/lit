@@ -51,6 +51,7 @@ describe("contentProvider", () => {
     mockSelectPageAtLine.mockClear();
     mockRecordJump.mockClear();
     mockWorkspaceState.currentPagePath = "other-page.md";
+    mockWorkspaceState.graphReady = true;
   });
 
   it('has id "content", prefix "/", label "Content", priority 40', () => {
@@ -66,6 +67,17 @@ describe("contentProvider", () => {
 
   it('search("") returns []', async () => {
     expect(await contentProvider.search("")).toEqual([]);
+  });
+
+  it("search does not check graphReady (centralized in CommandPalette)", async () => {
+    mockWorkspaceState.graphReady = false;
+    mockInvoke((cmd) => {
+      if (cmd === "search_content") return mockResults;
+      return [];
+    });
+    const results = await contentProvider.search("rust");
+    expect(results).toHaveLength(2);
+    mockWorkspaceState.graphReady = true;
   });
 
   it("search(query) calls searchContent IPC and maps to PaletteResult[]", async () => {

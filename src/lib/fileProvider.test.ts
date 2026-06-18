@@ -57,6 +57,7 @@ describe("fileProvider", () => {
     mockSelectPage.mockClear();
     mockRecordJump.mockClear();
     mockWorkspaceState.currentPagePath = "other-page.md";
+    mockWorkspaceState.graphReady = true;
   });
 
   it('has id "files", prefix "$", label "Files", priority 10', () => {
@@ -69,6 +70,17 @@ describe("fileProvider", () => {
   it('search("") returns []', async () => {
     const results = await fileProvider.search("");
     expect(results).toEqual([]);
+  });
+
+  it("search does not check graphReady (centralized in CommandPalette)", async () => {
+    mockWorkspaceState.graphReady = false;
+    mockInvoke((cmd) => {
+      if (cmd === "search_pages_by_title") return mockResults;
+      return [];
+    });
+    const results = await fileProvider.search("silk");
+    expect(results).toHaveLength(3);
+    mockWorkspaceState.graphReady = true;
   });
 
   it("search(query) calls searchPagesByTitle IPC and returns PaletteResult[]", async () => {

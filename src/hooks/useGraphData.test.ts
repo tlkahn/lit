@@ -528,6 +528,29 @@ describe("useGraphData", () => {
       expect(result.current.graphRef.current!.order).toBe(3);
     });
 
+    it("does not rebuild on lit:graph-updated when graphReady is false", async () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      mockListen();
+      const useGraphData = await importHook();
+
+      renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      // No IPC calls should have been made (graphReady is false, initial build skipped)
+      expect(handler).not.toHaveBeenCalled();
+
+      // Emit graph-updated while graphReady is false
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", null);
+      });
+
+      // Still no IPC calls — the listener should have bailed out
+      expect(handler).not.toHaveBeenCalled();
+    });
+
     it("uses getGraphSubgraph with correct seed/depth in local mode", async () => {
       let callCount = 0;
       const updatedLocalSubgraph: SubgraphResult = {

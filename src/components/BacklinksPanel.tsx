@@ -48,6 +48,7 @@ export function BacklinksPanel({ pageId, onCountChange, contentHeight, active = 
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
+      if (!useWorkspaceStore.getState().graphReady) return;
       if (activeRef.current) {
         fetchBacklinks();
       } else {

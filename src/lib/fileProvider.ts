@@ -23,7 +23,7 @@ export const fileProvider: PaletteProvider = {
   priority: 10,
 
   async search(query: string): Promise<PaletteResult[]> {
-    if (!query || !useWorkspaceStore.getState().graphReady) return [];
+    if (!query) return [];
     const results = await searchPagesByTitle(query);
     return results
       .filter((r) => r.title.trim().length > 0)

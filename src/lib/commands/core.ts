@@ -3,6 +3,7 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import { usePreferencesStore } from "../../stores/preferences";
 import { setPreference, rebuildGraphIndex } from "../ipc";
 import { useStatusMessageStore } from "../../stores/statusMessage";
+import { withGraphRebuilding } from "../withGraphRebuilding";
 
 function hasWorkspace(): boolean {
   return useWorkspaceStore.getState().workspacePath !== null;
@@ -55,15 +56,12 @@ export function initCoreCommands(): void {
       icon: "🔄",
       when: hasWorkspace,
       action: () => {
-        useWorkspaceStore.setState({ graphReady: false });
-        rebuildGraphIndex()
+        withGraphRebuilding(() => rebuildGraphIndex())
           .then((msg) => {
-            useWorkspaceStore.setState({ graphReady: true });
             useStatusMessageStore.getState().show(msg);
             useWorkspaceStore.getState().refreshPages();
           })
           .catch((err) => {
-            useWorkspaceStore.setState({ graphReady: true });
             useStatusMessageStore.getState().show(String(err), "error");
           });
       },

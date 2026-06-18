@@ -174,6 +174,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
 
     listen("lit:graph-updated", async () => {
       if (cancelled) return;
+      if (!useWorkspaceStore.getState().graphReady) return;
       await rebuild();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }

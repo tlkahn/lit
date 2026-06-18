@@ -65,6 +65,7 @@ describe("annotationProvider", () => {
     mockSelectPageAtLine.mockClear();
     mockRecordJump.mockClear();
     mockWorkspaceState.currentPagePath = "other-page.md";
+    mockWorkspaceState.graphReady = true;
   });
 
   it('has id "annotations", prefix "@", label "Annotations", priority 20', () => {
@@ -133,6 +134,17 @@ describe("annotationProvider", () => {
     });
     await annotationProvider.search("silk", "all");
     expect(capturedType).toBeNull();
+  });
+
+  it("search does not check graphReady (centralized in CommandPalette)", async () => {
+    mockWorkspaceState.graphReady = false;
+    mockInvoke((cmd) => {
+      if (cmd === "search_annotations") return mockResults;
+      return [];
+    });
+    const results = await annotationProvider.search("silk");
+    expect(results).toHaveLength(2);
+    mockWorkspaceState.graphReady = true;
   });
 
   it("filterOptions returns expected list", () => {

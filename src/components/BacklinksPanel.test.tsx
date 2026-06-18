@@ -300,6 +300,30 @@ describe("BacklinksPanel", () => {
 
       expect(spy).not.toHaveBeenCalled();
     });
+
+    it("does not fetch backlinks on lit:graph-updated when graphReady is false", async () => {
+      useWorkspaceStore.setState({ graphReady: false });
+      let fetchCalled = false;
+      mockInvoke((cmd) => {
+        if (cmd === "get_backlinks") {
+          fetchCalled = true;
+          return [makeEntry()];
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      mockListen();
+
+      render(<BacklinksPanel pageId="target.md" />);
+
+      // Emit graph-updated while graphReady is false
+      act(() => {
+        emitMockEvent("lit:graph-updated", {});
+      });
+
+      // Give any async call time to fire
+      await act(async () => {});
+      expect(fetchCalled).toBe(false);
+    });
   });
 
   it("logs warning when IPC call fails", async () => {

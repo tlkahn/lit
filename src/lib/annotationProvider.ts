@@ -4,7 +4,6 @@ import {
   truncateBody,
 } from "../editor/livePreview/annotationConstants";
 import { navigateToNote } from "./navigateToNote";
-import { useWorkspaceStore } from "../stores/workspace";
 import type { PaletteProvider, PaletteResult, PaletteFilterOption } from "./paletteRegistry";
 
 const FILTER_OPTIONS: PaletteFilterOption[] = [
@@ -25,7 +24,7 @@ export const annotationProvider: PaletteProvider = {
   filterOptions: FILTER_OPTIONS,
 
   async search(query: string, filter?: string): Promise<PaletteResult[]> {
-    if (!query || !useWorkspaceStore.getState().graphReady) return [];
+    if (!query) return [];
     const annotationType = filter && filter !== "all" ? (filter as AnnotationType) : undefined;
     const results = await searchAnnotations(query, annotationType);
     return results.map((r) => ({

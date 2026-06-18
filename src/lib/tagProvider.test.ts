@@ -35,6 +35,18 @@ describe("tagProvider", () => {
     mockSelectPage.mockClear();
     mockRecordJump.mockClear();
     mockWorkspaceState.currentPagePath = "other.md";
+    mockWorkspaceState.graphReady = true;
+  });
+
+  it("search does not check graphReady (centralized in CommandPalette)", async () => {
+    mockWorkspaceState.graphReady = false;
+    mockInvoke((cmd) => {
+      if (cmd === "search_tags") return [{ tag: "rust", count: 5 }];
+      return [];
+    });
+    const results = await tagProvider.search("rust");
+    expect(results).toHaveLength(1);
+    mockWorkspaceState.graphReady = true;
   });
 
   describe("search — tag mode", () => {
