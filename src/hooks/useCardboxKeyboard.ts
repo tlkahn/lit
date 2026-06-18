@@ -42,6 +42,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     // Cmd+Z: undo
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
       e.preventDefault();
+      e.stopPropagation();
       onUndo?.();
       return;
     }
@@ -50,6 +51,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     if (((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "z") ||
         (e.ctrlKey && e.key === "y")) {
       e.preventDefault();
+      e.stopPropagation();
       onRedo?.();
       return;
     }
@@ -57,6 +59,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     // Cmd/Ctrl+A: select all
     if ((e.metaKey || e.ctrlKey) && e.key === "a") {
       e.preventDefault();
+      e.stopPropagation();
       onSelectAll?.();
       return;
     }
@@ -66,6 +69,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       if (!connectionsActive && onClearSelection) {
         e.preventDefault();
+        e.stopPropagation();
         onClearSelection();
         return;
       }
@@ -73,8 +77,8 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
   }, [onUndo, onRedo, onSelectAll, onClearSelection, connectionsActive]);
 
   useEffect(() => {
-    document.addEventListener("keydown", globalHandler);
-    return () => document.removeEventListener("keydown", globalHandler);
+    window.addEventListener("keydown", globalHandler, true);
+    return () => window.removeEventListener("keydown", globalHandler, true);
   }, [globalHandler]);
 
   // Grid layer: arrow navigation, Enter, L, P, N, C, ?, Escape
