@@ -2549,7 +2549,7 @@ describe("GraphView", () => {
     });
   });
 
-  it("fetch-details with no enrichment changes shows minimal toast", async () => {
+  it("fetch-details success with fields added shows enriched toast", async () => {
     const { useWorkspaceStore } = await import("../stores/workspace");
     useWorkspaceStore.setState({ workspacePath: "/test/ws" });
 
