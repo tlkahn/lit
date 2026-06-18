@@ -112,6 +112,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    label: "Window Transparency",
+    storeField: "vibrancyIntensity",
+    jsonKey: "workbench.vibrancyIntensity",
+    controlType: "slider",
+    min: 0,
+    max: 100,
+    step: 5,
+    testId: "settings-vibrancyIntensity",
+    keywords: ["vibrancy", "frosted", "glass", "blur", "transparent", "opacity"],
+  },
+  {
+    category: "Appearance",
     label: "Bottom Panel Position",
     storeField: "bottomPanelPosition",
     jsonKey: "workbench.bottomPanel.position",

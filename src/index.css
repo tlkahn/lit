@@ -67,6 +67,12 @@ html, body, #root {
   font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
 }
 
+html.vibrancy-active,
+html.vibrancy-active body,
+html.vibrancy-active #root {
+  background-color: transparent;
+}
+
 select {
   appearance: none;
   background-color: var(--background-secondary);
@@ -316,4 +322,25 @@ select:disabled {
 }
 .cardbox-pin-pulse {
   animation: pin-pulse 0.4s ease-out;
+}
+
+/* Overlay title bar support for vibrancy */
+.vibrancy-active {
+  --titlebar-inset: 38px;
+}
+
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+  height: var(--titlebar-inset, 0px);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.vibrancy-active .app-main {
+  padding-top: var(--titlebar-inset);
+  background-color: transparent;
 }

@@ -227,10 +227,18 @@ pub fn run() {
                 }
             }
 
+            let vibrancy_intensity = preferences::read_preferences(app.handle())
+                .extra
+                .get("workbench.vibrancyIntensity")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+
             let mut builder =
                 WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
                     .title("Lit")
                     .inner_size(1024.0, 768.0);
+
+            builder = commands::appearance::apply_vibrancy_to_builder(builder, vibrancy_intensity);
 
             if let Some(script) = cli::cli_init_script(&setup_workspace, &setup_file, &setup_line, &setup_col) {
                 builder = builder.initialization_script(&script);
@@ -450,6 +458,8 @@ pub fn run() {
             commands::ocr::check_ocr_target_exists,
             commands::paper_search::list_search_providers,
             commands::paper_search::search_papers,
+            commands::appearance::set_window_vibrancy,
+            commands::appearance::get_reduce_transparency,
             context_menu::show_trash_context_menu,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,

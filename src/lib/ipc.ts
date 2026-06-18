@@ -1550,6 +1550,14 @@ export async function detectPandoc(): Promise<PandocInfo> {
   return invoke<PandocInfo>("detect_pandoc");
 }
 
+export async function setWindowVibrancy(intensity: number): Promise<void> {
+  return invoke<void>("set_window_vibrancy", { intensity });
+}
+
+export async function getReduceTransparency(): Promise<boolean> {
+  return invoke<boolean>("get_reduce_transparency");
+}
+
 export async function exportDocument(request: ExportRequest): Promise<ExportDocumentResult> {
   return invoke<ExportDocumentResult>("export_document", {
     request: {

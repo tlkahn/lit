@@ -531,7 +531,8 @@ function App() {
 
   return (
     <LicenseGate entryOpen={licenseEntryOpen} onEntryOpenChange={setLicenseEntryOpen}>
-      <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
+      <div className="titlebar-drag-region" />
+      <div className={`app-main flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
         <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
           <div
             style={{

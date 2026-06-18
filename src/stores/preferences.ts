@@ -66,6 +66,7 @@ export interface PreferencesState {
   searchCoreApiKeySet: boolean;
   searchPubmedApiKeySet: boolean;
   searchGoogleBooksApiKeySet: boolean;
+  vibrancyIntensity: number;
   searchBaseApiKeySet: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
@@ -218,6 +219,7 @@ function mapPreferences(prefs: Preferences) {
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
     ...(searchProviders !== null ? { searchEnabledProviders: searchProviders } : {}),
+    vibrancyIntensity: (prefs["workbench.vibrancyIntensity"] as number) ?? 0,
     searchCrossrefEmail: (prefs["search.crossrefEmail"] as string) ?? "",
     searchUnpaywallEmail: (prefs["search.unpaywallEmail"] as string) ?? "",
     searchProviderTimeout: (prefs["search.providerTimeout"] as number) ?? 30,
@@ -333,6 +335,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   searchCoreApiKeySet: false,
   searchPubmedApiKeySet: false,
   searchGoogleBooksApiKeySet: false,
+  vibrancyIntensity: 0,
   searchBaseApiKeySet: false,
   loaded: false,
 

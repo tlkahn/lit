@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { usePreferencesStore } from "../stores/preferences";
+import { useVibrancy } from "./useVibrancy";
 
 export type Theme = "light" | "dark";
 
@@ -52,6 +53,8 @@ export function useTheme() {
     }
     syncNativeTitleBar(darkModePref === "auto" ? null : theme);
   }, [theme, darkModePref]);
+
+  useVibrancy(theme);
 
   return { theme } as const;
 }

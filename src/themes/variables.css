@@ -151,3 +151,18 @@
   --color-base-70: #e8e0d6;
   --color-base-100: #e8e0d6;
 }
+
+/* Vibrancy (frosted glass) overrides — activated by useVibrancy hook */
+.theme-light.vibrancy-active {
+  --background-primary: rgba(253, 252, 250, var(--vibrancy-primary-alpha, 1));
+  --background-primary-alt: rgba(247, 245, 242, var(--vibrancy-primary-alpha, 1));
+  --background-secondary: rgba(244, 241, 236, var(--vibrancy-secondary-alpha, 1));
+  --background-secondary-alt: rgba(234, 230, 224, var(--vibrancy-secondary-alpha, 1));
+}
+
+.theme-dark.vibrancy-active {
+  --background-primary: rgba(26, 24, 22, var(--vibrancy-primary-alpha, 1));
+  --background-primary-alt: rgba(34, 32, 29, var(--vibrancy-primary-alpha, 1));
+  --background-secondary: rgba(32, 30, 27, var(--vibrancy-secondary-alpha, 1));
+  --background-secondary-alt: rgba(42, 39, 36, var(--vibrancy-secondary-alpha, 1));
+}

@@ -314,9 +314,17 @@ pub fn create_workspace_window(
             pending.0.lock().unwrap().insert(label.clone(), c);
         }
     }
+    let vibrancy_intensity = crate::preferences::read_preferences(app_handle)
+        .extra
+        .get("workbench.vibrancyIntensity")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
     let mut builder = WebviewWindowBuilder::new(app_handle, &label, tauri::WebviewUrl::default())
         .title("Lit")
         .inner_size(1024.0, 768.0);
+
+    builder = super::appearance::apply_vibrancy_to_builder(builder, vibrancy_intensity);
 
     if let Some(script) = crate::cli::cli_init_script(&path, &file, &line, &col) {
         builder = builder.initialization_script(&script);

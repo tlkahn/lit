@@ -1,4 +1,5 @@
 pub mod annotation;
+pub mod appearance;
 pub mod app_info;
 pub mod bib;
 pub mod bib_import;
