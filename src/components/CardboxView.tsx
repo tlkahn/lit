@@ -456,8 +456,22 @@ export default function CardboxView() {
   );
 
   useCardboxContextMenu({
-    onPin: (cardUuid) => { pinCard(cardUuid); debouncedSave(); },
-    onUnpin: (cardUuid) => { unpinCard(cardUuid); debouncedSave(); },
+    onPin: (cardUuid) => {
+      if (selectedUuids.has(cardUuid) && selectedCount > 1) {
+        batchPin([...selectedUuids]);
+      } else {
+        pinCard(cardUuid);
+      }
+      debouncedSave();
+    },
+    onUnpin: (cardUuid) => {
+      if (selectedUuids.has(cardUuid) && selectedCount > 1) {
+        batchUnpin([...selectedUuids]);
+      } else {
+        unpinCard(cardUuid);
+      }
+      debouncedSave();
+    },
     onNewGroup: (cardUuid) => {
       const groupId = crypto.randomUUID();
       createGroup(groupId, "New Group", [cardUuid], cardUuid);
