@@ -287,7 +287,7 @@ describe("computeDiff EdgeKind support", () => {
     const graph = new Graph();
     graph.addNode("a.md", { label: "A" });
     graph.addNode("b.md", { label: "B" });
-    graph.mergeUndirectedEdge("a.md", "b.md", { citation: false });
+    graph.mergeUndirectedEdge("a.md", "b.md", { kind: "wikilink" });
 
     const subgraph: SubgraphResult = {
       nodes: [n("a.md", "A"), n("b.md", "B")],
@@ -310,7 +310,7 @@ describe("computeDiff cardbox EdgeKind support", () => {
     const graph = new Graph();
     graph.addNode("a.md", { label: "A" });
     graph.addNode("b.md", { label: "B" });
-    graph.mergeUndirectedEdge("a.md", "b.md", { cardbox: false });
+    graph.mergeUndirectedEdge("a.md", "b.md", { kind: "wikilink" });
 
     const subgraph: SubgraphResult = {
       nodes: [n("a.md", "A"), n("b.md", "B")],
@@ -329,7 +329,7 @@ describe("computeDiff cardbox EdgeKind support", () => {
     const graph = new Graph();
     graph.addNode("a.md", { label: "A" });
     graph.addNode("b.md", { label: "B" });
-    graph.mergeUndirectedEdge("a.md", "b.md", { cardbox: true });
+    graph.mergeUndirectedEdge("a.md", "b.md", { kind: "cardbox" });
 
     const subgraph: SubgraphResult = {
       nodes: [n("a.md", "A"), n("b.md", "B")],
@@ -399,7 +399,7 @@ describe("applyDiff materialization and EdgeKind styling", () => {
     applyDiff(graph, diff, "#0969da");
 
     const edge = graph.undirectedEdge("a.md", "b.md")!;
-    expect(graph.getEdgeAttribute(edge, "citation")).toBe(true);
+    expect(graph.getEdgeAttribute(edge, "kind")).toBe("citation");
     expect(graph.getEdgeAttribute(edge, "size")).toBe(CITATION_EDGE_SIZE);
     expect(graph.getEdgeAttribute(edge, "color")).toBe(CITATION_EDGE_COLOR);
   });
@@ -421,8 +421,42 @@ describe("applyDiff materialization and EdgeKind styling", () => {
     applyDiff(graph, diff, "#0969da");
 
     const edge = graph.undirectedEdge("a.md", "b.md")!;
-    expect(graph.getEdgeAttribute(edge, "cardbox")).toBe(true);
+    expect(graph.getEdgeAttribute(edge, "kind")).toBe("cardbox");
     expect(graph.getEdgeAttribute(edge, "size")).toBe(CARDBOX_EDGE_SIZE);
     expect(graph.getEdgeAttribute(edge, "color")).toBe(CARDBOX_EDGE_COLOR);
+  });
+});
+
+describe("computeDiff stale-attr regression", () => {
+  it("does not misidentify edge kind when stale boolean flags remain after mergeUndirectedEdge", () => {
+    // Simulate the scenario: an edge was initially created as cardbox,
+    // then later merged with wikilink attrs. With boolean flags, the stale
+    // `cardbox: true` would persist and computeDiff would misidentify it.
+    // With the `kind` attribute, merging overwrites correctly.
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A" });
+    graph.addNode("b.md", { label: "B" });
+
+    // First, create as a cardbox edge
+    graph.mergeUndirectedEdge("a.md", "b.md", {
+      size: CARDBOX_EDGE_SIZE,
+      color: CARDBOX_EDGE_COLOR,
+      kind: "cardbox",
+    });
+
+    // Then merge with wikilink attrs (simulating edge kind change)
+    graph.mergeUndirectedEdge("a.md", "b.md", { size: 0.5, kind: "wikilink" });
+
+    // computeDiff should see this as a wikilink edge, NOT cardbox
+    const subgraph: SubgraphResult = {
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [["a.md", "b.md", "wikilink"]],
+    };
+
+    const diff = computeDiff(graph, subgraph);
+
+    // The wikilink edge in graph matches the wikilink edge in subgraph: no diff
+    expect(diff.addedEdges).toEqual([]);
+    expect(diff.removedEdges).toEqual([]);
   });
 });

@@ -371,7 +371,7 @@ pub fn add_cardbox_link(
     let edge_added = super::graph::with_graph_index(
         &workspace_state, &graph_state, window.label(),
         |gi| gi.sync_cardbox_edge_add(&a, &b),
-    ).unwrap_or(false);
+    ).unwrap_or_else(|e| { tracing::warn!(error = %e, "failed to sync cardbox edge after add"); false });
 
     if edge_added {
         let _ = window.emit("lit:graph-updated", ());
@@ -412,7 +412,7 @@ pub fn remove_cardbox_link(
     let edge_removed = super::graph::with_graph_index(
         &workspace_state, &graph_state, window.label(),
         |gi| gi.sync_cardbox_edge_remove(&layout, &a, &b),
-    ).unwrap_or(false);
+    ).unwrap_or_else(|e| { tracing::warn!(error = %e, "failed to sync cardbox edge after remove"); false });
 
     if edge_removed {
         let _ = window.emit("lit:graph-updated", ());

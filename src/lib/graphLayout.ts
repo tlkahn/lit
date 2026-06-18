@@ -1,5 +1,5 @@
 import Graph from "graphology";
-import type { SubgraphResult } from "./ipc";
+import type { SubgraphResult, EdgeKind } from "./ipc";
 
 const DEFAULT_ACCENT = "#0969da";
 const DEFAULT_DIM = "#d1d9e0";
@@ -58,6 +58,16 @@ export function materializationAttrs(
   return { type: "filled", color: accentColor, size: NODE_SIZE };
 }
 
+export function edgeAttrsForKind(kind: EdgeKind): Record<string, unknown> {
+  if (kind === "citation") {
+    return { size: CITATION_EDGE_SIZE, color: CITATION_EDGE_COLOR, kind: "citation" };
+  } else if (kind === "cardbox") {
+    return { size: CARDBOX_EDGE_SIZE, color: CARDBOX_EDGE_COLOR, kind: "cardbox" };
+  } else {
+    return { size: 0.5, kind: "wikilink" };
+  }
+}
+
 export interface GraphBuildOptions {
   subgraph: SubgraphResult;
   accentColor: string;
@@ -86,21 +96,7 @@ export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColo
 
   for (const [source, target, kind] of subgraph.edges) {
     if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
-    if (kind === "citation") {
-      graph.mergeUndirectedEdge(source, target, {
-        size: CITATION_EDGE_SIZE,
-        color: CITATION_EDGE_COLOR,
-        citation: true,
-      });
-    } else if (kind === "cardbox") {
-      graph.mergeUndirectedEdge(source, target, {
-        size: CARDBOX_EDGE_SIZE,
-        color: CARDBOX_EDGE_COLOR,
-        cardbox: true,
-      });
-    } else {
-      graph.mergeUndirectedEdge(source, target, { size: 0.5 });
-    }
+    graph.mergeUndirectedEdge(source, target, edgeAttrsForKind(kind));
   }
 }
 

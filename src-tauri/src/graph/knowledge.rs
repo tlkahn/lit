@@ -189,9 +189,11 @@ impl KnowledgeGraph {
             EdgeKind::Cardbox => include_cardbox,
         });
         let result = SubgraphResult { nodes, edges };
-        if include_citations || include_cardbox {
+        if include_citations {
+            // Citations on: keep Shadow/Partial (they connect via citation edges), only drop Stub
             result.without(&[Materialization::Stub])
         } else {
+            // Citations off: Shadow/Partial nodes have no visible edges, so drop them too
             result.retain_materialized()
         }
     }
@@ -448,7 +450,12 @@ impl KnowledgeGraph {
             EdgeKind::Citation => include_citations,
             EdgeKind::Cardbox => include_cardbox,
         });
-        SubgraphResult { nodes, edges }.without(&[Materialization::Stub])
+        let result = SubgraphResult { nodes, edges };
+        if include_citations {
+            result.without(&[Materialization::Stub])
+        } else {
+            result.retain_materialized()
+        }
     }
 
     pub fn backlinks(&self, id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
@@ -2162,7 +2169,7 @@ mod tests {
     fn full_subgraph_filtered_include_cardbox() {
         let (_, kg) = build_test_graph();
         let result = kg.full_subgraph_filtered(false, true);
-        // Materialized nodes + no stubs (but shadows kept due to include_cardbox)
+        // Materialized nodes only -- stubs and shadows excluded (citations off)
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(!ids.contains("F"), "stubs still hidden");
         // Cardbox edge C->E should appear
@@ -2242,5 +2249,36 @@ mod tests {
         // Only wikilink edges (cardbox filtered out)
         assert!(result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink));
         assert_eq!(result.edges.len(), 4);
+    }
+
+    #[test]
+    fn full_subgraph_filtered_cardbox_without_citations_excludes_shadow() {
+        let (_, kg) = build_test_graph();
+        let result = kg.full_subgraph_filtered(false, true);
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        // Shadow node bib:ref1 should be excluded -- it only connects via citation edges
+        assert!(!ids.contains("bib:ref1"), "shadow node should be excluded when citations are off");
+        // Stub F should also still be excluded
+        assert!(!ids.contains("F"), "stubs still hidden");
+        // Materialized nodes present
+        assert!(ids.contains("A"));
+        assert!(ids.contains("B"));
+        assert!(ids.contains("C"));
+        assert!(ids.contains("D"));
+        assert!(ids.contains("E"));
+    }
+
+    #[test]
+    fn subgraph_filtered_cardbox_without_citations_excludes_shadow() {
+        let (_, kg) = build_test_graph();
+        // Seed on A with depth 1. A has citation edge to bib:ref1.
+        // With include_citations=false, include_cardbox=true, bib:ref1 should not appear.
+        let result = kg.subgraph_filtered(&["A"], 1, false, false, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(!ids.contains("bib:ref1"), "shadow node should be excluded when citations are off");
+        // But when citations are on, it should appear
+        let result_with_cit = kg.subgraph_filtered(&["A"], 1, false, true, true).unwrap();
+        let ids_cit: HashSet<&str> = result_with_cit.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids_cit.contains("bib:ref1"), "shadow node should be present when citations are on");
     }
 }

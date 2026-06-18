@@ -708,8 +708,7 @@ impl GraphIndex {
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
-        let layout = self.load_cardbox_layout();
-        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
+        self.load_and_sync_cardbox_edges(&store)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -845,8 +844,6 @@ impl GraphIndex {
         }
         let shadows_ms = t.elapsed().as_millis() as u64;
         let t = std::time::Instant::now();
-        let layout = self.load_cardbox_layout();
-        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         let kg_rebuild_ms = t.elapsed().as_millis() as u64;
@@ -884,6 +881,13 @@ impl GraphIndex {
         )
     }
 
+    /// Load the cardbox layout and bulk-sync edges into the store.
+    /// Used by startup / full-rebuild / background-sync paths.
+    fn load_and_sync_cardbox_edges(&self, store: &Store) -> Result<(), GraphError> {
+        let layout = self.load_cardbox_layout();
+        super::cardbox_edges::sync_cardbox_edges_from_layout(store, &layout)
+    }
+
     /// Incremental cardbox edge add: locks store, inserts edge if cross-document
     /// and not already present, rebuilds KnowledgeGraph if changed.
     /// Lock ordering: store first, then knowledge (same as batch_reindex).
@@ -915,8 +919,7 @@ impl GraphIndex {
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
-        let layout = self.load_cardbox_layout();
-        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
+        self.load_and_sync_cardbox_edges(&store)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -6822,7 +6825,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_reindex_preserves_cardbox_edges() {
+    fn batch_reindex_does_not_clobber_cardbox_edges() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
         write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
@@ -6854,12 +6857,12 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        // Cardbox edge should still exist (re-synced from layout)
+        // Cardbox edge should still exist (batch_reindex does not touch cardbox edges)
         let store = gi.store.lock().unwrap();
         assert_eq!(
             count_cardbox_edges_in_store(&store),
             1,
-            "batch_reindex should re-sync cardbox edges from layout"
+            "batch_reindex should leave existing cardbox edges untouched"
         );
     }
 

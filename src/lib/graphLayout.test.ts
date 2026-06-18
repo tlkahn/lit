@@ -319,7 +319,7 @@ describe("graphLayout", () => {
       const edgeAttrs = graph.getEdgeAttributes(edgeKey);
       expect(edgeAttrs.size).toBe(CITATION_EDGE_SIZE);
       expect(edgeAttrs.color).toBe(CITATION_EDGE_COLOR);
-      expect(edgeAttrs.citation).toBe(true);
+      expect(edgeAttrs.kind).toBe("citation");
     });
 
     it("citation edge with missing node is skipped", () => {
@@ -347,7 +347,7 @@ describe("graphLayout", () => {
       const edgeKey = graph.edges()[0]!;
       const edgeAttrs = graph.getEdgeAttributes(edgeKey);
       expect(edgeAttrs.size).toBe(0.5);
-      expect(edgeAttrs.citation).toBeUndefined();
+      expect(edgeAttrs.kind).toBe("wikilink");
     });
   });
 

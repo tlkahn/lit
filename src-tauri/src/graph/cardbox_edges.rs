@@ -1,9 +1,30 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::error::GraphError;
 use super::store::Store;
 use super::types::EdgeKind;
 use crate::commands::cardbox::CardboxLayout;
+
+/// Resolve two annotation UUIDs to their owning document node IDs.
+/// Returns `Ok(None)` if either UUID is unknown or both belong to the same document.
+fn resolve_cross_doc_pair(
+    store: &Store,
+    uuid_a: &str,
+    uuid_b: &str,
+) -> Result<Option<(String, String)>, GraphError> {
+    let node_a = match store.get_node_id_for_uuid(uuid_a)? {
+        Some(id) => id,
+        None => return Ok(None),
+    };
+    let node_b = match store.get_node_id_for_uuid(uuid_b)? {
+        Some(id) => id,
+        None => return Ok(None),
+    };
+    if node_a == node_b {
+        return Ok(None);
+    }
+    Ok(Some((node_a, node_b)))
+}
 
 /// Bulk sync: delete all cardbox edges and re-insert one per unique
 /// cross-document pair found in the layout's links.
@@ -16,22 +37,10 @@ pub fn sync_cardbox_edges_from_layout(
     let mut seen_pairs: HashSet<(String, String)> = HashSet::new();
 
     for link in &layout.links {
-        let uuid_a = &link[0];
-        let uuid_b = &link[1];
-
-        let node_a = match store.get_node_id_for_uuid(uuid_a)? {
-            Some(id) => id,
+        let (node_a, node_b) = match resolve_cross_doc_pair(store, &link[0], &link[1])? {
+            Some(pair) => pair,
             None => continue,
         };
-        let node_b = match store.get_node_id_for_uuid(uuid_b)? {
-            Some(id) => id,
-            None => continue,
-        };
-
-        // No self-loops
-        if node_a == node_b {
-            continue;
-        }
 
         // Normalize pair order for dedup
         let pair = if node_a < node_b {
@@ -56,18 +65,10 @@ pub fn update_cardbox_edge_after_add(
     uuid_a: &str,
     uuid_b: &str,
 ) -> Result<bool, GraphError> {
-    let node_a = match store.get_node_id_for_uuid(uuid_a)? {
-        Some(id) => id,
+    let (node_a, node_b) = match resolve_cross_doc_pair(store, uuid_a, uuid_b)? {
+        Some(pair) => pair,
         None => return Ok(false),
     };
-    let node_b = match store.get_node_id_for_uuid(uuid_b)? {
-        Some(id) => id,
-        None => return Ok(false),
-    };
-
-    if node_a == node_b {
-        return Ok(false);
-    }
 
     if store.has_cardbox_edge(&node_a, &node_b)? {
         return Ok(false);
@@ -93,26 +94,29 @@ pub fn update_cardbox_edge_after_remove(
     uuid_a: &str,
     uuid_b: &str,
 ) -> Result<bool, GraphError> {
-    let node_a = match store.get_node_id_for_uuid(uuid_a)? {
-        Some(id) => id,
-        None => return Ok(false),
-    };
-    let node_b = match store.get_node_id_for_uuid(uuid_b)? {
-        Some(id) => id,
+    let (node_a, node_b) = match resolve_cross_doc_pair(store, uuid_a, uuid_b)? {
+        Some(pair) => pair,
         None => return Ok(false),
     };
 
-    if node_a == node_b {
-        return Ok(false);
+    // Pre-build a lookup cache: resolve each unique UUID from layout.links
+    // once, avoiding 2*k DB queries in the loop below.
+    let mut uuid_to_node: HashMap<&str, Option<String>> = HashMap::new();
+    for link in &layout.links {
+        for uuid in link {
+            uuid_to_node
+                .entry(uuid.as_str())
+                .or_insert_with(|| store.get_node_id_for_uuid(uuid).unwrap_or(None));
+        }
     }
 
     // Check if any remaining link in the layout still connects these two documents
     for link in &layout.links {
-        let other_a = match store.get_node_id_for_uuid(&link[0])? {
+        let other_a = match uuid_to_node.get(link[0].as_str()).and_then(|v| v.as_deref()) {
             Some(id) => id,
             None => continue,
         };
-        let other_b = match store.get_node_id_for_uuid(&link[1])? {
+        let other_b = match uuid_to_node.get(link[1].as_str()).and_then(|v| v.as_deref()) {
             Some(id) => id,
             None => continue,
         };
@@ -474,5 +478,124 @@ mod tests {
         let removed =
             update_cardbox_edge_after_remove(&store, &layout, &uuid_a, "ghost").unwrap();
         assert!(!removed);
+    }
+
+    #[test]
+    fn remove_with_many_links_sharing_uuids() {
+        // Regression test: multiple links share the same UUIDs.
+        // The HashMap-based lookup should resolve each unique UUID only once.
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("doc_a.md", "Doc A"), 1).unwrap();
+        store.upsert_node(&make_node("doc_b.md", "Doc B"), 1).unwrap();
+        store.upsert_node(&make_node("doc_c.md", "Doc C"), 1).unwrap();
+
+        store
+            .upsert_annotations(
+                "doc_a.md",
+                &[
+                    make_annotation("a1", 0, 5),
+                    make_annotation("a2", 10, 15),
+                    make_annotation("a3", 20, 25),
+                ],
+            )
+            .unwrap();
+        store
+            .upsert_annotations(
+                "doc_b.md",
+                &[
+                    make_annotation("b1", 0, 5),
+                    make_annotation("b2", 10, 15),
+                ],
+            )
+            .unwrap();
+        store
+            .upsert_annotations("doc_c.md", &[make_annotation("c1", 0, 5)])
+            .unwrap();
+
+        // Edge between doc_a and doc_b
+        store
+            .insert_edge("doc_a.md", "doc_b.md", "", "", 0, EdgeKind::Cardbox)
+            .unwrap();
+
+        // Layout has multiple links between doc_a and doc_b (sharing UUIDs),
+        // plus a link to doc_c
+        let layout = CardboxLayout {
+            links: vec![
+                ["a1".to_string(), "b1".to_string()],
+                ["a2".to_string(), "b2".to_string()],
+                ["a3".to_string(), "b1".to_string()], // reuses b1
+                ["a1".to_string(), "c1".to_string()],
+            ],
+            ..Default::default()
+        };
+
+        // Removing a1<->b1 should NOT delete the edge because a2<->b2
+        // and a3<->b1 still connect the same doc pair
+        let removed =
+            update_cardbox_edge_after_remove(&store, &layout, "a1", "b1").unwrap();
+        assert!(
+            !removed,
+            "edge should remain because other links connect same docs"
+        );
+        assert!(store.has_cardbox_edge("doc_a.md", "doc_b.md").unwrap());
+    }
+
+    #[test]
+    fn remove_deletes_edge_when_remaining_links_connect_different_docs() {
+        // Remaining links exist but connect different document pairs,
+        // so the edge for the removed pair should be deleted.
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("doc_a.md", "Doc A"), 1).unwrap();
+        store.upsert_node(&make_node("doc_b.md", "Doc B"), 1).unwrap();
+        store.upsert_node(&make_node("doc_c.md", "Doc C"), 1).unwrap();
+
+        store
+            .upsert_annotations("doc_a.md", &[make_annotation("a1", 0, 5)])
+            .unwrap();
+        store
+            .upsert_annotations("doc_b.md", &[make_annotation("b1", 0, 5)])
+            .unwrap();
+        store
+            .upsert_annotations("doc_c.md", &[make_annotation("c1", 0, 5)])
+            .unwrap();
+
+        store
+            .insert_edge("doc_a.md", "doc_b.md", "", "", 0, EdgeKind::Cardbox)
+            .unwrap();
+
+        // Only remaining link is a1<->c1 (different doc pair)
+        let layout = CardboxLayout {
+            links: vec![["a1".to_string(), "c1".to_string()]],
+            ..Default::default()
+        };
+
+        let removed =
+            update_cardbox_edge_after_remove(&store, &layout, "a1", "b1").unwrap();
+        assert!(removed, "edge should be removed because no remaining link connects doc_a and doc_b");
+        assert!(!store.has_cardbox_edge("doc_a.md", "doc_b.md").unwrap());
+    }
+
+    #[test]
+    fn remove_handles_unknown_uuids_in_remaining_links() {
+        // Some links in the layout reference unknown UUIDs -- they should be
+        // skipped gracefully, and not prevent correct removal.
+        let (store, uuid_a, uuid_b) = setup_two_doc_store();
+
+        store
+            .insert_edge("doc_a.md", "doc_b.md", "", "", 0, EdgeKind::Cardbox)
+            .unwrap();
+
+        // Layout has links with unknown UUIDs -- none connect the same doc pair
+        let layout = CardboxLayout {
+            links: vec![
+                ["ghost-1".to_string(), uuid_b.clone()],
+                [uuid_a.clone(), "ghost-2".to_string()],
+            ],
+            ..Default::default()
+        };
+
+        let removed =
+            update_cardbox_edge_after_remove(&store, &layout, &uuid_a, &uuid_b).unwrap();
+        assert!(removed, "edge should be removed because no valid remaining link connects the docs");
     }
 }

@@ -815,7 +815,7 @@ impl Store {
 
     pub fn delete_edges_from(&self, source: &str) -> Result<(), GraphError> {
         self.conn
-            .execute("DELETE FROM edges WHERE source = ?1 AND edge_kind != 'cardbox'", [source])?;
+            .execute("DELETE FROM edges WHERE source = ?1 AND edge_kind IN ('wikilink', 'citation')", [source])?;
         Ok(())
     }
 
