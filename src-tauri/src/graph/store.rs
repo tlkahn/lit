@@ -1571,7 +1571,8 @@ impl Store {
                 }
                 let pattern = format!("%{escaped}%");
                 conditions.push(format!(
-                    "(n.title LIKE ?{idx} ESCAPE '\\' OR n.id LIKE ?{idx} ESCAPE '\\' OR a.alias LIKE ?{idx} ESCAPE '\\')"
+                    "(n.title LIKE ?{idx} ESCAPE '\\' OR n.id LIKE ?{idx} ESCAPE '\\' \
+                     OR EXISTS(SELECT 1 FROM aliases a WHERE a.node_id = n.id AND a.alias LIKE ?{idx} ESCAPE '\\'))"
                 ));
                 params.push(rusqlite::types::Value::Text(pattern));
                 idx += 1;
@@ -1583,9 +1584,8 @@ impl Store {
 
             let where_clause = conditions.join(" AND ");
             let sql = format!(
-                "SELECT DISTINCT n.id, COALESCE(n.title, '') \
+                "SELECT n.id, COALESCE(n.title, '') \
                  FROM nodes n \
-                 LEFT JOIN aliases a ON a.node_id = n.id \
                  WHERE n.is_stub = 0 \
                    AND n.materialization = 'materialized' \
                    AND {where_clause} \
@@ -4312,6 +4312,16 @@ mod tests {
                 "every result should be a Go node, got: {id}"
             );
         }
+    }
+
+    #[test]
+    fn search_titles_short_terms_across_different_aliases() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("test.md", "Test Node", &[], json!({"aliases": ["Go", "AI"]}));
+        store.upsert_node(&node, 1, None).unwrap();
+        let results = store.search_titles("Go AI", 10).unwrap();
+        assert_eq!(results.len(), 1, "should find node when short terms match different aliases");
+        assert_eq!(results[0].0, "test.md");
     }
 
     #[test]
