@@ -99,10 +99,51 @@ describe("useTrackpadPageNav", () => {
     expect(goToPage).not.toHaveBeenCalled();
   });
 
-  it("prevents default when page has no overflow", () => {
-    makeContainer();
-    renderNav();
-    const event = fireWheel(10, { timeStamp: 1000 });
-    expect(event.defaultPrevented).toBe(true);
+  describe("preventDefault behavior", () => {
+    it("does NOT preventDefault when no navigation fires (no overflow, accumulation not met)", () => {
+      makeContainer(); // scrollHeight === clientHeight => no overflow
+      renderNav();
+      // Small delta below threshold — no navigation
+      const event = fireWheel(10, { timeStamp: 1000 });
+      expect(event.defaultPrevented).toBe(false);
+      expect(goToPage).not.toHaveBeenCalled();
+    });
+
+    it("does NOT preventDefault when on first page and scrolling up (clamped at bounds)", () => {
+      makeContainer(); // no overflow
+      renderNav({ currentPageRef: { current: 0 } });
+      // Large negative delta — would trigger "prev" but clamped at page 0
+      const event = fireWheel(-(OVERSCROLL_THRESHOLD + 10), { timeStamp: 1000 });
+      expect(event.defaultPrevented).toBe(false);
+      expect(goToPage).not.toHaveBeenCalled();
+    });
+
+    it("does NOT preventDefault when on last page and scrolling down (clamped at bounds)", () => {
+      makeContainer(); // no overflow
+      renderNav({ currentPageRef: { current: 9 }, pageCount: 10 });
+      // Large positive delta — would trigger "next" but clamped at last page
+      const event = fireWheel(OVERSCROLL_THRESHOLD + 10, { timeStamp: 1000 });
+      expect(event.defaultPrevented).toBe(false);
+      expect(goToPage).not.toHaveBeenCalled();
+    });
+
+    it("DOES preventDefault when navigation actually fires", () => {
+      makeContainer(); // no overflow
+      renderNav({ currentPageRef: { current: 2 } });
+      const event = fireWheel(OVERSCROLL_THRESHOLD + 10, { timeStamp: 1000 });
+      expect(event.defaultPrevented).toBe(true);
+      expect(goToPage).toHaveBeenCalledWith(3);
+    });
+
+    it("does NOT preventDefault during cooldown period", () => {
+      makeContainer(); // no overflow
+      renderNav({ currentPageRef: { current: 2 } });
+      // First scroll navigates
+      fireWheel(OVERSCROLL_THRESHOLD + 10, { timeStamp: 1000 });
+      expect(goToPage).toHaveBeenCalledTimes(1);
+      // Second scroll during cooldown — should NOT preventDefault
+      const event2 = fireWheel(OVERSCROLL_THRESHOLD + 10, { timeStamp: 1100 }); // within 400ms cooldown
+      expect(event2.defaultPrevented).toBe(false);
+    });
   });
 });

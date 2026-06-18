@@ -39,22 +39,24 @@ export function useTrackpadPageNav({
 
       const nav = processWheelEvent(gestureRef.current, e.deltaY, e.timeStamp, boundary);
 
-      if (!hasVerticalOverflow) {
-        e.preventDefault();
-      } else if ((atTop || atBottom) && nav !== null) {
-        e.preventDefault();
-      }
+      let navigated = false;
 
       if (nav === "next") {
         const current = currentPageRef.current;
         if (current < pageCount - 1) {
           goToPage(current + 1);
+          navigated = true;
         }
       } else if (nav === "prev") {
         const current = currentPageRef.current;
         if (current > 0) {
           goToPage(current - 1);
+          navigated = true;
         }
+      }
+
+      if (navigated) {
+        e.preventDefault();
       }
     };
 

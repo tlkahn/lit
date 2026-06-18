@@ -39,9 +39,13 @@ describe("trackpadGesture", () => {
   });
 
   describe("vertical overflow (zoomed in)", () => {
-    it("returns null when not at a boundary", () => {
+    it("resets accumulated delta when away from boundary beyond grace period", () => {
       const state = createGestureState();
-      const nav = processWheelEvent(state, 200, 100, overflowMiddle);
+      // 4 consecutive mid-scroll events exceed BOUNDARY_GRACE_EVENTS (3)
+      processWheelEvent(state, 50, 100, overflowMiddle);
+      processWheelEvent(state, 50, 110, overflowMiddle);
+      processWheelEvent(state, 50, 120, overflowMiddle);
+      const nav = processWheelEvent(state, 50, 130, overflowMiddle);
       expect(nav).toBeNull();
       expect(state.accumulatedDelta).toBe(0);
     });
@@ -118,6 +122,63 @@ describe("trackpadGesture", () => {
       expect(state.accumulatedDelta).toBe(0);
       const nav = processWheelEvent(state, 30, 120, noOverflow);
       expect(nav).toBeNull();
+    });
+  });
+
+  describe("boundary micro-jitter resilience", () => {
+    it("preserves accumulated delta through brief boundary jitter", () => {
+      const state = createGestureState();
+      // User is at bottom, scrolls down with delta 60 (below threshold)
+      processWheelEvent(state, 60, 100, overflowAtBottom);
+      expect(state.accumulatedDelta).toBe(60);
+
+      // 1 event reports not-at-boundary (micro-jitter)
+      const jitterNav = processWheelEvent(state, 0, 110, overflowMiddle);
+      expect(jitterNav).toBeNull();
+      // Delta should be preserved (within grace window)
+      expect(state.accumulatedDelta).toBe(60);
+
+      // Back at bottom with delta 25 -> total 85 > 80 threshold
+      const nav = processWheelEvent(state, 25, 120, overflowAtBottom);
+      expect(nav).toBe("next");
+    });
+
+    it("resets delta after sustained departure from boundary", () => {
+      const state = createGestureState();
+      // User is at bottom, scrolls down with delta 60
+      processWheelEvent(state, 60, 100, overflowAtBottom);
+
+      // 4+ consecutive events report not-at-boundary (exceeds BOUNDARY_GRACE_EVENTS = 3)
+      processWheelEvent(state, 5, 110, overflowMiddle);
+      processWheelEvent(state, 5, 120, overflowMiddle);
+      processWheelEvent(state, 5, 130, overflowMiddle);
+      processWheelEvent(state, 5, 140, overflowMiddle);
+
+      // Back at bottom with delta 25 -> should NOT trigger (delta was reset)
+      const nav = processWheelEvent(state, 25, 150, overflowAtBottom);
+      expect(nav).toBeNull();
+      expect(state.accumulatedDelta).toBe(25);
+    });
+
+    it("grace counter resets when boundary is re-entered", () => {
+      const state = createGestureState();
+      // User is at bottom, accumulate some delta
+      processWheelEvent(state, 30, 100, overflowAtBottom);
+
+      // 2 jitter events (below grace threshold of 3)
+      processWheelEvent(state, 5, 110, overflowMiddle);
+      processWheelEvent(state, 5, 120, overflowMiddle);
+
+      // Back at boundary — grace counter resets
+      processWheelEvent(state, 10, 130, overflowAtBottom);
+
+      // 2 more jitter events (below grace threshold again since counter reset)
+      processWheelEvent(state, 5, 140, overflowMiddle);
+      processWheelEvent(state, 5, 150, overflowMiddle);
+
+      // Back at boundary with enough to cross threshold (30+5+5+10+5+5+20 = 80, need >80)
+      const nav = processWheelEvent(state, 21, 160, overflowAtBottom);
+      expect(nav).toBe("next");
     });
   });
 });

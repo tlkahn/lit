@@ -2,6 +2,7 @@ export const OVERSCROLL_THRESHOLD = 80;
 export const COOLDOWN_MS = 400;
 export const GESTURE_TIMEOUT_MS = 200;
 export const BOUNDARY_TOLERANCE = 1;
+export const BOUNDARY_GRACE_EVENTS = 3;
 
 export type NavDirection = "next" | "prev" | null;
 
@@ -15,6 +16,7 @@ export interface GestureState {
   accumulatedDelta: number;
   lastWheelTimestamp: number;
   lastNavTimestamp: number;
+  boundaryLeaveCount: number;
 }
 
 export function createGestureState(): GestureState {
@@ -22,6 +24,7 @@ export function createGestureState(): GestureState {
     accumulatedDelta: 0,
     lastWheelTimestamp: 0,
     lastNavTimestamp: -Infinity,
+    boundaryLeaveCount: 0,
   };
 }
 
@@ -45,9 +48,13 @@ export function processWheelEvent(
 
   if (boundary.hasVerticalOverflow) {
     if (!boundary.atTop && !boundary.atBottom) {
-      state.accumulatedDelta = 0;
+      state.boundaryLeaveCount++;
+      if (state.boundaryLeaveCount > BOUNDARY_GRACE_EVENTS) {
+        state.accumulatedDelta = 0;
+      }
       return null;
     }
+    state.boundaryLeaveCount = 0;
     if (boundary.atBottom && deltaY > 0 && state.accumulatedDelta > OVERSCROLL_THRESHOLD) {
       state.accumulatedDelta = 0;
       state.lastNavTimestamp = timestamp;
