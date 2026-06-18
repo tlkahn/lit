@@ -3,7 +3,7 @@ import { useGraphViewState } from "./graphViewState";
 
 describe("useGraphViewState", () => {
   beforeEach(() => {
-    useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false });
+    useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false, showCardboxLinks: false });
   });
 
   it("defaults to mode=full, depth=2", () => {
@@ -30,5 +30,15 @@ describe("useGraphViewState", () => {
   it("setShowCitations updates showCitations", () => {
     useGraphViewState.getState().setShowCitations(true);
     expect(useGraphViewState.getState().showCitations).toBe(true);
+  });
+
+  it("defaults to showCardboxLinks=false", () => {
+    const state = useGraphViewState.getState();
+    expect(state.showCardboxLinks).toBe(false);
+  });
+
+  it("setShowCardboxLinks updates showCardboxLinks", () => {
+    useGraphViewState.getState().setShowCardboxLinks(true);
+    expect(useGraphViewState.getState().showCardboxLinks).toBe(true);
   });
 });

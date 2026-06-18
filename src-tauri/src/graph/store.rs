@@ -815,8 +815,42 @@ impl Store {
 
     pub fn delete_edges_from(&self, source: &str) -> Result<(), GraphError> {
         self.conn
-            .execute("DELETE FROM edges WHERE source = ?1", [source])?;
+            .execute("DELETE FROM edges WHERE source = ?1 AND edge_kind != 'cardbox'", [source])?;
         Ok(())
+    }
+
+    /// Look up which node owns an annotation with the given UUID.
+    pub fn get_node_id_for_uuid(&self, uuid: &str) -> Result<Option<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT node_id FROM annotations WHERE uuid = ?1"
+        )?;
+        let result = stmt.query_row([uuid], |row| row.get(0)).optional()?;
+        Ok(result)
+    }
+
+    /// Delete all cardbox edges from the graph.
+    pub fn delete_cardbox_edges(&self) -> Result<(), GraphError> {
+        self.conn.execute("DELETE FROM edges WHERE edge_kind = 'cardbox'", [])?;
+        Ok(())
+    }
+
+    /// Delete cardbox edges between two specific documents (both directions).
+    pub fn delete_cardbox_edge_between(&self, a: &str, b: &str) -> Result<(), GraphError> {
+        self.conn.execute(
+            "DELETE FROM edges WHERE edge_kind = 'cardbox' AND ((source = ?1 AND target = ?2) OR (source = ?2 AND target = ?1))",
+            rusqlite::params![a, b],
+        )?;
+        Ok(())
+    }
+
+    /// Check whether a cardbox edge exists between two documents (either direction).
+    pub fn has_cardbox_edge(&self, a: &str, b: &str) -> Result<bool, GraphError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'cardbox' AND ((source = ?1 AND target = ?2) OR (source = ?2 AND target = ?1))",
+            rusqlite::params![a, b],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     pub fn replace_all_edges(&self, edges: &[(&str, &str, &str, &str, u32, EdgeKind)]) -> Result<(), GraphError> {
@@ -2451,6 +2485,98 @@ mod tests {
         assert_eq!(partial_count, 0, "no partial new edges may remain");
 
         store.conn.execute_batch("DROP TRIGGER block_edge").unwrap();
+    }
+
+    // --- Cardbox edge CRUD ---
+
+    #[test]
+    fn get_node_id_for_uuid_finds_annotation() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+        store.upsert_annotations("a.md", &[IndexableAnnotation {
+            annotation_type: "highlight".into(),
+            certainty: "certain".into(),
+            body: Some("test".into()),
+            date: None,
+            source_line: 1,
+            char_start: 0,
+            char_end: 4,
+            scope_kind: "file".into(),
+            scope_value: "a.md".into(),
+            uuid: Some("uuid-abc-123".into()),
+        }]).unwrap();
+
+        let result = store.get_node_id_for_uuid("uuid-abc-123").unwrap();
+        assert_eq!(result, Some("a.md".to_string()));
+    }
+
+    #[test]
+    fn get_node_id_for_uuid_returns_none_for_unknown() {
+        let store = Store::open_memory().unwrap();
+        let result = store.get_node_id_for_uuid("nonexistent-uuid").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn delete_cardbox_edges_removes_only_cardbox() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "c.md", "", "", 0, EdgeKind::Citation).unwrap();
+        store.insert_edge("a.md", "d.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("b.md", "c.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+
+        store.delete_cardbox_edges().unwrap();
+
+        let edges = store.all_edges_full().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert!(edges.iter().all(|e| e.5 != EdgeKind::Cardbox));
+        assert!(edges.iter().any(|e| e.5 == EdgeKind::Wikilink));
+        assert!(edges.iter().any(|e| e.5 == EdgeKind::Citation));
+    }
+
+    #[test]
+    fn delete_cardbox_edge_between_removes_both_directions() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("b.md", "a.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("a.md", "c.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("a.md", "b.md", "ctx", "b", 1, EdgeKind::Wikilink).unwrap();
+
+        store.delete_cardbox_edge_between("a.md", "b.md").unwrap();
+
+        let edges = store.all_edges_full().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert!(edges.iter().any(|e| e.0 == "a.md" && e.1 == "c.md" && e.5 == EdgeKind::Cardbox));
+        assert!(edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md" && e.5 == EdgeKind::Wikilink));
+    }
+
+    #[test]
+    fn has_cardbox_edge_returns_true_and_false() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("a.md", "c.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+
+        assert!(store.has_cardbox_edge("a.md", "b.md").unwrap());
+        assert!(store.has_cardbox_edge("b.md", "a.md").unwrap()); // checks both directions
+        assert!(!store.has_cardbox_edge("a.md", "c.md").unwrap()); // wikilink, not cardbox
+        assert!(!store.has_cardbox_edge("x.md", "y.md").unwrap()); // no edge at all
+    }
+
+    #[test]
+    fn delete_edges_from_preserves_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "c.md", "", "", 0, EdgeKind::Citation).unwrap();
+        store.insert_edge("a.md", "d.md", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("x.md", "y.md", "", "", 0, EdgeKind::Wikilink).unwrap();
+
+        store.delete_edges_from("a.md").unwrap();
+
+        let edges = store.all_edges_full().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert!(edges.iter().any(|e| e.0 == "a.md" && e.1 == "d.md" && e.5 == EdgeKind::Cardbox));
+        assert!(edges.iter().any(|e| e.0 == "x.md" && e.1 == "y.md" && e.5 == EdgeKind::Wikilink));
     }
 
     // --- Phase 7: Query methods ---

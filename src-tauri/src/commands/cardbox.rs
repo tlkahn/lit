@@ -52,7 +52,7 @@ fn group_entry_key(group_id: &str) -> String {
     format!("{}{}", GROUP_PREFIX, group_id)
 }
 
-fn normalize_link(a: &str, b: &str) -> [String; 2] {
+pub(crate) fn normalize_link(a: &str, b: &str) -> [String; 2] {
     if a <= b {
         [a.to_string(), b.to_string()]
     } else {
@@ -60,7 +60,7 @@ fn normalize_link(a: &str, b: &str) -> [String; 2] {
     }
 }
 
-fn load_layout_from_disk(layout_path: &std::path::Path) -> CardboxLayout {
+pub(crate) fn load_layout_from_disk(layout_path: &std::path::Path) -> CardboxLayout {
     match std::fs::read_to_string(layout_path) {
         Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
             .unwrap_or(CardboxLayout::default()),
@@ -349,6 +349,7 @@ pub fn write_cardbox_layout(
 pub fn add_cardbox_link(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
     a: String,
     b: String,
 ) -> Result<(), String> {
@@ -364,13 +365,26 @@ pub fn add_cardbox_link(
         layout.links.push(normalized);
         layout.version = layout.version.max(2);
         Ok(())
-    })
+    })?;
+
+    // Sync graph edge (best-effort: graph may not be ready yet)
+    let edge_added = super::graph::with_graph_index(
+        &workspace_state, &graph_state, window.label(),
+        |gi| gi.sync_cardbox_edge_add(&a, &b),
+    ).unwrap_or(false);
+
+    if edge_added {
+        let _ = window.emit("lit:graph-updated", ());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
 pub fn remove_cardbox_link(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
     a: String,
     b: String,
 ) -> Result<(), String> {
@@ -392,7 +406,19 @@ pub fn remove_cardbox_link(
         return Ok(());
     }
 
-    persist_layout(&lit_dir, &layout)
+    persist_layout(&lit_dir, &layout)?;
+
+    // Sync graph edge removal (best-effort: graph may not be ready yet)
+    let edge_removed = super::graph::with_graph_index(
+        &workspace_state, &graph_state, window.label(),
+        |gi| gi.sync_cardbox_edge_remove(&layout, &a, &b),
+    ).unwrap_or(false);
+
+    if edge_removed {
+        let _ = window.emit("lit:graph-updated", ());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

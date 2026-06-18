@@ -32,6 +32,8 @@ export const SELECTED_COLOR = "#fbbf24";
 export const SHADOW_COLOR = "#8b949e";
 export const CITATION_EDGE_COLOR = "#8b949e";
 export const CITATION_EDGE_SIZE = 0.3;
+export const CARDBOX_EDGE_COLOR = "#a371f7";
+export const CARDBOX_EDGE_SIZE = 0.3;
 export const SHADOW_NODE_SIZE_FACTOR = 0.7;
 
 /** Derive a node label from its path: strip directory and the `.md` extension. Mirrors the Rust title fallback. */
@@ -89,6 +91,12 @@ export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColo
         size: CITATION_EDGE_SIZE,
         color: CITATION_EDGE_COLOR,
         citation: true,
+      });
+    } else if (kind === "cardbox") {
+      graph.mergeUndirectedEdge(source, target, {
+        size: CARDBOX_EDGE_SIZE,
+        color: CARDBOX_EDGE_COLOR,
+        cardbox: true,
       });
     } else {
       graph.mergeUndirectedEdge(source, target, { size: 0.5 });

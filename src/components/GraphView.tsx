@@ -53,6 +53,8 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setDepth = useGraphViewState((s) => s.setDepth);
   const showCitations = useGraphViewState((s) => s.showCitations);
   const setShowCitations = useGraphViewState((s) => s.setShowCitations);
+  const showCardboxLinks = useGraphViewState((s) => s.showCardboxLinks);
+  const setShowCardboxLinks = useGraphViewState((s) => s.setShowCardboxLinks);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
@@ -75,7 +77,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
 
   const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion, rebuild } = useGraphData({
-    mode, depth, activePageId: activePageId ?? null, showCitations,
+    mode, depth, activePageId: activePageId ?? null, showCitations, showCardboxLinks,
   });
 
   const materialize = useMaterializeCitation({
@@ -231,11 +233,13 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         localDisabled={!activePageId}
         selectionCount={selectionCount}
         showCitations={showCitations}
+        showCardboxLinks={showCardboxLinks}
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={resetZoom}
         onSearch={() => setSearchOpen(true)}
         onShowCitationsChange={setShowCitations}
+        onShowCardboxLinksChange={setShowCardboxLinks}
       />
       <GraphSearch
         visible={searchOpen}

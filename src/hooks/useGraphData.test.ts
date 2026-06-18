@@ -85,6 +85,7 @@ describe("useGraphData", () => {
         depth: 0,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
       expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
       expect(result.current.graphRef.current!.order).toBe(2);
@@ -133,6 +134,7 @@ describe("useGraphData", () => {
         depth: 2,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
       expect(result.current.graphRef.current!.hasNode("a.md")).toBe(true);
       expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
@@ -571,6 +573,7 @@ describe("useGraphData", () => {
         depth: 2,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
       expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
       expect(result.current.dataVersion).toBeGreaterThan(v1);
@@ -615,6 +618,7 @@ describe("useGraphData", () => {
           depth: 2,
           directed: null,
           includeCitations: null,
+          includeCardbox: null,
         });
       });
 
@@ -670,6 +674,7 @@ describe("useGraphData", () => {
           depth: 2,
           directed: null,
           includeCitations: null,
+          includeCardbox: null,
         });
       });
     });
@@ -1064,6 +1069,7 @@ describe("useGraphData", () => {
         depth: 0,
         directed: null,
         includeCitations: true,
+        includeCardbox: null,
       });
     });
 
@@ -1085,6 +1091,7 @@ describe("useGraphData", () => {
         depth: 0,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
     });
 
@@ -1106,6 +1113,7 @@ describe("useGraphData", () => {
         depth: 2,
         directed: null,
         includeCitations: true,
+        includeCardbox: null,
       });
     });
 
@@ -1124,6 +1132,96 @@ describe("useGraphData", () => {
       });
 
       rerender({ mode: "full", depth: 1, activePageId: null, showCitations: true });
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBe(2);
+      });
+    });
+  });
+
+  // Cycle: showCardboxLinks threading
+  describe("showCardboxLinks", () => {
+    it("full mode with showCardboxLinks=true passes includeCardbox to IPC", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null, showCardboxLinks: true }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: [],
+        depth: 0,
+        directed: null,
+        includeCitations: null,
+        includeCardbox: true,
+      });
+    });
+
+    it("full mode with showCardboxLinks=false (default) passes includeCardbox=null", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: [],
+        depth: 0,
+        directed: null,
+        includeCitations: null,
+        includeCardbox: null,
+      });
+    });
+
+    it("local mode with showCardboxLinks=true passes includeCardbox to IPC", async () => {
+      const handler = vi.fn(makeInvokeHandler(LOCAL_SUBGRAPH));
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result } = renderHook(() =>
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", showCardboxLinks: true }),
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(handler).toHaveBeenCalledWith("get_graph_subgraph", {
+        seeds: ["a.md"],
+        depth: 2,
+        directed: null,
+        includeCitations: null,
+        includeCardbox: true,
+      });
+    });
+
+    it("toggling showCardboxLinks triggers rebuild", async () => {
+      const handler = vi.fn(makeInvokeHandler());
+      mockInvoke(handler);
+      const useGraphData = await importHook();
+
+      const { result, rerender } = renderHook(
+        (props: UseGraphDataOptions) => useGraphData(props),
+        { initialProps: { mode: "full", depth: 1, activePageId: null, showCardboxLinks: false } as UseGraphDataOptions },
+      );
+
+      await waitFor(() => {
+        expect(result.current.dataVersion).toBe(1);
+      });
+
+      rerender({ mode: "full", depth: 1, activePageId: null, showCardboxLinks: true });
 
       await waitFor(() => {
         expect(result.current.dataVersion).toBe(2);

@@ -1376,7 +1376,7 @@ describe("ipc", () => {
     expect(result.pagerank).toEqual({ "a.md": 0.4, "b.md": 0.6 });
     expect(result.positions).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null, includeCitations: null });
+    expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md", "b.md"], depth: 1, directed: null, includeCitations: null, includeCardbox: null });
   });
 
   it("getFullSubgraph calls get_graph_subgraph with empty seeds", async () => {
@@ -1386,7 +1386,7 @@ describe("ipc", () => {
     expect(result.positions).toEqual({});
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
-      seeds: [], depth: 0, directed: null, includeCitations: null,
+      seeds: [], depth: 0, directed: null, includeCitations: null, includeCardbox: null,
     });
   });
 
@@ -1394,7 +1394,7 @@ describe("ipc", () => {
     await getGraphSubgraph(["a.md"], 1, false, true);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
-      seeds: ["a.md"], depth: 1, directed: false, includeCitations: true,
+      seeds: ["a.md"], depth: 1, directed: false, includeCitations: true, includeCardbox: null,
     });
   });
 
@@ -1402,7 +1402,7 @@ describe("ipc", () => {
     await getFullSubgraph(true);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
-      seeds: [], depth: 0, directed: null, includeCitations: true,
+      seeds: [], depth: 0, directed: null, includeCitations: true, includeCardbox: null,
     });
   });
 

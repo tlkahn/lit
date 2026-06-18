@@ -11,6 +11,7 @@ export interface UseGraphDataOptions {
   depth: number;
   activePageId: string | null | undefined;
   showCitations?: boolean;
+  showCardboxLinks?: boolean;
 }
 
 export interface UseGraphDataResult {
@@ -32,6 +33,7 @@ async function doRebuild(
   dimColorRef: MutableRefObject<string>,
   generationRef: MutableRefObject<number>,
   currentShowCitations: boolean = false,
+  currentShowCardboxLinks: boolean = false,
 ): Promise<{ stats: { nodes: number; edges: number }; tierSettings: TierSettings } | null> {
   const myGen = ++generationRef.current;
 
@@ -43,7 +45,7 @@ async function doRebuild(
     // subgraph and synthesize a seed-only node so the active page always renders.
     let local: SubgraphResult;
     try {
-      local = await getGraphSubgraph([seedId], currentDepth, undefined, currentShowCitations || undefined);
+      local = await getGraphSubgraph([seedId], currentDepth, undefined, currentShowCitations || undefined, currentShowCardboxLinks || undefined);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.startsWith(NODE_NOT_FOUND_PREFIX)) {
@@ -60,7 +62,7 @@ async function doRebuild(
     }
     subgraph = local;
   } else {
-    subgraph = await getFullSubgraph(currentShowCitations || undefined);
+    subgraph = await getFullSubgraph(currentShowCitations || undefined, currentShowCardboxLinks || undefined);
   }
 
   if (myGen !== generationRef.current) return null;
@@ -97,7 +99,7 @@ const DEFAULT_TIER: TierSettings = {
 };
 
 export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
-  const { mode, depth, activePageId, showCitations = false } = options;
+  const { mode, depth, activePageId, showCitations = false, showCardboxLinks = false } = options;
 
   const graphRef = useRef<Graph>(new Graph());
   const dimColorRef = useRef<string>("#d1d9e0");
@@ -113,17 +115,19 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const depthRef = useRef(depth);
   const activePageIdRef = useRef(activePageId);
   const showCitationsRef = useRef(showCitations);
+  const showCardboxLinksRef = useRef(showCardboxLinks);
   modeRef.current = mode;
   depthRef.current = depth;
   activePageIdRef.current = activePageId;
   showCitationsRef.current = showCitations;
+  showCardboxLinksRef.current = showCardboxLinks;
 
   const rebuild = useCallback(async () => {
     try {
       const result = await doRebuild(
         graphRef.current!, modeRef.current, depthRef.current,
         activePageIdRef.current, dimColorRef, generationRef,
-        showCitationsRef.current,
+        showCitationsRef.current, showCardboxLinksRef.current,
       );
       if (!result) return;
       setTierSettings(result.tierSettings);
@@ -144,7 +148,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
       try {
         setLoading(true);
         setError(null);
-        const result = await doRebuild(graphRef.current!, mode, depth, activePageId, dimColorRef, generationRef, showCitations);
+        const result = await doRebuild(graphRef.current!, mode, depth, activePageId, dimColorRef, generationRef, showCitations, showCardboxLinks);
         if (cancelled || !result) return;
         setTierSettings(result.tierSettings);
         setGraphStats(result.stats);
@@ -163,7 +167,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     return () => {
       cancelled = true;
     };
-  }, [mode, depth, effectKey, showCitations]);
+  }, [mode, depth, effectKey, showCitations, showCardboxLinks]);
 
   useEffect(() => {
     let cancelled = false;

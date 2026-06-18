@@ -84,7 +84,7 @@ describe("GraphView", () => {
     render(<GraphView />);
     const { invoke } = await import("@tauri-apps/api/core");
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null, includeCitations: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null, includeCitations: null, includeCardbox: null });
     });
     expect(invoke).not.toHaveBeenCalledWith("get_pagerank", expect.anything());
   });
@@ -331,7 +331,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 2, directed: null, includeCitations: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 2, directed: null, includeCitations: null, includeCardbox: null });
     });
 
     expect(screen.getByRole("button", { name: "2" })).toBeTruthy();
@@ -355,7 +355,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 3, directed: null, includeCitations: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: ["a.md"], depth: 3, directed: null, includeCitations: null, includeCardbox: null });
     });
   });
 
@@ -526,6 +526,7 @@ describe("GraphView", () => {
         depth: 0,
         directed: null,
         includeCitations: true,
+        includeCardbox: null,
       });
     });
   });
@@ -1081,7 +1082,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null, includeCitations: null });
+      expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", { seeds: [], depth: 0, directed: null, includeCitations: null, includeCardbox: null });
     });
 
     resetListenMock();

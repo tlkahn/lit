@@ -16,6 +16,7 @@ use super::store::Store;
 use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
+use crate::commands::cardbox::CardboxLayout;
 
 // ---------------------------------------------------------------------------
 // parse_md_file
@@ -707,6 +708,8 @@ impl GraphIndex {
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let layout = self.load_cardbox_layout();
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -769,6 +772,10 @@ impl GraphIndex {
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, &workspace_root, &bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let layout = crate::commands::cardbox::load_layout_from_disk(
+            &workspace_root.join(".lit").join("cardbox.json"),
+        );
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
@@ -838,6 +845,8 @@ impl GraphIndex {
         }
         let shadows_ms = t.elapsed().as_millis() as u64;
         let t = std::time::Instant::now();
+        let layout = self.load_cardbox_layout();
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         let kg_rebuild_ms = t.elapsed().as_millis() as u64;
@@ -868,11 +877,46 @@ impl GraphIndex {
         self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, annotations_enabled)
     }
 
+    /// Load the cardbox layout from `.lit/cardbox.json` in this workspace.
+    fn load_cardbox_layout(&self) -> CardboxLayout {
+        crate::commands::cardbox::load_layout_from_disk(
+            &self.workspace_root.join(".lit").join("cardbox.json"),
+        )
+    }
+
+    /// Incremental cardbox edge add: locks store, inserts edge if cross-document
+    /// and not already present, rebuilds KnowledgeGraph if changed.
+    /// Lock ordering: store first, then knowledge (same as batch_reindex).
+    pub fn sync_cardbox_edge_add(&self, uuid_a: &str, uuid_b: &str) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let added = super::cardbox_edges::update_cardbox_edge_after_add(&store, uuid_a, uuid_b)?;
+        if added {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            *knowledge = KnowledgeGraph::from_store(&store)?;
+        }
+        Ok(added)
+    }
+
+    /// Incremental cardbox edge remove: locks store, checks remaining layout links,
+    /// removes edge if no other links connect the same documents, rebuilds KnowledgeGraph if changed.
+    /// The layout is passed by the caller (cardbox command already has it loaded).
+    pub fn sync_cardbox_edge_remove(&self, layout: &CardboxLayout, uuid_a: &str, uuid_b: &str) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let removed = super::cardbox_edges::update_cardbox_edge_after_remove(&store, layout, uuid_a, uuid_b)?;
+        if removed {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            *knowledge = KnowledgeGraph::from_store(&store)?;
+        }
+        Ok(removed)
+    }
+
     pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
         let store = self.store.lock().unwrap();
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let layout = self.load_cardbox_layout();
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -926,14 +970,15 @@ impl GraphIndex {
         depth: usize,
         directed: bool,
         include_citations: bool,
+        include_cardbox: bool,
     ) -> Result<SubgraphResult, GraphError> {
         let knowledge = self.knowledge.lock().unwrap();
-        knowledge.subgraph_filtered(seeds, depth, directed, include_citations)
+        knowledge.subgraph_filtered(seeds, depth, directed, include_citations, include_cardbox)
     }
 
-    pub fn full_subgraph(&self, include_citations: bool) -> SubgraphResult {
+    pub fn full_subgraph(&self, include_citations: bool, include_cardbox: bool) -> SubgraphResult {
         let knowledge = self.knowledge.lock().unwrap();
-        knowledge.full_subgraph_filtered(include_citations)
+        knowledge.full_subgraph_filtered(include_citations, include_cardbox)
     }
 
     pub fn subgraph_bundle(
@@ -942,8 +987,9 @@ impl GraphIndex {
         depth: usize,
         directed: bool,
         include_citations: bool,
+        include_cardbox: bool,
     ) -> Result<SubgraphBundle, GraphError> {
-        let subgraph = self.subgraph(seeds, depth, directed, include_citations)?;
+        let subgraph = self.subgraph(seeds, depth, directed, include_citations, include_cardbox)?;
         let pagerank = self.pagerank()?;
         let positions = self.get_positions();
         Ok(SubgraphBundle {
@@ -2946,7 +2992,7 @@ mod tests {
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 3); // a, b, d (c deleted)
         // d->a edge exists, a->b edge removed
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "a.md"));
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "c.md"));
@@ -2975,7 +3021,7 @@ mod tests {
         write_md(dir.path(), "fresh.md", "");
         gi.reindex_file("fresh.md", true).unwrap();
 
-        let sub = gi.subgraph(&["fresh.md"], 1, false, false).unwrap();
+        let sub = gi.subgraph(&["fresh.md"], 1, false, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "fresh.md"));
     }
 
@@ -2990,10 +3036,10 @@ mod tests {
         gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true).unwrap();
 
         assert!(matches!(
-            gi.subgraph(&["old.md"], 1, false, false),
+            gi.subgraph(&["old.md"], 1, false, false, false),
             Err(GraphError::NodeNotFound { .. })
         ));
-        let sub = gi.subgraph(&["new.md"], 1, false, false).unwrap();
+        let sub = gi.subgraph(&["new.md"], 1, false, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "new.md"));
     }
 
@@ -3008,7 +3054,7 @@ mod tests {
         gi.remove_file("doomed.md", true).unwrap();
 
         assert!(matches!(
-            gi.subgraph(&["doomed.md"], 1, false, false),
+            gi.subgraph(&["doomed.md"], 1, false, false, false),
             Err(GraphError::NodeNotFound { .. })
         ));
     }
@@ -3020,7 +3066,7 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         // b is a stub node — filtered from subgraph output
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should not appear in subgraph");
 
         // Create b.md and batch_reindex with new
@@ -3032,7 +3078,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         // Real node should now appear (stub was replaced)
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "bare stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
@@ -3050,7 +3096,7 @@ mod tests {
         write_md(dir.path(), "b.md", "I exist now.");
         gi.add_file("b.md", true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
         assert!(!b_real.is_stub);
@@ -3069,7 +3115,7 @@ mod tests {
         // reindex_file uses `changed` semantics — stub promotion is skipped,
         // so the edge a.md -> b.md is NOT resolved (still points at stub "b",
         // which without_stubs filters out).
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(sub.nodes.iter().any(|n| n.id == "b.md"), "b.md exists as real node");
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"), "edge not resolved because stub persists");
     }
@@ -3099,7 +3145,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 3); // merged, c, d
         assert!(!sub.nodes.iter().any(|n| n.id == "a.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "b.md"));
@@ -3130,7 +3176,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 3); // part1, part2, ref
         assert!(!sub.nodes.iter().any(|n| n.id == "big.md"));
         assert!(sub.nodes.iter().any(|n| n.id == "part1.md"));
@@ -3180,15 +3226,15 @@ mod tests {
         gi_batch.batch_reindex(&diff, true).unwrap();
 
         // Compare node IDs
-        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph(false).nodes.iter().map(|n| n.id.clone()).collect();
-        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph(false).nodes.iter().map(|n| n.id.clone()).collect();
+        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph(false, false).nodes.iter().map(|n| n.id.clone()).collect();
+        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph(false, false).nodes.iter().map(|n| n.id.clone()).collect();
         seq_nodes.sort();
         batch_nodes.sort();
         assert_eq!(seq_nodes, batch_nodes);
 
         // Compare edge sets
-        let mut seq_edges: Vec<(String, String, EdgeKind)> = gi_seq.full_subgraph(false).edges.clone();
-        let mut batch_edges: Vec<(String, String, EdgeKind)> = gi_batch.full_subgraph(false).edges.clone();
+        let mut seq_edges: Vec<(String, String, EdgeKind)> = gi_seq.full_subgraph(false, false).edges.clone();
+        let mut batch_edges: Vec<(String, String, EdgeKind)> = gi_batch.full_subgraph(false, false).edges.clone();
         seq_edges.sort();
         batch_edges.sort();
         assert_eq!(seq_edges, batch_edges);
@@ -3303,12 +3349,12 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 1);
 
         write_md(dir.path(), "b.md", "New.");
         gi.full_rebuild(true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 2);
     }
 
@@ -3318,12 +3364,12 @@ mod tests {
         write_md(dir.path(), "a.md", "No links.");
         write_md(dir.path(), "b.md", "Target.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(sub.edges.is_empty());
 
         write_md(dir.path(), "a.md", "Now links to [[b]].");
         gi.reindex_file("a.md", true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(!sub.edges.is_empty());
     }
 
@@ -3643,7 +3689,7 @@ mod tests {
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         for key in bundle.pagerank.keys() {
             assert!(!key.starts_with("bib:"), "shadow node {key} in pagerank with include_citations=false");
         }
@@ -5871,7 +5917,7 @@ mod tests {
         // Verify in-memory KnowledgeGraph was rebuilt
         {
             let kg = gi.knowledge.lock().unwrap();
-            let subgraph = kg.full_subgraph_filtered(true);
+            let subgraph = kg.full_subgraph_filtered(true, false);
             let node = subgraph
                 .nodes
                 .iter()
@@ -5937,7 +5983,7 @@ mod tests {
         // Verify in-memory KnowledgeGraph was rebuilt
         {
             let kg = gi.knowledge.lock().unwrap();
-            let subgraph = kg.full_subgraph_filtered(true);
+            let subgraph = kg.full_subgraph_filtered(true, false);
             let node = subgraph
                 .nodes
                 .iter()
@@ -6605,6 +6651,252 @@ mod tests {
         assert!(
             items.iter().any(|e| e.key == "doe2022"),
             "new bib entry must be ingested during batch_reindex"
+        );
+    }
+
+    // --- cardbox edge integration (Phase 5) ---
+
+    use crate::graph::types::IndexableAnnotation;
+    use crate::commands::cardbox::CardboxLayout;
+
+    fn write_cardbox_layout(root: &Path, layout: &CardboxLayout) {
+        let lit_dir = root.join(".lit");
+        fs::create_dir_all(&lit_dir).unwrap();
+        let content = serde_json::to_string_pretty(layout).unwrap();
+        fs::write(lit_dir.join("cardbox.json"), content).unwrap();
+    }
+
+    fn make_annotation_for_indexer(uuid: &str, char_start: usize, char_end: usize) -> IndexableAnnotation {
+        IndexableAnnotation {
+            annotation_type: "note".to_string(),
+            certainty: "certain".to_string(),
+            body: Some(format!("note {}", uuid)),
+            date: None,
+            source_line: 1,
+            char_start,
+            char_end,
+            scope_kind: "block".to_string(),
+            scope_value: "_".to_string(),
+            uuid: Some(uuid.to_string()),
+        }
+    }
+
+    fn count_cardbox_edges_in_store(store: &Store) -> usize {
+        store
+            .all_edges_full()
+            .unwrap()
+            .iter()
+            .filter(|e| e.5 == EdgeKind::Cardbox)
+            .count()
+    }
+
+    #[test]
+    fn full_rebuild_syncs_cardbox_edges_from_layout() {
+        let dir = create_workspace();
+        // Two documents with annotations
+        write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
+        write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
+
+        // Build first to get annotations indexed
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // Get annotation UUIDs from the store
+        let (uuid_a, uuid_b) = {
+            let store = gi.store.lock().unwrap();
+            let anns_a = store.list_annotations(Some("a.md"), None, 10).unwrap();
+            let anns_b = store.list_annotations(Some("b.md"), None, 10).unwrap();
+            assert!(!anns_a.is_empty(), "a.md should have annotations");
+            assert!(!anns_b.is_empty(), "b.md should have annotations");
+            (anns_a[0].uuid.clone(), anns_b[0].uuid.clone())
+        };
+
+        // Write a cardbox layout linking the two annotations
+        let layout = CardboxLayout {
+            links: vec![[uuid_a.clone(), uuid_b.clone()]],
+            ..Default::default()
+        };
+        write_cardbox_layout(dir.path(), &layout);
+
+        // Full rebuild should pick up cardbox edges
+        gi.full_rebuild(true).unwrap();
+
+        let store = gi.store.lock().unwrap();
+        assert_eq!(
+            count_cardbox_edges_in_store(&store),
+            1,
+            "full_rebuild should create cardbox edge from layout"
+        );
+    }
+
+    #[test]
+    fn build_with_progress_syncs_cardbox_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
+        write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
+
+        // Build once to index annotations and get their UUIDs
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let (uuid_a, uuid_b) = {
+            let store = gi.store.lock().unwrap();
+            let anns_a = store.list_annotations(Some("a.md"), None, 10).unwrap();
+            let anns_b = store.list_annotations(Some("b.md"), None, 10).unwrap();
+            (anns_a[0].uuid.clone(), anns_b[0].uuid.clone())
+        };
+        drop(gi);
+
+        // Write cardbox layout
+        let layout = CardboxLayout {
+            links: vec![[uuid_a, uuid_b]],
+            ..Default::default()
+        };
+        write_cardbox_layout(dir.path(), &layout);
+
+        // build_with_progress (warm start) should sync cardbox edges
+        let gi2 = GraphIndex::build_with_progress(
+            dir.path().to_path_buf(),
+            &super::super::progress::noop_callback(),
+            true,
+        ).unwrap();
+
+        let store = gi2.store.lock().unwrap();
+        assert_eq!(
+            count_cardbox_edges_in_store(&store),
+            1,
+            "build_with_progress should create cardbox edge from layout"
+        );
+    }
+
+    #[test]
+    fn sync_cardbox_edge_add_creates_edge_and_updates_knowledge() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
+        write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let (uuid_a, uuid_b) = {
+            let store = gi.store.lock().unwrap();
+            let anns_a = store.list_annotations(Some("a.md"), None, 10).unwrap();
+            let anns_b = store.list_annotations(Some("b.md"), None, 10).unwrap();
+            (anns_a[0].uuid.clone(), anns_b[0].uuid.clone())
+        };
+
+        let added = gi.sync_cardbox_edge_add(&uuid_a, &uuid_b).unwrap();
+        assert!(added, "should return true when edge is created");
+
+        // Verify edge exists in store
+        let store = gi.store.lock().unwrap();
+        assert_eq!(count_cardbox_edges_in_store(&store), 1);
+        drop(store);
+
+        // Second call should return false (already exists)
+        let added2 = gi.sync_cardbox_edge_add(&uuid_a, &uuid_b).unwrap();
+        assert!(!added2, "should return false when edge already exists");
+    }
+
+    #[test]
+    fn sync_cardbox_edge_remove_deletes_edge_and_updates_knowledge() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
+        write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let (uuid_a, uuid_b) = {
+            let store = gi.store.lock().unwrap();
+            let anns_a = store.list_annotations(Some("a.md"), None, 10).unwrap();
+            let anns_b = store.list_annotations(Some("b.md"), None, 10).unwrap();
+            (anns_a[0].uuid.clone(), anns_b[0].uuid.clone())
+        };
+
+        // First add the edge
+        gi.sync_cardbox_edge_add(&uuid_a, &uuid_b).unwrap();
+
+        // Then remove with an empty layout (no remaining links)
+        let layout = CardboxLayout::default();
+        let removed = gi.sync_cardbox_edge_remove(&layout, &uuid_a, &uuid_b).unwrap();
+        assert!(removed, "should return true when edge is removed");
+
+        let store = gi.store.lock().unwrap();
+        assert_eq!(count_cardbox_edges_in_store(&store), 0);
+    }
+
+    #[test]
+    fn batch_reindex_preserves_cardbox_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
+        write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let (uuid_a, uuid_b) = {
+            let store = gi.store.lock().unwrap();
+            let anns_a = store.list_annotations(Some("a.md"), None, 10).unwrap();
+            let anns_b = store.list_annotations(Some("b.md"), None, 10).unwrap();
+            (anns_a[0].uuid.clone(), anns_b[0].uuid.clone())
+        };
+
+        // Write cardbox layout and add edge
+        let layout = CardboxLayout {
+            links: vec![[uuid_a.clone(), uuid_b.clone()]],
+            ..Default::default()
+        };
+        write_cardbox_layout(dir.path(), &layout);
+        gi.sync_cardbox_edge_add(&uuid_a, &uuid_b).unwrap();
+
+        // Now do a batch_reindex (e.g. editing a.md)
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "a.md", "modified text<!--- note _ --->rest of a");
+        let diff = DiffResult {
+            new: vec![],
+            changed: vec!["a.md".to_string()],
+            deleted: vec![],
+        };
+        gi.batch_reindex(&diff, true).unwrap();
+
+        // Cardbox edge should still exist (re-synced from layout)
+        let store = gi.store.lock().unwrap();
+        assert_eq!(
+            count_cardbox_edges_in_store(&store),
+            1,
+            "batch_reindex should re-sync cardbox edges from layout"
+        );
+    }
+
+    #[test]
+    fn sync_with_disk_syncs_cardbox_edges() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "text<!--- note _ --->rest of a");
+        write_md(dir.path(), "b.md", "text<!--- note _ --->rest of b");
+
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let (uuid_a, uuid_b) = {
+            let store = gi.store.lock().unwrap();
+            let anns_a = store.list_annotations(Some("a.md"), None, 10).unwrap();
+            let anns_b = store.list_annotations(Some("b.md"), None, 10).unwrap();
+            (anns_a[0].uuid.clone(), anns_b[0].uuid.clone())
+        };
+
+        // Write cardbox layout
+        let layout = CardboxLayout {
+            links: vec![[uuid_a, uuid_b]],
+            ..Default::default()
+        };
+        write_cardbox_layout(dir.path(), &layout);
+
+        // Trigger sync_with_disk by modifying a file
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_md(dir.path(), "a.md", "changed text<!--- note _ --->rest of a");
+
+        let changed = gi.sync_with_disk(true).unwrap();
+        assert!(changed, "sync_with_disk should detect changes");
+
+        let store = gi.store.lock().unwrap();
+        assert_eq!(
+            count_cardbox_edges_in_store(&store),
+            1,
+            "sync_with_disk should sync cardbox edges from layout"
         );
     }
 }

@@ -1,6 +1,6 @@
 import type Graph from "graphology";
 import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
-import { materializationAttrs, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR } from "./graphLayout";
+import { materializationAttrs, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, CARDBOX_EDGE_SIZE, CARDBOX_EDGE_COLOR } from "./graphLayout";
 
 export interface GraphDiff {
   addedNodes: GraphNode[];
@@ -45,7 +45,7 @@ export function computeDiff(graph: Graph, subgraph: SubgraphResult): GraphDiff {
 
   const currentEdgeMap = new Map<string, [string, string, EdgeKind]>();
   graph.forEachEdge((_edge, attrs, source, target) => {
-    const kind: EdgeKind = attrs.citation ? "citation" : "wikilink";
+    const kind: EdgeKind = attrs.cardbox ? "cardbox" : attrs.citation ? "citation" : "wikilink";
     currentEdgeMap.set(edgeKey(source, target, kind), [source, target, kind]);
   });
 
@@ -130,6 +130,12 @@ export function applyDiff(
           size: CITATION_EDGE_SIZE,
           color: CITATION_EDGE_COLOR,
           citation: true,
+        });
+      } else if (kind === "cardbox") {
+        graph.mergeUndirectedEdge(source, target, {
+          size: CARDBOX_EDGE_SIZE,
+          color: CARDBOX_EDGE_COLOR,
+          cardbox: true,
         });
       } else {
         graph.mergeUndirectedEdge(source, target, { size: 0.5 });

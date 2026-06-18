@@ -6,14 +6,16 @@ export interface GraphToolbarProps {
   localDisabled?: boolean;
   selectionCount?: number;
   showCitations?: boolean;
+  showCardboxLinks?: boolean;
   onModeChange: (mode: "full" | "local") => void;
   onDepthChange: (depth: number) => void;
   onResetZoom: () => void;
   onSearch?: () => void;
   onShowCitationsChange?: (show: boolean) => void;
+  onShowCardboxLinksChange?: (show: boolean) => void;
 }
 
-export function GraphToolbar({ mode, depth, localDisabled, selectionCount, showCitations, onModeChange, onDepthChange, onResetZoom, onSearch, onShowCitationsChange }: GraphToolbarProps) {
+export function GraphToolbar({ mode, depth, localDisabled, selectionCount, showCitations, showCardboxLinks, onModeChange, onDepthChange, onResetZoom, onSearch, onShowCitationsChange, onShowCardboxLinksChange }: GraphToolbarProps) {
   return (
     <div className="graph-toolbar">
       <div className="graph-toolbar-group">
@@ -74,6 +76,17 @@ export function GraphToolbar({ mode, depth, localDisabled, selectionCount, showC
           title="Show citations"
         >
           @
+        </button>
+      )}
+      {onShowCardboxLinksChange && (
+        <button
+          aria-pressed={showCardboxLinks}
+          className={`graph-toolbar-btn ${showCardboxLinks ? "active" : ""}`}
+          onClick={() => onShowCardboxLinksChange(!showCardboxLinks)}
+          aria-label="Show cardbox links"
+          title="Show cardbox links"
+        >
+          &#x26D3;
         </button>
       )}
       {selectionCount != null && selectionCount > 0 && (

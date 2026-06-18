@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum EdgeKind {
     Wikilink,
     Citation,
+    Cardbox,
 }
 
 impl EdgeKind {
@@ -12,6 +13,7 @@ impl EdgeKind {
         match self {
             EdgeKind::Wikilink => "wikilink",
             EdgeKind::Citation => "citation",
+            EdgeKind::Cardbox => "cardbox",
         }
     }
 }
@@ -20,6 +22,7 @@ impl From<&str> for EdgeKind {
     fn from(s: &str) -> Self {
         match s {
             "citation" => EdgeKind::Citation,
+            "cardbox" => EdgeKind::Cardbox,
             // Unknown kinds degrade to wikilink, mirroring the edges table's
             // `edge_kind TEXT NOT NULL DEFAULT 'wikilink'` semantics.
             _ => EdgeKind::Wikilink,
@@ -245,9 +248,12 @@ mod tests {
     fn edge_kind_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&EdgeKind::Wikilink).unwrap(), "\"wikilink\"");
         assert_eq!(serde_json::to_string(&EdgeKind::Citation).unwrap(), "\"citation\"");
+        assert_eq!(serde_json::to_string(&EdgeKind::Cardbox).unwrap(), "\"cardbox\"");
         assert_eq!(EdgeKind::Wikilink.as_str(), "wikilink");
         assert_eq!(EdgeKind::Citation.as_str(), "citation");
+        assert_eq!(EdgeKind::Cardbox.as_str(), "cardbox");
         assert_eq!(serde_json::from_str::<EdgeKind>("\"citation\"").unwrap(), EdgeKind::Citation);
+        assert_eq!(serde_json::from_str::<EdgeKind>("\"cardbox\"").unwrap(), EdgeKind::Cardbox);
     }
 
     #[test]
@@ -256,6 +262,32 @@ mod tests {
         assert_eq!(EdgeKind::from("wikilink"), EdgeKind::Wikilink);
         // Unknown kinds degrade to wikilink, mirroring the DB column default.
         assert_eq!(EdgeKind::from("garbage"), EdgeKind::Wikilink);
+    }
+
+    #[test]
+    fn edge_kind_cardbox_round_trips() {
+        // Serialize
+        let json_str = serde_json::to_string(&EdgeKind::Cardbox).unwrap();
+        assert_eq!(json_str, "\"cardbox\"");
+        // as_str
+        assert_eq!(EdgeKind::Cardbox.as_str(), "cardbox");
+        // Deserialize
+        let back: EdgeKind = serde_json::from_str("\"cardbox\"").unwrap();
+        assert_eq!(back, EdgeKind::Cardbox);
+    }
+
+    #[test]
+    fn edge_kind_from_str_cardbox() {
+        assert_eq!(EdgeKind::from("cardbox"), EdgeKind::Cardbox);
+        // Confirm unknown strings still degrade to Wikilink, not Cardbox
+        assert_eq!(EdgeKind::from("unknown"), EdgeKind::Wikilink);
+    }
+
+    #[test]
+    fn edge_kind_ord_wikilink_lt_citation_lt_cardbox() {
+        assert!(EdgeKind::Wikilink < EdgeKind::Citation);
+        assert!(EdgeKind::Citation < EdgeKind::Cardbox);
+        assert!(EdgeKind::Wikilink < EdgeKind::Cardbox);
     }
 
     #[test]

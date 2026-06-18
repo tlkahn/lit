@@ -735,7 +735,7 @@ export interface GraphNode {
   materialization: Materialization;
 }
 
-export type EdgeKind = "wikilink" | "citation";
+export type EdgeKind = "wikilink" | "citation" | "cardbox";
 
 export interface SubgraphResult {
   nodes: GraphNode[];
@@ -805,21 +805,24 @@ export async function getGraphSubgraph(
   depth: number,
   directed?: boolean,
   includeCitations?: boolean,
+  includeCardbox?: boolean,
 ): Promise<SubgraphResult> {
   return invoke<SubgraphResult>("get_graph_subgraph", {
     seeds,
     depth,
     directed: directed ?? null,
     includeCitations: includeCitations ?? null,
+    includeCardbox: includeCardbox ?? null,
   });
 }
 
-export async function getFullSubgraph(includeCitations?: boolean): Promise<SubgraphResult> {
+export async function getFullSubgraph(includeCitations?: boolean, includeCardbox?: boolean): Promise<SubgraphResult> {
   return invoke<SubgraphResult>("get_graph_subgraph", {
     seeds: [],
     depth: 0,
     directed: null,
     includeCitations: includeCitations ?? null,
+    includeCardbox: includeCardbox ?? null,
   });
 }
 

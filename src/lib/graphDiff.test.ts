@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import Graph from "graphology";
 import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
 import { computeDiff, applyDiff } from "./graphDiff";
-import { SHADOW_COLOR, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, NODE_SIZE, SHADOW_NODE_SIZE_FACTOR } from "./graphLayout";
+import { SHADOW_COLOR, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, CARDBOX_EDGE_SIZE, CARDBOX_EDGE_COLOR, NODE_SIZE, SHADOW_NODE_SIZE_FACTOR } from "./graphLayout";
 
 /** Helper to create a materialized GraphNode for test fixtures */
 function n(id: string, title: string): GraphNode {
@@ -305,6 +305,42 @@ describe("computeDiff EdgeKind support", () => {
   });
 });
 
+describe("computeDiff cardbox EdgeKind support", () => {
+  it("treats cardbox and wikilink edges between same pair as distinct", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A" });
+    graph.addNode("b.md", { label: "B" });
+    graph.mergeUndirectedEdge("a.md", "b.md", { cardbox: false });
+
+    const subgraph: SubgraphResult = {
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [
+        ["a.md", "b.md", "wikilink"],
+        ["a.md", "b.md", "cardbox"],
+      ],
+    };
+
+    const diff = computeDiff(graph, subgraph);
+    expect(diff.addedEdges).toEqual([["a.md", "b.md", "cardbox"]]);
+    expect(diff.removedEdges).toEqual([]);
+  });
+
+  it("detects cardbox edge kind from graph attributes", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A" });
+    graph.addNode("b.md", { label: "B" });
+    graph.mergeUndirectedEdge("a.md", "b.md", { cardbox: true });
+
+    const subgraph: SubgraphResult = {
+      nodes: [n("a.md", "A"), n("b.md", "B")],
+      edges: [],
+    };
+
+    const diff = computeDiff(graph, subgraph);
+    expect(diff.removedEdges).toEqual([["a.md", "b.md", "cardbox"]]);
+  });
+});
+
 describe("applyDiff materialization and EdgeKind styling", () => {
   it("uses shadow type for shadow nodes", () => {
     const graph = new Graph();
@@ -366,5 +402,27 @@ describe("applyDiff materialization and EdgeKind styling", () => {
     expect(graph.getEdgeAttribute(edge, "citation")).toBe(true);
     expect(graph.getEdgeAttribute(edge, "size")).toBe(CITATION_EDGE_SIZE);
     expect(graph.getEdgeAttribute(edge, "color")).toBe(CITATION_EDGE_COLOR);
+  });
+
+  it("styles cardbox edges with distinct color and size", () => {
+    const graph = new Graph();
+    graph.addNode("a.md", { label: "A", color: "#0969da", type: "filled", size: 10, x: 50, y: 50 });
+    graph.addNode("b.md", { label: "B", color: "#0969da", type: "filled", size: 8, x: 60, y: 60 });
+
+    const diff = {
+      addedNodes: [],
+      removedNodes: [],
+      updatedNodes: [],
+      addedEdges: [["a.md", "b.md", "cardbox"]] as [string, string, EdgeKind][],
+      removedEdges: [] as [string, string, EdgeKind][],
+      isMajorChange: false,
+    };
+
+    applyDiff(graph, diff, "#0969da");
+
+    const edge = graph.undirectedEdge("a.md", "b.md")!;
+    expect(graph.getEdgeAttribute(edge, "cardbox")).toBe(true);
+    expect(graph.getEdgeAttribute(edge, "size")).toBe(CARDBOX_EDGE_SIZE);
+    expect(graph.getEdgeAttribute(edge, "color")).toBe(CARDBOX_EDGE_COLOR);
   });
 });
