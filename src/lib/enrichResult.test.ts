@@ -197,7 +197,7 @@ describe("dispatchEnrichResult", () => {
     expect(show).not.toHaveBeenCalled();
   });
 
-  it("calls show with 'error' variant for 'miss' kind", () => {
+  it("calls show without variant for 'miss' kind", () => {
     const setCandidates = vi.fn();
     const show = vi.fn();
     const classified = {
@@ -208,7 +208,7 @@ describe("dispatchEnrichResult", () => {
 
     dispatchEnrichResult(classified, setCandidates, show);
 
-    expect(show).toHaveBeenCalledWith(classified.message, "error");
+    expect(show).toHaveBeenCalledWith(classified.message);
     expect(setCandidates).not.toHaveBeenCalled();
   });
 

@@ -78,7 +78,7 @@ export function classifyEnrichResult(
  * Dispatch a classified enrich result to the appropriate UI handler.
  *
  * - candidates -> open the candidate picker
- * - miss -> show error toast
+ * - miss -> show informational toast
  * - success -> show success toast
  */
 export function dispatchEnrichResult(
@@ -91,7 +91,7 @@ export function dispatchEnrichResult(
       setEnrichCandidates(classified);
       return;
     case "miss":
-      show(classified.message, "error");
+      show(classified.message);
       return;
     case "success":
       show(classified.message);
