@@ -5,7 +5,7 @@ const TITLE_MATCH_THRESHOLD: f64 = 0.85;
 /// Returns true if the character is punctuation (ASCII or Unicode general
 /// category P). We avoid adding a dependency by checking ASCII punctuation
 /// plus common Unicode punctuation blocks.
-fn is_punctuation(c: char) -> bool {
+pub(crate) fn is_punctuation(c: char) -> bool {
     if c.is_ascii_punctuation() {
         return true;
     }

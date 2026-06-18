@@ -23,7 +23,7 @@ import { useGraphRenderer } from "../hooks/useGraphRenderer";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import type { GraphLike } from "../hooks/graphTypes";
 import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
-import { classifyEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
+import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -151,21 +151,12 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
       if (!workspacePath) return;
       const bibKey = bibKeyFromNodeId(nodeId);
       if (!bibKey) return;
+      show("Fetching details…", "progress", 30000);
       try {
         const result = await enrichBibEntry(bibKey, workspacePath);
-        const title = result.entry.title;
+        const title = result.entry.title || bibKey;
         const classified = classifyEnrichResult(result, bibKey, title);
-        switch (classified.kind) {
-          case "candidates":
-            setEnrichCandidates(classified);
-            return;
-          case "miss":
-            show(classified.message, "error");
-            return;
-          case "success":
-            show(classified.message);
-            return;
-        }
+        dispatchEnrichResult(classified, setEnrichCandidates, show);
       } catch (err) {
         show(
           err instanceof Error ? err.message : String(err),
@@ -193,17 +184,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
       try {
         const result = await applyEnrichmentCandidate(bibKey, candidate, workspacePath);
         const classified = classifyEnrichResult(result, bibKey, title);
-        switch (classified.kind) {
-          case "candidates":
-            setEnrichCandidates(classified);
-            return;
-          case "miss":
-            show(classified.message, "error");
-            return;
-          case "success":
-            show(classified.message);
-            return;
-        }
+        dispatchEnrichResult(classified, setEnrichCandidates, show);
       } catch (err) {
         show(err instanceof Error ? err.message : String(err), "error");
       }

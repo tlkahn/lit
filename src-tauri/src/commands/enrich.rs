@@ -20,44 +20,31 @@ use crate::bib::semantic_scholar::{
 };
 use crate::bib::types::BibEntry;
 use crate::commands::bib_import::{fetch_crossref_csl_item, HTTP_CLIENT};
+use crate::recognize::resolve::title_match::is_punctuation;
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
 
 const MAX_REFERENCES: usize = 30;
 
 /// Normalize a string for similarity comparison: lowercase, replace punctuation
-/// with spaces (using the same heuristic as `title_match::normalize_title`),
+/// with spaces (via [`is_punctuation`](crate::recognize::resolve::title_match::is_punctuation)),
 /// split into words. Returns an owned `Vec<String>` preserving word order.
 fn normalize_words(s: &str) -> Vec<String> {
     s.to_lowercase()
         .chars()
-        .map(|c| {
-            if c.is_ascii_punctuation()
-                || (!c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace())
-            {
-                ' '
-            } else {
-                c
-            }
-        })
+        .map(|c| if is_punctuation(c) { ' ' } else { c })
         .collect::<String>()
         .split_whitespace()
         .map(String::from)
         .collect()
 }
 
-/// Normalize a string into a deduplicated word set for Jaccard similarity.
-fn normalize_for_similarity(s: &str) -> HashSet<String> {
-    normalize_words(s).into_iter().collect()
-}
-
 /// Compute the ratio of the longest common subsequence (LCS) of words to the
-/// longer of the two word sequences. Returns a value in `[0.0, 1.0]`.
+/// longer of the two word sequences. Takes pre-normalized word slices.
+/// Returns a value in `[0.0, 1.0]`.
 ///
-/// Two empty strings yield 1.0; one empty and one non-empty yield 0.0.
-fn word_lcs_ratio(a: &str, b: &str) -> f64 {
-    let words_a = normalize_words(a);
-    let words_b = normalize_words(b);
+/// Two empty slices yield 1.0; one empty and one non-empty yield 0.0.
+fn word_lcs_ratio(words_a: &[String], words_b: &[String]) -> f64 {
     let len_a = words_a.len();
     let len_b = words_b.len();
 
@@ -92,8 +79,11 @@ fn word_lcs_ratio(a: &str, b: &str) -> f64 {
 /// Returns a value in `[0.0, 1.0]`. Two empty strings yield 1.0;
 /// one empty and one non-empty yield 0.0.
 pub fn title_similarity(a: &str, b: &str) -> f64 {
-    let set_a = normalize_for_similarity(a);
-    let set_b = normalize_for_similarity(b);
+    let words_a = normalize_words(a);
+    let words_b = normalize_words(b);
+
+    let set_a: HashSet<&str> = words_a.iter().map(|w| w.as_str()).collect();
+    let set_b: HashSet<&str> = words_b.iter().map(|w| w.as_str()).collect();
 
     let jaccard = if set_a.is_empty() && set_b.is_empty() {
         1.0
@@ -105,7 +95,7 @@ pub fn title_similarity(a: &str, b: &str) -> f64 {
         intersection as f64 / union as f64
     };
 
-    let lcs = word_lcs_ratio(a, b);
+    let lcs = word_lcs_ratio(&words_a, &words_b);
 
     0.5 * jaccard + 0.5 * lcs
 }
@@ -763,7 +753,12 @@ pub async fn enrich_bib_entry(
 
     let result = enrich_entry(&bib_key, &gi, &app_handle).await?;
 
-    crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+    if !result.fields_added.is_empty()
+        || result.references_appended > 0
+        || result.shadow_nodes_created > 0
+    {
+        crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
+    }
 
     Ok(result)
 }

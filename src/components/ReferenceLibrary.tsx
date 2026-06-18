@@ -33,7 +33,7 @@ import {
   type FileEvent,
   type PaperSearchResult,
 } from "../lib/ipc";
-import { classifyEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
+import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
 import { localeFilter } from "../lib/localeSearch";
@@ -501,17 +501,7 @@ export function ReferenceLibrary() {
       try {
         const result = await ipcFn();
         const classified = classifyEnrichResult(result, bibKey, title);
-        switch (classified.kind) {
-          case "candidates":
-            setEnrichCandidates(classified);
-            return;
-          case "miss":
-            show(classified.message, "error");
-            return;
-          case "success":
-            show(classified.message);
-            return;
-        }
+        dispatchEnrichResult(classified, setEnrichCandidates, show);
       } catch (err) {
         show(
           err instanceof Error ? err.message : String(err),

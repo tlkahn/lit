@@ -2365,7 +2365,7 @@ describe("GraphView", () => {
         case "read_page":
           return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "## Heading\ncontent", raw_yaml: "" };
         case "enrich_bib_entry":
-          return { entry: {}, fields_added: [], references_found: 0, references_appended: 0, shadow_nodes_created: 0 };
+          return { entry: { key: "smith2024", title: "Test Paper" }, fields_added: [], references_found: 0, references_appended: 0, shadow_nodes_created: 0, candidates: [], providers_searched: [], providers_failed: [] };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -2406,7 +2406,7 @@ describe("GraphView", () => {
         case "read_page":
           return { meta: { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" }, body: "content", raw_yaml: "" };
         case "enrich_bib_entry":
-          return { entry: {}, fields_added: ["abstract", "doi"], references_found: 10, references_appended: 10, shadow_nodes_created: 3 };
+          return { entry: { key: "smith2024", title: "Test Paper" }, fields_added: ["abstract", "doi"], references_found: 10, references_appended: 10, shadow_nodes_created: 3, candidates: [], providers_searched: [], providers_failed: [] };
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }

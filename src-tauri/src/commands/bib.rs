@@ -269,7 +269,14 @@ pub async fn materialize_citation(
     //    Runs AFTER existence guards so a duplicate-materialize fast-fails
     //    without network I/O or bib_references churn.
     match crate::commands::enrich::enrich_entry(&bib_key, &gi, &app_handle).await {
-        Ok(_enrich_result) => {
+        Ok(enrich_result) => {
+            if !enrich_result.candidates.is_empty() {
+                tracing::info!(
+                    "Enrichment for '{}' returned {} candidates (below auto-merge threshold); enrich manually via the UI",
+                    bib_key,
+                    enrich_result.candidates.len(),
+                );
+            }
             crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
         }
         Err(e) => {
