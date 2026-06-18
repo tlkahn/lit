@@ -488,10 +488,19 @@ export default function CardboxView() {
       }
     },
     onSetColor: (cardUuid, color) => {
-      if (color) {
-        setCardColor(cardUuid, color);
+      if (selectedUuids.has(cardUuid) && selectedCount > 1) {
+        const uuids = [...selectedUuids];
+        if (color) {
+          batchSetColor(uuids, color);
+        } else {
+          batchClearColor(uuids);
+        }
       } else {
-        clearCardColor(cardUuid);
+        if (color) {
+          setCardColor(cardUuid, color);
+        } else {
+          clearCardColor(cardUuid);
+        }
       }
       debouncedSave();
     },
