@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, SearchFilter, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 23;
+pub const CURRENT_SCHEMA_VERSION: i64 = 24;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -413,6 +413,7 @@ impl Store {
             );
             self.conn.execute_batch(
                 "DROP TABLE IF EXISTS notes_fts;
+                 DROP TABLE IF EXISTS titles_fts;
                  DROP TABLE IF EXISTS bib_references;
                  DROP TABLE IF EXISTS bib_source_files;
                  DROP TABLE IF EXISTS bib_items;
@@ -830,6 +831,21 @@ impl Store {
             )?;
         }
 
+        if version < 24 {
+            info!(from = version, to = 24, "migrating schema: adding titles_fts");
+            self.conn.execute_batch(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS titles_fts USING fts5(
+                     title, id_text, aliases_text, node_id UNINDEXED,
+                     tokenize = 'trigram case_sensitive 0'
+                 );
+                 INSERT INTO titles_fts(node_id, title, id_text, aliases_text)
+                     SELECT n.id, COALESCE(n.title, ''), n.id,
+                            COALESCE((SELECT group_concat(a.alias, ' ') FROM aliases a WHERE a.node_id = n.id), '')
+                     FROM nodes n WHERE n.is_stub = 0 AND n.materialization = 'materialized';
+                 UPDATE meta SET value = '24' WHERE key = 'schema_version';"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -904,6 +920,13 @@ impl Store {
                     rusqlite::params![node.id, node.title, b, tags_text],
                 )?;
             }
+
+            self.conn.execute("DELETE FROM titles_fts WHERE node_id = ?1", [&node.id])?;
+            let aliases_text = aliases.join(" ");
+            self.conn.execute(
+                "INSERT INTO titles_fts(node_id, title, id_text, aliases_text) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![node.id, node.title, node.id, aliases_text],
+            )?;
 
             Ok(())
         })
@@ -1033,6 +1056,7 @@ impl Store {
     pub fn delete_node(&self, id: &str) -> Result<(), GraphError> {
         self.with_savepoint("delete_node", || {
             self.conn.execute("DELETE FROM notes_fts WHERE node_id = ?1", [id])?;
+            self.conn.execute("DELETE FROM titles_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations_fts WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM annotations WHERE node_id = ?1", [id])?;
             self.conn.execute("DELETE FROM nodes WHERE id = ?1", [id])?;
@@ -1520,26 +1544,84 @@ impl Store {
         if query.is_empty() {
             return Ok(vec![]);
         }
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title FROM nodes
-             WHERE (title LIKE '%' || ?1 || '%' COLLATE NOCASE
-                OR id LIKE '%' || ?1 || '%' COLLATE NOCASE)
-               AND is_stub = 0
-               AND materialization = 'materialized'
-             UNION
-             SELECT a.node_id, n.title FROM aliases a
-             JOIN nodes n ON n.id = a.node_id
-             WHERE a.alias LIKE '%' || ?1 || '%' COLLATE NOCASE
-               AND n.is_stub = 0
-               AND n.materialization = 'materialized'
-             LIMIT ?2"
-        )?;
-        let results = stmt
-            .query_map(rusqlite::params![query, limit], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(results)
+
+        let terms: Vec<&str> = query.split_whitespace().collect();
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let (fts_terms, short_terms) = partition_terms(&terms);
+
+        if fts_terms.is_empty() {
+            let mut conditions = Vec::new();
+            let mut params: Vec<rusqlite::types::Value> = Vec::new();
+            let mut idx = 1;
+
+            for term in &terms {
+                let escaped = escape_like_term(term);
+                if escaped.is_empty() {
+                    continue;
+                }
+                let pattern = format!("%{escaped}%");
+                conditions.push(format!(
+                    "(title LIKE ?{idx} ESCAPE '\\' OR id_text LIKE ?{idx} ESCAPE '\\' OR aliases_text LIKE ?{idx} ESCAPE '\\')"
+                ));
+                params.push(rusqlite::types::Value::Text(pattern));
+                idx += 1;
+            }
+
+            if conditions.is_empty() {
+                return Ok(vec![]);
+            }
+
+            let where_clause = conditions.join(" AND ");
+            let sql = format!(
+                "SELECT DISTINCT node_id, title FROM titles_fts WHERE {where_clause} LIMIT ?{idx}"
+            );
+            params.push(rusqlite::types::Value::Integer(limit));
+
+            let mut stmt = self.conn.prepare(&sql)?;
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
+            let results = stmt
+                .query_map(param_refs.as_slice(), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(results)
+        } else {
+            let fts_query = build_fts_query(&fts_terms);
+            let fetch_limit = if short_terms.is_empty() { limit } else { limit * 4 };
+
+            let sql =
+                "SELECT DISTINCT f.node_id, f.title
+                 FROM titles_fts f
+                 WHERE titles_fts MATCH ?1
+                 ORDER BY rank
+                 LIMIT ?2";
+
+            let mut stmt = self.conn.prepare(sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params![fts_query, fetch_limit], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            if short_terms.is_empty() {
+                Ok(rows)
+            } else {
+                let lowered_short: Vec<String> = short_terms.iter().map(|t| t.to_lowercase()).collect();
+                let filtered: Vec<(String, String)> = rows
+                    .into_iter()
+                    .filter(|(id, title)| {
+                        let haystack = format!("{} {}", id, title).to_lowercase();
+                        lowered_short.iter().all(|s| haystack.contains(s.as_str()))
+                    })
+                    .take(limit as usize)
+                    .collect();
+                Ok(filtered)
+            }
+        }
     }
 
     // --- Content search (FTS5) ---
@@ -2269,6 +2351,7 @@ mod tests {
         assert!(tables.contains(&"bib_items".to_string()));
         assert!(tables.contains(&"bib_source_files".to_string()));
         assert!(tables.contains(&"notes_fts".to_string()));
+        assert!(tables.contains(&"titles_fts".to_string()));
     }
 
     // --- with_savepoint ---
@@ -2415,7 +2498,7 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
-        for table in &["annotations", "annotations_fts", "notes_fts", "node_positions", "bib_items", "bib_source_files"] {
+        for table in &["annotations", "annotations_fts", "notes_fts", "titles_fts", "node_positions", "bib_items", "bib_source_files"] {
             let count: i64 = store.conn.query_row(
                 &format!("SELECT COUNT(*) FROM {}", table), [], |r| r.get(0),
             ).unwrap();
@@ -4038,6 +4121,79 @@ mod tests {
         let results = store.search_titles("Smith", 10).unwrap();
         assert_eq!(results.len(), 1, "only the materialized node should appear");
         assert_eq!(results[0].0, "real-note.md");
+    }
+
+    #[test]
+    fn titles_fts_table_exists() {
+        let store = Store::open_memory().unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='titles_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn search_titles_short_query_like_fallback() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("go-lang.md", "Go Programming", &[], json!({}));
+        store.upsert_node(&node, 1, None).unwrap();
+        let results = store.search_titles("Go", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "go-lang.md");
+    }
+
+    #[test]
+    fn search_titles_mixed_long_short_terms() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("go-programming.md", "Go Programming Language", &[], json!({}));
+        store.upsert_node(&node, 1, None).unwrap();
+        let node2 = make_node("rust-programming.md", "Rust Programming", &[], json!({}));
+        store.upsert_node(&node2, 1, None).unwrap();
+        let results = store.search_titles("Go Programming", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "go-programming.md");
+    }
+
+    #[test]
+    fn search_titles_upsert_updates_fts() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Old Title", &[], json!({}));
+        store.upsert_node(&node, 1, None).unwrap();
+        assert_eq!(store.search_titles("Old Title", 10).unwrap().len(), 1);
+
+        let updated = make_node("a.md", "New Title", &[], json!({}));
+        store.upsert_node(&updated, 2, None).unwrap();
+        assert!(store.search_titles("Old Title", 10).unwrap().is_empty());
+        assert_eq!(store.search_titles("New Title", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn search_titles_delete_removes_fts() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Deletable Note", &[], json!({}));
+        store.upsert_node(&node, 1, None).unwrap();
+        assert_eq!(store.search_titles("Deletable", 10).unwrap().len(), 1);
+
+        store.delete_node("a.md").unwrap();
+        assert!(store.search_titles("Deletable", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_titles_alias_update_reflected_in_fts() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "Original", &[], json!({"aliases": ["OldAlias"]}));
+        store.upsert_node(&node, 1, None).unwrap();
+        assert_eq!(store.search_titles("OldAlias", 10).unwrap().len(), 1);
+
+        let updated = make_node("a.md", "Original", &[], json!({"aliases": ["NewAlias"]}));
+        store.upsert_node(&updated, 2, None).unwrap();
+        assert!(store.search_titles("OldAlias", 10).unwrap().is_empty());
+        assert_eq!(store.search_titles("NewAlias", 10).unwrap().len(), 1);
     }
 
     #[test]
