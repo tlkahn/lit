@@ -391,6 +391,19 @@ export function SearchPanel() {
     return () => { cancelled = true; unlisten?.(); };
   }, []);
 
+  // Re-run search when graphReady transitions from false → true
+  // (e.g. after "Rebuild Graph Index" completes)
+  const prevGraphReadyRef = useRef(graphReady);
+  useEffect(() => {
+    if (graphReady && !prevGraphReadyRef.current) {
+      const { query: q } = useSearchPanelStore.getState();
+      if (q.trim()) {
+        useSearchPanelStore.getState().executeSearch();
+      }
+    }
+    prevGraphReadyRef.current = graphReady;
+  }, [graphReady]);
+
   const virtualizer = useVirtualizer({
     count: results.length,
     getScrollElement: () => scrollRef.current,

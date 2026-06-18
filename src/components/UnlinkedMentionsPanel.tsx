@@ -76,10 +76,8 @@ export function UnlinkedMentionsPanel({ pageId, onCountChange, contentHeight, ac
   }, [active, fetchMentions]);
 
   useEffect(() => {
-    if (!loading) {
-      onCountChange?.(entries.length);
-    }
-  }, [entries, loading, onCountChange]);
+    if (graphReady) onCountChange?.(entries.length);
+  }, [entries, graphReady, onCountChange]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
