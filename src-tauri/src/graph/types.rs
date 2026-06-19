@@ -4,14 +4,18 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum EdgeKind {
     Wikilink,
+    Mdlink,
     Citation,
+    Annotation,
 }
 
 impl EdgeKind {
     pub fn as_str(self) -> &'static str {
         match self {
             EdgeKind::Wikilink => "wikilink",
+            EdgeKind::Mdlink => "mdlink",
             EdgeKind::Citation => "citation",
+            EdgeKind::Annotation => "annotation",
         }
     }
 }
@@ -19,9 +23,9 @@ impl EdgeKind {
 impl From<&str> for EdgeKind {
     fn from(s: &str) -> Self {
         match s {
+            "mdlink" => EdgeKind::Mdlink,
             "citation" => EdgeKind::Citation,
-            // Unknown kinds degrade to wikilink, mirroring the edges table's
-            // `edge_kind TEXT NOT NULL DEFAULT 'wikilink'` semantics.
+            "annotation" => EdgeKind::Annotation,
             _ => EdgeKind::Wikilink,
         }
     }
@@ -244,17 +248,24 @@ mod tests {
     #[test]
     fn edge_kind_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&EdgeKind::Wikilink).unwrap(), "\"wikilink\"");
+        assert_eq!(serde_json::to_string(&EdgeKind::Mdlink).unwrap(), "\"mdlink\"");
         assert_eq!(serde_json::to_string(&EdgeKind::Citation).unwrap(), "\"citation\"");
+        assert_eq!(serde_json::to_string(&EdgeKind::Annotation).unwrap(), "\"annotation\"");
         assert_eq!(EdgeKind::Wikilink.as_str(), "wikilink");
+        assert_eq!(EdgeKind::Mdlink.as_str(), "mdlink");
         assert_eq!(EdgeKind::Citation.as_str(), "citation");
+        assert_eq!(EdgeKind::Annotation.as_str(), "annotation");
+        assert_eq!(serde_json::from_str::<EdgeKind>("\"mdlink\"").unwrap(), EdgeKind::Mdlink);
         assert_eq!(serde_json::from_str::<EdgeKind>("\"citation\"").unwrap(), EdgeKind::Citation);
+        assert_eq!(serde_json::from_str::<EdgeKind>("\"annotation\"").unwrap(), EdgeKind::Annotation);
     }
 
     #[test]
     fn edge_kind_from_str() {
-        assert_eq!(EdgeKind::from("citation"), EdgeKind::Citation);
         assert_eq!(EdgeKind::from("wikilink"), EdgeKind::Wikilink);
-        // Unknown kinds degrade to wikilink, mirroring the DB column default.
+        assert_eq!(EdgeKind::from("mdlink"), EdgeKind::Mdlink);
+        assert_eq!(EdgeKind::from("citation"), EdgeKind::Citation);
+        assert_eq!(EdgeKind::from("annotation"), EdgeKind::Annotation);
         assert_eq!(EdgeKind::from("garbage"), EdgeKind::Wikilink);
     }
 

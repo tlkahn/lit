@@ -86,12 +86,12 @@ export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColo
     if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
     if (kind === "citation") {
       graph.mergeUndirectedEdge(source, target, {
+        kind: "citation",
         size: CITATION_EDGE_SIZE,
         color: CITATION_EDGE_COLOR,
-        citation: true,
       });
     } else {
-      graph.mergeUndirectedEdge(source, target, { size: 0.5 });
+      graph.mergeUndirectedEdge(source, target, { kind, size: 0.5 });
     }
   }
 }
