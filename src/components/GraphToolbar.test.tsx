@@ -145,6 +145,35 @@ describe("GraphToolbar", () => {
     });
   });
 
+  describe("show cardbox toggle", () => {
+    it("renders Show cardbox edges button when onShowCardboxChange provided", () => {
+      render(<GraphToolbar {...defaults} onShowCardboxChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Show cardbox edges" })).toBeTruthy();
+    });
+
+    it("Show cardbox edges button not rendered when onShowCardboxChange is undefined", () => {
+      render(<GraphToolbar {...defaults} />);
+      expect(screen.queryByRole("button", { name: "Show cardbox edges" })).toBeNull();
+    });
+
+    it("Show cardbox edges button has aria-pressed=true when showCardbox=true", () => {
+      render(<GraphToolbar {...defaults} showCardbox={true} onShowCardboxChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Show cardbox edges" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("Show cardbox edges button has aria-pressed=false when showCardbox=false", () => {
+      render(<GraphToolbar {...defaults} showCardbox={false} onShowCardboxChange={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Show cardbox edges" }).getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("clicking Show cardbox edges toggles via onShowCardboxChange", async () => {
+      const onShowCardboxChange = vi.fn();
+      render(<GraphToolbar {...defaults} showCardbox={false} onShowCardboxChange={onShowCardboxChange} />);
+      await userEvent.click(screen.getByRole("button", { name: "Show cardbox edges" }));
+      expect(onShowCardboxChange).toHaveBeenCalledWith(true);
+    });
+  });
+
   describe("selection badge", () => {
     it("renders badge with selectionCount=3 showing '3'", () => {
       render(<GraphToolbar {...defaults} selectionCount={3} />);

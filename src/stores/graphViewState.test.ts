@@ -31,4 +31,9 @@ describe("useGraphViewState", () => {
     useGraphViewState.getState().setEdgeFilter("citations", true);
     expect(useGraphViewState.getState().edgeFilters.citations).toBe(true);
   });
+
+  it("setEdgeFilter updates cardbox filter", () => {
+    useGraphViewState.getState().setEdgeFilter("cardbox", true);
+    expect(useGraphViewState.getState().edgeFilters.cardbox).toBe(true);
+  });
 });

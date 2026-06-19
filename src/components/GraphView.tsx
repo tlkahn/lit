@@ -235,11 +235,13 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         localDisabled={!activePageId}
         selectionCount={selectionCount}
         showCitations={edgeFilters.citations}
+        showCardbox={edgeFilters.cardbox}
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={resetZoom}
         onSearch={() => setSearchOpen(true)}
         onShowCitationsChange={(show) => setEdgeFilter("citations", show)}
+        onShowCardboxChange={(show) => setEdgeFilter("cardbox", show)}
       />
       <GraphSearch
         visible={searchOpen}
