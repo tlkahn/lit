@@ -140,6 +140,41 @@ impl KnowledgeGraph {
         Ok(Self { raw_graph: graph, id_to_index })
     }
 
+    pub fn add_cardbox_edge(&mut self, source_id: &str, target_id: &str) {
+        if let (Some(&s_idx), Some(&t_idx)) =
+            (self.id_to_index.get(source_id), self.id_to_index.get(target_id))
+        {
+            self.raw_graph.add_edge(
+                s_idx,
+                t_idx,
+                EdgeMeta {
+                    context: String::new(),
+                    source_line: 0,
+                    raw_target: String::new(),
+                    kind: EdgeKind::Cardbox,
+                },
+            );
+        }
+    }
+
+    pub fn remove_cardbox_edges_between(&mut self, a_id: &str, b_id: &str) {
+        let (&a_idx, &b_idx) = match (self.id_to_index.get(a_id), self.id_to_index.get(b_id)) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return,
+        };
+        let mut to_remove: Vec<petgraph::graph::EdgeIndex> = self
+            .raw_graph
+            .edges_connecting(a_idx, b_idx)
+            .chain(self.raw_graph.edges_connecting(b_idx, a_idx))
+            .filter(|e| e.weight().kind == EdgeKind::Cardbox)
+            .map(|e| e.id())
+            .collect();
+        to_remove.sort_unstable();
+        for idx in to_remove.into_iter().rev() {
+            self.raw_graph.remove_edge(idx);
+        }
+    }
+
     /// Returns neighbor node indices reachable via wikilink edges only.
     fn wikilink_neighbors_directed(
         &self,
@@ -2141,5 +2176,71 @@ mod tests {
             "path through shadow node should not exist, got: {:?}",
             result
         );
+    }
+
+    // --- incremental cardbox edge mutations ---
+
+    #[test]
+    fn add_cardbox_edge_inserts_edge() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        let mut kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        assert_eq!(kg.raw_graph.edge_count(), 0);
+        kg.add_cardbox_edge("A", "B");
+        assert_eq!(kg.raw_graph.edge_count(), 1);
+        let edge = kg.raw_graph.edge_indices().next().unwrap();
+        assert_eq!(kg.raw_graph[edge].kind, EdgeKind::Cardbox);
+    }
+
+    #[test]
+    fn add_cardbox_edge_noop_for_missing_node() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        let mut kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        kg.add_cardbox_edge("A", "MISSING");
+        assert_eq!(kg.raw_graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn remove_cardbox_edges_between_removes_both_directions() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.insert_edge("A", "B", "", "", 0, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("B", "A", "", "", 0, EdgeKind::Cardbox).unwrap();
+        let mut kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        assert_eq!(kg.raw_graph.edge_count(), 2);
+        kg.remove_cardbox_edges_between("A", "B");
+        assert_eq!(kg.raw_graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn remove_cardbox_edges_preserves_non_cardbox() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.insert_edge("A", "B", "", "", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "B", "", "", 0, EdgeKind::Cardbox).unwrap();
+        let mut kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        assert_eq!(kg.raw_graph.edge_count(), 2);
+        kg.remove_cardbox_edges_between("A", "B");
+        assert_eq!(kg.raw_graph.edge_count(), 1);
+        let remaining = kg.raw_graph.edge_indices().next().unwrap();
+        assert_eq!(kg.raw_graph[remaining].kind, EdgeKind::Wikilink);
+    }
+
+    #[test]
+    fn remove_cardbox_edges_noop_for_missing_node() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        let mut kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        kg.remove_cardbox_edges_between("A", "MISSING");
+        assert_eq!(kg.raw_graph.edge_count(), 0);
     }
 }

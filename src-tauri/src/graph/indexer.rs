@@ -12,6 +12,7 @@ use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult
 use super::citations::extract_citations_blanked;
 use super::links::{blank_code, extract_wikilinks_blanked, WikiLink};
 use super::resolve::StemLookup;
+use super::cardbox_layout::load_layout_links;
 use super::store::Store;
 use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
@@ -677,6 +678,8 @@ impl GraphIndex {
             .map(|(source, _target, raw_target)| (source, raw_target))
             .collect();
         let reverse_stems = ReverseStemIndex::build_from_edges(&edges);
+        let links = load_layout_links(&workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let knowledge = KnowledgeGraph::from_store(&store)?;
         let positions = store.load_positions().unwrap_or_default();
         info!("loaded graph from store (skipped disk diff)");
@@ -707,6 +710,8 @@ impl GraphIndex {
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let links = load_layout_links(&self.workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -769,6 +774,8 @@ impl GraphIndex {
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, &workspace_root, &bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let links = load_layout_links(&workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
@@ -873,6 +880,8 @@ impl GraphIndex {
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let links = load_layout_links(&self.workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -1268,6 +1277,34 @@ impl GraphIndex {
     /// indexer module cannot reach the private `store` field otherwise.
     pub fn store(&self) -> std::sync::MutexGuard<'_, crate::graph::store::Store> {
         self.store.lock().unwrap()
+    }
+
+    pub fn workspace_root(&self) -> &std::path::Path {
+        &self.workspace_root
+    }
+
+    pub fn add_cardbox_edge(&self, a: &str, b: &str) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let result = super::cardbox_edges::update_cardbox_edge_after_add(&store, a, b)?;
+        if let Some((source, target)) = result {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            knowledge.add_cardbox_edge(&source, &target);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn remove_cardbox_edge(&self, remaining_links: &[[String; 2]], a: &str, b: &str) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let result = super::cardbox_edges::update_cardbox_edge_after_remove(&store, remaining_links, a, b)?;
+        if let Some((a_id, b_id)) = result {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            knowledge.remove_cardbox_edges_between(&a_id, &b_id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn clear_positions(&self) -> Result<(), GraphError> {
