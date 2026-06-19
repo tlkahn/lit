@@ -45,7 +45,7 @@ describe("GraphView", () => {
     vi.clearAllMocks();
     lastSigmaOptions = {};
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
-    useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false });
+    useGraphViewState.setState({ mode: "full", depth: 2, edgeFilters: { citations: false } });
     useStatusMessageStore.setState({ message: null, variant: "success" });
     resetListenMock();
     mockListen();

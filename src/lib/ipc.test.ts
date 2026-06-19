@@ -1390,16 +1390,16 @@ describe("ipc", () => {
     });
   });
 
-  it("getGraphSubgraph passes includeCitations when provided", async () => {
-    await getGraphSubgraph(["a.md"], 1, false, true);
+  it("getGraphSubgraph passes includeCitations when edgeFilters.citations is true", async () => {
+    await getGraphSubgraph(["a.md"], 1, false, { citations: true });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
       seeds: ["a.md"], depth: 1, directed: false, includeCitations: true,
     });
   });
 
-  it("getFullSubgraph passes includeCitations when provided", async () => {
-    await getFullSubgraph(true);
+  it("getFullSubgraph passes includeCitations when edgeFilters.citations is true", async () => {
+    await getFullSubgraph({ citations: true });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_graph_subgraph", {
       seeds: [], depth: 0, directed: null, includeCitations: true,

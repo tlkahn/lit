@@ -4,6 +4,7 @@ import Graph from "graphology";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import * as graphLayout from "../lib/graphLayout";
 import { NODE_NOT_FOUND_PREFIX, type SubgraphResult } from "../lib/ipc";
+import { DEFAULT_EDGE_FILTERS } from "../stores/graphViewState";
 import type { UseGraphDataOptions } from "./useGraphData";
 
 const TWO_NODE_SUBGRAPH: SubgraphResult = {
@@ -53,7 +54,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       expect(result.current.loading).toBe(true);
@@ -73,7 +74,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -97,7 +98,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: "a.md" }),
+        useGraphData({ mode: "full", depth: 1, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -121,7 +122,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -144,7 +145,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -170,7 +171,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "notes/a.md" }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "notes/a.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -198,7 +199,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "notes/new page.md" }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "notes/new page.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -222,7 +223,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -247,7 +248,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -269,7 +270,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -293,7 +294,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -318,7 +319,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -336,7 +337,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -359,7 +360,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -380,7 +381,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -398,7 +399,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -424,7 +425,7 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
@@ -436,7 +437,7 @@ describe("useGraphData", () => {
       expect(graphBefore!.hasNode("a.md")).toBe(true);
       expect(graphBefore!.hasNode("b.md")).toBe(true);
 
-      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
@@ -463,7 +464,7 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       expect(result.current.dataVersion).toBe(0);
@@ -472,7 +473,7 @@ describe("useGraphData", () => {
         expect(result.current.dataVersion).toBe(1);
       });
 
-      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(result.current.dataVersion).toBe(2);
@@ -504,7 +505,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -549,7 +550,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "a.md" }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -590,14 +591,14 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
@@ -645,14 +646,14 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "local", depth: 2, activePageId: "a.md" } as UseGraphDataOptions },
+        { initialProps: { mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      rerender({ mode: "local", depth: 2, activePageId: "b.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "b.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(result.current.graphRef.current!.hasNode("e.md")).toBe(true);
@@ -689,7 +690,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -723,7 +724,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -763,7 +764,7 @@ describe("useGraphData", () => {
       };
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       // Effect 1 fetch is in-flight
@@ -814,7 +815,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -885,7 +886,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       // Effect 1 rebuild is in-flight
@@ -937,7 +938,7 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: "a.md" } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
@@ -946,7 +947,7 @@ describe("useGraphData", () => {
 
       expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
 
-      rerender({ mode: "full", depth: 1, activePageId: "b.md" });
+      rerender({ mode: "full", depth: 1, activePageId: "b.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(result.current.graphRef.current!.getNodeAttribute("b.md", "type")).toBe("seed");
@@ -961,7 +962,7 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: "a.md" } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
@@ -970,7 +971,7 @@ describe("useGraphData", () => {
 
       expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
 
-      rerender({ mode: "full", depth: 1, activePageId: "a.md" });
+      rerender({ mode: "full", depth: 1, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       expect(result.current.graphRef.current!.getNodeAttribute("a.md", "type")).toBe("seed");
     });
@@ -990,14 +991,14 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "local", depth: 2, activePageId: "a.md" } as UseGraphDataOptions },
+        { initialProps: { mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      rerender({ mode: "local", depth: 2, activePageId: "b.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "b.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -1018,20 +1019,20 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: "a.md" } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
       await waitFor(() => { expect(result.current.loading).toBe(false); });
       recolorSpy.mockClear();
 
       // Switch to local, navigate a.md → b.md
-      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS });
       await waitFor(() => { expect(result.current.loading).toBe(false); });
-      rerender({ mode: "local", depth: 2, activePageId: "b.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "b.md", edgeFilters: DEFAULT_EDGE_FILTERS });
       await waitFor(() => { expect(result.current.loading).toBe(false); });
       recolorSpy.mockClear();
 
       // Return to full mode with activePageId="b.md"
-      rerender({ mode: "full", depth: 1, activePageId: "b.md" });
+      rerender({ mode: "full", depth: 1, activePageId: "b.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       // prev should be "a.md" (last full-mode seed), NOT "b.md" (local tracking)
       await waitFor(() => {
@@ -1044,15 +1045,15 @@ describe("useGraphData", () => {
     });
   });
 
-  // Cycle: showCitations threading
-  describe("showCitations", () => {
-    it("full mode with showCitations=true passes includeCitations to IPC", async () => {
+  // Cycle: edgeFilters threading
+  describe("edgeFilters", () => {
+    it("full mode with citations=true passes includeCitations to IPC", async () => {
       const handler = vi.fn(makeInvokeHandler());
       mockInvoke(handler);
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null, showCitations: true }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: true } }),
       );
 
       await waitFor(() => {
@@ -1067,13 +1068,13 @@ describe("useGraphData", () => {
       });
     });
 
-    it("full mode with showCitations=false (default) passes includeCitations=null", async () => {
+    it("full mode with citations=false (default) passes includeCitations=null", async () => {
       const handler = vi.fn(makeInvokeHandler());
       mockInvoke(handler);
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: false } }),
       );
 
       await waitFor(() => {
@@ -1088,13 +1089,13 @@ describe("useGraphData", () => {
       });
     });
 
-    it("local mode with showCitations=true passes includeCitations to IPC", async () => {
+    it("local mode with citations=true passes includeCitations to IPC", async () => {
       const handler = vi.fn(makeInvokeHandler(LOCAL_SUBGRAPH));
       mockInvoke(handler);
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", showCitations: true }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: { citations: true } }),
       );
 
       await waitFor(() => {
@@ -1109,21 +1110,21 @@ describe("useGraphData", () => {
       });
     });
 
-    it("toggling showCitations triggers rebuild", async () => {
+    it("toggling edgeFilters.citations triggers rebuild", async () => {
       const handler = vi.fn(makeInvokeHandler());
       mockInvoke(handler);
       const useGraphData = await importHook();
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: null, showCitations: false } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: false } } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
         expect(result.current.dataVersion).toBe(1);
       });
 
-      rerender({ mode: "full", depth: 1, activePageId: null, showCitations: true });
+      rerender({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: true } });
 
       await waitFor(() => {
         expect(result.current.dataVersion).toBe(2);
@@ -1139,7 +1140,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result, unmount } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => {
@@ -1167,14 +1168,14 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: null } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS } as UseGraphDataOptions },
       );
 
       // First render starts a fetch
       expect(resolvers).toHaveLength(1);
 
       // Rapidly change mode before first resolves
-      rerender({ mode: "local", depth: 2, activePageId: "a.md" });
+      rerender({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: DEFAULT_EDGE_FILTERS });
 
       await waitFor(() => {
         expect(resolvers).toHaveLength(2);
@@ -1201,7 +1202,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
 
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -1219,7 +1220,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: DEFAULT_EDGE_FILTERS }),
       );
       await waitFor(() => expect(result.current.loading).toBe(false));
 

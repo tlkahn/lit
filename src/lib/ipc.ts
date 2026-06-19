@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { EdgeFilters } from "../stores/graphViewState";
 
 export interface AppInfo {
   name: string;
@@ -804,22 +805,22 @@ export async function getGraphSubgraph(
   seeds: string[],
   depth: number,
   directed?: boolean,
-  includeCitations?: boolean,
+  edgeFilters?: EdgeFilters,
 ): Promise<SubgraphResult> {
   return invoke<SubgraphResult>("get_graph_subgraph", {
     seeds,
     depth,
     directed: directed ?? null,
-    includeCitations: includeCitations ?? null,
+    includeCitations: edgeFilters?.citations ?? null,
   });
 }
 
-export async function getFullSubgraph(includeCitations?: boolean): Promise<SubgraphResult> {
+export async function getFullSubgraph(edgeFilters?: EdgeFilters): Promise<SubgraphResult> {
   return invoke<SubgraphResult>("get_graph_subgraph", {
     seeds: [],
     depth: 0,
     directed: null,
-    includeCitations: includeCitations ?? null,
+    includeCitations: edgeFilters?.citations ?? null,
   });
 }
 

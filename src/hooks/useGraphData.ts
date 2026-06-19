@@ -3,6 +3,7 @@ import Graph from "graphology";
 import { listen } from "@tauri-apps/api/event";
 import { getFullSubgraph, getGraphPositions, getGraphSubgraph, NODE_NOT_FOUND_PREFIX } from "../lib/ipc";
 import type { SubgraphResult } from "../lib/ipc";
+import type { EdgeFilters } from "../stores/graphViewState";
 import { applyPositions, nodeLabelFromPath, populateGraph, recolorSeed, resolveThemeColors } from "../lib/graphLayout";
 import { getQualitySettings, type TierSettings } from "../lib/qualityTiers";
 
@@ -10,7 +11,7 @@ export interface UseGraphDataOptions {
   mode: "full" | "local";
   depth: number;
   activePageId: string | null | undefined;
-  showCitations?: boolean;
+  edgeFilters: EdgeFilters;
 }
 
 export interface UseGraphDataResult {
@@ -31,19 +32,18 @@ async function doRebuild(
   currentActivePageId: string | null | undefined,
   dimColorRef: MutableRefObject<string>,
   generationRef: MutableRefObject<number>,
-  currentShowCitations: boolean = false,
+  edgeFilters: EdgeFilters,
 ): Promise<{ stats: { nodes: number; edges: number }; tierSettings: TierSettings } | null> {
   const myGen = ++generationRef.current;
+
+  const activeFilters = Object.values(edgeFilters).some(Boolean) ? edgeFilters : undefined;
 
   let subgraph: SubgraphResult;
   if (currentMode === "local" && currentActivePageId) {
     const seedId = currentActivePageId;
-    // Local view: the seed may be missing from the index (e.g. just-created page
-    // whose synchronous reindex/watcher hasn't propagated). Fall back to an empty
-    // subgraph and synthesize a seed-only node so the active page always renders.
     let local: SubgraphResult;
     try {
-      local = await getGraphSubgraph([seedId], currentDepth, undefined, currentShowCitations || undefined);
+      local = await getGraphSubgraph([seedId], currentDepth, undefined, activeFilters);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.startsWith(NODE_NOT_FOUND_PREFIX)) {
@@ -60,7 +60,7 @@ async function doRebuild(
     }
     subgraph = local;
   } else {
-    subgraph = await getFullSubgraph(currentShowCitations || undefined);
+    subgraph = await getFullSubgraph(activeFilters);
   }
 
   if (myGen !== generationRef.current) return null;
@@ -97,7 +97,7 @@ const DEFAULT_TIER: TierSettings = {
 };
 
 export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
-  const { mode, depth, activePageId, showCitations = false } = options;
+  const { mode, depth, activePageId, edgeFilters } = options;
 
   const graphRef = useRef<Graph>(new Graph());
   const dimColorRef = useRef<string>("#d1d9e0");
@@ -112,18 +112,18 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
   const modeRef = useRef(mode);
   const depthRef = useRef(depth);
   const activePageIdRef = useRef(activePageId);
-  const showCitationsRef = useRef(showCitations);
+  const edgeFiltersRef = useRef(edgeFilters);
   modeRef.current = mode;
   depthRef.current = depth;
   activePageIdRef.current = activePageId;
-  showCitationsRef.current = showCitations;
+  edgeFiltersRef.current = edgeFilters;
 
   const rebuild = useCallback(async () => {
     try {
       const result = await doRebuild(
         graphRef.current!, modeRef.current, depthRef.current,
         activePageIdRef.current, dimColorRef, generationRef,
-        showCitationsRef.current,
+        edgeFiltersRef.current,
       );
       if (!result) return;
       setTierSettings(result.tierSettings);
@@ -144,7 +144,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
       try {
         setLoading(true);
         setError(null);
-        const result = await doRebuild(graphRef.current!, mode, depth, activePageId, dimColorRef, generationRef, showCitations);
+        const result = await doRebuild(graphRef.current!, mode, depth, activePageId, dimColorRef, generationRef, edgeFilters);
         if (cancelled || !result) return;
         setTierSettings(result.tierSettings);
         setGraphStats(result.stats);
@@ -163,7 +163,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     return () => {
       cancelled = true;
     };
-  }, [mode, depth, effectKey, showCitations]);
+  }, [mode, depth, effectKey, edgeFilters.citations]);
 
   useEffect(() => {
     let cancelled = false;

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useGraphViewState } from "./graphViewState";
+import { useGraphViewState, DEFAULT_EDGE_FILTERS } from "./graphViewState";
 
 describe("useGraphViewState", () => {
   beforeEach(() => {
-    useGraphViewState.setState({ mode: "full", depth: 2, showCitations: false });
+    useGraphViewState.setState({ mode: "full", depth: 2, edgeFilters: DEFAULT_EDGE_FILTERS });
   });
 
   it("defaults to mode=full, depth=2", () => {
@@ -22,13 +22,13 @@ describe("useGraphViewState", () => {
     expect(useGraphViewState.getState().depth).toBe(3);
   });
 
-  it("defaults to showCitations=false", () => {
+  it("defaults to edgeFilters matching DEFAULT_EDGE_FILTERS", () => {
     const state = useGraphViewState.getState();
-    expect(state.showCitations).toBe(false);
+    expect(state.edgeFilters).toEqual(DEFAULT_EDGE_FILTERS);
   });
 
-  it("setShowCitations updates showCitations", () => {
-    useGraphViewState.getState().setShowCitations(true);
-    expect(useGraphViewState.getState().showCitations).toBe(true);
+  it("setEdgeFilter updates a single filter key", () => {
+    useGraphViewState.getState().setEdgeFilter("citations", true);
+    expect(useGraphViewState.getState().edgeFilters.citations).toBe(true);
   });
 });
