@@ -6799,6 +6799,16 @@ mod tests {
         // Second call should return false (already exists)
         let added2 = gi.sync_cardbox_edge_add(&uuid_a, &uuid_b).unwrap();
         assert!(!added2, "should return false when edge already exists");
+
+        // Verify the cardbox edge appears in full_subgraph with include_cardbox=true
+        let sub = gi.full_subgraph(false, true);
+        let has_cardbox_edge = sub.edges.iter().any(|(_, _, kind)| *kind == EdgeKind::Cardbox);
+        assert!(has_cardbox_edge, "full_subgraph(include_cardbox=true) should include the cardbox edge");
+
+        // And NOT with include_cardbox=false
+        let sub_off = gi.full_subgraph(false, false);
+        let has_cardbox_edge_off = sub_off.edges.iter().any(|(_, _, kind)| *kind == EdgeKind::Cardbox);
+        assert!(!has_cardbox_edge_off, "full_subgraph(include_cardbox=false) should NOT include cardbox edges");
     }
 
     #[test]

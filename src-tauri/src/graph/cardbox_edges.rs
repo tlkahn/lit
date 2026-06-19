@@ -67,10 +67,14 @@ pub fn update_cardbox_edge_after_add(
 ) -> Result<bool, GraphError> {
     let (node_a, node_b) = match resolve_cross_doc_pair(store, uuid_a, uuid_b)? {
         Some(pair) => pair,
-        None => return Ok(false),
+        None => {
+            tracing::debug!(uuid_a, uuid_b, "cardbox edge add: UUIDs unresolved or same document");
+            return Ok(false);
+        }
     };
 
     if store.has_cardbox_edge(&node_a, &node_b)? {
+        tracing::debug!(node_a = %node_a, node_b = %node_b, "cardbox edge add: edge already exists");
         return Ok(false);
     }
 
@@ -81,6 +85,7 @@ pub fn update_cardbox_edge_after_add(
         (node_b, node_a)
     };
 
+    tracing::info!(source = %a, target = %b, "inserting cardbox edge");
     store.insert_edge(&a, &b, "", "", 0, EdgeKind::Cardbox)?;
     Ok(true)
 }

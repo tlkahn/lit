@@ -373,6 +373,7 @@ pub fn add_cardbox_link(
         |gi| gi.sync_cardbox_edge_add(&a, &b),
     ).unwrap_or_else(|e| { tracing::warn!(error = %e, "failed to sync cardbox edge after add"); false });
 
+    tracing::info!(uuid_a = %a, uuid_b = %b, edge_added, "add_cardbox_link sync result");
     if edge_added {
         let _ = window.emit("lit:graph-updated", ());
     }
