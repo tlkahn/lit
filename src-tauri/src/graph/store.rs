@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 21;
+pub const CURRENT_SCHEMA_VERSION: i64 = 22;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -551,6 +551,25 @@ impl Store {
             )?;
         }
 
+        if version < 22 {
+            info!(from = version, to = 22, "migrating schema: adding annotations uuid index");
+            let has_annotations: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotations')",
+                [],
+                |r| r.get(0),
+            )?;
+            self.conn.execute_batch("BEGIN;")?;
+            if has_annotations {
+                self.conn.execute_batch(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_annotations_uuid ON annotations(uuid);"
+                )?;
+            }
+            self.conn.execute_batch(
+                "UPDATE meta SET value = '22' WHERE key = 'schema_version';
+                 COMMIT;"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -815,7 +834,7 @@ impl Store {
 
     pub fn delete_edges_from(&self, source: &str) -> Result<(), GraphError> {
         self.conn
-            .execute("DELETE FROM edges WHERE source = ?1 AND edge_kind IN ('wikilink', 'mdlink', 'citation')", [source])?;
+            .execute("DELETE FROM edges WHERE source = ?1 AND edge_kind NOT IN ('cardbox', 'annotation')", [source])?;
         Ok(())
     }
 
@@ -826,11 +845,14 @@ impl Store {
         Ok(())
     }
 
-    /// Replaces all rows in `edges` without opening its own transaction. Callers
-    /// must wrap this in a transaction (or SAVEPOINT) to preserve atomicity —
-    /// `replace_all_edges` does so directly, while the `.lkg` importer calls this
-    /// inside its own SAVEPOINT (a nested `BEGIN` would otherwise raise "cannot
-    /// start a transaction within a transaction").
+    /// Replaces all non-cardbox rows in `edges` without opening its own
+    /// transaction. Cardbox (and legacy `annotation`) edges are preserved —
+    /// they are user-created and must survive LKG reimports.
+    ///
+    /// Callers must wrap this in a transaction (or SAVEPOINT) to preserve
+    /// atomicity — `replace_all_edges` does so directly, while the `.lkg`
+    /// importer calls this inside its own SAVEPOINT (a nested `BEGIN` would
+    /// otherwise raise "cannot start a transaction within a transaction").
     ///
     /// # Single-connection invariant
     ///
@@ -838,7 +860,7 @@ impl Store {
     /// operates on `self.conn` directly and relies on the caller's transaction
     /// living on the same connection.
     pub(crate) fn replace_all_edges_no_tx(&self, edges: &[(&str, &str, &str, &str, u32, EdgeKind)]) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM edges", [])?;
+        self.conn.execute("DELETE FROM edges WHERE edge_kind NOT IN ('cardbox', 'annotation')", [])?;
         for &(source, target, context, raw_target, source_line, kind) in edges {
             self.conn.execute(
                 "INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -849,8 +871,9 @@ impl Store {
     }
 
     pub fn get_node_ids_for_uuids(&self, uuids: &[&str]) -> Result<HashMap<String, String>, GraphError> {
+        const CHUNK: usize = 500;
         let mut map = HashMap::new();
-        for chunk in uuids.chunks(500) {
+        for chunk in uuids.chunks(CHUNK) {
             let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("?{i}")).collect();
             let sql = format!(
                 "SELECT uuid, node_id FROM annotations WHERE uuid IN ({})",
@@ -2450,6 +2473,53 @@ mod tests {
     }
 
     #[test]
+    fn replace_all_edges_no_tx_preserves_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "b", 1, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("a.md", "c.md", "link", "C", 0, EdgeKind::Wikilink).unwrap();
+
+        let new_edges = vec![
+            ("x.md", "y.md", "new", "Y", 0, EdgeKind::Wikilink),
+        ];
+        store.replace_all_edges_no_tx(&new_edges).unwrap();
+
+        let cardbox_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'cardbox'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(cardbox_count, 1, "cardbox edge should survive replace_all_edges_no_tx");
+
+        let total: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM edges",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(total, 2, "should have 1 cardbox + 1 new wikilink");
+    }
+
+    #[test]
+    fn replace_all_edges_no_tx_preserves_legacy_annotation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind) VALUES ('a.md', 'b.md', '', 'b', 1, 'annotation')",
+            [],
+        ).unwrap();
+
+        let new_edges = vec![
+            ("x.md", "y.md", "new", "Y", 0, EdgeKind::Wikilink),
+        ];
+        store.replace_all_edges_no_tx(&new_edges).unwrap();
+
+        let legacy_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_kind = 'annotation'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(legacy_count, 1, "legacy annotation edge should survive replace_all_edges_no_tx");
+    }
+
+    #[test]
     fn replace_all_edges_is_atomic() {
         let store = Store::open_memory().unwrap();
         store.insert_edge("keep.md", "keep_target.md", "orig", "kt", 0, EdgeKind::Wikilink).unwrap();
@@ -3467,8 +3537,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_one() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 21);
+    fn schema_version_is_twenty_two() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
     }
 
     #[test]
@@ -3490,6 +3560,17 @@ mod tests {
             |r| r.get(0),
         ).unwrap();
         assert_eq!(idx_count, 1, "idx_bib_refs_child index should exist");
+    }
+
+    #[test]
+    fn migration_v22_creates_annotations_uuid_index() {
+        let store = Store::open_memory().unwrap();
+        let idx_count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_annotations_uuid'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(idx_count, 1, "idx_annotations_uuid index should exist");
     }
 
     #[test]
@@ -5760,6 +5841,21 @@ mod tests {
         assert_eq!(count, 1);
         let kind: String = store.conn.query_row("SELECT edge_kind FROM edges WHERE source = 'a.md'", [], |r| r.get(0)).unwrap();
         assert_eq!(kind, "cardbox");
+    }
+
+    #[test]
+    fn delete_edges_from_preserves_legacy_annotation_edges() {
+        let store = Store::open_memory().unwrap();
+        store.conn.execute(
+            "INSERT INTO edges(source, target, context, raw_target, source_line, edge_kind) VALUES ('a.md', 'b.md', '', 'b', 1, 'annotation')",
+            [],
+        ).unwrap();
+        store.insert_edge("a.md", "c.md", "", "c", 2, EdgeKind::Wikilink).unwrap();
+        store.delete_edges_from("a.md").unwrap();
+        let count: i64 = store.conn.query_row("SELECT COUNT(*) FROM edges WHERE source = 'a.md'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let kind: String = store.conn.query_row("SELECT edge_kind FROM edges WHERE source = 'a.md'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kind, "annotation");
     }
 
     #[test]
