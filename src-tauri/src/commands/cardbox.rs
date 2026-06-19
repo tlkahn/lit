@@ -324,26 +324,24 @@ pub fn add_cardbox_link(
         return Err("Cannot link a card to itself".to_string());
     }
 
-    let _guard = lock.0.lock().unwrap();
+    let added = with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
+        let normalized = normalize_link(&a, &b);
+        if layout.links.iter().any(|pair| *pair == normalized) {
+            return Ok(false);
+        }
+        layout.links.push(normalized);
+        layout.version = layout.version.max(2);
+        Ok(true)
+    })?;
 
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-    let mut layout = cardbox_layout::load_layout(&root);
-
-    let normalized = normalize_link(&a, &b);
-    if layout.links.iter().any(|pair| *pair == normalized) {
-        return Ok(());
-    }
-    layout.links.push(normalized);
-    layout.version = layout.version.max(2);
-    persist_layout(&lit_dir, &layout)?;
-
-    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
-        match gi.add_cardbox_edge(&a, &b) {
-            Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
-            Ok(false) => {}
-            Err(e) => tracing::warn!("add_cardbox_edge failed: {e}"),
+    if added {
+        let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+        if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+            match gi.add_cardbox_edge(&a, &b) {
+                Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
+                Ok(false) => {}
+                Err(e) => tracing::warn!("add_cardbox_edge failed: {e}"),
+            }
         }
     }
 
@@ -360,33 +358,25 @@ pub fn remove_cardbox_link(
     a: String,
     b: String,
 ) -> Result<(), String> {
-    let _guard = lock.0.lock().unwrap();
+    let removed = with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
+        let normalized = normalize_link(&a, &b);
+        let before = layout.links.len();
+        layout.links.retain(|pair| *pair != normalized);
+        if layout.links.len() == before {
+            Ok(None)
+        } else {
+            Ok(Some(layout.links.clone()))
+        }
+    })?;
 
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-
-    if !cardbox_layout::layout_path(&root).exists() {
-        return Ok(());
-    }
-
-    let mut layout = cardbox_layout::load_layout(&root);
-
-    let normalized = normalize_link(&a, &b);
-    let before = layout.links.len();
-    layout.links.retain(|pair| *pair != normalized);
-
-    if layout.links.len() == before {
-        return Ok(());
-    }
-
-    let remaining_links = layout.links.clone();
-    persist_layout(&lit_dir, &layout)?;
-
-    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
-        match gi.remove_cardbox_edge(&remaining_links, &a, &b) {
-            Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
-            Ok(false) => {}
-            Err(e) => tracing::warn!("remove_cardbox_edge failed: {e}"),
+    if let Some(remaining_links) = removed {
+        let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+        if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+            match gi.remove_cardbox_edge(&remaining_links, &a, &b) {
+                Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
+                Ok(false) => {}
+                Err(e) => tracing::warn!("remove_cardbox_edge failed: {e}"),
+            }
         }
     }
 
