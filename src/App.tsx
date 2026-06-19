@@ -40,7 +40,7 @@ import { useBottomPanelPosition } from "./hooks/useBottomPanelPosition";
 import { BottomPanel } from "./components/BottomPanel";
 import { getCurrentEditorView } from "./lib/editorViewRef";
 import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
-import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan } from "./lib/ipc";
+import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan, UpdateDownloadProgress } from "./lib/ipc";
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { MergePreviewDialog } from "./components/MergePreviewDialog";
 import { SplitPreviewDialog } from "./components/SplitPreviewDialog";
@@ -321,6 +321,32 @@ function App() {
       cancelled = true;
       unlistenProgress?.();
       unlistenComplete?.();
+    };
+  }, [statusShow]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenInstalling: (() => void) | undefined;
+
+    const formatMB = (bytes: number) => (bytes / 1_000_000).toFixed(1);
+
+    listen<UpdateDownloadProgress>("lit:update-download-progress", (event) => {
+      const { downloaded, total } = event.payload;
+      const msg = total != null
+        ? `Downloading update… ${Math.round((downloaded / total) * 100)}% (${formatMB(downloaded)}/${formatMB(total)} MB)`
+        : `Downloading update… ${formatMB(downloaded)} MB`;
+      statusShow(msg, "progress", 15000);
+    }).then((fn) => { if (cancelled) fn(); else unlistenProgress = fn; });
+
+    listen("lit:update-installing", () => {
+      statusShow("Installing update…", "progress", 30000);
+    }).then((fn) => { if (cancelled) fn(); else unlistenInstalling = fn; });
+
+    return () => {
+      cancelled = true;
+      unlistenProgress?.();
+      unlistenInstalling?.();
     };
   }, [statusShow]);
 
