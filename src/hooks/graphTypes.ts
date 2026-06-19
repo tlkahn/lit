@@ -1,6 +1,7 @@
 export interface SigmaLike {
   kill(): void;
   on(event: string, handler: (...args: unknown[]) => void): void;
+  off(event: string, handler: (...args: unknown[]) => void): void;
   setSetting(key: string, value: unknown): void;
   refresh(): void;
   getCamera(): { animatedReset(): void; animate(state: Record<string, number>): void };
