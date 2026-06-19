@@ -1995,8 +1995,6 @@ mod tests {
 
     #[test]
     fn pagerank_excludes_citation_edges() {
-        // Build a graph with only wikilinks, compute pagerank.
-        // Then build the same graph with an extra citation edge and verify scores are identical.
         let store1 = Store::open_memory().unwrap();
         store1.upsert_node(&make_node("A", "A"), 1).unwrap();
         store1.upsert_node(&make_node("B", "B"), 1).unwrap();
@@ -2017,6 +2015,27 @@ mod tests {
     }
 
     #[test]
+    fn pagerank_excludes_cardbox_edges() {
+        let store1 = Store::open_memory().unwrap();
+        store1.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store1.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store1.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        let kg1 = KnowledgeGraph::from_store(&store1).unwrap();
+        let scores1 = kg1.pagerank(0.85);
+
+        let store2 = Store::open_memory().unwrap();
+        store2.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store2.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store2.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store2.insert_edge("A", "B", "", "", 0, EdgeKind::Cardbox).unwrap();
+        let kg2 = KnowledgeGraph::from_store(&store2).unwrap();
+        let scores2 = kg2.pagerank(0.85);
+
+        assert!((scores1["A"] - scores2["A"]).abs() < 1e-9, "cardbox edge should not affect A's score");
+        assert!((scores1["B"] - scores2["B"]).abs() < 1e-9, "cardbox edge should not affect B's score");
+    }
+
+    #[test]
     fn bfs_collect_ignores_citation_edges() {
         let store = Store::open_memory().unwrap();
         store.upsert_node(&make_node("A", "A"), 1).unwrap();
@@ -2031,6 +2050,23 @@ mod tests {
         assert!(ids.contains("A"));
         assert!(ids.contains("B"));
         assert!(!ids.contains("C"), "BFS should not follow citation edges");
+    }
+
+    #[test]
+    fn bfs_collect_ignores_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "A"), 1).unwrap();
+        store.upsert_node(&make_node("B", "B"), 1).unwrap();
+        store.upsert_node(&make_node("C", "C"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "", "", 0, EdgeKind::Cardbox).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.neighbors("A", 1, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("A"));
+        assert!(ids.contains("B"));
+        assert!(!ids.contains("C"), "BFS should not follow cardbox edges");
     }
 
     // --- edge dedup: wikilink wins over citation ---
