@@ -679,14 +679,19 @@ export function ReferenceLibrary() {
     estimateSize: (index) => {
       const item = sectionedItems[index];
       if (!item || item.kind === "header") return 24;
-      return index === expandedIndex ? 260 : 36;
+      if (index === expandedIndex) return 260;
+      if (item.kind === "entry") {
+        const state = bibKeyStates[item.entry.key];
+        if (state?.page_id || state?.materialization === "partial") return 70;
+      }
+      return 48;
     },
     overscan: 10,
   });
 
   useEffect(() => {
     virtualizer.measure();
-  }, [virtualizer, expandedIndex]);
+  }, [virtualizer, expandedIndex, bibKeyStates]);
 
   const scrollToLetter = useCallback(
     (letter: string, smooth: boolean) => {
