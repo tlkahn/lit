@@ -678,6 +678,10 @@ impl GraphIndex {
             .map(|(source, _target, raw_target)| (source, raw_target))
             .collect();
         let reverse_stems = ReverseStemIndex::build_from_edges(&edges);
+        let layout = crate::commands::cardbox::load_layout_from_disk(
+            &workspace_root.join(".lit").join("cardbox.json"),
+        );
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &layout)?;
         let knowledge = KnowledgeGraph::from_store(&store)?;
         let positions = store.load_positions().unwrap_or_default();
         info!("loaded graph from store (skipped disk diff)");
