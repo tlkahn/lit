@@ -679,14 +679,35 @@ export function ReferenceLibrary() {
     estimateSize: (index) => {
       const item = sectionedItems[index];
       if (!item || item.kind === "header") return 24;
-      return index === expandedIndex ? 260 : 36;
+      if (index === expandedIndex) return 260;
+      if (item.kind === "entry") {
+        const state = bibKeyStates[item.entry.key];
+        if (state?.page_id || state?.materialization === "partial") return 70;
+      }
+      return 48;
     },
     overscan: 10,
   });
 
+  const prevExpandedRef = useRef(expandedIndex);
+  useEffect(() => {
+    const prev = prevExpandedRef.current;
+    prevExpandedRef.current = expandedIndex;
+
+    // Only invalidate items whose size actually changed (expanded/collapsed),
+    // instead of measure() which nukes all cached sizes and causes cumulative
+    // drift from estimate errors.
+    const changed: number[] = [];
+    if (prev >= 0) changed.push(prev);
+    if (expandedIndex >= 0 && expandedIndex !== prev) changed.push(expandedIndex);
+    for (const idx of changed) {
+      virtualizer.resizeItem(idx, virtualizer.options.estimateSize(idx));
+    }
+  }, [virtualizer, expandedIndex]);
+
   useEffect(() => {
     virtualizer.measure();
-  }, [virtualizer, expandedIndex]);
+  }, [virtualizer, bibKeyStates]);
 
   const scrollToLetter = useCallback(
     (letter: string, smooth: boolean) => {
