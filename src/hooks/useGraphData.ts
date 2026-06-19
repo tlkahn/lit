@@ -163,7 +163,7 @@ export function useGraphData(options: UseGraphDataOptions): UseGraphDataResult {
     return () => {
       cancelled = true;
     };
-  }, [mode, depth, effectKey, edgeFilters.citations]);
+  }, [mode, depth, effectKey, edgeFilters.citations, edgeFilters.cardbox]);
 
   useEffect(() => {
     let cancelled = false;

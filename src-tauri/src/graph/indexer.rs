@@ -935,14 +935,15 @@ impl GraphIndex {
         depth: usize,
         directed: bool,
         include_citations: bool,
+        include_cardbox: bool,
     ) -> Result<SubgraphResult, GraphError> {
         let knowledge = self.knowledge.lock().unwrap();
-        knowledge.subgraph_filtered(seeds, depth, directed, include_citations)
+        knowledge.subgraph_filtered(seeds, depth, directed, include_citations, include_cardbox)
     }
 
-    pub fn full_subgraph(&self, include_citations: bool) -> SubgraphResult {
+    pub fn full_subgraph(&self, include_citations: bool, include_cardbox: bool) -> SubgraphResult {
         let knowledge = self.knowledge.lock().unwrap();
-        knowledge.full_subgraph_filtered(include_citations)
+        knowledge.full_subgraph_filtered(include_citations, include_cardbox)
     }
 
     pub fn subgraph_bundle(
@@ -951,8 +952,9 @@ impl GraphIndex {
         depth: usize,
         directed: bool,
         include_citations: bool,
+        include_cardbox: bool,
     ) -> Result<SubgraphBundle, GraphError> {
-        let subgraph = self.subgraph(seeds, depth, directed, include_citations)?;
+        let subgraph = self.subgraph(seeds, depth, directed, include_citations, include_cardbox)?;
         let pagerank = self.pagerank()?;
         let positions = self.get_positions();
         Ok(SubgraphBundle {
@@ -2983,7 +2985,7 @@ mod tests {
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 3); // a, b, d (c deleted)
         // d->a edge exists, a->b edge removed
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(sub.edges.iter().any(|e| e.0 == "d.md" && e.1 == "a.md"));
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "c.md"));
@@ -3012,7 +3014,7 @@ mod tests {
         write_md(dir.path(), "fresh.md", "");
         gi.reindex_file("fresh.md", true).unwrap();
 
-        let sub = gi.subgraph(&["fresh.md"], 1, false, false).unwrap();
+        let sub = gi.subgraph(&["fresh.md"], 1, false, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "fresh.md"));
     }
 
@@ -3027,10 +3029,10 @@ mod tests {
         gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true).unwrap();
 
         assert!(matches!(
-            gi.subgraph(&["old.md"], 1, false, false),
+            gi.subgraph(&["old.md"], 1, false, false, false),
             Err(GraphError::NodeNotFound { .. })
         ));
-        let sub = gi.subgraph(&["new.md"], 1, false, false).unwrap();
+        let sub = gi.subgraph(&["new.md"], 1, false, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "new.md"));
     }
 
@@ -3045,7 +3047,7 @@ mod tests {
         gi.remove_file("doomed.md", true).unwrap();
 
         assert!(matches!(
-            gi.subgraph(&["doomed.md"], 1, false, false),
+            gi.subgraph(&["doomed.md"], 1, false, false, false),
             Err(GraphError::NodeNotFound { .. })
         ));
     }
@@ -3057,7 +3059,7 @@ mod tests {
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
 
         // b is a stub node — filtered from subgraph output
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should not appear in subgraph");
 
         // Create b.md and batch_reindex with new
@@ -3069,7 +3071,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         // Real node should now appear (stub was replaced)
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "bare stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
@@ -3087,7 +3089,7 @@ mod tests {
         write_md(dir.path(), "b.md", "I exist now.");
         gi.add_file("b.md", true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should be gone");
         let b_real = sub.nodes.iter().find(|n| n.id == "b.md").unwrap();
         assert!(!b_real.is_stub);
@@ -3106,7 +3108,7 @@ mod tests {
         // reindex_file uses `changed` semantics — stub promotion is skipped,
         // so the edge a.md -> b.md is NOT resolved (still points at stub "b",
         // which without_stubs filters out).
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(sub.nodes.iter().any(|n| n.id == "b.md"), "b.md exists as real node");
         assert!(!sub.edges.iter().any(|e| e.0 == "a.md" && e.1 == "b.md"), "edge not resolved because stub persists");
     }
@@ -3136,7 +3138,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 3); // merged, c, d
         assert!(!sub.nodes.iter().any(|n| n.id == "a.md"));
         assert!(!sub.nodes.iter().any(|n| n.id == "b.md"));
@@ -3167,7 +3169,7 @@ mod tests {
         };
         gi.batch_reindex(&diff, true).unwrap();
 
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 3); // part1, part2, ref
         assert!(!sub.nodes.iter().any(|n| n.id == "big.md"));
         assert!(sub.nodes.iter().any(|n| n.id == "part1.md"));
@@ -3217,15 +3219,15 @@ mod tests {
         gi_batch.batch_reindex(&diff, true).unwrap();
 
         // Compare node IDs
-        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph(false).nodes.iter().map(|n| n.id.clone()).collect();
-        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph(false).nodes.iter().map(|n| n.id.clone()).collect();
+        let mut seq_nodes: Vec<String> = gi_seq.full_subgraph(false, false).nodes.iter().map(|n| n.id.clone()).collect();
+        let mut batch_nodes: Vec<String> = gi_batch.full_subgraph(false, false).nodes.iter().map(|n| n.id.clone()).collect();
         seq_nodes.sort();
         batch_nodes.sort();
         assert_eq!(seq_nodes, batch_nodes);
 
         // Compare edge sets
-        let mut seq_edges: Vec<(String, String, EdgeKind)> = gi_seq.full_subgraph(false).edges.clone();
-        let mut batch_edges: Vec<(String, String, EdgeKind)> = gi_batch.full_subgraph(false).edges.clone();
+        let mut seq_edges: Vec<(String, String, EdgeKind)> = gi_seq.full_subgraph(false, false).edges.clone();
+        let mut batch_edges: Vec<(String, String, EdgeKind)> = gi_batch.full_subgraph(false, false).edges.clone();
         seq_edges.sort();
         batch_edges.sort();
         assert_eq!(seq_edges, batch_edges);
@@ -3340,12 +3342,12 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 1);
 
         write_md(dir.path(), "b.md", "New.");
         gi.full_rebuild(true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 2);
     }
 
@@ -3355,12 +3357,12 @@ mod tests {
         write_md(dir.path(), "a.md", "No links.");
         write_md(dir.path(), "b.md", "Target.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(sub.edges.is_empty());
 
         write_md(dir.path(), "a.md", "Now links to [[b]].");
         gi.reindex_file("a.md", true).unwrap();
-        let sub = gi.full_subgraph(false);
+        let sub = gi.full_subgraph(false, false);
         assert!(!sub.edges.is_empty());
     }
 
@@ -3680,7 +3682,7 @@ mod tests {
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         for key in bundle.pagerank.keys() {
             assert!(!key.starts_with("bib:"), "shadow node {key} in pagerank with include_citations=false");
         }
@@ -5908,7 +5910,7 @@ mod tests {
         // Verify in-memory KnowledgeGraph was rebuilt
         {
             let kg = gi.knowledge.lock().unwrap();
-            let subgraph = kg.full_subgraph_filtered(true);
+            let subgraph = kg.full_subgraph_filtered(true, false);
             let node = subgraph
                 .nodes
                 .iter()
@@ -5974,7 +5976,7 @@ mod tests {
         // Verify in-memory KnowledgeGraph was rebuilt
         {
             let kg = gi.knowledge.lock().unwrap();
-            let subgraph = kg.full_subgraph_filtered(true);
+            let subgraph = kg.full_subgraph_filtered(true, false);
             let node = subgraph
                 .nodes
                 .iter()

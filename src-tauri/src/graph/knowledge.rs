@@ -212,17 +212,18 @@ impl KnowledgeGraph {
     }
 
     pub fn full_subgraph(&self) -> SubgraphResult {
-        self.full_subgraph_filtered(false)
+        self.full_subgraph_filtered(false, false)
     }
 
-    pub fn full_subgraph_filtered(&self, include_citations: bool) -> SubgraphResult {
+    pub fn full_subgraph_filtered(&self, include_citations: bool, include_cardbox: bool) -> SubgraphResult {
         let all_indices: HashSet<NodeIndex> = self.raw_graph.node_indices().collect();
         let nodes: Vec<GraphNode> = self.raw_graph.node_weights().cloned().collect();
-        let edges = if include_citations {
-            self.collect_induced_edges(&all_indices, |_| true)
-        } else {
-            self.collect_induced_edges(&all_indices, |kind| kind == EdgeKind::Wikilink)
-        };
+        let edges = self.collect_induced_edges(&all_indices, |kind| match kind {
+            EdgeKind::Wikilink => true,
+            EdgeKind::Citation => include_citations,
+            EdgeKind::Cardbox => include_cardbox,
+            EdgeKind::Mdlink => include_citations || include_cardbox,
+        });
         let result = SubgraphResult { nodes, edges };
         if include_citations {
             result.without(&[Materialization::Stub])
@@ -327,7 +328,7 @@ impl KnowledgeGraph {
         depth: usize,
         directed: bool,
     ) -> Result<SubgraphResult, GraphError> {
-        self.subgraph_filtered(seeds, depth, directed, false)
+        self.subgraph_filtered(seeds, depth, directed, false, false)
     }
 
     pub fn subgraph_filtered(
@@ -336,9 +337,10 @@ impl KnowledgeGraph {
         depth: usize,
         directed: bool,
         include_citations: bool,
+        include_cardbox: bool,
     ) -> Result<SubgraphResult, GraphError> {
         if seeds.is_empty() {
-            return Ok(self.full_subgraph_filtered(include_citations));
+            return Ok(self.full_subgraph_filtered(include_citations, include_cardbox));
         }
         let mut seed_indices = Vec::new();
         for &seed_id in seeds {
@@ -357,7 +359,7 @@ impl KnowledgeGraph {
         }
 
         let visited = self.bfs_collect(&seed_indices, depth, directed);
-        Ok(self.induced_subgraph_filtered(&visited, include_citations))
+        Ok(self.induced_subgraph_filtered(&visited, include_citations, include_cardbox))
     }
 
     fn bfs_collect(
@@ -449,29 +451,54 @@ impl KnowledgeGraph {
         &self,
         wikilink_visited: &HashSet<NodeIndex>,
         include_citations: bool,
+        include_cardbox: bool,
     ) -> SubgraphResult {
-        if !include_citations {
+        if !include_citations && !include_cardbox {
             return self.induced_subgraph(wikilink_visited);
         }
 
-        // Expand visited set to include citation-adjacent nodes
         let mut visited = wikilink_visited.clone();
-        for &idx in wikilink_visited {
-            for edge in self.raw_graph.edges_directed(idx, Direction::Outgoing) {
-                if edge.weight().kind == EdgeKind::Citation {
-                    visited.insert(edge.target());
+        if include_citations {
+            for &idx in wikilink_visited {
+                for edge in self.raw_graph.edges_directed(idx, Direction::Outgoing) {
+                    if edge.weight().kind == EdgeKind::Citation {
+                        visited.insert(edge.target());
+                    }
+                }
+                for edge in self.raw_graph.edges_directed(idx, Direction::Incoming) {
+                    if edge.weight().kind == EdgeKind::Citation {
+                        visited.insert(edge.source());
+                    }
                 }
             }
-            for edge in self.raw_graph.edges_directed(idx, Direction::Incoming) {
-                if edge.weight().kind == EdgeKind::Citation {
-                    visited.insert(edge.source());
+        }
+        if include_cardbox {
+            for &idx in wikilink_visited {
+                for edge in self.raw_graph.edges_directed(idx, Direction::Outgoing) {
+                    if edge.weight().kind == EdgeKind::Cardbox {
+                        visited.insert(edge.target());
+                    }
+                }
+                for edge in self.raw_graph.edges_directed(idx, Direction::Incoming) {
+                    if edge.weight().kind == EdgeKind::Cardbox {
+                        visited.insert(edge.source());
+                    }
                 }
             }
         }
 
         let nodes: Vec<GraphNode> = visited.iter().map(|&idx| self.raw_graph[idx].clone()).collect();
-        let edges = self.collect_induced_edges(&visited, |_| true);
-        SubgraphResult { nodes, edges }.without(&[Materialization::Stub])
+        let edges = self.collect_induced_edges(&visited, |kind| match kind {
+            EdgeKind::Wikilink => true,
+            EdgeKind::Citation => include_citations,
+            EdgeKind::Cardbox => include_cardbox,
+            EdgeKind::Mdlink => include_citations || include_cardbox,
+        });
+        if include_citations {
+            SubgraphResult { nodes, edges }.without(&[Materialization::Stub])
+        } else {
+            SubgraphResult { nodes, edges }.retain_materialized()
+        }
     }
 
     pub fn backlinks(&self, id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
@@ -1630,7 +1657,7 @@ mod tests {
     #[test]
     fn full_subgraph_default_excludes_shadows_and_citations() {
         let (_, kg) = build_test_graph();
-        let result = kg.full_subgraph_filtered(false);
+        let result = kg.full_subgraph_filtered(false, false);
         // Only materialized nodes, no shadows, no stubs
         assert_eq!(result.nodes.len(), 5);
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -1644,7 +1671,7 @@ mod tests {
     #[test]
     fn full_subgraph_include_citations_shows_shadows() {
         let (_, kg) = build_test_graph();
-        let result = kg.full_subgraph_filtered(true);
+        let result = kg.full_subgraph_filtered(true, false);
         // Materialized + shadow nodes, stubs still hidden
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("bib:ref1"), "shadow should be included");
@@ -1656,7 +1683,7 @@ mod tests {
     #[test]
     fn subgraph_default_excludes_citations() {
         let (_, kg) = build_test_graph();
-        let result = kg.subgraph_filtered(&["A"], 1, true, false).unwrap();
+        let result = kg.subgraph_filtered(&["A"], 1, true, false, false).unwrap();
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(!ids.contains("bib:ref1"));
         assert!(result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink));
@@ -1665,7 +1692,7 @@ mod tests {
     #[test]
     fn subgraph_include_citations_shows_citation_edges() {
         let (_, kg) = build_test_graph();
-        let result = kg.subgraph_filtered(&["A"], 1, true, true).unwrap();
+        let result = kg.subgraph_filtered(&["A"], 1, true, true, false).unwrap();
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("bib:ref1"), "shadow node reachable via citation");
         assert!(result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Citation));
@@ -1706,7 +1733,7 @@ mod tests {
         store.insert_edge("B", "C", "wiki", "c", 0, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
-        let result = kg.subgraph_filtered(&["A"], 2, true, false).unwrap();
+        let result = kg.subgraph_filtered(&["A"], 2, true, false, false).unwrap();
         assert_eq!(result.edges.len(), 2, "only A->B wikilink and B->C wikilink");
         assert!(
             result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink),
@@ -1728,7 +1755,7 @@ mod tests {
         store.insert_edge("A", "bib:ref1", "cite", "ref1", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
-        let result = kg.subgraph_filtered(&["A"], 1, true, true).unwrap();
+        let result = kg.subgraph_filtered(&["A"], 1, true, true, false).unwrap();
         let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("bib:ref1"), "shadow node reachable via citation");
         assert!(
@@ -1738,6 +1765,116 @@ mod tests {
         assert!(
             result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Citation),
             "should have citation edges when include_citations=true"
+        );
+    }
+
+    // --- include_cardbox parameter ---
+
+    #[test]
+    fn full_subgraph_default_excludes_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "box", "c", 0, EdgeKind::Cardbox).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.full_subgraph_filtered(false, false);
+        assert!(
+            result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink),
+            "cardbox edges should be excluded by default, got: {:?}",
+            result.edges
+        );
+        assert_eq!(result.edges.len(), 1);
+    }
+
+    #[test]
+    fn full_subgraph_include_cardbox_shows_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "C", "box", "c", 0, EdgeKind::Cardbox).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.full_subgraph_filtered(false, true);
+        assert!(
+            result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Cardbox),
+            "cardbox edges should be present when include_cardbox=true"
+        );
+        assert!(
+            result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Wikilink),
+            "wikilink edges should still be present"
+        );
+    }
+
+    #[test]
+    fn subgraph_default_excludes_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "C", "box", "c", 0, EdgeKind::Cardbox).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.subgraph_filtered(&["A"], 1, true, false, false).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(!ids.contains("C"), "cardbox-adjacent node should not appear");
+        assert!(
+            result.edges.iter().all(|(_, _, k)| *k == EdgeKind::Wikilink),
+            "no cardbox edges when include_cardbox=false"
+        );
+    }
+
+    #[test]
+    fn subgraph_include_cardbox_shows_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("B", "C", "box", "c", 0, EdgeKind::Cardbox).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.subgraph_filtered(&["A"], 1, true, false, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("C"), "cardbox-adjacent materialized node should appear");
+        assert!(
+            result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Cardbox),
+            "cardbox edges should be present when include_cardbox=true"
+        );
+    }
+
+    #[test]
+    fn subgraph_include_both_citations_and_cardbox() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("A", "Alpha"), 1).unwrap();
+        store.upsert_node(&make_node("B", "Beta"), 1).unwrap();
+        store.upsert_shadow("bib:ref1", "Ref (2024)", Materialization::Shadow).unwrap();
+        store.upsert_node(&make_node("C", "Charlie"), 1).unwrap();
+        store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("A", "bib:ref1", "cite", "ref1", 0, EdgeKind::Citation).unwrap();
+        store.insert_edge("B", "C", "box", "c", 0, EdgeKind::Cardbox).unwrap();
+        let kg = KnowledgeGraph::from_store(&store).unwrap();
+
+        let result = kg.subgraph_filtered(&["A"], 1, true, true, true).unwrap();
+        let ids: HashSet<&str> = result.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains("bib:ref1"), "citation shadow should appear");
+        assert!(ids.contains("C"), "cardbox-adjacent node should appear");
+        assert!(
+            result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Citation),
+            "citation edges present"
+        );
+        assert!(
+            result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Cardbox),
+            "cardbox edges present"
+        );
+        assert!(
+            result.edges.iter().any(|(_, _, k)| *k == EdgeKind::Wikilink),
+            "wikilink edges present"
         );
     }
 
@@ -1911,7 +2048,7 @@ mod tests {
         store.insert_edge("A", "B", "wiki", "b", 0, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
-        let result = kg.full_subgraph_filtered(true);
+        let result = kg.full_subgraph_filtered(true, false);
         assert_eq!(result.edges.len(), 1, "should dedup to 1 edge");
         assert_eq!(
             result.edges[0].2,
@@ -1933,7 +2070,7 @@ mod tests {
         store.insert_edge("A", "C", "wiki", "c", 0, EdgeKind::Wikilink).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
-        let result = kg.subgraph_filtered(&["A"], 1, true, true).unwrap();
+        let result = kg.subgraph_filtered(&["A"], 1, true, true, false).unwrap();
         assert_eq!(result.edges.len(), 2, "A->B (wikilink) + A->C (wikilink)");
         let ab_edge = result.edges.iter().find(|(s, t, _)| s == "A" && t == "B");
         assert!(ab_edge.is_some(), "A->B edge must exist");
@@ -1953,7 +2090,7 @@ mod tests {
         store.insert_edge("A", "bib:ref1", "cite", "ref1", 0, EdgeKind::Citation).unwrap();
         let kg = KnowledgeGraph::from_store(&store).unwrap();
 
-        let result = kg.full_subgraph_filtered(true);
+        let result = kg.full_subgraph_filtered(true, false);
         assert_eq!(result.edges.len(), 1, "citation-only pair should survive");
         assert_eq!(result.edges[0], ("A".to_string(), "bib:ref1".to_string(), EdgeKind::Citation));
     }

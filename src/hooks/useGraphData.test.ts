@@ -86,6 +86,7 @@ describe("useGraphData", () => {
         depth: 0,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
       expect(result.current.graphStats).toEqual({ nodes: 2, edges: 1 });
       expect(result.current.graphRef.current!.order).toBe(2);
@@ -134,6 +135,7 @@ describe("useGraphData", () => {
         depth: 2,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
       expect(result.current.graphRef.current!.hasNode("a.md")).toBe(true);
       expect(result.current.graphRef.current!.hasNode("c.md")).toBe(true);
@@ -572,6 +574,7 @@ describe("useGraphData", () => {
         depth: 2,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
       expect(result.current.graphStats).toEqual({ nodes: 3, edges: 2 });
       expect(result.current.dataVersion).toBeGreaterThan(v1);
@@ -616,6 +619,7 @@ describe("useGraphData", () => {
           depth: 2,
           directed: null,
           includeCitations: null,
+          includeCardbox: null,
         });
       });
 
@@ -671,6 +675,7 @@ describe("useGraphData", () => {
           depth: 2,
           directed: null,
           includeCitations: null,
+          includeCardbox: null,
         });
       });
     });
@@ -1053,7 +1058,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: true } }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: true, cardbox: false } }),
       );
 
       await waitFor(() => {
@@ -1065,6 +1070,7 @@ describe("useGraphData", () => {
         depth: 0,
         directed: null,
         includeCitations: true,
+        includeCardbox: false,
       });
     });
 
@@ -1074,7 +1080,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: false } }),
+        useGraphData({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: false, cardbox: false } }),
       );
 
       await waitFor(() => {
@@ -1086,6 +1092,7 @@ describe("useGraphData", () => {
         depth: 0,
         directed: null,
         includeCitations: null,
+        includeCardbox: null,
       });
     });
 
@@ -1095,7 +1102,7 @@ describe("useGraphData", () => {
       const useGraphData = await importHook();
 
       const { result } = renderHook(() =>
-        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: { citations: true } }),
+        useGraphData({ mode: "local", depth: 2, activePageId: "a.md", edgeFilters: { citations: true, cardbox: false } }),
       );
 
       await waitFor(() => {
@@ -1107,6 +1114,7 @@ describe("useGraphData", () => {
         depth: 2,
         directed: null,
         includeCitations: true,
+        includeCardbox: false,
       });
     });
 
@@ -1117,14 +1125,14 @@ describe("useGraphData", () => {
 
       const { result, rerender } = renderHook(
         (props: UseGraphDataOptions) => useGraphData(props),
-        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: false } } as UseGraphDataOptions },
+        { initialProps: { mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: false, cardbox: false } } as UseGraphDataOptions },
       );
 
       await waitFor(() => {
         expect(result.current.dataVersion).toBe(1);
       });
 
-      rerender({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: true } });
+      rerender({ mode: "full", depth: 1, activePageId: null, edgeFilters: { citations: true, cardbox: false } });
 
       await waitFor(() => {
         expect(result.current.dataVersion).toBe(2);
