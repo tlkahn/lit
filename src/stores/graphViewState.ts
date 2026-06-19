@@ -2,9 +2,10 @@ import { create } from "zustand";
 
 export interface EdgeFilters {
   citations: boolean;
+  cardbox: boolean;
 }
 
-export const DEFAULT_EDGE_FILTERS: EdgeFilters = { citations: false };
+export const DEFAULT_EDGE_FILTERS: EdgeFilters = { citations: false, cardbox: false };
 
 export interface GraphViewState {
   mode: "full" | "local";

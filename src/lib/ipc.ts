@@ -812,6 +812,7 @@ export async function getGraphSubgraph(
     depth,
     directed: directed ?? null,
     includeCitations: edgeFilters?.citations ?? null,
+    includeCardbox: edgeFilters?.cardbox ?? null,
   });
 }
 
@@ -821,6 +822,7 @@ export async function getFullSubgraph(edgeFilters?: EdgeFilters): Promise<Subgra
     depth: 0,
     directed: null,
     includeCitations: edgeFilters?.citations ?? null,
+    includeCardbox: edgeFilters?.cardbox ?? null,
   });
 }
 

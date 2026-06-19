@@ -488,10 +488,11 @@ pub fn get_graph_subgraph(
     depth: usize,
     directed: Option<bool>,
     include_citations: Option<bool>,
+    include_cardbox: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let seed_refs: Vec<&str> = seeds.iter().map(|s| s.as_str()).collect();
-        let result = gi.subgraph_bundle(&seed_refs, depth, directed.unwrap_or(false), include_citations.unwrap_or(false))?;
+        let result = gi.subgraph_bundle(&seed_refs, depth, directed.unwrap_or(false), include_citations.unwrap_or(false), include_cardbox.unwrap_or(false))?;
         serde_json::to_value(result).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
     })
 }
@@ -896,7 +897,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
         std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let result = gi.subgraph(&["a.md"], 1, true, false).unwrap();
+        let result = gi.subgraph(&["a.md"], 1, true, false, false).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
         assert!(ids.contains("a.md"));
@@ -910,7 +911,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         assert_eq!(bundle.subgraph.nodes.len(), 2);
         assert!(bundle.pagerank.contains_key("a.md"));
         assert!(bundle.pagerank.contains_key("b.md"));
@@ -1271,7 +1272,7 @@ mod tests {
         )
         .unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let bundle = gi.subgraph_bundle(&[], 0, false, false).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         let node_ids: std::collections::HashSet<&str> =
             bundle.subgraph.nodes.iter().map(|n| n.id.as_str()).collect();
         // With include_citations=false, shadow nodes should NOT appear
@@ -1307,7 +1308,7 @@ mod tests {
         )
         .unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
-        let bundle = gi.subgraph_bundle(&[], 0, false, true).unwrap();
+        let bundle = gi.subgraph_bundle(&[], 0, false, true, false).unwrap();
         let node_ids: std::collections::HashSet<&str> =
             bundle.subgraph.nodes.iter().map(|n| n.id.as_str()).collect();
         // With include_citations=true, shadow nodes SHOULD appear
