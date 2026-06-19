@@ -1,6 +1,14 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
+
+pub struct CardboxLock(Mutex<()>);
+
+impl CardboxLock {
+    pub fn new() -> Self {
+        Self(Mutex::new(()))
+    }
+}
 use tauri::{Emitter, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -77,21 +85,24 @@ fn persist_layout(lit_dir: &std::path::Path, layout: &CardboxLayout) -> Result<(
     Ok(())
 }
 
-fn with_cardbox_layout<F>(
+fn with_cardbox_layout<F, T>(
     window: &tauri::Window,
     workspace_state: &State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: &State<CardboxLock>,
     f: F,
-) -> Result<(), String>
+) -> Result<T, String>
 where
-    F: FnOnce(&mut CardboxLayout) -> Result<(), String>,
+    F: FnOnce(&mut CardboxLayout) -> Result<T, String>,
 {
+    let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
     let layout_path = lit_dir.join("cardbox.json");
     let mut layout = load_layout_from_disk(&layout_path);
-    f(&mut layout)?;
-    persist_layout(&lit_dir, &layout)
+    let result = f(&mut layout)?;
+    persist_layout(&lit_dir, &layout)?;
+    Ok(result)
 }
 
 /// Remove a card UUID from wherever it currently lives (top-level order and all group orders).
@@ -303,7 +314,9 @@ pub fn read_cardbox_layout(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<super::graph::GraphRegistry>>,
+    lock: State<CardboxLock>,
 ) -> Result<CardboxLayout, String> {
+    let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let layout_path = root.join(".lit").join("cardbox.json");
 
@@ -337,8 +350,10 @@ pub fn read_cardbox_layout(
 pub fn write_cardbox_layout(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     layout: CardboxLayout,
 ) -> Result<(), String> {
+    let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
@@ -350,6 +365,7 @@ pub fn add_cardbox_link(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<super::graph::GraphRegistry>>,
+    lock: State<CardboxLock>,
     app_handle: tauri::AppHandle,
     a: String,
     b: String,
@@ -358,17 +374,22 @@ pub fn add_cardbox_link(
         return Err("Cannot link a card to itself".to_string());
     }
 
-    with_cardbox_layout(&window, &workspace_state, |layout| {
-        let normalized = normalize_link(&a, &b);
-        if layout.links.iter().any(|pair| *pair == normalized) {
-            return Ok(());
-        }
-        layout.links.push(normalized);
-        layout.version = layout.version.max(2);
-        Ok(())
-    })?;
+    let _guard = lock.0.lock().unwrap();
 
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+    let layout_path = lit_dir.join("cardbox.json");
+    let mut layout = load_layout_from_disk(&layout_path);
+
+    let normalized = normalize_link(&a, &b);
+    if layout.links.iter().any(|pair| *pair == normalized) {
+        return Ok(());
+    }
+    layout.links.push(normalized);
+    layout.version = layout.version.max(2);
+    persist_layout(&lit_dir, &layout)?;
+
     if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
         match gi.add_cardbox_edge(&a, &b) {
             Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
@@ -385,10 +406,13 @@ pub fn remove_cardbox_link(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<super::graph::GraphRegistry>>,
+    lock: State<CardboxLock>,
     app_handle: tauri::AppHandle,
     a: String,
     b: String,
 ) -> Result<(), String> {
+    let _guard = lock.0.lock().unwrap();
+
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     let layout_path = lit_dir.join("cardbox.json");
@@ -425,12 +449,13 @@ pub fn remove_cardbox_link(
 pub fn create_cardbox_group(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     group_id: String,
     name: String,
     card_uuids: Vec<String>,
     after_entry: Option<String>,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         do_create_group(layout, group_id, name, card_uuids, after_entry);
         Ok(())
     })
@@ -440,10 +465,11 @@ pub fn create_cardbox_group(
 pub fn rename_cardbox_group(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     group_id: String,
     name: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         do_rename_group(layout, &group_id, name)
     })
 }
@@ -452,9 +478,10 @@ pub fn rename_cardbox_group(
 pub fn dissolve_cardbox_group(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     group_id: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         do_dissolve_group(layout, &group_id)
     })
 }
@@ -463,11 +490,12 @@ pub fn dissolve_cardbox_group(
 pub fn move_card_to_group(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     card_uuid: String,
     target_group_id: String,
     index: Option<usize>,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         do_move_card_to_group(layout, card_uuid, &target_group_id, index)
     })
 }
@@ -476,11 +504,12 @@ pub fn move_card_to_group(
 pub fn remove_card_from_group(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     card_uuid: String,
     group_id: String,
     top_level_index: Option<usize>,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         do_remove_card_from_group(layout, card_uuid, &group_id, top_level_index)
     })
 }
@@ -489,10 +518,11 @@ pub fn remove_card_from_group(
 pub fn toggle_group_collapsed(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     group_id: String,
     collapsed: bool,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         do_toggle_group_collapsed(layout, &group_id, collapsed)
     })
 }
@@ -501,9 +531,10 @@ pub fn toggle_group_collapsed(
 pub fn pin_cardbox_card(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuid: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         if layout.pinned.contains(&uuid) {
             return Ok(());
         }
@@ -517,9 +548,10 @@ pub fn pin_cardbox_card(
 pub fn unpin_cardbox_card(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuid: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         let before = layout.pinned.len();
         layout.pinned.retain(|u| *u != uuid);
         if layout.pinned.len() < before {
@@ -558,10 +590,12 @@ pub fn export_card_note(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<super::graph::GraphRegistry>>,
+    lock: State<CardboxLock>,
     registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
     app_handle: tauri::AppHandle,
     uuid: String,
 ) -> Result<String, String> {
+    let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     let layout_path = lit_dir.join("cardbox.json");
@@ -623,10 +657,11 @@ pub fn export_card_note(
 pub fn set_card_note(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuid: String,
     body: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         let trimmed = body.trim().to_string();
         if trimmed.is_empty() {
             layout.notes.remove(&uuid);
@@ -645,9 +680,10 @@ pub fn set_card_note(
 pub fn clear_card_note(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuid: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         layout.notes.remove(&uuid);
         layout.version = layout.version.max(4);
         Ok(())
@@ -660,6 +696,7 @@ const VALID_COLORS: &[&str] = &["blue", "orange", "green", "purple", "pink", "cy
 pub fn set_card_color(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuid: String,
     color: String,
 ) -> Result<(), String> {
@@ -670,7 +707,7 @@ pub fn set_card_color(
             VALID_COLORS.join(", ")
         ));
     }
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         layout.colors.insert(uuid.clone(), color.clone());
         layout.version = layout.version.max(4);
         Ok(())
@@ -681,9 +718,10 @@ pub fn set_card_color(
 pub fn clear_card_color(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuid: String,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         if layout.colors.remove(&uuid).is_some() {
             layout.version = layout.version.max(4);
         }
@@ -701,6 +739,7 @@ pub struct ColorEntry {
 pub fn batch_set_card_color(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     entries: Vec<ColorEntry>,
 ) -> Result<(), String> {
     // Validate all colors upfront before touching layout
@@ -713,7 +752,7 @@ pub fn batch_set_card_color(
             ));
         }
     }
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         for entry in &entries {
             layout.colors.insert(entry.uuid.clone(), entry.color.clone());
         }
@@ -726,9 +765,10 @@ pub fn batch_set_card_color(
 pub fn batch_clear_card_color(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuids: Vec<String>,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         let mut changed = false;
         for uuid in &uuids {
             if layout.colors.remove(uuid).is_some() {
@@ -746,9 +786,10 @@ pub fn batch_clear_card_color(
 pub fn batch_pin_cards(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuids: Vec<String>,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         let pinned_set: HashSet<String> = layout.pinned.iter().cloned().collect();
         let to_add: Vec<String> = uuids.iter()
             .filter(|uuid| !pinned_set.contains(uuid.as_str()))
@@ -766,9 +807,10 @@ pub fn batch_pin_cards(
 pub fn batch_unpin_cards(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    lock: State<CardboxLock>,
     uuids: Vec<String>,
 ) -> Result<(), String> {
-    with_cardbox_layout(&window, &workspace_state, |layout| {
+    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         let remove_set: HashSet<&str> = uuids.iter().map(|s| s.as_str()).collect();
         let before = layout.pinned.len();
         layout.pinned.retain(|u| !remove_set.contains(u.as_str()));
@@ -2474,5 +2516,370 @@ mod tests {
 
         let result = read_layout(dir.path());
         assert_eq!(result.pinned, vec!["uuid-b"]);
+    }
+
+    // ---- Concurrency / TOCTOU race tests ----
+    //
+    // These tests reproduce the read-modify-write races that CardboxLock prevents.
+    // Without the lock, concurrent threads doing load → mutate → persist can
+    // silently clobber each other's writes. With the lock, every mutation is
+    // serialized and all writes survive.
+
+    fn locked_read_modify_write<F>(
+        root: &std::path::Path,
+        lock: &super::CardboxLock,
+        f: F,
+    ) where
+        F: FnOnce(&mut super::CardboxLayout),
+    {
+        let _guard = lock.0.lock().unwrap();
+        let layout_path = root.join(".lit").join("cardbox.json");
+        let mut layout = super::load_layout_from_disk(&layout_path);
+        f(&mut layout);
+        super::persist_layout(&root.join(".lit"), &layout).unwrap();
+    }
+
+    #[test]
+    fn concurrent_link_adds_no_lost_writes() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        write_layout(dir.path(), &super::CardboxLayout::default());
+
+        let lock = std::sync::Arc::new(super::CardboxLock::new());
+        let root = dir.path().to_path_buf();
+        let n = 50;
+
+        let handles: Vec<_> = (0..n).map(|i| {
+            let lock = lock.clone();
+            let root = root.clone();
+            std::thread::spawn(move || {
+                let link = super::normalize_link(
+                    &format!("uuid-{i}"),
+                    &format!("uuid-{}", i + 1000),
+                );
+                locked_read_modify_write(&root, &lock, |layout| {
+                    if !layout.links.iter().any(|p| *p == link) {
+                        layout.links.push(link);
+                    }
+                    layout.version = layout.version.max(2);
+                });
+            })
+        }).collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let result = read_layout(dir.path());
+        assert_eq!(
+            result.links.len(), n,
+            "expected {n} links, got {} — writes were lost",
+            result.links.len()
+        );
+    }
+
+    #[test]
+    fn concurrent_pin_and_unpin_consistent() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        let initial = super::CardboxLayout {
+            version: 3,
+            pinned: (0..20).map(|i| format!("uuid-{i}")).collect(),
+            ..Default::default()
+        };
+        write_layout(dir.path(), &initial);
+
+        let lock = std::sync::Arc::new(super::CardboxLock::new());
+        let root = dir.path().to_path_buf();
+
+        let mut handles = vec![];
+
+        // 10 threads each pin a new unique UUID
+        for i in 100..110 {
+            let lock = lock.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let uuid = format!("uuid-{i}");
+                locked_read_modify_write(&root, &lock, |layout| {
+                    if !layout.pinned.contains(&uuid) {
+                        layout.pinned.push(uuid);
+                    }
+                });
+            }));
+        }
+
+        // 10 threads each unpin one of the initial UUIDs
+        for i in 0..10 {
+            let lock = lock.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let uuid = format!("uuid-{i}");
+                locked_read_modify_write(&root, &lock, |layout| {
+                    layout.pinned.retain(|u| *u != uuid);
+                });
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let result = read_layout(dir.path());
+        // Started with 20 (uuid-0..19), removed 10 (uuid-0..9), added 10 (uuid-100..109)
+        assert_eq!(
+            result.pinned.len(), 20,
+            "expected 20 pinned, got {} — concurrent pin/unpin lost writes",
+            result.pinned.len()
+        );
+        for i in 0..10 {
+            assert!(
+                !result.pinned.contains(&format!("uuid-{i}")),
+                "uuid-{i} should have been unpinned"
+            );
+        }
+        for i in 10..20 {
+            assert!(
+                result.pinned.contains(&format!("uuid-{i}")),
+                "uuid-{i} should still be pinned"
+            );
+        }
+        for i in 100..110 {
+            assert!(
+                result.pinned.contains(&format!("uuid-{i}")),
+                "uuid-{i} should have been pinned"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_link_add_and_remove_consistent() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+
+        // Seed with 10 links that will be removed concurrently
+        let mut initial = super::CardboxLayout::default();
+        for i in 0..10 {
+            initial.links.push(super::normalize_link(
+                &format!("old-{i}"),
+                &format!("old-{}", i + 100),
+            ));
+        }
+        initial.version = 2;
+        write_layout(dir.path(), &initial);
+
+        let lock = std::sync::Arc::new(super::CardboxLock::new());
+        let root = dir.path().to_path_buf();
+        let mut handles = vec![];
+
+        // 10 threads add new links
+        for i in 0..10 {
+            let lock = lock.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let link = super::normalize_link(
+                    &format!("new-{i}"),
+                    &format!("new-{}", i + 100),
+                );
+                locked_read_modify_write(&root, &lock, |layout| {
+                    if !layout.links.iter().any(|p| *p == link) {
+                        layout.links.push(link);
+                    }
+                });
+            }));
+        }
+
+        // 10 threads remove old links
+        for i in 0..10 {
+            let lock = lock.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let link = super::normalize_link(
+                    &format!("old-{i}"),
+                    &format!("old-{}", i + 100),
+                );
+                locked_read_modify_write(&root, &lock, |layout| {
+                    layout.links.retain(|p| *p != link);
+                });
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let result = read_layout(dir.path());
+        assert_eq!(
+            result.links.len(), 10,
+            "expected 10 links (old removed, new added), got {}",
+            result.links.len()
+        );
+        for i in 0..10 {
+            let old = super::normalize_link(
+                &format!("old-{i}"),
+                &format!("old-{}", i + 100),
+            );
+            assert!(
+                !result.links.contains(&old),
+                "old-{i} link should have been removed"
+            );
+            let new = super::normalize_link(
+                &format!("new-{i}"),
+                &format!("new-{}", i + 100),
+            );
+            assert!(
+                result.links.contains(&new),
+                "new-{i} link should have been added"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_color_sets_no_lost_writes() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        write_layout(dir.path(), &super::CardboxLayout::default());
+
+        let lock = std::sync::Arc::new(super::CardboxLock::new());
+        let root = dir.path().to_path_buf();
+        let n = 30;
+
+        let handles: Vec<_> = (0..n).map(|i| {
+            let lock = lock.clone();
+            let root = root.clone();
+            std::thread::spawn(move || {
+                let uuid = format!("uuid-{i}");
+                let color = super::VALID_COLORS[i % super::VALID_COLORS.len()].to_string();
+                locked_read_modify_write(&root, &lock, |layout| {
+                    layout.colors.insert(uuid, color);
+                    layout.version = layout.version.max(4);
+                });
+            })
+        }).collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let result = read_layout(dir.path());
+        assert_eq!(
+            result.colors.len(), n,
+            "expected {n} color entries, got {} — writes were lost",
+            result.colors.len()
+        );
+    }
+
+    #[test]
+    fn concurrent_group_create_and_dissolve_consistent() {
+        let dir = create_workspace();
+        let lit_dir = dir.path().join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+
+        // Seed: cards uuid-0..19 at top level, groups g-0..4 pre-existing
+        let mut initial = super::CardboxLayout {
+            version: 3,
+            order: (0..20).map(|i| format!("uuid-{i}")).collect(),
+            ..Default::default()
+        };
+        for i in 0..5 {
+            let gid = format!("g-{i}");
+            let cards = vec![format!("gcard-{i}-0"), format!("gcard-{i}-1")];
+            super::do_create_group(
+                &mut initial,
+                gid,
+                format!("Group {i}"),
+                cards,
+                None,
+            );
+        }
+        write_layout(dir.path(), &initial);
+
+        let lock = std::sync::Arc::new(super::CardboxLock::new());
+        let root = dir.path().to_path_buf();
+        let mut handles = vec![];
+
+        // 5 threads dissolve the existing groups
+        for i in 0..5 {
+            let lock = lock.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let gid = format!("g-{i}");
+                locked_read_modify_write(&root, &lock, |layout| {
+                    let _ = super::do_dissolve_group(layout, &gid);
+                });
+            }));
+        }
+
+        // 5 threads create new groups from top-level cards
+        for i in 0..5 {
+            let lock = lock.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                let gid = format!("new-g-{i}");
+                let cards = vec![
+                    format!("uuid-{}", i * 4),
+                    format!("uuid-{}", i * 4 + 1),
+                ];
+                locked_read_modify_write(&root, &lock, |layout| {
+                    super::do_create_group(
+                        layout,
+                        gid,
+                        format!("New Group {i}"),
+                        cards,
+                        None,
+                    );
+                });
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let result = read_layout(dir.path());
+
+        // Old groups should all be dissolved
+        for i in 0..5 {
+            assert!(
+                !result.groups.contains_key(&format!("g-{i}")),
+                "g-{i} should have been dissolved"
+            );
+        }
+
+        // New groups should all exist
+        for i in 0..5 {
+            assert!(
+                result.groups.contains_key(&format!("new-g-{i}")),
+                "new-g-{i} should have been created"
+            );
+        }
+
+        // No duplicate entries in top-level order
+        let mut seen = std::collections::HashSet::new();
+        for entry in &result.order {
+            assert!(
+                seen.insert(entry.clone()),
+                "duplicate entry in order: {entry}"
+            );
+        }
+
+        // Every card UUID should appear exactly once across top-level + all groups
+        let mut all_uuids: Vec<String> = result.order.iter()
+            .filter(|e| !e.starts_with(super::GROUP_PREFIX))
+            .cloned()
+            .collect();
+        for group in result.groups.values() {
+            all_uuids.extend(group.order.iter().cloned());
+        }
+        all_uuids.sort();
+        let before_dedup = all_uuids.len();
+        all_uuids.dedup();
+        assert_eq!(
+            all_uuids.len(), before_dedup,
+            "some card UUIDs appear more than once"
+        );
     }
 }
