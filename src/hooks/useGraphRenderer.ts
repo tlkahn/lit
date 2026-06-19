@@ -27,6 +27,120 @@ export interface UseGraphRendererResult {
   refresh: () => void;
 }
 
+function initEdgeReducers(
+  sigma: SigmaLike,
+  tierSettingsRef: RefObject<TierSettings>,
+  defaultNodeReducer: (node: string, attrs: Record<string, unknown>) => Record<string, unknown>,
+): () => void {
+  if (tierSettingsRef.current!.defaultEdgesHidden) {
+    sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
+  }
+
+  sigma.setSetting("nodeReducer", defaultNodeReducer);
+
+  return () => {
+    sigma.setSetting("nodeReducer", defaultNodeReducer);
+    sigma.setSetting("edgeReducer",
+      tierSettingsRef.current!.defaultEdgesHidden
+        ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
+        : null
+    );
+  };
+}
+
+interface SigmaEventDeps {
+  sigma: SigmaLike;
+  containerRef: RefObject<HTMLDivElement | null>;
+  hoveredNodeRef: MutableRefObject<string | null>;
+  selectedSetRef: MutableRefObject<Set<string>>;
+  nudgeRef: RefObject<NudgeController | null>;
+  dimColorRef: MutableRefObject<string>;
+  onNavigateRef: RefObject<((pageId: string) => void) | undefined>;
+  onContextMenuRef: RefObject<((menu: { nodeId: string; x: number; y: number }) => void) | undefined>;
+  restoreDefaultReducers: () => void;
+}
+
+function registerSigmaEvents(deps: SigmaEventDeps): () => void {
+  const { sigma, containerRef, hoveredNodeRef, selectedSetRef, nudgeRef, dimColorRef, onNavigateRef, onContextMenuRef, restoreDefaultReducers } = deps;
+
+  sigma.on("clickNode", (({ node, event }: { node: string; event: { original?: { metaKey?: boolean; ctrlKey?: boolean } } }) => {
+    const orig = event?.original;
+    if (orig?.metaKey || orig?.ctrlKey) {
+      useGraphSelectionStore.getState().clearSelection();
+      onNavigateRef.current?.(node);
+      return;
+    }
+    useGraphSelectionStore.getState().toggleNode(node);
+  }) as (...args: unknown[]) => void);
+
+  sigma.on("rightClickNode", (({ node, event }: { node: string; event: { original?: MouseEvent } }) => {
+    if (event?.original) event.original.preventDefault();
+    window.getSelection()?.removeAllRanges();
+    const orig = event?.original;
+    onContextMenuRef.current?.({
+      nodeId: node,
+      x: orig?.clientX ?? 0,
+      y: orig?.clientY ?? 0,
+    });
+  }) as (...args: unknown[]) => void);
+
+  sigma.on("enterNode", (({ node }: { node: string }) => {
+    hoveredNodeRef.current = node;
+    nudgeRef.current?.enter(node);
+
+    sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
+      if (_n === node) {
+        return selectedSetRef.current.has(_n)
+          ? { ...attrs, color: SELECTED_COLOR, forceLabel: true, highlighted: true }
+          : { ...attrs, forceLabel: true };
+      }
+      return defaultNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current });
+    });
+
+    if (containerRef.current) {
+      containerRef.current.style.cursor = "pointer";
+    }
+  }) as (...args: unknown[]) => void);
+
+  sigma.on("leaveNode", (() => {
+    hoveredNodeRef.current = null;
+    nudgeRef.current?.leave();
+    restoreDefaultReducers();
+    if (containerRef.current) {
+      containerRef.current.style.cursor = "grab";
+    }
+  }) as (...args: unknown[]) => void);
+
+  sigma.on("clickStage", (() => {
+    useGraphSelectionStore.getState().clearSelection();
+    restoreDefaultReducers();
+  }) as (...args: unknown[]) => void);
+
+  sigma.on("rightClickStage", (({ event }: { event: { original?: MouseEvent } }) => {
+    if (event?.original) event.original.preventDefault();
+    window.getSelection()?.removeAllRanges();
+  }) as (...args: unknown[]) => void);
+
+  const container = containerRef.current;
+  const onSelectStart = (e: Event) => e.preventDefault();
+  container?.addEventListener("selectstart", onSelectStart);
+
+  selectedSetRef.current = new Set(useGraphSelectionStore.getState().selectedNodes);
+  const unsub = useGraphSelectionStore.subscribe((state, prev) => {
+    if (state.selectedNodes !== prev.selectedNodes) {
+      selectedSetRef.current = new Set(state.selectedNodes);
+      sigma.refresh();
+    }
+  });
+
+  return () => {
+    unsub();
+    if (container) {
+      container.removeEventListener("selectstart", onSelectStart);
+    }
+  };
+}
+
 export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRendererResult {
   const { containerRef, graphRef, tierSettings, dimColorRef, dataVersion, onNavigate, onContextMenu } = options;
 
@@ -36,8 +150,7 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
   const tierSettingsRef = useRef<TierSettings>(tierSettings);
   tierSettingsRef.current = tierSettings;
   const nudgeRef = useRef<NudgeController | null>(null);
-  const unsubRef = useRef<(() => void) | null>(null);
-  const selectStartRef = useRef<((e: Event) => void) | null>(null);
+  const cleanupEventsRef = useRef<(() => void) | null>(null);
   const prevDataVersionRef = useRef(dataVersion);
 
   const onNavigateRef = useRef(onNavigate);
@@ -105,89 +218,18 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
         nudgeRef.current = createNudgeController(graph, () => sigma.refresh());
       }
 
-      if (ts.defaultEdgesHidden) {
-        sigma.setSetting("edgeReducer", (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true }));
-      }
+      const restoreDefaultReducers = initEdgeReducers(sigma, tierSettingsRef, defaultNodeReducer);
 
-      sigma.setSetting("nodeReducer", defaultNodeReducer);
-
-      const restoreDefaultReducers = () => {
-        sigma.setSetting("nodeReducer", defaultNodeReducer);
-        sigma.setSetting("edgeReducer",
-          tierSettingsRef.current.defaultEdgesHidden
-            ? (_e: string, attrs: Record<string, unknown>) => ({ ...attrs, hidden: true })
-            : null
-        );
-      };
-
-      sigma.on("clickNode", (({ node, event }: { node: string; event: { original?: { metaKey?: boolean; ctrlKey?: boolean } } }) => {
-        const orig = event?.original;
-        if (orig?.metaKey || orig?.ctrlKey) {
-          useGraphSelectionStore.getState().clearSelection();
-          onNavigateRef.current?.(node);
-          return;
-        }
-        useGraphSelectionStore.getState().toggleNode(node);
-      }) as (...args: unknown[]) => void);
-
-      sigma.on("rightClickNode", (({ node, event }: { node: string; event: { original?: MouseEvent } }) => {
-        if (event?.original) event.original.preventDefault();
-        window.getSelection()?.removeAllRanges();
-        const orig = event?.original;
-        onContextMenuRef.current?.({
-          nodeId: node,
-          x: orig?.clientX ?? 0,
-          y: orig?.clientY ?? 0,
-        });
-      }) as (...args: unknown[]) => void);
-
-      sigma.on("enterNode", (({ node }: { node: string }) => {
-        hoveredNodeRef.current = node;
-        nudgeRef.current?.enter(node);
-
-        sigma.setSetting("nodeReducer", (_n: string, attrs: Record<string, unknown>) => {
-          if (_n === node) {
-            return selectedSetRef.current.has(_n)
-              ? { ...attrs, color: SELECTED_COLOR, forceLabel: true, highlighted: true }
-              : { ...attrs, forceLabel: true };
-          }
-          return defaultNodeReduce(_n, attrs, { selectedSet: selectedSetRef.current, dimColor: dimColorRef.current });
-        });
-
-        if (containerRef.current) {
-          containerRef.current.style.cursor = "pointer";
-        }
-      }) as (...args: unknown[]) => void);
-
-      sigma.on("leaveNode", (() => {
-        hoveredNodeRef.current = null;
-        nudgeRef.current?.leave();
-        restoreDefaultReducers();
-        if (containerRef.current) {
-          containerRef.current.style.cursor = "grab";
-        }
-      }) as (...args: unknown[]) => void);
-
-      sigma.on("clickStage", (() => {
-        useGraphSelectionStore.getState().clearSelection();
-        restoreDefaultReducers();
-      }) as (...args: unknown[]) => void);
-
-      sigma.on("rightClickStage", (({ event }: { event: { original?: MouseEvent } }) => {
-        if (event?.original) event.original.preventDefault();
-        window.getSelection()?.removeAllRanges();
-      }) as (...args: unknown[]) => void);
-
-      const onSelectStart = (e: Event) => e.preventDefault();
-      container.addEventListener("selectstart", onSelectStart);
-      selectStartRef.current = onSelectStart;
-
-      selectedSetRef.current = new Set(useGraphSelectionStore.getState().selectedNodes);
-      unsubRef.current = useGraphSelectionStore.subscribe((state, prev) => {
-        if (state.selectedNodes !== prev.selectedNodes) {
-          selectedSetRef.current = new Set(state.selectedNodes);
-          sigma.refresh();
-        }
+      cleanupEventsRef.current = registerSigmaEvents({
+        sigma,
+        containerRef,
+        hoveredNodeRef,
+        selectedSetRef,
+        nudgeRef,
+        dimColorRef,
+        onNavigateRef,
+        onContextMenuRef,
+        restoreDefaultReducers,
       });
     }
 
@@ -197,12 +239,8 @@ export function useGraphRenderer(options: UseGraphRendererOptions): UseGraphRend
       cancelled = true;
       nudgeRef.current?.dispose();
       nudgeRef.current = null;
-      unsubRef.current?.();
-      unsubRef.current = null;
-      if (selectStartRef.current && containerRef.current) {
-        containerRef.current.removeEventListener("selectstart", selectStartRef.current);
-        selectStartRef.current = null;
-      }
+      cleanupEventsRef.current?.();
+      cleanupEventsRef.current = null;
       if (sigmaRef.current) {
         sigmaRef.current.kill();
         sigmaRef.current = null;
