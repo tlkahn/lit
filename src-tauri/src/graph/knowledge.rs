@@ -218,12 +218,7 @@ impl KnowledgeGraph {
     pub fn full_subgraph_filtered(&self, include_citations: bool, include_cardbox: bool) -> SubgraphResult {
         let all_indices: HashSet<NodeIndex> = self.raw_graph.node_indices().collect();
         let nodes: Vec<GraphNode> = self.raw_graph.node_weights().cloned().collect();
-        let edges = self.collect_induced_edges(&all_indices, |kind| match kind {
-            EdgeKind::Wikilink => true,
-            EdgeKind::Citation => include_citations,
-            EdgeKind::Cardbox => include_cardbox,
-            EdgeKind::Mdlink => include_citations || include_cardbox,
-        });
+        let edges = self.collect_induced_edges(&all_indices, Self::edge_kind_filter(include_citations, include_cardbox));
         let result = SubgraphResult { nodes, edges };
         if include_citations {
             result.without(&[Materialization::Stub])
@@ -447,6 +442,35 @@ impl KnowledgeGraph {
         SubgraphResult { nodes, edges }.retain_materialized()
     }
 
+    fn edge_kind_filter(include_citations: bool, include_cardbox: bool) -> impl Fn(EdgeKind) -> bool {
+        move |kind| match kind {
+            EdgeKind::Wikilink => true,
+            EdgeKind::Citation => include_citations,
+            EdgeKind::Cardbox => include_cardbox,
+            EdgeKind::Mdlink => include_citations || include_cardbox,
+        }
+    }
+
+    fn expand_neighbors_by_kind(
+        &self,
+        seed_set: &HashSet<NodeIndex>,
+        visited: &mut HashSet<NodeIndex>,
+        kind: EdgeKind,
+    ) {
+        for &idx in seed_set {
+            for edge in self.raw_graph.edges_directed(idx, Direction::Outgoing) {
+                if edge.weight().kind == kind {
+                    visited.insert(edge.target());
+                }
+            }
+            for edge in self.raw_graph.edges_directed(idx, Direction::Incoming) {
+                if edge.weight().kind == kind {
+                    visited.insert(edge.source());
+                }
+            }
+        }
+    }
+
     fn induced_subgraph_filtered(
         &self,
         wikilink_visited: &HashSet<NodeIndex>,
@@ -459,41 +483,14 @@ impl KnowledgeGraph {
 
         let mut visited = wikilink_visited.clone();
         if include_citations {
-            for &idx in wikilink_visited {
-                for edge in self.raw_graph.edges_directed(idx, Direction::Outgoing) {
-                    if edge.weight().kind == EdgeKind::Citation {
-                        visited.insert(edge.target());
-                    }
-                }
-                for edge in self.raw_graph.edges_directed(idx, Direction::Incoming) {
-                    if edge.weight().kind == EdgeKind::Citation {
-                        visited.insert(edge.source());
-                    }
-                }
-            }
+            self.expand_neighbors_by_kind(wikilink_visited, &mut visited, EdgeKind::Citation);
         }
         if include_cardbox {
-            for &idx in wikilink_visited {
-                for edge in self.raw_graph.edges_directed(idx, Direction::Outgoing) {
-                    if edge.weight().kind == EdgeKind::Cardbox {
-                        visited.insert(edge.target());
-                    }
-                }
-                for edge in self.raw_graph.edges_directed(idx, Direction::Incoming) {
-                    if edge.weight().kind == EdgeKind::Cardbox {
-                        visited.insert(edge.source());
-                    }
-                }
-            }
+            self.expand_neighbors_by_kind(wikilink_visited, &mut visited, EdgeKind::Cardbox);
         }
 
         let nodes: Vec<GraphNode> = visited.iter().map(|&idx| self.raw_graph[idx].clone()).collect();
-        let edges = self.collect_induced_edges(&visited, |kind| match kind {
-            EdgeKind::Wikilink => true,
-            EdgeKind::Citation => include_citations,
-            EdgeKind::Cardbox => include_cardbox,
-            EdgeKind::Mdlink => include_citations || include_cardbox,
-        });
+        let edges = self.collect_induced_edges(&visited, Self::edge_kind_filter(include_citations, include_cardbox));
         if include_citations {
             SubgraphResult { nodes, edges }.without(&[Materialization::Stub])
         } else {
