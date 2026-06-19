@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { classifyEnrichResult } from "./enrichResult";
+import { describe, it, expect, vi } from "vitest";
+import { classifyEnrichResult, dispatchEnrichResult } from "./enrichResult";
 import type { EnrichResult, BibEntry } from "./ipc";
 
 /** Minimal BibEntry for testing */
@@ -175,5 +175,54 @@ describe("classifyEnrichResult", () => {
     if (classified.kind === "success") {
       expect(classified.message).toBe("Enriched k: added url");
     }
+  });
+});
+
+describe("dispatchEnrichResult", () => {
+  it("calls setEnrichCandidates for 'candidates' kind", () => {
+    const setCandidates = vi.fn();
+    const show = vi.fn();
+    const classified = {
+      kind: "candidates" as const,
+      bibKey: "smith2020",
+      title: "Test Paper",
+      candidates: [stubEntry({ key: "c1" })],
+      providersSearched: ["crossref"],
+      providersFailed: [],
+    };
+
+    dispatchEnrichResult(classified, setCandidates, show);
+
+    expect(setCandidates).toHaveBeenCalledWith(classified);
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it("calls show without variant for 'miss' kind", () => {
+    const setCandidates = vi.fn();
+    const show = vi.fn();
+    const classified = {
+      kind: "miss" as const,
+      title: "Test Paper",
+      message: "No metadata found for 'Test Paper'. Try searching manually.",
+    };
+
+    dispatchEnrichResult(classified, setCandidates, show);
+
+    expect(show).toHaveBeenCalledWith(classified.message);
+    expect(setCandidates).not.toHaveBeenCalled();
+  });
+
+  it("calls show without variant for 'success' kind", () => {
+    const setCandidates = vi.fn();
+    const show = vi.fn();
+    const classified = {
+      kind: "success" as const,
+      message: "Enriched smith2020: added doi",
+    };
+
+    dispatchEnrichResult(classified, setCandidates, show);
+
+    expect(show).toHaveBeenCalledWith(classified.message);
+    expect(setCandidates).not.toHaveBeenCalled();
   });
 });

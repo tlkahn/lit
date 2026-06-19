@@ -1,4 +1,5 @@
 import type { EnrichResult, BibEntry } from "./ipc";
+import type { StatusVariant } from "../stores/statusMessage";
 
 export interface EnrichCandidateState {
   bibKey: string;
@@ -71,4 +72,29 @@ export function classifyEnrichResult(
     kind: "success",
     message: `Enriched ${bibKey}${parts.length > 0 ? ": " + parts.join(". ") : ""}`,
   };
+}
+
+/**
+ * Dispatch a classified enrich result to the appropriate UI handler.
+ *
+ * - candidates -> open the candidate picker
+ * - miss -> show informational toast
+ * - success -> show success toast
+ */
+export function dispatchEnrichResult(
+  classified: ClassifiedEnrichResult,
+  setEnrichCandidates: (state: EnrichCandidateState) => void,
+  show: (message: string, variant?: StatusVariant) => void,
+): void {
+  switch (classified.kind) {
+    case "candidates":
+      setEnrichCandidates(classified);
+      return;
+    case "miss":
+      show(classified.message);
+      return;
+    case "success":
+      show(classified.message);
+      return;
+  }
 }

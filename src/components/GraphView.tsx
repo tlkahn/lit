@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback } from "react";
-import type { PageContent, MergePlan, SplitPlan } from "../lib/ipc";
-import { readPage, enrichBibEntry } from "../lib/ipc";
+import type { PageContent, MergePlan, SplitPlan, BibEntry } from "../lib/ipc";
+import { readPage, enrichBibEntry, applyEnrichmentCandidate } from "../lib/ipc";
 import { bibKeyFromNodeId } from "../lib/bibKey";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -22,6 +22,8 @@ import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { useGraphRenderer } from "../hooks/useGraphRenderer";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import type { GraphLike } from "../hooks/graphTypes";
+import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
+import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
 import "./GraphSearch.css";
 import "./GraphView.css";
 
@@ -73,6 +75,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const [splitDialogPlan, setSplitDialogPlan] = useState<SplitPlan | null>(null);
   const [splitDialogPath, setSplitDialogPath] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ nodeIds: string[]; labels: string[] } | null>(null);
+  const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
 
   const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion, rebuild } = useGraphData({
     mode, depth, activePageId: activePageId ?? null, showCitations,
@@ -148,27 +151,12 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
       if (!workspacePath) return;
       const bibKey = bibKeyFromNodeId(nodeId);
       if (!bibKey) return;
+      show("Fetching details…", "progress", 30000);
       try {
         const result = await enrichBibEntry(bibKey, workspacePath);
-        const parts: string[] = [];
-        if (result.fields_added.length > 0)
-          parts.push(`added ${result.fields_added.join(", ")}`);
-        if (result.references_appended > 0) {
-          const qualifier =
-            result.references_found > result.references_appended
-              ? ` of ${result.references_found}`
-              : "";
-          parts.push(
-            `${result.references_appended}${qualifier} references added`,
-          );
-        }
-        if (result.shadow_nodes_created > 0)
-          parts.push(`${result.shadow_nodes_created} shadow nodes created`);
-        if (parts.length === 0) {
-          show(`No new metadata found for @${bibKey}`);
-        } else {
-          show(`Enriched ${bibKey}: ${parts.join(". ")}`);
-        }
+        const title = result.entry.title || bibKey;
+        const classified = classifyEnrichResult(result, bibKey, title);
+        dispatchEnrichResult(classified, setEnrichCandidates, show);
       } catch (err) {
         show(
           err instanceof Error ? err.message : String(err),
@@ -187,6 +175,22 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
       } catch { return nodeId; }
     },
   });
+
+  const handleApplyCandidate = useCallback(
+    async (candidate: BibEntry) => {
+      if (!workspacePath || !enrichCandidates) return;
+      const { bibKey, title } = enrichCandidates;
+      setEnrichCandidates(null); // close picker immediately
+      try {
+        const result = await applyEnrichmentCandidate(bibKey, candidate, workspacePath);
+        const classified = classifyEnrichResult(result, bibKey, title);
+        dispatchEnrichResult(classified, setEnrichCandidates, show);
+      } catch (err) {
+        show(err instanceof Error ? err.message : String(err), "error");
+      }
+    },
+    [workspacePath, enrichCandidates, show],
+  );
 
   const handleContainerKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "f") {
@@ -294,6 +298,15 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         />
       )}
       <GraphDeleteDialog deleteConfirm={deleteConfirm} onClose={() => setDeleteConfirm(null)} />
+      <EnrichCandidatePicker
+        open={enrichCandidates !== null}
+        bibKey={enrichCandidates?.bibKey ?? ""}
+        candidates={enrichCandidates?.candidates ?? []}
+        providersSearched={enrichCandidates?.providersSearched ?? []}
+        providersFailed={enrichCandidates?.providersFailed ?? []}
+        onApply={handleApplyCandidate}
+        onClose={() => setEnrichCandidates(null)}
+      />
     </div>
   );
 }
