@@ -10,7 +10,7 @@ export interface LatexFixTarget {
 
 export type LatexCheckResult = "valid" | "unparsable" | "unavailable";
 
-export function isUnparsableLatex(latex: string): LatexCheckResult {
+export function checkLatex(latex: string): LatexCheckResult {
   if (!latex.trim()) return "valid";
   const katex = getKatexSync();
   if (!katex) return "unavailable";

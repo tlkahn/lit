@@ -9,11 +9,11 @@ vi.mock("./katexLoader", () => ({
 }));
 
 import { getKatexSync } from "./katexLoader";
-import { isUnparsableLatex, stripLatexResponse, LATEX_FIX_SYSTEM_PROMPT, buildLatexFixArgs } from "./latexFix";
+import { checkLatex, stripLatexResponse, LATEX_FIX_SYSTEM_PROMPT, buildLatexFixArgs } from "./latexFix";
 import type { LatexFixTarget, LatexCheckResult } from "./latexFix";
 import { usePreferencesStore } from "../../stores/preferences";
 
-describe("isUnparsableLatex", () => {
+describe("checkLatex", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockKatex.renderToString.mockImplementation(
@@ -22,35 +22,35 @@ describe("isUnparsableLatex", () => {
   });
 
   it("returns 'valid' for valid LaTeX", () => {
-    expect(isUnparsableLatex("x^2")).toBe("valid");
+    expect(checkLatex("x^2")).toBe("valid");
   });
 
   it("returns 'unparsable' for broken LaTeX", () => {
     mockKatex.renderToString.mockImplementation(() => {
       throw new Error("KaTeX parse error");
     });
-    expect(isUnparsableLatex("\\frac{")).toBe("unparsable");
+    expect(checkLatex("\\frac{")).toBe("unparsable");
   });
 
   it("returns 'valid' for empty or whitespace-only strings without calling KaTeX", () => {
-    expect(isUnparsableLatex("")).toBe("valid");
-    expect(isUnparsableLatex("   \t\n  ")).toBe("valid");
+    expect(checkLatex("")).toBe("valid");
+    expect(checkLatex("   \t\n  ")).toBe("valid");
     expect(mockKatex.renderToString).not.toHaveBeenCalled();
   });
 
   it("returns 'unavailable' when KaTeX is not loaded", () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
-    expect(isUnparsableLatex("x^2")).toBe("unavailable");
+    expect(checkLatex("x^2")).toBe("unavailable");
     expect(mockKatex.renderToString).not.toHaveBeenCalled();
   });
 
   it("calls renderToString with throwOnError: true", () => {
-    isUnparsableLatex("x^2");
+    checkLatex("x^2");
     expect(mockKatex.renderToString).toHaveBeenCalledWith("x^2", { throwOnError: true });
   });
 
   it("return type is assignable to LatexCheckResult", () => {
-    const result: LatexCheckResult = isUnparsableLatex("x^2");
+    const result: LatexCheckResult = checkLatex("x^2");
     expect(["valid", "unparsable", "unavailable"]).toContain(result);
   });
 });
