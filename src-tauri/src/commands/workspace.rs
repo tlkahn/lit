@@ -137,6 +137,21 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
         "pdf" => "md",
         _ => return None,
     };
+
+    // For .md input: check frontmatter `companion` key first
+    if ext == "md" {
+        let abs_md = root.join(relative_path);
+        if let Ok(raw) = std::fs::read_to_string(&abs_md) {
+            let parsed = crate::workspace::frontmatter::parse_frontmatter(&raw);
+            if let Some(serde_yaml::Value::String(fm_path)) = parsed.map.get("companion") {
+                let fm_abs = root.join(fm_path);
+                if fm_abs.is_file() {
+                    return Some(canonicalize_within_root(root, &fm_abs, Path::new(fm_path)));
+                }
+            }
+        }
+    }
+
     let candidate = rel.with_extension(target_ext);
     let absolute = root.join(&candidate);
     if absolute.is_file() {
@@ -152,6 +167,31 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
             return Some(canonicalize_within_root(root, &abs, &cand));
         }
     }
+
+    // For .pdf input: reverse lookup — scan sibling .md files for a frontmatter
+    // `companion` key pointing to this PDF.
+    if ext == "pdf" {
+        let parent_dir = rel.parent().unwrap_or(Path::new(""));
+        let abs_parent = root.join(parent_dir);
+        if let Ok(entries) = std::fs::read_dir(&abs_parent) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+                if let Ok(raw) = std::fs::read_to_string(&path) {
+                    let parsed = crate::workspace::frontmatter::parse_frontmatter(&raw);
+                    if let Some(serde_yaml::Value::String(fm_path)) = parsed.map.get("companion") {
+                        if fm_path == relative_path {
+                            let md_rel = path.strip_prefix(root).ok()?;
+                            return Some(canonicalize_within_root(root, &path, md_rel));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -281,6 +321,19 @@ pub fn find_companion_file(
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
     Ok(find_companion(&relative_path, &root, &search_paths))
+}
+
+#[tauri::command]
+pub fn persist_companion_frontmatter(
+    md_path: String,
+    companion_path: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
+) -> Result<(), String> {
+    let root = get_workspace_root(&state, window.label())?;
+    crate::workspace::ops::persist_companion_frontmatter(&root, &md_path, &companion_path, &registry)
+        .map_err(|e| e.to_string())
 }
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -959,6 +1012,69 @@ mod tests {
         assert_eq!(
             registry.find_window_for_workspace(Path::new("/nonexistent/path")),
             Some("win-1".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_fm_md_to_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "---\ncompanion: pdfs/paper.pdf\n---\n# Hello\n").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &[]),
+            Some("pdfs/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_fm_priority_over_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("custom")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "---\ncompanion: custom/paper.pdf\n---\n").unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "sibling").unwrap();
+        std::fs::write(root.join("custom/paper.pdf"), "frontmatter").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &[]),
+            Some("custom/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_fm_stale_falls_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "---\ncompanion: gone/paper.pdf\n---\n").unwrap();
+        std::fs::write(root.join("notes/paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("notes/paper.md", root, &[]),
+            Some("notes/paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_pdf_reverse_via_fm() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("summary.md"), "---\ncompanion: pdfs/paper.pdf\n---\n").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+        // No sibling md exists in pdfs/ — reverse lookup scans root .md files
+        // The reverse lookup scans the parent dir of the pdf, which is pdfs/.
+        // Since summary.md is in root, not in pdfs/, and our reverse only scans
+        // the sibling dir of the PDF, this won't match. Let's put them together.
+        let dir2 = tempfile::tempdir().unwrap();
+        let root2 = dir2.path();
+        std::fs::write(root2.join("summary.md"), "---\ncompanion: paper.pdf\n---\n").unwrap();
+        std::fs::write(root2.join("paper.pdf"), "x").unwrap();
+        assert_eq!(
+            find_companion("paper.pdf", root2, &[]),
+            Some("summary.md".to_string())
         );
     }
 }

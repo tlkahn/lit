@@ -197,6 +197,100 @@ pub fn acknowledge_file_hash(root: &Path, relative_path: &str, registry: &WriteH
     Ok(())
 }
 
+pub fn rename_companion(
+    root: &Path,
+    companion_path: &str,
+    new_stem: &str,
+    registry: &WriteHashRegistry,
+) -> Result<String, WorkspaceError> {
+    let rel = Path::new(companion_path);
+    let ext = rel
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let new_filename = if ext.is_empty() {
+        new_stem.to_string()
+    } else {
+        format!("{new_stem}.{ext}")
+    };
+    let new_relative = match rel.parent() {
+        Some(parent) if parent != Path::new("") => {
+            format!("{}/{new_filename}", parent.to_string_lossy())
+        }
+        _ => new_filename,
+    };
+
+    let old_full = root.join(companion_path);
+    if !old_full.exists() {
+        return Err(WorkspaceError::PageNotFound(companion_path.to_string()));
+    }
+    let new_full = root.join(&new_relative);
+    if new_full.exists() {
+        return Err(WorkspaceError::PageAlreadyExists(new_relative));
+    }
+
+    if let Some(parent) = new_full.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Only record hash for text files (md) — binary files like PDFs can't be read_to_string'd
+    if ext == "md" {
+        let content = fs::read_to_string(&old_full)?;
+        fs::rename(&old_full, &new_full)?;
+        registry.record(&new_full, &content);
+    } else {
+        fs::rename(&old_full, &new_full)?;
+    }
+    registry.record_delete(&old_full);
+
+    Ok(normalize_to_nfc(&new_relative))
+}
+
+pub fn persist_companion_frontmatter(
+    root: &Path,
+    md_path: &str,
+    companion_path: &str,
+    registry: &WriteHashRegistry,
+) -> Result<(), WorkspaceError> {
+    let full_path = root.join(md_path);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(md_path.to_string()));
+    }
+    let raw = fs::read_to_string(&full_path)?;
+    let parsed = parse_frontmatter(&raw);
+    let mut map = parsed.map;
+    map.insert(
+        "companion".to_string(),
+        serde_yaml::Value::String(companion_path.to_string()),
+    );
+    let content = serialize_frontmatter(&map, parsed.body);
+    fs::write(&full_path, &content)?;
+    registry.record(&full_path, &content);
+    Ok(())
+}
+
+pub fn remove_companion_frontmatter(
+    root: &Path,
+    md_path: &str,
+    registry: &WriteHashRegistry,
+) -> Result<(), WorkspaceError> {
+    let full_path = root.join(md_path);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(md_path.to_string()));
+    }
+    let raw = fs::read_to_string(&full_path)?;
+    let parsed = parse_frontmatter(&raw);
+    let mut map = parsed.map;
+    if !map.contains_key("companion") {
+        return Ok(());
+    }
+    map.swap_remove("companion");
+    let content = serialize_frontmatter(&map, parsed.body);
+    fs::write(&full_path, &content)?;
+    registry.record(&full_path, &content);
+    Ok(())
+}
+
 pub fn delete_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry) -> Result<(), WorkspaceError> {
     let full_path = root.join(relative_path);
     if !full_path.exists() {
@@ -570,5 +664,180 @@ mod tests {
 
         let page = read_page(dir.path(), "🚀 Launch.md", &registry).unwrap();
         assert_eq!(page.meta.title, "🚀 Launch");
+    }
+
+    // --- rename_companion ---
+
+    #[test]
+    fn rename_companion_pdf_happy_path() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("paper.pdf"), b"fake pdf").unwrap();
+
+        let result = rename_companion(dir.path(), "paper.pdf", "notes", &registry).unwrap();
+        assert_eq!(result, "notes.pdf");
+        assert!(!dir.path().join("paper.pdf").exists());
+        assert!(dir.path().join("notes.pdf").exists());
+    }
+
+    #[test]
+    fn rename_companion_md_happy_path() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("paper.md"), "# Paper").unwrap();
+
+        let result = rename_companion(dir.path(), "paper.md", "notes", &registry).unwrap();
+        assert_eq!(result, "notes.md");
+        assert!(!dir.path().join("paper.md").exists());
+        assert!(dir.path().join("notes.md").exists());
+        assert_eq!(fs::read_to_string(dir.path().join("notes.md")).unwrap(), "# Paper");
+    }
+
+    #[test]
+    fn rename_companion_preserves_parent_dir() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::create_dir_all(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub/paper.pdf"), b"x").unwrap();
+
+        let result = rename_companion(dir.path(), "sub/paper.pdf", "notes", &registry).unwrap();
+        assert_eq!(result, "sub/notes.pdf");
+        assert!(dir.path().join("sub/notes.pdf").exists());
+        assert!(!dir.path().join("sub/paper.pdf").exists());
+    }
+
+    #[test]
+    fn rename_companion_target_exists() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("paper.pdf"), b"a").unwrap();
+        fs::write(dir.path().join("notes.pdf"), b"b").unwrap();
+
+        let result = rename_companion(dir.path(), "paper.pdf", "notes", &registry);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rename_companion_source_not_found() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+
+        let result = rename_companion(dir.path(), "ghost.pdf", "notes", &registry);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rename_companion_md_registry() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("paper.md"), "content").unwrap();
+
+        rename_companion(dir.path(), "paper.md", "notes", &registry).unwrap();
+        assert!(registry.check(&dir.path().join("notes.md"), "content"));
+        assert!(registry.consume_delete(&dir.path().join("paper.md")));
+    }
+
+    #[test]
+    fn rename_companion_pdf_registry() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("paper.pdf"), b"binary").unwrap();
+
+        rename_companion(dir.path(), "paper.pdf", "notes", &registry).unwrap();
+        // Binary files don't get hash recorded
+        assert!(!registry.check(&dir.path().join("notes.pdf"), "binary"));
+        // But delete is always recorded
+        assert!(registry.consume_delete(&dir.path().join("paper.pdf")));
+    }
+
+    // --- persist_companion_frontmatter ---
+
+    #[test]
+    fn persist_fm_inserts_key() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "# Hello\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "pdfs/paper.pdf", &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(content.contains("companion: pdfs/paper.pdf"));
+        assert!(content.contains("# Hello"));
+    }
+
+    #[test]
+    fn persist_fm_updates_existing() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "---\ncompanion: old.pdf\n---\n# Hello\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "new.pdf", &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(content.contains("companion: new.pdf"));
+        assert!(!content.contains("old.pdf"));
+    }
+
+    #[test]
+    fn persist_fm_preserves_other_keys() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "---\ntitle: My Note\ntags:\n  - rust\n---\n# Body\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "paper.pdf", &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(content.contains("title: My Note"));
+        assert!(content.contains("tags:"));
+        assert!(content.contains("companion: paper.pdf"));
+    }
+
+    #[test]
+    fn persist_fm_file_not_found() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+
+        let result = persist_companion_frontmatter(dir.path(), "ghost.md", "paper.pdf", &registry);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn persist_fm_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "# Hello\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "paper.pdf", &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(registry.check(&dir.path().join("note.md"), &content));
+    }
+
+    // --- remove_companion_frontmatter ---
+
+    #[test]
+    fn remove_fm_removes_key() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "---\ntitle: X\ncompanion: paper.pdf\n---\n# Body\n").unwrap();
+
+        remove_companion_frontmatter(dir.path(), "note.md", &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(!content.contains("companion"));
+        assert!(content.contains("title: X"));
+    }
+
+    #[test]
+    fn remove_fm_noop_if_absent() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let original = "---\ntitle: X\n---\n# Body\n";
+        fs::write(dir.path().join("note.md"), original).unwrap();
+
+        remove_companion_frontmatter(dir.path(), "note.md", &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert_eq!(content, original);
     }
 }

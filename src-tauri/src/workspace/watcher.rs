@@ -42,6 +42,12 @@ pub struct FileEvent {
     pub path: String,
 }
 
+#[derive(Clone, Serialize)]
+pub struct FileRenamedEvent {
+    pub old_path: String,
+    pub new_path: String,
+}
+
 fn try_refresh_shadows(app_handle: &AppHandle, root: &PathBuf) {
     if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
         let indices = graph_reg.indices.lock().unwrap();
@@ -91,8 +97,10 @@ impl FileWatcher {
                     Err(_) => continue,
                 };
 
+                let mut classified_events: Vec<(String, FileChangeKind)> = Vec::new();
                 let mut md_events: Vec<(String, FileChangeKind)> = Vec::new();
                 let mut bib_changed = false;
+                let win = app_handle.get_webview_window(&window_label);
 
                 for event in events {
                     let path = &event.path;
@@ -113,46 +121,85 @@ impl FileWatcher {
                         }
                     }
 
-                    if let Some(win) = app_handle.get_webview_window(&window_label) {
-                        match event.kind {
-                            DebouncedEventKind::Any => {
-                                let exists = path.exists();
-                                if should_skip_event(path, exists, &registry) {
-                                    if exists {
-                                        eprintln!("[watcher] self-write filtered: {}", relative);
-                                    } else {
-                                        eprintln!("[watcher] self-delete filtered: {}", relative);
-                                    }
-                                    continue;
+                    match event.kind {
+                        DebouncedEventKind::Any => {
+                            let exists = path.exists();
+                            if should_skip_event(path, exists, &registry) {
+                                if exists {
+                                    eprintln!("[watcher] self-write filtered: {}", relative);
+                                } else {
+                                    eprintln!("[watcher] self-delete filtered: {}", relative);
                                 }
-
-                                let kind = classify_file_event(&relative, exists, &mut known_files);
-
-                                let payload = FileEvent { path: relative.clone() };
-                                match kind {
-                                    FileChangeKind::Created => {
-                                        eprintln!("[watcher] file-CREATED: {}", relative);
-                                        let _ = win.emit("workspace://file-created", &payload);
-                                    }
-                                    FileChangeKind::Modified => {
-                                        eprintln!("[watcher] file-modified: {}", relative);
-                                        let _ = win.emit("workspace://file-modified", &payload);
-                                    }
-                                    FileChangeKind::Deleted => {
-                                        eprintln!("[watcher] file-DELETED: {}", relative);
-                                        let _ = win.emit("workspace://file-deleted", &payload);
-                                    }
-                                }
-
-                                let ext = path.extension().and_then(|e| e.to_str());
-                                if ext == Some("md") {
-                                    md_events.push((relative, kind));
-                                } else if ext == Some("bib") {
-                                    bib_changed = true;
-                                }
+                                continue;
                             }
-                            DebouncedEventKind::AnyContinuous | _ => {}
+
+                            let kind = classify_file_event(&relative, exists, &mut known_files);
+                            classified_events.push((relative, kind));
                         }
+                        DebouncedEventKind::AnyContinuous | _ => {}
+                    }
+                }
+
+                // Detect renames: pairs of (Deleted, Created) with same parent + extension
+                let renames = detect_renames(&mut classified_events);
+
+                // Emit events for detected renames
+                if let Some(ref win) = win {
+                    for rename in &renames {
+                        eprintln!("[watcher] file-RENAMED: {} -> {}", rename.old_path, rename.new_path);
+                        let _ = win.emit("workspace://file-renamed", &FileRenamedEvent {
+                            old_path: rename.old_path.clone(),
+                            new_path: rename.new_path.clone(),
+                        });
+
+                        let ext = Path::new(&rename.new_path).extension().and_then(|e| e.to_str());
+                        if ext == Some("md") {
+                            md_events.push((rename.old_path.clone(), FileChangeKind::Deleted));
+                            md_events.push((rename.new_path.clone(), FileChangeKind::Created));
+                        } else if ext == Some("bib") {
+                            bib_changed = true;
+                        }
+                    }
+
+                    // Check for companion rename prompts
+                    let prefs = crate::preferences::read_preferences(&app_handle);
+                    let search_paths = crate::preferences::companion_search_paths(&prefs);
+                    for rename in &renames {
+                        if let Some(prompt) = check_companion_for_rename(rename, &root_clone, &search_paths, &renames) {
+                            eprintln!(
+                                "[watcher] companion-rename-prompt: {} -> {}",
+                                prompt.companion_path, prompt.suggested_companion_new_path
+                            );
+                            let _ = win.emit("workspace://companion-rename-prompt", &prompt);
+                        }
+                    }
+                }
+
+                // Emit remaining (non-rename) events
+                for (relative, kind) in &classified_events {
+                    if let Some(ref win) = win {
+                        let payload = FileEvent { path: relative.clone() };
+                        match kind {
+                            FileChangeKind::Created => {
+                                eprintln!("[watcher] file-CREATED: {}", relative);
+                                let _ = win.emit("workspace://file-created", &payload);
+                            }
+                            FileChangeKind::Modified => {
+                                eprintln!("[watcher] file-modified: {}", relative);
+                                let _ = win.emit("workspace://file-modified", &payload);
+                            }
+                            FileChangeKind::Deleted => {
+                                eprintln!("[watcher] file-DELETED: {}", relative);
+                                let _ = win.emit("workspace://file-deleted", &payload);
+                            }
+                        }
+                    }
+
+                    let ext = Path::new(relative.as_str()).extension().and_then(|e| e.to_str());
+                    if ext == Some("md") {
+                        md_events.push((relative.clone(), *kind));
+                    } else if ext == Some("bib") {
+                        bib_changed = true;
                     }
                 }
 
@@ -160,7 +207,6 @@ impl FileWatcher {
                     let refs: Vec<(&str, FileChangeKind)> = md_events.iter().map(|(p, k)| (p.as_str(), *k)).collect();
                     let diff = accumulate_diff(&refs);
                     if diff.is_empty() {
-                        // md events cancelled out; still check bib
                         if bib_changed {
                             try_refresh_shadows(&app_handle, &root_clone);
                         }
@@ -178,7 +224,6 @@ impl FileWatcher {
                         }
                     }
                 } else if bib_changed {
-                    // Only .bib files changed — refresh shadow nodes without a full reindex
                     try_refresh_shadows(&app_handle, &root_clone);
                 }
             }
@@ -236,6 +281,108 @@ pub(crate) fn accumulate_diff(events: &[(&str, FileChangeKind)]) -> crate::graph
         changed,
         deleted,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DetectedRename {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+pub fn detect_renames(
+    events: &mut Vec<(String, FileChangeKind)>,
+) -> Vec<DetectedRename> {
+    use std::collections::HashMap;
+
+    // Group deleted/created events by (parent_dir, extension)
+    let mut groups: HashMap<(String, String), (Vec<usize>, Vec<usize>)> = HashMap::new();
+    for (i, (path, kind)) in events.iter().enumerate() {
+        if *kind != FileChangeKind::Deleted && *kind != FileChangeKind::Created {
+            continue;
+        }
+        let p = Path::new(path);
+        let parent = p.parent().unwrap_or(Path::new("")).to_string_lossy().to_string();
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+        let key = (parent, ext);
+        let entry = groups.entry(key).or_insert_with(|| (Vec::new(), Vec::new()));
+        match kind {
+            FileChangeKind::Deleted => entry.0.push(i),
+            FileChangeKind::Created => entry.1.push(i),
+            _ => {}
+        }
+    }
+
+    let mut renames = Vec::new();
+    let mut indices_to_remove: Vec<usize> = Vec::new();
+
+    for (_key, (deleted, created)) in &groups {
+        if deleted.len() != 1 || created.len() != 1 {
+            continue;
+        }
+        let del_idx = deleted[0];
+        let cr_idx = created[0];
+        renames.push(DetectedRename {
+            old_path: events[del_idx].0.clone(),
+            new_path: events[cr_idx].0.clone(),
+        });
+        indices_to_remove.push(del_idx);
+        indices_to_remove.push(cr_idx);
+    }
+
+    indices_to_remove.sort_unstable();
+    indices_to_remove.dedup();
+    for idx in indices_to_remove.into_iter().rev() {
+        events.remove(idx);
+    }
+
+    renames
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CompanionRenamePrompt {
+    pub renamed_file_old: String,
+    pub renamed_file_new: String,
+    pub companion_path: String,
+    pub suggested_companion_new_path: String,
+}
+
+pub fn check_companion_for_rename(
+    rename: &DetectedRename,
+    root: &Path,
+    search_paths: &[String],
+    all_renames: &[DetectedRename],
+) -> Option<CompanionRenamePrompt> {
+    let companion = crate::commands::workspace::find_companion(&rename.old_path, root, search_paths)?;
+
+    // If the companion was also renamed in this batch, skip the prompt
+    if all_renames.iter().any(|r| r.old_path == companion) {
+        return None;
+    }
+
+    // Compute the suggested new path for the companion
+    let new_stem = Path::new(&rename.new_path)
+        .file_stem()
+        .and_then(|s| s.to_str())?;
+    let companion_path = Path::new(&companion);
+    let companion_ext = companion_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let new_companion_filename = if companion_ext.is_empty() {
+        new_stem.to_string()
+    } else {
+        format!("{new_stem}.{companion_ext}")
+    };
+    let suggested = match companion_path.parent() {
+        Some(parent) if parent != Path::new("") => {
+            format!("{}/{new_companion_filename}", parent.to_string_lossy())
+        }
+        _ => new_companion_filename,
+    };
+
+    Some(CompanionRenamePrompt {
+        renamed_file_old: rename.old_path.clone(),
+        renamed_file_new: rename.new_path.clone(),
+        companion_path: companion,
+        suggested_companion_new_path: suggested,
+    })
 }
 
 /// Source-code file extensions that the app can open and edit.
@@ -529,5 +676,181 @@ mod tests {
         ]);
         assert!(!diff.is_empty());
         assert_eq!(diff.changed, vec!["a.md", "b.md"]);
+    }
+
+    // --- detect_renames ---
+
+    #[test]
+    fn detect_renames_simple_pair() {
+        let mut events = vec![
+            ("paper.md".to_string(), FileChangeKind::Deleted),
+            ("notes.md".to_string(), FileChangeKind::Created),
+        ];
+        let renames = detect_renames(&mut events);
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0].old_path, "paper.md");
+        assert_eq!(renames[0].new_path, "notes.md");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn detect_renames_different_ext_no_pair() {
+        let mut events = vec![
+            ("paper.md".to_string(), FileChangeKind::Deleted),
+            ("notes.pdf".to_string(), FileChangeKind::Created),
+        ];
+        let renames = detect_renames(&mut events);
+        assert!(renames.is_empty());
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn detect_renames_different_parent_no_pair() {
+        let mut events = vec![
+            ("a/x.md".to_string(), FileChangeKind::Deleted),
+            ("b/y.md".to_string(), FileChangeKind::Created),
+        ];
+        let renames = detect_renames(&mut events);
+        assert!(renames.is_empty());
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn detect_renames_multiple_pairs() {
+        let mut events = vec![
+            ("a.md".to_string(), FileChangeKind::Deleted),
+            ("b.md".to_string(), FileChangeKind::Created),
+            ("x.pdf".to_string(), FileChangeKind::Deleted),
+            ("y.pdf".to_string(), FileChangeKind::Created),
+        ];
+        let renames = detect_renames(&mut events);
+        assert_eq!(renames.len(), 2);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn detect_renames_unpaired_pass_through() {
+        let mut events = vec![
+            ("a.md".to_string(), FileChangeKind::Modified),
+            ("b.md".to_string(), FileChangeKind::Deleted),
+            ("c.md".to_string(), FileChangeKind::Created),
+        ];
+        let renames = detect_renames(&mut events);
+        assert_eq!(renames.len(), 1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "a.md");
+        assert_eq!(events[0].1, FileChangeKind::Modified);
+    }
+
+    #[test]
+    fn detect_renames_ambiguous_skips() {
+        let mut events = vec![
+            ("a.md".to_string(), FileChangeKind::Deleted),
+            ("b.md".to_string(), FileChangeKind::Deleted),
+            ("c.md".to_string(), FileChangeKind::Created),
+        ];
+        let renames = detect_renames(&mut events);
+        assert!(renames.is_empty());
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn detect_renames_empty() {
+        let mut events: Vec<(String, FileChangeKind)> = vec![];
+        let renames = detect_renames(&mut events);
+        assert!(renames.is_empty());
+    }
+
+    // --- check_companion_for_rename ---
+
+    #[test]
+    fn check_companion_finds_sibling() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+
+        let rename = DetectedRename {
+            old_path: "paper.md".to_string(),
+            new_path: "notes.md".to_string(),
+        };
+        let prompt = check_companion_for_rename(&rename, root, &[], &[]);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert_eq!(p.companion_path, "paper.pdf");
+        assert_eq!(p.suggested_companion_new_path, "notes.pdf");
+    }
+
+    #[test]
+    fn check_companion_no_companion() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        // No paper.pdf
+
+        let rename = DetectedRename {
+            old_path: "paper.md".to_string(),
+            new_path: "notes.md".to_string(),
+        };
+        let prompt = check_companion_for_rename(&rename, root, &[], &[]);
+        assert!(prompt.is_none());
+    }
+
+    #[test]
+    fn check_companion_already_renamed_in_batch() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+
+        let rename_md = DetectedRename {
+            old_path: "paper.md".to_string(),
+            new_path: "notes.md".to_string(),
+        };
+        let rename_pdf = DetectedRename {
+            old_path: "paper.pdf".to_string(),
+            new_path: "notes.pdf".to_string(),
+        };
+        let all = vec![rename_md.clone(), rename_pdf.clone()];
+        let prompt = check_companion_for_rename(&rename_md, root, &[], &all);
+        assert!(prompt.is_none());
+    }
+
+    #[test]
+    fn check_companion_via_search_path() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+
+        let rename = DetectedRename {
+            old_path: "notes/paper.md".to_string(),
+            new_path: "notes/lecture.md".to_string(),
+        };
+        let prompt = check_companion_for_rename(&rename, root, &["pdfs".to_string()], &[]);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert_eq!(p.companion_path, "pdfs/paper.pdf");
+        assert_eq!(p.suggested_companion_new_path, "pdfs/lecture.pdf");
+    }
+
+    #[test]
+    fn check_companion_pdf_renamed_finds_md() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+
+        let rename = DetectedRename {
+            old_path: "paper.pdf".to_string(),
+            new_path: "notes.pdf".to_string(),
+        };
+        let prompt = check_companion_for_rename(&rename, root, &[], &[]);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert_eq!(p.companion_path, "paper.md");
+        assert_eq!(p.suggested_companion_new_path, "notes.md");
     }
 }

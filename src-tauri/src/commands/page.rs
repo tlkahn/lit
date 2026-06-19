@@ -9,10 +9,23 @@ use crate::workspace::ops;
 use crate::workspace::page::{CodeFileContent, PageContent, PageMeta};
 use crate::workspace::write_hash::WriteHashRegistry;
 use indexmap::IndexMap;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct CompanionRename {
+    pub old_path: String,
+    pub new_path: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct RenameResult {
+    pub new_path: String,
+    pub companion_renamed: Option<CompanionRename>,
+}
 
 pub(super) fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
     let indices = registry.indices.lock().unwrap();
@@ -139,34 +152,76 @@ pub fn rename_page(
     oplog_state: State<Arc<OpLogRegistry>>,
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
-) -> Result<String, String> {
+) -> Result<RenameResult, String> {
     let root = get_workspace_root(&state, window.label())?;
     let new_path = ops::rename_page(&root, &old_path, &new_name, &registry).map_err(|e| e.to_string())?;
+
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+    let companion_renamed = match crate::commands::workspace::find_companion(&old_path, &root, &search_paths) {
+        Some(companion_old) => {
+            let new_stem = std::path::Path::new(&new_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&new_name);
+            match ops::rename_companion(&root, &companion_old, new_stem, &registry) {
+                Ok(companion_new) => Some(CompanionRename {
+                    old_path: companion_old,
+                    new_path: companion_new,
+                }),
+                Err(e) => {
+                    tracing::warn!(companion = %companion_old, error = %e, "companion rename failed (non-fatal)");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
+    let mut actions = vec![Action {
+        seq: 0,
+        action_type: "rename_file".into(),
+        path: new_path.clone(),
+        old_path: Some(old_path.clone()),
+        before_content: None,
+        after_content: None,
+    }];
+    if let Some(ref cr) = companion_renamed {
+        actions.push(Action {
+            seq: 1,
+            action_type: "rename_file".into(),
+            path: cr.new_path.clone(),
+            old_path: Some(cr.old_path.clone()),
+            before_content: None,
+            after_content: None,
+        });
+    }
 
     if let Ok(oplog) = oplog_state.get_oplog(&root) {
         let store = oplog.lock().unwrap();
         let _ = store.record_operation(
             "rename_page",
             &format!("Rename '{old_path}' to '{new_name}'"),
-            &[Action {
-                seq: 0,
-                action_type: "rename_file".into(),
-                path: new_path.clone(),
-                old_path: Some(old_path.clone()),
-                before_content: None,
-                after_content: None,
-            }],
+            &actions,
         );
     }
 
+    let mut diff = crate::graph::indexer::rename_reindex_diff(&old_path, &new_path);
+    if let Some(ref cr) = companion_renamed {
+        if cr.new_path.ends_with(".md") {
+            let companion_diff = crate::graph::indexer::rename_reindex_diff(&cr.old_path, &cr.new_path);
+            diff = diff.merge(&companion_diff);
+        }
+    }
+
     reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
-        gi.batch_reindex(
-            &crate::graph::indexer::rename_reindex_diff(&old_path, &new_path),
-            ann,
-        )
+        gi.batch_reindex(&diff, ann)
     });
 
-    Ok(new_path)
+    Ok(RenameResult {
+        new_path,
+        companion_renamed,
+    })
 }
 
 #[tauri::command]
@@ -360,6 +415,54 @@ pub fn write_code_file(
 /// other's `run` closure. Never a real workspace root: it's a subpath.
 fn bib_refresh_lane(root: &std::path::Path) -> PathBuf {
     root.join(".lit/__bib_refresh__")
+}
+
+#[tauri::command]
+pub fn rename_companion_file(
+    companion_path: String,
+    new_stem: String,
+    window: tauri::Window,
+    state: State<WorkspaceRegistry>,
+    registry: State<Arc<WriteHashRegistry>>,
+    oplog_state: State<Arc<OpLogRegistry>>,
+    graph_state: State<Arc<GraphRegistry>>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    let root = get_workspace_root(&state, window.label())?;
+    let new_path = ops::rename_companion(&root, &companion_path, &new_stem, &registry)
+        .map_err(|e| e.to_string())?;
+
+    // For .md companions, remove stale frontmatter companion key
+    if new_path.ends_with(".md") {
+        let _ = ops::remove_companion_frontmatter(&root, &new_path, &registry);
+    }
+
+    if let Ok(oplog) = oplog_state.get_oplog(&root) {
+        let store = oplog.lock().unwrap();
+        let _ = store.record_operation(
+            "rename_companion_file",
+            &format!("Rename companion '{companion_path}' to stem '{new_stem}'"),
+            &[Action {
+                seq: 0,
+                action_type: "rename_file".into(),
+                path: new_path.clone(),
+                old_path: Some(companion_path.clone()),
+                before_content: None,
+                after_content: None,
+            }],
+        );
+    }
+
+    if new_path.ends_with(".md") {
+        reindex_and_emit(&graph_state, &app_handle, &root, |gi, ann| {
+            gi.batch_reindex(
+                &crate::graph::indexer::rename_reindex_diff(&companion_path, &new_path),
+                ann,
+            )
+        });
+    }
+
+    Ok(new_path)
 }
 
 #[cfg(test)]
