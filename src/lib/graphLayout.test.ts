@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR, SHADOW_COLOR, CITATION_EDGE_COLOR, CITATION_EDGE_SIZE, SHADOW_NODE_SIZE_FACTOR, materializationAttrs, populateGraph } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR, SHADOW_COLOR, WIKILINK_EDGE_SIZE, WIKILINK_EDGE_COLOR, MDLINK_EDGE_SIZE, MDLINK_EDGE_COLOR, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, ANNOTATION_EDGE_SIZE, ANNOTATION_EDGE_COLOR, SHADOW_NODE_SIZE_FACTOR, materializationAttrs, edgeAttrsForKind, populateGraph } from "./graphLayout";
 import Graph from "graphology";
 import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
 
@@ -285,6 +285,40 @@ describe("graphLayout", () => {
     it("returns filled type for materialized", () => {
       const result = materializationAttrs("materialized", "#7c3aed");
       expect(result).toEqual({ type: "filled", color: "#7c3aed", size: NODE_SIZE });
+    });
+  });
+
+  describe("edgeAttrsForKind", () => {
+    it("returns wikilink constants for wikilink kind", () => {
+      expect(edgeAttrsForKind("wikilink")).toEqual({
+        kind: "wikilink",
+        size: WIKILINK_EDGE_SIZE,
+        color: WIKILINK_EDGE_COLOR,
+      });
+    });
+
+    it("returns mdlink constants for mdlink kind", () => {
+      expect(edgeAttrsForKind("mdlink")).toEqual({
+        kind: "mdlink",
+        size: MDLINK_EDGE_SIZE,
+        color: MDLINK_EDGE_COLOR,
+      });
+    });
+
+    it("returns citation constants for citation kind", () => {
+      expect(edgeAttrsForKind("citation")).toEqual({
+        kind: "citation",
+        size: CITATION_EDGE_SIZE,
+        color: CITATION_EDGE_COLOR,
+      });
+    });
+
+    it("returns annotation constants for annotation kind", () => {
+      expect(edgeAttrsForKind("annotation")).toEqual({
+        kind: "annotation",
+        size: ANNOTATION_EDGE_SIZE,
+        color: ANNOTATION_EDGE_COLOR,
+      });
     });
   });
 

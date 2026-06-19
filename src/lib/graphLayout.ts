@@ -1,5 +1,5 @@
 import Graph from "graphology";
-import type { SubgraphResult } from "./ipc";
+import type { SubgraphResult, EdgeKind } from "./ipc";
 
 const DEFAULT_ACCENT = "#0969da";
 const DEFAULT_DIM = "#d1d9e0";
@@ -30,14 +30,35 @@ export const SEED_COLOR = "#f59e0b";
 export const SELECTED_COLOR = "#fbbf24";
 
 export const SHADOW_COLOR = "#8b949e";
-export const CITATION_EDGE_COLOR = "#8b949e";
+
+export const WIKILINK_EDGE_SIZE = 0.5;
+export const WIKILINK_EDGE_COLOR = "#818b98";
+export const MDLINK_EDGE_SIZE = 0.5;
+export const MDLINK_EDGE_COLOR = "#818b98";
 export const CITATION_EDGE_SIZE = 0.3;
+export const CITATION_EDGE_COLOR = "#8b949e";
+export const ANNOTATION_EDGE_SIZE = 0.3;
+export const ANNOTATION_EDGE_COLOR = "#8b949e";
+
 export const SHADOW_NODE_SIZE_FACTOR = 0.7;
 
 /** Derive a node label from its path: strip directory and the `.md` extension. Mirrors the Rust title fallback. */
 export function nodeLabelFromPath(p: string): string {
   const base = p.split("/").pop() ?? p;
   return base.endsWith(".md") ? base.slice(0, -3) : base;
+}
+
+export function edgeAttrsForKind(kind: EdgeKind): { kind: EdgeKind; size: number; color: string } {
+  switch (kind) {
+    case "wikilink":
+      return { kind, size: WIKILINK_EDGE_SIZE, color: WIKILINK_EDGE_COLOR };
+    case "mdlink":
+      return { kind, size: MDLINK_EDGE_SIZE, color: MDLINK_EDGE_COLOR };
+    case "citation":
+      return { kind, size: CITATION_EDGE_SIZE, color: CITATION_EDGE_COLOR };
+    case "annotation":
+      return { kind, size: ANNOTATION_EDGE_SIZE, color: ANNOTATION_EDGE_COLOR };
+  }
 }
 
 export function seedAttrs(isSeed: boolean, accentColor: string): { type: string; color: string } {
@@ -84,15 +105,7 @@ export function populateGraph(graph: Graph, subgraph: SubgraphResult, accentColo
 
   for (const [source, target, kind] of subgraph.edges) {
     if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
-    if (kind === "citation") {
-      graph.mergeUndirectedEdge(source, target, {
-        kind: "citation",
-        size: CITATION_EDGE_SIZE,
-        color: CITATION_EDGE_COLOR,
-      });
-    } else {
-      graph.mergeUndirectedEdge(source, target, { kind, size: 0.5 });
-    }
+    graph.mergeUndirectedEdge(source, target, edgeAttrsForKind(kind));
   }
 }
 

@@ -1,6 +1,6 @@
 import type Graph from "graphology";
 import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
-import { materializationAttrs, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR } from "./graphLayout";
+import { materializationAttrs, edgeAttrsForKind } from "./graphLayout";
 
 export interface GraphDiff {
   addedNodes: GraphNode[];
@@ -125,15 +125,7 @@ export function applyDiff(
 
   for (const [source, target, kind] of diff.addedEdges) {
     if (graph.hasNode(source) && graph.hasNode(target)) {
-      if (kind === "citation") {
-        graph.mergeUndirectedEdge(source, target, {
-          kind: "citation",
-          size: CITATION_EDGE_SIZE,
-          color: CITATION_EDGE_COLOR,
-        });
-      } else {
-        graph.mergeUndirectedEdge(source, target, { kind, size: 0.5 });
-      }
+      graph.mergeUndirectedEdge(source, target, edgeAttrsForKind(kind));
     }
   }
 
