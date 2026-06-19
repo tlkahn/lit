@@ -735,7 +735,7 @@ export interface GraphNode {
   materialization: Materialization;
 }
 
-export type EdgeKind = "wikilink" | "citation";
+export type EdgeKind = "wikilink" | "mdlink" | "citation" | "annotation";
 
 export interface SubgraphResult {
   nodes: GraphNode[];

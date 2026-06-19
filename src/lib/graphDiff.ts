@@ -45,7 +45,7 @@ export function computeDiff(graph: Graph, subgraph: SubgraphResult): GraphDiff {
 
   const currentEdgeMap = new Map<string, [string, string, EdgeKind]>();
   graph.forEachEdge((_edge, attrs, source, target) => {
-    const kind: EdgeKind = attrs.citation ? "citation" : "wikilink";
+    const kind: EdgeKind = (attrs.kind as EdgeKind) ?? "wikilink";
     currentEdgeMap.set(edgeKey(source, target, kind), [source, target, kind]);
   });
 
@@ -127,12 +127,12 @@ export function applyDiff(
     if (graph.hasNode(source) && graph.hasNode(target)) {
       if (kind === "citation") {
         graph.mergeUndirectedEdge(source, target, {
+          kind: "citation",
           size: CITATION_EDGE_SIZE,
           color: CITATION_EDGE_COLOR,
-          citation: true,
         });
       } else {
-        graph.mergeUndirectedEdge(source, target, { size: 0.5 });
+        graph.mergeUndirectedEdge(source, target, { kind, size: 0.5 });
       }
     }
   }

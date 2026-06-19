@@ -287,7 +287,7 @@ describe("computeDiff EdgeKind support", () => {
     const graph = new Graph();
     graph.addNode("a.md", { label: "A" });
     graph.addNode("b.md", { label: "B" });
-    graph.mergeUndirectedEdge("a.md", "b.md", { citation: false });
+    graph.mergeUndirectedEdge("a.md", "b.md", { kind: "wikilink" });
 
     const subgraph: SubgraphResult = {
       nodes: [n("a.md", "A"), n("b.md", "B")],
@@ -363,7 +363,7 @@ describe("applyDiff materialization and EdgeKind styling", () => {
     applyDiff(graph, diff, "#0969da");
 
     const edge = graph.undirectedEdge("a.md", "b.md")!;
-    expect(graph.getEdgeAttribute(edge, "citation")).toBe(true);
+    expect(graph.getEdgeAttribute(edge, "kind")).toBe("citation");
     expect(graph.getEdgeAttribute(edge, "size")).toBe(CITATION_EDGE_SIZE);
     expect(graph.getEdgeAttribute(edge, "color")).toBe(CITATION_EDGE_COLOR);
   });
