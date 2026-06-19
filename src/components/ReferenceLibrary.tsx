@@ -689,12 +689,25 @@ export function ReferenceLibrary() {
     overscan: 10,
   });
 
+  const prevExpandedRef = useRef(expandedIndex);
+  useEffect(() => {
+    const prev = prevExpandedRef.current;
+    prevExpandedRef.current = expandedIndex;
+
+    // Only invalidate items whose size actually changed (expanded/collapsed),
+    // instead of measure() which nukes all cached sizes and causes cumulative
+    // drift from estimate errors.
+    const changed: number[] = [];
+    if (prev >= 0) changed.push(prev);
+    if (expandedIndex >= 0 && expandedIndex !== prev) changed.push(expandedIndex);
+    for (const idx of changed) {
+      virtualizer.resizeItem(idx, virtualizer.options.estimateSize(idx));
+    }
+  }, [virtualizer, expandedIndex]);
+
   useEffect(() => {
     virtualizer.measure();
-    if (expandedIndex >= 0) {
-      virtualizer.scrollToIndex(expandedIndex, { align: "start" });
-    }
-  }, [virtualizer, expandedIndex, bibKeyStates]);
+  }, [virtualizer, bibKeyStates]);
 
   const scrollToLetter = useCallback(
     (letter: string, smooth: boolean) => {
