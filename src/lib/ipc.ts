@@ -554,6 +554,11 @@ export async function linkEntryPdf(
   return invoke<string>("link_entry_pdf", { key, filePath, workspacePath });
 }
 
+export interface UpdateDownloadProgress {
+  downloaded: number;
+  total: number | null;
+}
+
 export type OcrProgressPayload = { key: string; step: string; detail?: string };
 
 export async function ocrPdfToMarkdown(

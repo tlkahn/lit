@@ -1,8 +1,15 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub(crate) struct UpdateDownloadProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+}
 
 static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
@@ -50,10 +57,34 @@ pub(crate) async fn show_dialog<R: tauri::Runtime>(
 /// Run the full install + restart flow for a found update.
 /// Shows a download-error dialog on failure; prompts to restart on success.
 async fn install_update(app: &AppHandle, update: tauri_plugin_updater::Update) {
-    match update
-        .download_and_install(|_chunk, _total| {}, || {})
-        .await
-    {
+    use tauri::Emitter;
+
+    let handle = app.clone();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+
+    let on_chunk = move |chunk_bytes: usize, content_length: Option<u64>| {
+        downloaded += chunk_bytes as u64;
+        let now = std::time::Instant::now();
+        let is_complete = content_length.is_some_and(|total| downloaded >= total);
+        if is_complete || now.duration_since(last_emit).as_millis() >= 100 {
+            last_emit = now;
+            let _ = handle.emit(
+                "lit:update-download-progress",
+                UpdateDownloadProgress {
+                    downloaded,
+                    total: content_length,
+                },
+            );
+        }
+    };
+
+    let finish_handle = app.clone();
+    let on_finish = move || {
+        let _ = finish_handle.emit("lit:update-installing", ());
+    };
+
+    match update.download_and_install(on_chunk, on_finish).await {
         Ok(()) => {
             let restart = show_dialog(
                 app.dialog()
@@ -228,5 +259,27 @@ mod tests {
     #[tokio::test]
     async fn oneshot_bridge_handles_deferred_callback() {
         assert!(oneshot_bridge(|cb| { tokio::spawn(async move { cb(true) }); }).await);
+    }
+
+    #[test]
+    fn update_download_progress_serializes_with_total() {
+        let p = UpdateDownloadProgress {
+            downloaded: 1024,
+            total: Some(4096),
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["downloaded"], 1024);
+        assert_eq!(json["total"], 4096);
+    }
+
+    #[test]
+    fn update_download_progress_serializes_without_total() {
+        let p = UpdateDownloadProgress {
+            downloaded: 512,
+            total: None,
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["downloaded"], 512);
+        assert!(json["total"].is_null());
     }
 }
