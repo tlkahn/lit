@@ -661,6 +661,20 @@ pub struct GraphIndex {
     bib_cache: crate::bib::cache::BibCache,
 }
 
+fn load_cardbox_layout(workspace_root: &Path) -> Vec<[String; 2]> {
+    #[derive(serde::Deserialize)]
+    struct LayoutLinks {
+        #[serde(default)]
+        links: Vec<[String; 2]>,
+    }
+    let path = workspace_root.join(".lit").join("cardbox.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<LayoutLinks>(&c).ok())
+        .map(|l| l.links)
+        .unwrap_or_default()
+}
+
 impl GraphIndex {
     pub fn load_from_store(workspace_root: std::path::PathBuf) -> Result<Option<Self>, GraphError> {
         let db_path = workspace_root.join(".lit").join("graph.db");
@@ -677,6 +691,8 @@ impl GraphIndex {
             .map(|(source, _target, raw_target)| (source, raw_target))
             .collect();
         let reverse_stems = ReverseStemIndex::build_from_edges(&edges);
+        let links = load_cardbox_layout(&workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let knowledge = KnowledgeGraph::from_store(&store)?;
         let positions = store.load_positions().unwrap_or_default();
         info!("loaded graph from store (skipped disk diff)");
@@ -707,6 +723,8 @@ impl GraphIndex {
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let links = load_cardbox_layout(&self.workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
         Ok(true)
@@ -769,6 +787,8 @@ impl GraphIndex {
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, &workspace_root, &bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let links = load_cardbox_layout(&workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
         let knowledge = KnowledgeGraph::from_store(&store)?;
@@ -873,6 +893,8 @@ impl GraphIndex {
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
+        let links = load_cardbox_layout(&self.workspace_root);
+        super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;
         let mut knowledge = self.knowledge.lock().unwrap();
@@ -1268,6 +1290,30 @@ impl GraphIndex {
     /// indexer module cannot reach the private `store` field otherwise.
     pub fn store(&self) -> std::sync::MutexGuard<'_, crate::graph::store::Store> {
         self.store.lock().unwrap()
+    }
+
+    pub fn workspace_root(&self) -> &std::path::Path {
+        &self.workspace_root
+    }
+
+    pub fn add_cardbox_edge(&self, a: &str, b: &str) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let changed = super::cardbox_edges::update_cardbox_edge_after_add(&store, a, b)?;
+        if changed {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            *knowledge = KnowledgeGraph::from_store(&store)?;
+        }
+        Ok(changed)
+    }
+
+    pub fn remove_cardbox_edge(&self, remaining_links: &[[String; 2]], a: &str, b: &str) -> Result<bool, GraphError> {
+        let store = self.store.lock().unwrap();
+        let changed = super::cardbox_edges::update_cardbox_edge_after_remove(&store, remaining_links, a, b)?;
+        if changed {
+            let mut knowledge = self.knowledge.lock().unwrap();
+            *knowledge = KnowledgeGraph::from_store(&store)?;
+        }
+        Ok(changed)
     }
 
     pub fn clear_positions(&self) -> Result<(), GraphError> {

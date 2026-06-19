@@ -349,6 +349,8 @@ pub fn write_cardbox_layout(
 pub fn add_cardbox_link(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
     a: String,
     b: String,
 ) -> Result<(), String> {
@@ -364,13 +366,26 @@ pub fn add_cardbox_link(
         layout.links.push(normalized);
         layout.version = layout.version.max(2);
         Ok(())
-    })
+    })?;
+
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+        match gi.add_cardbox_edge(&a, &b) {
+            Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
+            Ok(false) => {}
+            Err(e) => tracing::warn!("add_cardbox_edge failed: {e}"),
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
 pub fn remove_cardbox_link(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
+    app_handle: tauri::AppHandle,
     a: String,
     b: String,
 ) -> Result<(), String> {
@@ -392,7 +407,18 @@ pub fn remove_cardbox_link(
         return Ok(());
     }
 
-    persist_layout(&lit_dir, &layout)
+    let remaining_links = layout.links.clone();
+    persist_layout(&lit_dir, &layout)?;
+
+    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+        match gi.remove_cardbox_edge(&remaining_links, &a, &b) {
+            Ok(true) => { let _ = app_handle.emit("lit:graph-updated", ()); }
+            Ok(false) => {}
+            Err(e) => tracing::warn!("remove_cardbox_edge failed: {e}"),
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
