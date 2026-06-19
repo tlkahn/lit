@@ -1285,22 +1285,26 @@ impl GraphIndex {
 
     pub fn add_cardbox_edge(&self, a: &str, b: &str) -> Result<bool, GraphError> {
         let store = self.store.lock().unwrap();
-        let changed = super::cardbox_edges::update_cardbox_edge_after_add(&store, a, b)?;
-        if changed {
+        let result = super::cardbox_edges::update_cardbox_edge_after_add(&store, a, b)?;
+        if let Some((source, target)) = result {
             let mut knowledge = self.knowledge.lock().unwrap();
-            *knowledge = KnowledgeGraph::from_store(&store)?;
+            knowledge.add_cardbox_edge(&source, &target);
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(changed)
     }
 
     pub fn remove_cardbox_edge(&self, remaining_links: &[[String; 2]], a: &str, b: &str) -> Result<bool, GraphError> {
         let store = self.store.lock().unwrap();
-        let changed = super::cardbox_edges::update_cardbox_edge_after_remove(&store, remaining_links, a, b)?;
-        if changed {
+        let result = super::cardbox_edges::update_cardbox_edge_after_remove(&store, remaining_links, a, b)?;
+        if let Some((a_id, b_id)) = result {
             let mut knowledge = self.knowledge.lock().unwrap();
-            *knowledge = KnowledgeGraph::from_store(&store)?;
+            knowledge.remove_cardbox_edges_between(&a_id, &b_id);
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(changed)
     }
 
     pub fn clear_positions(&self) -> Result<(), GraphError> {

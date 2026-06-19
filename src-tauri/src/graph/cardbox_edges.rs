@@ -57,17 +57,17 @@ pub fn sync_cardbox_edges_from_layout(store: &Store, links: &[[String; 2]]) -> R
     Ok(())
 }
 
-pub fn update_cardbox_edge_after_add(store: &Store, a: &str, b: &str) -> Result<bool, GraphError> {
+pub fn update_cardbox_edge_after_add(store: &Store, a: &str, b: &str) -> Result<Option<(String, String)>, GraphError> {
     let uuid_map = store.get_node_ids_for_uuids(&[a, b])?;
     let pair = match resolve_cross_doc_pair(&uuid_map, a, b) {
         Some(p) => p,
-        None => return Ok(false),
+        None => return Ok(None),
     };
     if store.has_cardbox_edge(&pair.0, &pair.1)? {
-        return Ok(false);
+        return Ok(None);
     }
     store.insert_edge(&pair.0, &pair.1, "", "", 0, EdgeKind::Cardbox)?;
-    Ok(true)
+    Ok(Some(pair))
 }
 
 pub fn update_cardbox_edge_after_remove(
@@ -75,11 +75,11 @@ pub fn update_cardbox_edge_after_remove(
     remaining_links: &[[String; 2]],
     a: &str,
     b: &str,
-) -> Result<bool, GraphError> {
+) -> Result<Option<(String, String)>, GraphError> {
     let uuid_map_removed = store.get_node_ids_for_uuids(&[a, b])?;
     let removed_pair = match resolve_cross_doc_pair(&uuid_map_removed, a, b) {
         Some(p) => p,
-        None => return Ok(false),
+        None => return Ok(None),
     };
 
     let all_uuids: Vec<&str> = remaining_links
@@ -102,11 +102,11 @@ pub fn update_cardbox_edge_after_remove(
     });
 
     if still_connected {
-        return Ok(false);
+        return Ok(None);
     }
 
     store.delete_cardbox_edges_between(&removed_pair.0, &removed_pair.1)?;
-    Ok(true)
+    Ok(Some(removed_pair))
 }
 
 #[cfg(test)]
@@ -226,7 +226,7 @@ mod tests {
         let (store, uuid_a, uuid_b) = setup_two_doc_store();
 
         let added = update_cardbox_edge_after_add(&store, &uuid_a, &uuid_b).unwrap();
-        assert!(added);
+        assert!(added.is_some());
         assert!(store.has_cardbox_edge("doc_a.md", "doc_b.md").unwrap());
     }
 
@@ -234,8 +234,8 @@ mod tests {
     fn add_idempotent() {
         let (store, uuid_a, uuid_b) = setup_two_doc_store();
 
-        assert!(update_cardbox_edge_after_add(&store, &uuid_a, &uuid_b).unwrap());
-        assert!(!update_cardbox_edge_after_add(&store, &uuid_a, &uuid_b).unwrap());
+        assert!(update_cardbox_edge_after_add(&store, &uuid_a, &uuid_b).unwrap().is_some());
+        assert!(update_cardbox_edge_after_add(&store, &uuid_a, &uuid_b).unwrap().is_none());
 
         let count: i64 = store.conn.query_row(
             "SELECT COUNT(*) FROM edges WHERE edge_kind = 'cardbox'",
@@ -256,7 +256,7 @@ mod tests {
             rusqlite::params!["aaaa-2222", "doc_a.md"],
         ).unwrap();
 
-        assert!(!update_cardbox_edge_after_add(&store, "aaaa-1111", "aaaa-2222").unwrap());
+        assert!(update_cardbox_edge_after_add(&store, "aaaa-1111", "aaaa-2222").unwrap().is_none());
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
         assert!(store.has_cardbox_edge("doc_a.md", "doc_b.md").unwrap());
 
         let deleted = update_cardbox_edge_after_remove(&store, &[], &uuid_a, &uuid_b).unwrap();
-        assert!(deleted);
+        assert!(deleted.is_some());
         assert!(!store.has_cardbox_edge("doc_a.md", "doc_b.md").unwrap());
     }
 
@@ -286,7 +286,7 @@ mod tests {
 
         let remaining = vec![[uuid_a2.to_string(), uuid_b.clone()]];
         let deleted = update_cardbox_edge_after_remove(&store, &remaining, &uuid_a, &uuid_b).unwrap();
-        assert!(!deleted);
+        assert!(deleted.is_none());
         assert!(store.has_cardbox_edge("doc_a.md", "doc_b.md").unwrap());
     }
 
@@ -294,6 +294,6 @@ mod tests {
     fn remove_missing_uuid_returns_false() {
         let (store, ..) = setup_two_doc_store();
         let deleted = update_cardbox_edge_after_remove(&store, &[], "missing-1", "missing-2").unwrap();
-        assert!(!deleted);
+        assert!(deleted.is_none());
     }
 }
