@@ -691,6 +691,9 @@ export function ReferenceLibrary() {
 
   useEffect(() => {
     virtualizer.measure();
+    if (expandedIndex >= 0) {
+      virtualizer.scrollToIndex(expandedIndex, { align: "start" });
+    }
   }, [virtualizer, expandedIndex, bibKeyStates]);
 
   const scrollToLetter = useCallback(
