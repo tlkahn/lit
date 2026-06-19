@@ -30,6 +30,7 @@ vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = vi.fn();
     on = vi.fn();
+    off = vi.fn();
     refresh = vi.fn();
     setSetting = vi.fn();
     getCamera = () => ({ animatedReset: vi.fn() });

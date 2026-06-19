@@ -8,6 +8,7 @@ import type { UseGraphRendererOptions } from "./useGraphRenderer";
 
 const mockSigmaKill = vi.fn();
 const mockSigmaOn = vi.fn();
+const mockSigmaOff = vi.fn();
 const mockSigmaSetSetting = vi.fn();
 const mockCameraAnimatedReset = vi.fn();
 const mockSigmaRefresh = vi.fn();
@@ -21,6 +22,7 @@ vi.mock("sigma", () => ({
   default: class MockSigma {
     kill = mockSigmaKill;
     on = mockSigmaOn;
+    off = mockSigmaOff;
     setSetting = mockSigmaSetSetting;
     getCamera = () => ({ animatedReset: mockCameraAnimatedReset });
     refresh = mockSigmaRefresh;
