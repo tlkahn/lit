@@ -8,6 +8,7 @@ import {
 import { annotationToFields, generateDsl } from "./annotationDsl";
 import { parseThreadBody, turnsToMessages, appendTurn } from "./threadBody";
 import { getTypePrompt } from "./fireOrchestrator";
+import { resolveCurrentLlmProvider } from "./resolveCurrentLlmProvider";
 import { withLlmStream } from "./withLlmStream";
 
 export interface ThreadFollowupArgs {
@@ -49,21 +50,14 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
 
   return withLlmStream(view, annotation, {
     buildArgs: async () => {
-      const prefs = usePreferencesStore.getState();
       const turns = parseThreadBody(annotation.body ?? "");
       const messages = [...turnsToMessages(turns), { role: "user", content: question }];
       const system = resolveThreadSystemPrompt(annotation);
-      const customDef = prefs.llmProvider.providerId.startsWith("custom-")
-        ? prefs.llmCustomProviders.find((p) => p.id === prefs.llmProvider.providerId)
-        : undefined;
       return {
-        provider: prefs.llmProvider.providerId,
-        model: prefs.llmProvider.model,
+        ...resolveCurrentLlmProvider(),
         text: "",
         system: system || undefined,
         messages,
-        baseUrl: prefs.llmProvider.baseUrl ?? customDef?.baseUrl,
-        contextWindow: customDef?.contextWindow,
       };
     },
     onDone: ({ responseText, markFiringCleared, liveRange }) => {

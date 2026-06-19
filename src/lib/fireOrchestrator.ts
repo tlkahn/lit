@@ -5,6 +5,7 @@ import { canFire } from "./fireClassification";
 import { usePreferencesStore, type PreferencesState } from "../stores/preferences";
 import { clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
 import { buildThreadDsl } from "./companionInsert";
+import { resolveCurrentLlmProvider } from "./resolveCurrentLlmProvider";
 import { withLlmStream } from "./withLlmStream";
 
 export interface FireAnnotationArgs {
@@ -70,16 +71,10 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
 
       const system = getTypePrompt(annotation.annotation_type);
       const text = buildFirePrompt(scopeText, annotation.body);
-      const customDef = prefs.llmProvider.providerId.startsWith("custom-")
-        ? prefs.llmCustomProviders.find((p) => p.id === prefs.llmProvider.providerId)
-        : undefined;
       return {
-        provider: prefs.llmProvider.providerId,
-        model: prefs.llmProvider.model,
+        ...resolveCurrentLlmProvider(),
         text,
         system: system || undefined,
-        baseUrl: prefs.llmProvider.baseUrl ?? customDef?.baseUrl,
-        contextWindow: customDef?.contextWindow,
       };
     },
     onDone: ({ responseText, markFiringCleared, liveRange }) => {

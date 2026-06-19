@@ -10,7 +10,7 @@ vi.mock("./katexLoader", () => ({
 
 import { getKatexSync } from "./katexLoader";
 import { isUnparsableLatex, stripLatexResponse, LATEX_FIX_SYSTEM_PROMPT, buildLatexFixArgs } from "./latexFix";
-import type { LatexFixTarget } from "./latexFix";
+import type { LatexFixTarget, LatexCheckResult } from "./latexFix";
 import { usePreferencesStore } from "../../stores/preferences";
 
 describe("isUnparsableLatex", () => {
@@ -21,32 +21,37 @@ describe("isUnparsableLatex", () => {
     );
   });
 
-  it("returns false for valid LaTeX", () => {
-    expect(isUnparsableLatex("x^2")).toBe(false);
+  it("returns 'valid' for valid LaTeX", () => {
+    expect(isUnparsableLatex("x^2")).toBe("valid");
   });
 
-  it("returns true for broken LaTeX", () => {
+  it("returns 'unparsable' for broken LaTeX", () => {
     mockKatex.renderToString.mockImplementation(() => {
       throw new Error("KaTeX parse error");
     });
-    expect(isUnparsableLatex("\\frac{")).toBe(true);
+    expect(isUnparsableLatex("\\frac{")).toBe("unparsable");
   });
 
-  it("returns false for empty or whitespace-only strings without calling KaTeX", () => {
-    expect(isUnparsableLatex("")).toBe(false);
-    expect(isUnparsableLatex("   \t\n  ")).toBe(false);
+  it("returns 'valid' for empty or whitespace-only strings without calling KaTeX", () => {
+    expect(isUnparsableLatex("")).toBe("valid");
+    expect(isUnparsableLatex("   \t\n  ")).toBe("valid");
     expect(mockKatex.renderToString).not.toHaveBeenCalled();
   });
 
-  it("returns false when KaTeX is not loaded", () => {
+  it("returns 'unavailable' when KaTeX is not loaded", () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
-    expect(isUnparsableLatex("x^2")).toBe(false);
+    expect(isUnparsableLatex("x^2")).toBe("unavailable");
     expect(mockKatex.renderToString).not.toHaveBeenCalled();
   });
 
   it("calls renderToString with throwOnError: true", () => {
     isUnparsableLatex("x^2");
     expect(mockKatex.renderToString).toHaveBeenCalledWith("x^2", { throwOnError: true });
+  });
+
+  it("return type is assignable to LatexCheckResult", () => {
+    const result: LatexCheckResult = isUnparsableLatex("x^2");
+    expect(["valid", "unparsable", "unavailable"]).toContain(result);
   });
 });
 
@@ -81,6 +86,60 @@ describe("stripLatexResponse", () => {
 
   it("returns empty string for empty input", () => {
     expect(stripLatexResponse("")).toBe("");
+  });
+
+  it("strips ```tex fence", () => {
+    expect(stripLatexResponse("```tex\n\\frac{1}{2}\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips ```LaTeX fence (case-insensitive)", () => {
+    expect(stripLatexResponse("```LaTeX\n\\frac{1}{2}\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips ```math fence", () => {
+    expect(stripLatexResponse("```math\n\\frac{1}{2}\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips ```TEX fence (all caps)", () => {
+    expect(stripLatexResponse("```TEX\n\\sum_{i=0}^n x_i\n```")).toBe("\\sum_{i=0}^n x_i");
+  });
+
+  it("strips ```LATEX fence (all caps)", () => {
+    expect(stripLatexResponse("```LATEX\n\\alpha + \\beta\n```")).toBe("\\alpha + \\beta");
+  });
+
+  it("strips combined ```math fence + $$ delimiters", () => {
+    expect(stripLatexResponse("```math\n$$\\frac{1}{2}$$\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips ```latex fence with \\r\\n line endings", () => {
+    expect(stripLatexResponse("```latex\r\n\\frac{1}{2}\r\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips bare ``` fence with \\r\\n line endings", () => {
+    expect(stripLatexResponse("```\r\n\\frac{1}{2}\r\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips multi-line fenced content with \\r\\n without leaving stray \\r", () => {
+    expect(stripLatexResponse("```latex\r\n\\frac{1}{2} +\r\n\\frac{3}{4}\r\n```")).toBe(
+      "\\frac{1}{2} +\n\\frac{3}{4}",
+    );
+  });
+
+  it("strips combined fence + $$ delimiters with \\r\\n", () => {
+    expect(stripLatexResponse("```latex\r\n$$\\frac{1}{2}$$\r\n```")).toBe("\\frac{1}{2}");
+  });
+
+  it("strips $...$ delimiters with surrounding \\r\\n whitespace", () => {
+    expect(stripLatexResponse("\r\n$\\frac{1}{2}$\r\n")).toBe("\\frac{1}{2}");
+  });
+
+  it("does not mangle a lone $ character", () => {
+    expect(stripLatexResponse("$")).toBe("$");
+  });
+
+  it("does not mangle a lone $$ string", () => {
+    expect(stripLatexResponse("$$")).toBe("$$");
   });
 });
 
