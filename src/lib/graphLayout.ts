@@ -37,8 +37,8 @@ export const MDLINK_EDGE_SIZE = 0.5;
 export const MDLINK_EDGE_COLOR = "#818b98";
 export const CITATION_EDGE_SIZE = 0.3;
 export const CITATION_EDGE_COLOR = "#8b949e";
-export const ANNOTATION_EDGE_SIZE = 0.3;
-export const ANNOTATION_EDGE_COLOR = "#8b949e";
+export const CARDBOX_EDGE_SIZE = 0.4;
+export const CARDBOX_EDGE_COLOR = "#d2a8ff";
 
 export const SHADOW_NODE_SIZE_FACTOR = 0.7;
 
@@ -56,8 +56,8 @@ export function edgeAttrsForKind(kind: EdgeKind): { kind: EdgeKind; size: number
       return { kind, size: MDLINK_EDGE_SIZE, color: MDLINK_EDGE_COLOR };
     case "citation":
       return { kind, size: CITATION_EDGE_SIZE, color: CITATION_EDGE_COLOR };
-    case "annotation":
-      return { kind, size: ANNOTATION_EDGE_SIZE, color: ANNOTATION_EDGE_COLOR };
+    case "cardbox":
+      return { kind, size: CARDBOX_EDGE_SIZE, color: CARDBOX_EDGE_COLOR };
   }
 }
 

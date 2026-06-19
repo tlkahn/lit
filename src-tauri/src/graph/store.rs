@@ -815,7 +815,7 @@ impl Store {
 
     pub fn delete_edges_from(&self, source: &str) -> Result<(), GraphError> {
         self.conn
-            .execute("DELETE FROM edges WHERE source = ?1", [source])?;
+            .execute("DELETE FROM edges WHERE source = ?1 AND edge_kind IN ('wikilink', 'mdlink', 'citation')", [source])?;
         Ok(())
     }
 
@@ -846,6 +846,48 @@ impl Store {
             )?;
         }
         Ok(())
+    }
+
+    pub fn get_node_ids_for_uuids(&self, uuids: &[&str]) -> Result<HashMap<String, String>, GraphError> {
+        let mut map = HashMap::new();
+        for chunk in uuids.chunks(500) {
+            let placeholders: Vec<String> = (1..=chunk.len()).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "SELECT uuid, node_id FROM annotations WHERE uuid IN ({})",
+                placeholders.join(", ")
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::types::ToSql> = chunk.iter().map(|u| u as &dyn rusqlite::types::ToSql).collect();
+            let mut rows = stmt.query(params.as_slice())?;
+            while let Some(row) = rows.next()? {
+                let uuid: String = row.get(0)?;
+                let node_id: String = row.get(1)?;
+                map.insert(uuid, node_id);
+            }
+        }
+        Ok(map)
+    }
+
+    pub fn delete_all_cardbox_edges(&self) -> Result<usize, GraphError> {
+        let count = self.conn.execute("DELETE FROM edges WHERE edge_kind = 'cardbox'", [])?;
+        Ok(count)
+    }
+
+    pub fn delete_cardbox_edges_between(&self, a: &str, b: &str) -> Result<usize, GraphError> {
+        let count = self.conn.execute(
+            "DELETE FROM edges WHERE edge_kind = 'cardbox' AND ((source = ?1 AND target = ?2) OR (source = ?2 AND target = ?1))",
+            [a, b],
+        )?;
+        Ok(count)
+    }
+
+    pub fn has_cardbox_edge(&self, a: &str, b: &str) -> Result<bool, GraphError> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM edges WHERE edge_kind = 'cardbox' AND ((source = ?1 AND target = ?2) OR (source = ?2 AND target = ?1)))",
+            [a, b],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
     }
 
     // --- Queries ---
@@ -5704,5 +5746,114 @@ mod tests {
         let results = store.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1, "orphan annotation should be excluded by JOIN");
         assert_eq!(results[0].uuid, "u1");
+    }
+
+    #[test]
+    fn delete_edges_from_preserves_cardbox_edges() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("b.md", "B", &[], json!({})), 1).unwrap();
+        store.insert_edge("a.md", "b.md", "", "b", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "b.md", "", "b", 2, EdgeKind::Cardbox).unwrap();
+        store.delete_edges_from("a.md").unwrap();
+        let count: i64 = store.conn.query_row("SELECT COUNT(*) FROM edges WHERE source = 'a.md'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let kind: String = store.conn.query_row("SELECT edge_kind FROM edges WHERE source = 'a.md'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kind, "cardbox");
+    }
+
+    #[test]
+    fn delete_all_cardbox_edges_removes_only_cardbox() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "b", 1, EdgeKind::Wikilink).unwrap();
+        store.insert_edge("a.md", "b.md", "", "b", 2, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("c.md", "d.md", "", "d", 1, EdgeKind::Cardbox).unwrap();
+        let deleted = store.delete_all_cardbox_edges().unwrap();
+        assert_eq!(deleted, 2);
+        let count: i64 = store.conn.query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let kind: String = store.conn.query_row("SELECT edge_kind FROM edges", [], |r| r.get(0)).unwrap();
+        assert_eq!(kind, "wikilink");
+    }
+
+    #[test]
+    fn delete_cardbox_edges_between_both_directions() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 1, EdgeKind::Cardbox).unwrap();
+        store.insert_edge("b.md", "a.md", "", "", 1, EdgeKind::Cardbox).unwrap();
+        let deleted = store.delete_cardbox_edges_between("a.md", "b.md").unwrap();
+        assert_eq!(deleted, 2);
+        let count: i64 = store.conn.query_row("SELECT COUNT(*) FROM edges", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn delete_cardbox_edges_between_no_match() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 1, EdgeKind::Cardbox).unwrap();
+        let deleted = store.delete_cardbox_edges_between("x.md", "y.md").unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn has_cardbox_edge_true() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 1, EdgeKind::Cardbox).unwrap();
+        assert!(store.has_cardbox_edge("a.md", "b.md").unwrap());
+    }
+
+    #[test]
+    fn has_cardbox_edge_false() {
+        let store = Store::open_memory().unwrap();
+        assert!(!store.has_cardbox_edge("a.md", "b.md").unwrap());
+    }
+
+    #[test]
+    fn has_cardbox_edge_ignores_other_kinds() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("a.md", "b.md", "", "", 1, EdgeKind::Wikilink).unwrap();
+        assert!(!store.has_cardbox_edge("a.md", "b.md").unwrap());
+    }
+
+    #[test]
+    fn has_cardbox_edge_either_direction() {
+        let store = Store::open_memory().unwrap();
+        store.insert_edge("b.md", "a.md", "", "", 1, EdgeKind::Cardbox).unwrap();
+        assert!(store.has_cardbox_edge("a.md", "b.md").unwrap());
+    }
+
+    #[test]
+    fn get_node_ids_for_uuids_basic() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
+        let anns_a = vec![IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("x".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-a".into()),
+        }];
+        let anns_b = vec![IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("y".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-b".into()),
+        }];
+        store.upsert_annotations("a.md", &anns_a).unwrap();
+        store.upsert_annotations("b.md", &anns_b).unwrap();
+        let map = store.get_node_ids_for_uuids(&["uuid-a", "uuid-b"]).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["uuid-a"], "a.md");
+        assert_eq!(map["uuid-b"], "b.md");
+    }
+
+    #[test]
+    fn get_node_ids_for_uuids_empty_input() {
+        let store = Store::open_memory().unwrap();
+        let map = store.get_node_ids_for_uuids(&[]).unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn get_node_ids_for_uuids_missing_uuids() {
+        let store = Store::open_memory().unwrap();
+        let map = store.get_node_ids_for_uuids(&["nonexistent"]).unwrap();
+        assert!(map.is_empty());
     }
 }
