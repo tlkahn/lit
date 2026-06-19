@@ -6,7 +6,8 @@ pub enum EdgeKind {
     Wikilink,
     Mdlink,
     Citation,
-    Annotation,
+    #[serde(alias = "annotation")]
+    Cardbox,
 }
 
 impl EdgeKind {
@@ -15,7 +16,7 @@ impl EdgeKind {
             EdgeKind::Wikilink => "wikilink",
             EdgeKind::Mdlink => "mdlink",
             EdgeKind::Citation => "citation",
-            EdgeKind::Annotation => "annotation",
+            EdgeKind::Cardbox => "cardbox",
         }
     }
 }
@@ -25,7 +26,7 @@ impl From<&str> for EdgeKind {
         match s {
             "mdlink" => EdgeKind::Mdlink,
             "citation" => EdgeKind::Citation,
-            "annotation" => EdgeKind::Annotation,
+            "cardbox" | "annotation" => EdgeKind::Cardbox,
             _ => EdgeKind::Wikilink,
         }
     }
@@ -250,14 +251,15 @@ mod tests {
         assert_eq!(serde_json::to_string(&EdgeKind::Wikilink).unwrap(), "\"wikilink\"");
         assert_eq!(serde_json::to_string(&EdgeKind::Mdlink).unwrap(), "\"mdlink\"");
         assert_eq!(serde_json::to_string(&EdgeKind::Citation).unwrap(), "\"citation\"");
-        assert_eq!(serde_json::to_string(&EdgeKind::Annotation).unwrap(), "\"annotation\"");
+        assert_eq!(serde_json::to_string(&EdgeKind::Cardbox).unwrap(), "\"cardbox\"");
         assert_eq!(EdgeKind::Wikilink.as_str(), "wikilink");
         assert_eq!(EdgeKind::Mdlink.as_str(), "mdlink");
         assert_eq!(EdgeKind::Citation.as_str(), "citation");
-        assert_eq!(EdgeKind::Annotation.as_str(), "annotation");
+        assert_eq!(EdgeKind::Cardbox.as_str(), "cardbox");
         assert_eq!(serde_json::from_str::<EdgeKind>("\"mdlink\"").unwrap(), EdgeKind::Mdlink);
         assert_eq!(serde_json::from_str::<EdgeKind>("\"citation\"").unwrap(), EdgeKind::Citation);
-        assert_eq!(serde_json::from_str::<EdgeKind>("\"annotation\"").unwrap(), EdgeKind::Annotation);
+        assert_eq!(serde_json::from_str::<EdgeKind>("\"cardbox\"").unwrap(), EdgeKind::Cardbox);
+        assert_eq!(serde_json::from_str::<EdgeKind>("\"annotation\"").unwrap(), EdgeKind::Cardbox);
     }
 
     #[test]
@@ -265,7 +267,8 @@ mod tests {
         assert_eq!(EdgeKind::from("wikilink"), EdgeKind::Wikilink);
         assert_eq!(EdgeKind::from("mdlink"), EdgeKind::Mdlink);
         assert_eq!(EdgeKind::from("citation"), EdgeKind::Citation);
-        assert_eq!(EdgeKind::from("annotation"), EdgeKind::Annotation);
+        assert_eq!(EdgeKind::from("cardbox"), EdgeKind::Cardbox);
+        assert_eq!(EdgeKind::from("annotation"), EdgeKind::Cardbox);
         assert_eq!(EdgeKind::from("garbage"), EdgeKind::Wikilink);
     }
 

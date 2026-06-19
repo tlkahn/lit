@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR, SHADOW_COLOR, WIKILINK_EDGE_SIZE, WIKILINK_EDGE_COLOR, MDLINK_EDGE_SIZE, MDLINK_EDGE_COLOR, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, ANNOTATION_EDGE_SIZE, ANNOTATION_EDGE_COLOR, SHADOW_NODE_SIZE_FACTOR, materializationAttrs, edgeAttrsForKind, populateGraph } from "./graphLayout";
+import { buildGraph, resolveThemeColors, applyPositions, recolorSeed, seedAttrs, nodeLabelFromPath, NODE_SIZE, SEED_COLOR, SELECTED_COLOR, SHADOW_COLOR, WIKILINK_EDGE_SIZE, WIKILINK_EDGE_COLOR, MDLINK_EDGE_SIZE, MDLINK_EDGE_COLOR, CITATION_EDGE_SIZE, CITATION_EDGE_COLOR, CARDBOX_EDGE_SIZE, CARDBOX_EDGE_COLOR, SHADOW_NODE_SIZE_FACTOR, materializationAttrs, edgeAttrsForKind, populateGraph } from "./graphLayout";
 import Graph from "graphology";
 import type { SubgraphResult, GraphNode, EdgeKind } from "./ipc";
 
@@ -313,11 +313,11 @@ describe("graphLayout", () => {
       });
     });
 
-    it("returns annotation constants for annotation kind", () => {
-      expect(edgeAttrsForKind("annotation")).toEqual({
-        kind: "annotation",
-        size: ANNOTATION_EDGE_SIZE,
-        color: ANNOTATION_EDGE_COLOR,
+    it("returns cardbox constants for cardbox kind", () => {
+      expect(edgeAttrsForKind("cardbox")).toEqual({
+        kind: "cardbox",
+        size: CARDBOX_EDGE_SIZE,
+        color: CARDBOX_EDGE_COLOR,
       });
     });
   });
