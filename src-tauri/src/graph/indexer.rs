@@ -12,6 +12,7 @@ use super::knowledge::{GraphNode, KnowledgeGraph, SubgraphBundle, SubgraphResult
 use super::citations::extract_citations_blanked;
 use super::links::{blank_code, extract_wikilinks_blanked, WikiLink};
 use super::resolve::StemLookup;
+use super::cardbox_layout::load_layout_links;
 use super::store::Store;
 use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
@@ -661,20 +662,6 @@ pub struct GraphIndex {
     bib_cache: crate::bib::cache::BibCache,
 }
 
-fn load_cardbox_layout(workspace_root: &Path) -> Vec<[String; 2]> {
-    #[derive(serde::Deserialize)]
-    struct LayoutLinks {
-        #[serde(default)]
-        links: Vec<[String; 2]>,
-    }
-    let path = workspace_root.join(".lit").join("cardbox.json");
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<LayoutLinks>(&c).ok())
-        .map(|l| l.links)
-        .unwrap_or_default()
-}
-
 impl GraphIndex {
     pub fn load_from_store(workspace_root: std::path::PathBuf) -> Result<Option<Self>, GraphError> {
         let db_path = workspace_root.join(".lit").join("graph.db");
@@ -691,7 +678,7 @@ impl GraphIndex {
             .map(|(source, _target, raw_target)| (source, raw_target))
             .collect();
         let reverse_stems = ReverseStemIndex::build_from_edges(&edges);
-        let links = load_cardbox_layout(&workspace_root);
+        let links = load_layout_links(&workspace_root);
         super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let knowledge = KnowledgeGraph::from_store(&store)?;
         let positions = store.load_positions().unwrap_or_default();
@@ -723,7 +710,7 @@ impl GraphIndex {
         incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
-        let links = load_cardbox_layout(&self.workspace_root);
+        let links = load_layout_links(&self.workspace_root);
         super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let mut knowledge = self.knowledge.lock().unwrap();
         *knowledge = KnowledgeGraph::from_store(&store)?;
@@ -787,7 +774,7 @@ impl GraphIndex {
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, &workspace_root, &bib_cache)?;
         resolve_shadows_tx(&store)?;
-        let links = load_cardbox_layout(&workspace_root);
+        let links = load_layout_links(&workspace_root);
         super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
 
         on_progress(IndexProgress { phase: IndexPhase::Building, current: 0, total: 0 });
@@ -893,7 +880,7 @@ impl GraphIndex {
         let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
-        let links = load_cardbox_layout(&self.workspace_root);
+        let links = load_layout_links(&self.workspace_root);
         super::cardbox_edges::sync_cardbox_edges_from_layout(&store, &links)?;
         let mut reverse = self.reverse_stems.lock().unwrap();
         *reverse = new_reverse;

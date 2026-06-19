@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use serde::{Serialize, Deserialize};
+use serde::Deserialize;
 
 pub struct CardboxLock(Mutex<()>);
 
@@ -11,48 +11,8 @@ impl CardboxLock {
 }
 use tauri::{Emitter, State};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CardboxLayout {
-    pub version: u32,
-    pub order: Vec<String>,
-    #[serde(default)]
-    pub links: Vec<[String; 2]>,
-    #[serde(default)]
-    pub groups: HashMap<String, GroupInfo>,
-    #[serde(default)]
-    pub pinned: Vec<String>,
-    #[serde(default)]
-    pub notes: HashMap<String, CardNote>,
-    #[serde(default)]
-    pub colors: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CardNote {
-    pub body: String,
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GroupInfo {
-    pub name: String,
-    pub order: Vec<String>,
-    pub collapsed: bool,
-}
-
-impl Default for CardboxLayout {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            order: vec![],
-            links: vec![],
-            groups: HashMap::new(),
-            pinned: vec![],
-            notes: HashMap::new(),
-            colors: HashMap::new(),
-        }
-    }
-}
+pub use crate::graph::cardbox_layout::{CardboxLayout, CardNote, GroupInfo};
+use crate::graph::cardbox_layout;
 
 const GROUP_PREFIX: &str = "group:";
 
@@ -65,14 +25,6 @@ fn normalize_link(a: &str, b: &str) -> [String; 2] {
         [a.to_string(), b.to_string()]
     } else {
         [b.to_string(), a.to_string()]
-    }
-}
-
-fn load_layout_from_disk(layout_path: &std::path::Path) -> CardboxLayout {
-    match std::fs::read_to_string(layout_path) {
-        Ok(content) => serde_json::from_str::<CardboxLayout>(&content)
-            .unwrap_or(CardboxLayout::default()),
-        Err(_) => CardboxLayout::default(),
     }
 }
 
@@ -98,8 +50,7 @@ where
     let root = crate::commands::workspace::get_workspace_root(workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
+    let mut layout = cardbox_layout::load_layout(&root);
     let result = f(&mut layout)?;
     persist_layout(&lit_dir, &layout)?;
     Ok(result)
@@ -318,9 +269,8 @@ pub fn read_cardbox_layout(
 ) -> Result<CardboxLayout, String> {
     let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let layout_path = root.join(".lit").join("cardbox.json");
 
-    let mut layout = load_layout_from_disk(&layout_path);
+    let mut layout = cardbox_layout::load_layout(&root);
 
     // Normalize links: sort within pairs, sort full list, dedup
     for pair in &mut layout.links {
@@ -379,8 +329,7 @@ pub fn add_cardbox_link(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-    let layout_path = lit_dir.join("cardbox.json");
-    let mut layout = load_layout_from_disk(&layout_path);
+    let mut layout = cardbox_layout::load_layout(&root);
 
     let normalized = normalize_link(&a, &b);
     if layout.links.iter().any(|pair| *pair == normalized) {
@@ -415,13 +364,12 @@ pub fn remove_cardbox_link(
 
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let lit_dir = root.join(".lit");
-    let layout_path = lit_dir.join("cardbox.json");
 
-    if !layout_path.exists() {
+    if !cardbox_layout::layout_path(&root).exists() {
         return Ok(());
     }
 
-    let mut layout = load_layout_from_disk(&layout_path);
+    let mut layout = cardbox_layout::load_layout(&root);
 
     let normalized = normalize_link(&a, &b);
     let before = layout.links.len();
@@ -597,9 +545,7 @@ pub fn export_card_note(
 ) -> Result<String, String> {
     let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let lit_dir = root.join(".lit");
-    let layout_path = lit_dir.join("cardbox.json");
-    let layout = load_layout_from_disk(&layout_path);
+    let layout = cardbox_layout::load_layout(&root);
 
     let note = layout.notes.get(&uuid)
         .ok_or_else(|| format!("No note for card {}", uuid))?;
@@ -2533,8 +2479,7 @@ mod tests {
         F: FnOnce(&mut super::CardboxLayout),
     {
         let _guard = lock.0.lock().unwrap();
-        let layout_path = root.join(".lit").join("cardbox.json");
-        let mut layout = super::load_layout_from_disk(&layout_path);
+        let mut layout = crate::graph::cardbox_layout::load_layout(root);
         f(&mut layout);
         super::persist_layout(&root.join(".lit"), &layout).unwrap();
     }
