@@ -53,8 +53,8 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const setMode = useGraphViewState((s) => s.setMode);
   const depth = useGraphViewState((s) => s.depth);
   const setDepth = useGraphViewState((s) => s.setDepth);
-  const showCitations = useGraphViewState((s) => s.showCitations);
-  const setShowCitations = useGraphViewState((s) => s.setShowCitations);
+  const edgeFilters = useGraphViewState((s) => s.edgeFilters);
+  const setEdgeFilter = useGraphViewState((s) => s.setEdgeFilter);
   const selectionCount = useGraphSelectionStore((s) => s.selectedNodes.length);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
@@ -78,7 +78,7 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
 
   const { graphRef, loading, error, graphStats, tierSettings, dimColorRef, dataVersion, rebuild } = useGraphData({
-    mode, depth, activePageId: activePageId ?? null, showCitations,
+    mode, depth, activePageId: activePageId ?? null, edgeFilters,
   });
 
   const materialize = useMaterializeCitation({
@@ -234,12 +234,12 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         depth={depth}
         localDisabled={!activePageId}
         selectionCount={selectionCount}
-        showCitations={showCitations}
+        showCitations={edgeFilters.citations}
         onModeChange={setMode}
         onDepthChange={setDepth}
         onResetZoom={resetZoom}
         onSearch={() => setSearchOpen(true)}
-        onShowCitationsChange={setShowCitations}
+        onShowCitationsChange={(show) => setEdgeFilter("citations", show)}
       />
       <GraphSearch
         visible={searchOpen}
