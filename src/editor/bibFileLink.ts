@@ -168,11 +168,17 @@ function createBibFileClickHandler(): Extension {
 
       const kind: "file" | "url" | "doi" | "title" = hit.deco.spec.kind;
 
-      // Title clicks are handled by dblclick — let single clicks fall through
-      // so CM6 can place the cursor normally.
-      if (kind === "title") return false;
-
       if (!event.ctrlKey && !event.metaKey) return false;
+
+      if (kind === "title") {
+        event.preventDefault();
+        const citekey = findCitekey(view, hit.pos);
+        if (citekey) {
+          const bibFile = view.state.facet(bibPagePathFacet);
+          window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey, bibFile } }));
+        }
+        return true;
+      }
 
       event.preventDefault();
       const rawValue = view.state.doc.sliceString(hit.from, hit.to);
@@ -227,33 +233,8 @@ function createBibFileClickHandler(): Extension {
       return true;
     },
 
-    dblclick(event, view) {
-      if (event.button !== 0) return false;
-
-      const hit = hitTestDecoration(view, event);
-      if (!hit) return false;
-
-      const kind: "file" | "url" | "doi" | "title" = hit.deco.spec.kind;
-      if (kind !== "title") return false;
-
-      event.preventDefault();
-      const citekey = findCitekey(view, hit.pos);
-      if (citekey) {
-        const bibFile = view.state.facet(bibPagePathFacet);
-        window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey, bibFile } }));
-      }
-      return true;
-    },
   });
 }
-
-const bibTitleLinkTheme = EditorView.baseTheme({
-  ".cm-bib-title-link": {
-    textDecoration: "underline",
-    cursor: "pointer",
-    color: "var(--interactive-accent)",
-  },
-});
 
 export function bibFileLinkExtension(pagePath: string): Extension {
   return [
@@ -263,6 +244,6 @@ export function bibFileLinkExtension(pagePath: string): Extension {
     createBibFileClickHandler(),
     modHeldLinkStyle("cm-bib-file-link"),
     modHeldLinkStyle("cm-bib-url-link"),
-    bibTitleLinkTheme,
+    modHeldLinkStyle("cm-bib-title-link"),
   ];
 }

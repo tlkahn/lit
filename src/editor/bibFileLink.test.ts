@@ -1298,7 +1298,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title dispatches lit:reveal-bib-entry with citekey", () => {
+  it("Cmd+Click on title dispatches lit:reveal-bib-entry with citekey", () => {
     const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
     const view = makeViewWithBibExt(doc, "refs/library.bib");
 
@@ -1315,7 +1315,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
@@ -1326,7 +1326,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title dispatches lit:reveal-bib-entry with both citekey and bibFile", () => {
+  it("Cmd+Click on title dispatches lit:reveal-bib-entry with both citekey and bibFile", () => {
     const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
     const view = makeViewWithBibExt(doc, "refs/library.bib");
 
@@ -1343,7 +1343,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
@@ -1355,10 +1355,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title does not require modifier keys", () => {
-    const selectPage = vi.fn();
-    useWorkspaceStore.setState({ selectPage, pages: [] });
-
+  it("Cmd+Click on title requires modifier key — plain click does not dispatch", () => {
     const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
     const view = makeViewWithBibExt(doc, "refs/library.bib");
 
@@ -1375,19 +1372,17 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
 
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(selectPage).not.toHaveBeenCalled();
-    expect(openUrl).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
 
     window.removeEventListener("lit:reveal-bib-entry", handler);
     view.dom.remove();
     view.destroy();
   });
 
-  it("double-click on title in malformed entry (missing @header) separated by blank line does NOT dispatch reveal event", () => {
+  it("Cmd+Click on title in malformed entry (missing @header) separated by blank line does NOT dispatch reveal event", () => {
     // Two entries: the first is well-formed, the second is missing its @type{key, header.
     // A blank line separates them. findCitekey must stop at the blank line
     // and return null, not walk past it to find wrongEntry2024.
@@ -1419,7 +1414,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     // Must NOT dispatch — there is no valid citekey for this orphan entry
@@ -1430,7 +1425,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title after a closing brace boundary does NOT leak to preceding entry", () => {
+  it("Cmd+Click on title after a closing brace boundary does NOT leak to preceding entry", () => {
     // Two entries back-to-back: no blank line, but the closing } of the first
     // entry acts as a boundary. The second lacks a header.
     const doc = [
@@ -1459,7 +1454,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     // Must NOT dispatch — the closing brace marks the end of the preceding entry
@@ -1470,7 +1465,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title preceded by multi-line brace field still reveals correctly", () => {
+  it("Cmd+Click on title preceded by multi-line brace field still reveals correctly", () => {
     // An entry where the abstract field has a closing `}` on its own indented line
     // above the title. The backward scan must NOT treat the indented `},` as an
     // entry boundary.
@@ -1498,7 +1493,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
@@ -1509,7 +1504,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title preceded by several multi-line brace fields still reveals correctly", () => {
+  it("Cmd+Click on title preceded by several multi-line brace fields still reveals correctly", () => {
     // An entry with TWO multi-line brace fields (abstract and keywords) above the title,
     // each with indented `},` on their own line.
     const doc = [
@@ -1539,7 +1534,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
@@ -1550,7 +1545,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("double-click on title in well-formed entry still works after boundary checks (regression)", () => {
+  it("Cmd+Click on title in well-formed entry still works after boundary checks (regression)", () => {
     // Ensure the boundary checks don't break normal well-formed entries.
     // The closing brace is INSIDE the entry (at the end), the @header is above.
     const doc = [
@@ -1574,7 +1569,7 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+      new MouseEvent("mousedown", { button: 0, metaKey: true, bubbles: true }),
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
