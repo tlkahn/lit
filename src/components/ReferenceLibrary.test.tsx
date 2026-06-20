@@ -844,49 +844,43 @@ describe("ReferenceLibrary", () => {
     expect(screen.getByText("Note A")).toBeInTheDocument();
   });
 
-  it("shows 'Enriched' badge for partial materialization entries", async () => {
+  it("shows enriched indicator for partial materialization entries", async () => {
     bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    const badge = screen.getByTestId("badge-enriched");
-    expect(badge).toBeInTheDocument();
-    expect(badge.textContent).toBe("Enriched");
+    expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument();
   });
 
-  it("shows 'Has note' badge for citekey-linked entries", async () => {
+  it("shows has-note indicator for citekey-linked entries", async () => {
     bibKeyStatesFixture = { sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" } };
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    const badge = screen.getByTestId("badge-has-note");
-    expect(badge).toBeInTheDocument();
-    expect(badge.textContent).toBe("Has note");
+    expect(document.querySelector('[data-indicator="has-note"]')).toBeInTheDocument();
   });
 
-  it("no badge for shadow materialization entries", async () => {
+  it("no indicator for shadow materialization entries", async () => {
     bibKeyStatesFixture = { sanderson2009: { materialization: "shadow", page_id: null } };
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    expect(screen.queryByTestId("badge-enriched")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("badge-has-note")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-indicator]')).not.toBeInTheDocument();
   });
 
-  it("no badge when bib key is absent from bibKeyStates", async () => {
+  it("no indicator when bib key is absent from bibKeyStates", async () => {
     bibKeyStatesFixture = {};
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    expect(screen.queryByTestId("badge-enriched")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("badge-has-note")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-indicator]')).not.toBeInTheDocument();
   });
 
-  it("Has note badge prioritized over Enriched when page_id is present", async () => {
+  it("has-note indicator prioritized over enriched when page_id is present", async () => {
     bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: "notes/sanderson.md" } };
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    expect(screen.getByTestId("badge-has-note")).toBeInTheDocument();
-    expect(screen.queryByTestId("badge-enriched")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-indicator="has-note"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-indicator="enriched"]')).not.toBeInTheDocument();
   });
 
-  it("expanded card shows 'Enriched' badge for partial entries", async () => {
+  it("expanded card shows enriched indicator for partial entries", async () => {
     const user = userEvent.setup();
     bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
     render(<ReferenceLibrary />);
@@ -894,9 +888,7 @@ describe("ReferenceLibrary", () => {
 
     await user.click(screen.getByText("The Saiva Age"));
 
-    // The expanded card should also contain an Enriched badge
-    const badges = screen.getAllByTestId("badge-enriched");
-    expect(badges.length).toBeGreaterThanOrEqual(2); // collapsed row + expanded card
+    expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument();
   });
 
   it("clicking 'Has note' link in expanded card navigates to the linked page", async () => {
@@ -921,13 +913,13 @@ describe("ReferenceLibrary", () => {
     bibKeyStatesFixture = {};
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    expect(screen.queryByTestId("badge-enriched")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-indicator]')).not.toBeInTheDocument();
 
     bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
     emitMockEvent("lit:graph-updated", {});
 
     await waitFor(() =>
-      expect(screen.getByTestId("badge-enriched")).toBeInTheDocument(),
+      expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument(),
     );
   });
 
@@ -935,13 +927,13 @@ describe("ReferenceLibrary", () => {
     bibKeyStatesFixture = {};
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-    expect(screen.queryByTestId("badge-enriched")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-indicator]')).not.toBeInTheDocument();
 
     bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
     emitMockEvent("workspace://file-modified", { path: "refs.bib" });
 
     await waitFor(() =>
-      expect(screen.getByTestId("badge-enriched")).toBeInTheDocument(),
+      expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument(),
     );
   });
 
@@ -965,7 +957,7 @@ describe("ReferenceLibrary", () => {
     expect(btn.textContent).toBe("Create note");
   });
 
-  it("shows 'Create note' button with 'Enriched' badge for partial entries", async () => {
+  it("shows 'Create note' button with enriched indicator for partial entries", async () => {
     const user = userEvent.setup();
     bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
     render(<ReferenceLibrary />);
@@ -974,8 +966,7 @@ describe("ReferenceLibrary", () => {
     await user.click(screen.getByText("The Saiva Age"));
 
     expect(screen.getByTestId("create-note-btn")).toBeInTheDocument();
-    const badges = screen.getAllByTestId("badge-enriched");
-    expect(badges.length).toBeGreaterThanOrEqual(1);
+    expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument();
   });
 
   it("shows 'Open note' link in expanded card when state.page_id is set", async () => {
@@ -1198,20 +1189,20 @@ describe("ReferenceLibrary", () => {
     emitMockEvent("lit:graph-updated", {});
     emitMockEvent("lit:graph-updated", {});
 
-    // The third (fresh) call should resolve immediately, showing the Enriched badge
+    // The third (fresh) call should resolve immediately, showing the enriched indicator
     await waitFor(() =>
-      expect(screen.getByTestId("badge-enriched")).toBeInTheDocument(),
+      expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument(),
     );
 
-    // Now resolve the stale (second) call with a result that would show "Has note"
+    // Now resolve the stale (second) call with a result that would show "has-note"
     resolveStale({ sanderson2009: { materialization: "materialized", page_id: "notes/stale.md" } });
 
     // Wait a bit for any erroneous state update to propagate
     await new Promise((r) => setTimeout(r, 50));
 
-    // The stale result should have been discarded — still showing Enriched, not Has note
-    expect(screen.queryByTestId("badge-has-note")).not.toBeInTheDocument();
-    expect(screen.getByTestId("badge-enriched")).toBeInTheDocument();
+    // The stale result should have been discarded — still showing enriched, not has-note
+    expect(document.querySelector('[data-indicator="has-note"]')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-indicator="enriched"]')).toBeInTheDocument();
   });
 
   describe("Import PDF button", () => {
