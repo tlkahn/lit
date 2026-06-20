@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
+use crate::workspace::write_hash::WriteHashRegistry;
+
 use tauri::Emitter;
 
 static OCR_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
@@ -168,6 +170,7 @@ pub async fn ocr_pdf_to_markdown(
     credential_store: tauri::State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
     pdfium_config: tauri::State<'_, crate::pdf::PdfiumConfig>,
     graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    registry: tauri::State<'_, Arc<WriteHashRegistry>>,
     app_handle: tauri::AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
@@ -298,6 +301,23 @@ pub async fn ocr_pdf_to_markdown(
     // so it cannot be moved into spawn_blocking. Acceptable for tiny preferences I/O.
     if let Err(e) = ensure_companion_search_path(&app_handle) {
         eprintln!("[ocr] failed to update companion search paths: {e}");
+    }
+
+    // Step 8c: Persist companion frontmatter so the md↔pdf pairing survives renames.
+    {
+        let reg = registry.inner().clone();
+        let root_clone = root.clone();
+        let md_rel = md_relative.clone();
+        let pdf_rel = relative_pdf.to_string();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = crate::workspace::ops::persist_companion_frontmatter(
+                &root_clone, &md_rel, &pdf_rel, &reg,
+            ) {
+                eprintln!("[ocr] failed to persist companion frontmatter: {e}");
+            }
+        })
+        .await
+        .map_err(|e| format!("Companion frontmatter task failed: {e}"))?;
     }
 
     // Step 9: Done
@@ -1105,5 +1125,108 @@ mod tests {
             !output.markdown.contains("<!-- Page 0"),
             "should not re-index to 0"
         );
+    }
+
+    // --- companion frontmatter after OCR ---
+
+    #[test]
+    fn ocr_output_gets_companion_frontmatter() {
+        use crate::workspace::frontmatter::parse_frontmatter;
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, "# OCR output\n\nSome text.\n").unwrap();
+
+        let registry = WriteHashRegistry::new();
+        crate::workspace::ops::persist_companion_frontmatter(
+            root,
+            "smith2024.md",
+            "assets/pdf/smith2024.pdf",
+            &registry,
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(&md_path).unwrap();
+        let parsed = parse_frontmatter(&content);
+        let companion = parsed.map.get("companion").unwrap();
+        assert_eq!(
+            companion.as_str().unwrap(),
+            "assets/pdf/smith2024.pdf"
+        );
+        assert!(
+            parsed.body.contains("# OCR output"),
+            "body preserved after frontmatter insertion"
+        );
+    }
+
+    #[test]
+    fn ocr_companion_frontmatter_is_idempotent() {
+        use crate::workspace::frontmatter::parse_frontmatter;
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, "# OCR output\n").unwrap();
+
+        let registry = WriteHashRegistry::new();
+        for _ in 0..3 {
+            crate::workspace::ops::persist_companion_frontmatter(
+                root,
+                "smith2024.md",
+                "assets/pdf/smith2024.pdf",
+                &registry,
+            )
+            .unwrap();
+        }
+
+        let content = std::fs::read_to_string(&md_path).unwrap();
+        let parsed = parse_frontmatter(&content);
+        assert_eq!(parsed.map.len(), 1, "only one frontmatter key");
+        assert_eq!(
+            parsed.map.get("companion").unwrap().as_str().unwrap(),
+            "assets/pdf/smith2024.pdf"
+        );
+    }
+
+    #[test]
+    fn ocr_companion_frontmatter_find_companion_roundtrip() {
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("smith2024.md"), "# OCR\n").unwrap();
+        let pdf_dir = root.join("assets").join("pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        std::fs::write(pdf_dir.join("smith2024.pdf"), b"fake pdf").unwrap();
+
+        let registry = WriteHashRegistry::new();
+        crate::workspace::ops::persist_companion_frontmatter(
+            root,
+            "smith2024.md",
+            "assets/pdf/smith2024.pdf",
+            &registry,
+        )
+        .unwrap();
+
+        let search_paths = vec![".".to_string(), "assets/pdf".to_string()];
+
+        // md → pdf via frontmatter key
+        let found = crate::commands::workspace::find_companion(
+            "smith2024.md",
+            root,
+            &search_paths,
+        );
+        assert_eq!(found, Some("assets/pdf/smith2024.pdf".to_string()));
+
+        // pdf → md via search_paths ("." finds root-level md)
+        let reverse = crate::commands::workspace::find_companion(
+            "assets/pdf/smith2024.pdf",
+            root,
+            &search_paths,
+        );
+        assert_eq!(reverse, Some("smith2024.md".to_string()));
     }
 }
