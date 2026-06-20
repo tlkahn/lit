@@ -21,6 +21,7 @@ use crate::bib::semantic_scholar::{
 use crate::bib::types::BibEntry;
 use crate::commands::bib_import::{fetch_crossref_csl_item, HTTP_CLIENT};
 use crate::recognize::resolve::isbn::{self, IsbnPath};
+use crate::recognize::resolve::BaseUrls;
 use crate::recognize::resolve::title_match::is_punctuation;
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
@@ -296,23 +297,14 @@ fn merge_and_persist(
     Ok((new_fields, fields_added))
 }
 
-const OPEN_LIBRARY_BASE: &str = "https://openlibrary.org";
-const GOOGLE_BOOKS_BASE: &str = "https://www.googleapis.com";
-
 async fn try_isbn_enrichment(
     isbn: &str,
     client: &reqwest::Client,
     open_library_base: &str,
     google_books_base: &str,
-) -> Option<(BibEntry, &'static str)> {
+) -> Option<(BibEntry, IsbnPath)> {
     match isbn::resolve_isbn_with_base(client, isbn, open_library_base, google_books_base).await {
-        Ok((entry, path)) => {
-            let provider = match path {
-                IsbnPath::OpenLibrary => "open_library",
-                IsbnPath::GoogleBooks => "google_books",
-            };
-            Some((entry, provider))
-        }
+        Ok(result) => Some(result),
         Err(e) => {
             tracing::debug!(error = %e, "ISBN enrichment resolution failed");
             None
@@ -674,8 +666,9 @@ pub(crate) async fn enrich_entry(
 
     // ── Path ISBN: ISBN present, no DOI ─────────────────────────────
     if let Some(ref isbn_val) = existing.isbn {
-        if let Some((isbn_entry, provider)) = try_isbn_enrichment(
-            isbn_val, &HTTP_CLIENT, OPEN_LIBRARY_BASE, GOOGLE_BOOKS_BASE,
+        let urls = BaseUrls::production();
+        if let Some((isbn_entry, isbn_path)) = try_isbn_enrichment(
+            isbn_val, &HTTP_CLIENT, urls.open_library, urls.google_books,
         ).await {
             let (_new_fields, fields_added) = {
                 let store = gi.store();
@@ -689,6 +682,12 @@ pub(crate) async fn enrich_entry(
                     .unwrap_or(existing)
             };
 
+            let providers_failed = if isbn_path == IsbnPath::GoogleBooks {
+                vec!["open_library".to_string()]
+            } else {
+                vec![]
+            };
+
             return Ok(EnrichResult {
                 entry: updated_entry,
                 fields_added,
@@ -697,8 +696,8 @@ pub(crate) async fn enrich_entry(
                 shadow_nodes_created: 0,
                 references_linked: 0,
                 candidates: vec![],
-                providers_searched: vec![provider.to_string()],
-                providers_failed: vec![],
+                providers_searched: vec![isbn_path.provider_name().to_string()],
+                providers_failed,
             });
         }
         // ISBN resolution failed — fall through to title search (Path B)
@@ -708,7 +707,7 @@ pub(crate) async fn enrich_entry(
     let title_is_empty = existing.title.trim().is_empty();
     if title_is_empty {
         return Err(
-            "Cannot enrich: entry has no DOI and no title".to_string(),
+            "Cannot enrich: entry has no DOI, no title, and ISBN lookup failed".to_string(),
         );
     }
 
@@ -1358,8 +1357,8 @@ mod tests {
         ).await;
 
         assert!(result.is_some(), "expected Some from Open Library");
-        let (entry, provider) = result.unwrap();
-        assert_eq!(provider, "open_library");
+        let (entry, isbn_path) = result.unwrap();
+        assert_eq!(isbn_path, IsbnPath::OpenLibrary);
         assert_eq!(entry.title, "A Great Book");
         assert_eq!(entry.publisher.as_deref(), Some("Dover"));
     }
@@ -1409,8 +1408,8 @@ mod tests {
         ).await;
 
         assert!(result.is_some(), "expected Some from Google Books fallback");
-        let (entry, provider) = result.unwrap();
-        assert_eq!(provider, "google_books");
+        let (entry, isbn_path) = result.unwrap();
+        assert_eq!(isbn_path, IsbnPath::GoogleBooks);
         assert_eq!(entry.title, "Google Book Title");
     }
 
