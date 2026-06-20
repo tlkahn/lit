@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useMemo,
   useRef,
@@ -718,6 +719,14 @@ export function ReferenceLibrary() {
       }
     }
   }, [virtualizer, bibKeyStates, sectionedItems, expandedIndex]);
+
+  useLayoutEffect(() => {
+    if (expandedIndex < 0) return;
+    const el = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-index="${expandedIndex}"]`,
+    );
+    if (el) virtualizer.measureElement(el);
+  }, [sectionedItems, expandedIndex, virtualizer]);
 
   const scrollAfterEnrichRef = useRef<string | null>(null);
   const prevEnrichingKeyRef = useRef(enrichingKey);
