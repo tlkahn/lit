@@ -35,6 +35,8 @@ import {
   type PaperSearchResult,
 } from "../lib/ipc";
 import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
+import { usePreferencesStore } from "../stores/preferences";
+import { setPreference } from "../lib/ipc";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
 import { localeFilter } from "../lib/localeSearch";
@@ -219,6 +221,7 @@ export function ReferenceLibrary() {
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
   // Clean up enrichPhase timer on unmount
@@ -760,6 +763,41 @@ export function ReferenceLibrary() {
     }
   }, [dropPdf.droppedPdfPath, dropPdf.clearDroppedPdfPath]);
 
+  const sectionedItemsRef = useRef(sectionedItems);
+  sectionedItemsRef.current = sectionedItems;
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { citekey } = (e as CustomEvent<{ citekey: string }>).detail;
+
+      usePreferencesStore.setState({ sidebarVisible: true });
+      setPreference("workbench.sideBar.visible", true).catch(() => {});
+      window.dispatchEvent(new CustomEvent("lit:set-sidebar-tab", { detail: "references" }));
+
+      const items = sectionedItemsRef.current;
+      const idx = items.findIndex(
+        (item) => item.kind === "entry" && item.entry.key === citekey,
+      );
+      if (idx < 0) return;
+
+      const item = items[idx]!;
+      if (item.kind !== "entry") return;
+      const entryId = `${item.entry.bib_file ?? ""}:${item.entry.key}`;
+
+      setExpandedKey(entryId);
+      setRevealedKey(entryId);
+      setTimeout(() => setRevealedKey(null), 1500);
+
+      requestAnimationFrame(() => {
+        virtualizerRef.current.scrollToIndex(idx, { align: "center" });
+      });
+    };
+    window.addEventListener("lit:reveal-bib-entry", handler);
+    return () => window.removeEventListener("lit:reveal-bib-entry", handler);
+  }, []);
+
   const addButton = (
     <button
       data-testid="reference-library-add-btn"
@@ -960,6 +998,7 @@ export function ReferenceLibrary() {
                 const entry = item.entry;
                 const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
                 const isExpanded = expandedKey === entryId;
+                const isRevealed = revealedKey === entryId;
                 const tags = entry.tags ?? [];
                 const state = bibKeyStates[entry.key];
                 return (
@@ -967,13 +1006,14 @@ export function ReferenceLibrary() {
                     key={entryId}
                     data-index={virtualRow.index}
                     ref={virtualizer.measureElement}
-                    className={
+                    className={[
                       state?.page_id
                         ? "border-l-2 border-interactive-accent"
                         : state?.materialization === "partial"
                           ? "border-l-2 border-dashed border-text-muted"
-                          : undefined
-                    }
+                          : undefined,
+                      isRevealed ? "bib-entry-revealed" : undefined,
+                    ].filter(Boolean).join(" ") || undefined}
                     data-indicator={
                       state?.page_id ? "has-note"
                         : state?.materialization === "partial" ? "enriched"

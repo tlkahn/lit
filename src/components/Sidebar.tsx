@@ -4,7 +4,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { openInExternalEditor } from "../lib/ipc";
 import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
 import { localeFilter } from "../lib/localeSearch";
-import { useSidebarTab } from "../hooks/useSidebarTab";
+import { useSidebarTab, type SidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
@@ -153,6 +153,15 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   const onExportNetworkRef = useRef(onExportNetwork);
   onExportNetworkRef.current = onExportNetwork;
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const tab = (e as CustomEvent<SidebarTab>).detail;
+      setTab(tab);
+    };
+    window.addEventListener("lit:set-sidebar-tab", handler);
+    return () => window.removeEventListener("lit:set-sidebar-tab", handler);
+  }, [setTab]);
 
   useSidebarContextMenu({
     onRename: (relativePath) => setRenamingPath(relativePath),

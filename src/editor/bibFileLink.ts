@@ -35,11 +35,12 @@ export const bibPagePathFacet: Facet<string, string> = Facet.define<
  * - Multi-line values are not matched (CM6 viewport scanning is line-by-line).
  */
 export const BIB_FIELD_RE =
-  /(?:^|[\s,{])(file|url|doi)\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/gi;
+  /(?:^|[\s,{])(file|url|doi|title)\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/gi;
 
 const bibFileLinkMark = Decoration.mark({ class: "cm-bib-file-link", kind: "file" });
 const bibUrlMark = Decoration.mark({ class: "cm-bib-url-link", kind: "url" });
 const bibDoiMark = Decoration.mark({ class: "cm-bib-url-link", kind: "doi" });
+const bibTitleMark = Decoration.mark({ class: "cm-bib-title-link", kind: "title" });
 
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -59,6 +60,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       const mark =
         field === "file" ? bibFileLinkMark :
         field === "doi" ? bibDoiMark :
+        field === "title" ? bibTitleMark :
         bibUrlMark;
       ranges.push({ from: valueStart, to: valueEnd, mark });
     }
@@ -94,11 +96,24 @@ function getExtension(path: string): string {
   return path.slice(dot + 1).toLowerCase();
 }
 
+const CITEKEY_RE = /^\s*@\w+\s*\{\s*([^,\s]+)/;
+
+function findCitekey(view: EditorView, pos: number): string | null {
+  const doc = view.state.doc;
+  let lineNum = doc.lineAt(pos).number;
+  while (lineNum >= 1) {
+    const line = doc.line(lineNum);
+    const m = CITEKEY_RE.exec(line.text);
+    if (m) return m[1]!;
+    lineNum--;
+  }
+  return null;
+}
+
 function createBibFileClickHandler(): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
       if (event.button !== 0) return false;
-      if (!event.ctrlKey && !event.metaKey) return false;
 
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) return false;
@@ -118,10 +133,21 @@ function createBibFileClickHandler(): Extension {
       });
       if (hitFrom === undefined || hitTo === undefined || hitDeco === undefined) return false;
 
+      const kind: "file" | "url" | "doi" | "title" = hitDeco.spec.kind;
+
+      if (kind === "title") {
+        event.preventDefault();
+        const citekey = findCitekey(view, pos);
+        if (citekey) {
+          window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey } }));
+        }
+        return true;
+      }
+
+      if (!event.ctrlKey && !event.metaKey) return false;
+
       event.preventDefault();
       const rawValue = view.state.doc.sliceString(hitFrom, hitTo);
-
-      const kind: "file" | "url" | "doi" = hitDeco.spec.kind;
       if (kind === "url" || kind === "doi") {
         const resolved = kind === "doi" ? doiHref(rawValue) : rawValue.trim();
         if (!isHttpUrl(resolved)) {
@@ -175,6 +201,14 @@ function createBibFileClickHandler(): Extension {
   });
 }
 
+const bibTitleLinkTheme = EditorView.baseTheme({
+  ".cm-bib-title-link": {
+    textDecoration: "underline",
+    cursor: "pointer",
+    color: "var(--interactive-accent)",
+  },
+});
+
 export function bibFileLinkExtension(pagePath: string): Extension {
   return [
     bibPagePathFacet.of(pagePath),
@@ -183,5 +217,6 @@ export function bibFileLinkExtension(pagePath: string): Extension {
     createBibFileClickHandler(),
     modHeldLinkStyle("cm-bib-file-link"),
     modHeldLinkStyle("cm-bib-url-link"),
+    bibTitleLinkTheme,
   ];
 }

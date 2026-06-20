@@ -729,7 +729,8 @@ function extractUrlFields(text: string): { field: string; value: string }[] {
   let m: RegExpExecArray | null;
   while ((m = BIB_FIELD_RE.exec(text)) !== null) {
     const field = m[1]!;
-    if (field.toLowerCase() !== "file") {
+    const lower = field.toLowerCase();
+    if (lower !== "file" && lower !== "title") {
       results.push({ field, value: (m[2] ?? m[3])! });
     }
   }
@@ -1240,6 +1241,91 @@ describe("click handler — URL/DOI fields", () => {
 
     expect(selectPage).toHaveBeenCalledWith("refs/papers/foo.pdf");
     expect(openUrl).not.toHaveBeenCalled();
+    view.dom.remove();
+    view.destroy();
+  });
+});
+
+describe("title field decoration and click", () => {
+  it("decorates title field value with cm-bib-title-link", () => {
+    const doc = "  title = {Some Paper Title},";
+    const view = makeViewWithBibExt(doc, "some/page.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    let decoTo: number | undefined;
+    let decoClass: string | undefined;
+    let kind: string | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, to, value) => {
+      decoFrom = from;
+      decoTo = to;
+      decoClass = value.spec.class;
+      kind = value.spec.kind;
+    });
+    expect(decoFrom).toBeDefined();
+    expect(view.state.doc.sliceString(decoFrom!, decoTo!)).toBe("Some Paper Title");
+    expect(decoClass).toBe("cm-bib-title-link");
+    expect(kind).toBe("title");
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("plain click on title dispatches lit:reveal-bib-entry with citekey", () => {
+    const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail).toEqual({ citekey: "smith2024" });
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("plain click on title does not require modifier keys", () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({ selectPage, pages: [] });
+
+    const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(openUrl).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
     view.dom.remove();
     view.destroy();
   });
