@@ -27,6 +27,15 @@ pub enum IsbnPath {
     GoogleBooks,
 }
 
+impl IsbnPath {
+    pub fn provider_name(&self) -> &'static str {
+        match self {
+            IsbnPath::OpenLibrary => "open_library",
+            IsbnPath::GoogleBooks => "google_books",
+        }
+    }
+}
+
 pub async fn resolve_isbn_with_base(
     client: &reqwest::Client,
     isbn: &str,

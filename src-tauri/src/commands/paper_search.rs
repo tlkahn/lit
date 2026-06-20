@@ -110,11 +110,7 @@ pub async fn search_papers(
     if let Some((entry, isbn_path)) =
         try_isbn_fallback(&CLIENT, &query, &result, urls.open_library, urls.google_books).await
     {
-        let provider_name = match isbn_path {
-            IsbnPath::OpenLibrary => "open_library",
-            IsbnPath::GoogleBooks => "google_books",
-        };
-        psr.providers_searched.push(provider_name.to_string());
+        psr.providers_searched.push(isbn_path.provider_name().to_string());
         psr.entries = vec![entry];
         psr.total_results = 1;
     }
