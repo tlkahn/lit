@@ -214,13 +214,14 @@ pub fn persist_companion_frontmatter(
     registry: &WriteHashRegistry,
 ) -> Result<(), WorkspaceError> {
     let full_path = root.join(md_relative);
+    if !full_path.exists() {
+        return Err(WorkspaceError::PageNotFound(md_relative.to_string()));
+    }
     let raw = fs::read_to_string(&full_path)?;
     let parsed = parse_frontmatter(&raw);
 
-    if let Some(existing) = parsed.map.get("companion") {
-        if existing.as_str() == Some(pdf_relative) {
-            return Ok(());
-        }
+    if parsed.map.get("companion").and_then(|v| v.as_str()) == Some(pdf_relative) {
+        return Ok(());
     }
 
     let mut fm = parsed.map;
@@ -228,10 +229,7 @@ pub fn persist_companion_frontmatter(
         "companion".to_string(),
         serde_yaml::Value::String(pdf_relative.to_string()),
     );
-    let content = serialize_frontmatter(&fm, parsed.body);
-    fs::write(&full_path, &content)?;
-    registry.record(&full_path, &content);
-    Ok(())
+    write_page(root, md_relative, parsed.body, &fm, registry)
 }
 
 #[cfg(test)]
