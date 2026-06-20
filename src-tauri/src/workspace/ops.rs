@@ -207,6 +207,33 @@ pub fn delete_page(root: &Path, relative_path: &str, registry: &WriteHashRegistr
     Ok(())
 }
 
+pub fn persist_companion_frontmatter(
+    root: &Path,
+    md_relative: &str,
+    pdf_relative: &str,
+    registry: &WriteHashRegistry,
+) -> Result<(), WorkspaceError> {
+    let full_path = root.join(md_relative);
+    let raw = fs::read_to_string(&full_path)?;
+    let parsed = parse_frontmatter(&raw);
+
+    if let Some(existing) = parsed.map.get("companion") {
+        if existing.as_str() == Some(pdf_relative) {
+            return Ok(());
+        }
+    }
+
+    let mut fm = parsed.map;
+    fm.insert(
+        "companion".to_string(),
+        serde_yaml::Value::String(pdf_relative.to_string()),
+    );
+    let content = serialize_frontmatter(&fm, parsed.body);
+    fs::write(&full_path, &content)?;
+    registry.record(&full_path, &content);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
