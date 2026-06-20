@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useMemo,
   useRef,
@@ -673,6 +674,9 @@ export function ReferenceLibrary() {
       ),
     [sectionedItems, expandedKey],
   );
+  const hasBadge = (state: BibKeyState | undefined) =>
+    !!(state?.page_id || state?.materialization === "partial");
+
   const virtualizer = useVirtualizer({
     count: sectionedItems.length,
     getScrollElement: () => scrollRef.current,
@@ -680,10 +684,7 @@ export function ReferenceLibrary() {
       const item = sectionedItems[index];
       if (!item || item.kind === "header") return 24;
       if (index === expandedIndex) return 260;
-      if (item.kind === "entry") {
-        const state = bibKeyStates[item.entry.key];
-        if (state?.page_id || state?.materialization === "partial") return 70;
-      }
+      if (item.kind === "entry" && hasBadge(bibKeyStates[item.entry.key])) return 70;
       return 48;
     },
     overscan: 10,
@@ -694,9 +695,6 @@ export function ReferenceLibrary() {
     const prev = prevExpandedRef.current;
     prevExpandedRef.current = expandedIndex;
 
-    // Only invalidate items whose size actually changed (expanded/collapsed),
-    // instead of measure() which nukes all cached sizes and causes cumulative
-    // drift from estimate errors.
     const changed: number[] = [];
     if (prev >= 0) changed.push(prev);
     if (expandedIndex >= 0 && expandedIndex !== prev) changed.push(expandedIndex);
@@ -705,9 +703,51 @@ export function ReferenceLibrary() {
     }
   }, [virtualizer, expandedIndex]);
 
+  const prevBibKeyStatesRef = useRef(bibKeyStates);
   useEffect(() => {
-    virtualizer.measure();
-  }, [virtualizer, bibKeyStates]);
+    const prev = prevBibKeyStatesRef.current;
+    prevBibKeyStatesRef.current = bibKeyStates;
+
+    for (let i = 0; i < sectionedItems.length; i++) {
+      const item = sectionedItems[i];
+      if (!item || item.kind !== "entry") continue;
+      const oldBadge = hasBadge(prev[item.entry.key]);
+      const newBadge = hasBadge(bibKeyStates[item.entry.key]);
+      if (oldBadge === newBadge) continue;
+      if (i !== expandedIndex) {
+        virtualizer.resizeItem(i, virtualizer.options.estimateSize(i));
+      }
+    }
+  }, [virtualizer, bibKeyStates, sectionedItems, expandedIndex]);
+
+  useLayoutEffect(() => {
+    if (expandedIndex < 0) return;
+    const el = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-index="${expandedIndex}"]`,
+    );
+    if (el) virtualizer.measureElement(el);
+  }, [sectionedItems, expandedIndex, virtualizer]);
+
+  const scrollAfterEnrichRef = useRef<string | null>(null);
+  const prevEnrichingKeyRef = useRef(enrichingKey);
+  useEffect(() => {
+    const prevKey = prevEnrichingKeyRef.current;
+    prevEnrichingKeyRef.current = enrichingKey;
+    if (prevKey && !enrichingKey) {
+      scrollAfterEnrichRef.current = prevKey;
+    }
+  }, [enrichingKey]);
+
+  useEffect(() => {
+    const pendingKey = scrollAfterEnrichRef.current;
+    if (!pendingKey || expandedIndex < 0) return;
+    const item = sectionedItems[expandedIndex];
+    if (item?.kind !== "entry" || item.entry.key !== pendingKey) return;
+    scrollAfterEnrichRef.current = null;
+    requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(expandedIndex, { align: "auto" });
+    });
+  }, [sectionedItems, expandedIndex, virtualizer]);
 
   const scrollToLetter = useCallback(
     (letter: string, smooth: boolean) => {
