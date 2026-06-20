@@ -47,6 +47,7 @@ import { doiHref } from "../lib/urlUtils";
 import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
 import { EntryTypeBadge } from "./EntryTypeBadge";
+import { SpinnerSvg } from "./SpinnerSvg";
 import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
 import { distinctPublisher } from "../lib/bibUtils";
 
@@ -1066,9 +1067,11 @@ export function ReferenceLibrary() {
                                 recordDeparture();
                                 selectPage(state.page_id!);
                               }}
-                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                              title={`Open note: ${state.page_id}`}
+                              aria-label="Open note"
+                              className="inline-flex items-center justify-center rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
-                              Open note: {state.page_id}
+                              <span className="nerd-font" aria-hidden="true">{'󰈙'}</span>
                             </button>
                           </div>
                         ) : state ? (
@@ -1077,9 +1080,13 @@ export function ReferenceLibrary() {
                               data-testid="create-note-btn"
                               onClick={() => materializeNote(entry.key)}
                               disabled={materializingKey !== null}
-                              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                              title={materializingKey === entry.key ? "Creating…" : "Create note"}
+                              aria-label={materializingKey === entry.key ? "Creating…" : "Create note"}
+                              className="inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >
-                              {materializingKey === entry.key ? "Creating…" : "Create note"}
+                              {materializingKey === entry.key
+                                ? <SpinnerSvg className="h-3 w-3" />
+                                : <span className="nerd-font" aria-hidden="true">{'󰝒'}</span>}
                             </button>
                           </div>
                         ) : null}
@@ -1089,13 +1096,21 @@ export function ReferenceLibrary() {
                               data-testid="fetch-details-btn"
                               disabled={enrichingKey === entry.key}
                               onClick={() => handleEnrich(entry)}
-                              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
-                            >
-                              {enrichingKey === entry.key
+                              title={enrichingKey === entry.key
                                 ? (enrichPhase === "fetch" ? "Fetching…" : "Searching providers…")
                                 : state?.materialization === "partial"
-                                  ? "Refresh"
+                                  ? "Refresh metadata"
                                   : "Fetch details"}
+                              aria-label={enrichingKey === entry.key
+                                ? (enrichPhase === "fetch" ? "Fetching…" : "Searching providers…")
+                                : state?.materialization === "partial"
+                                  ? "Refresh metadata"
+                                  : "Fetch details"}
+                              className="inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                            >
+                              {enrichingKey === entry.key
+                                ? <SpinnerSvg className="h-3 w-3" />
+                                : <span className="nerd-font" aria-hidden="true">{state?.materialization === "partial" ? '󰑐' : '󰇚'}</span>}
                             </button>
                           </div>
                         ) : null}
@@ -1104,54 +1119,74 @@ export function ReferenceLibrary() {
                             <button
                               data-testid="open-pdf-btn"
                               onClick={() => selectPage(entry.file!)}
-                              title={entry.file}
-                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                              title={`Open PDF: ${entry.file}`}
+                              aria-label="Open PDF"
+                              className="inline-flex items-center justify-center rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
-                              Open PDF
+                              <span className="nerd-font" aria-hidden="true">{'󰈦'}</span>
                             </button>
                             <button
                               data-testid="ocr-btn"
                               onClick={() => { if (workspacePath) setOcrEntry(entry); }}
-                              className="rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
+                              title="OCR to Markdown"
+                              aria-label="OCR to Markdown"
+                              className="inline-flex items-center justify-center rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
                             >
-                              OCR to Markdown
+                              <span className="nerd-font" aria-hidden="true">{'󱄄'}</span>
                             </button>
                           </div>
                         ) : null}
                         <div className="mt-2 flex gap-2">
                           <button
                             onClick={() => copyCitation(entry.key)}
-                            className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
+                            title="Copy citation"
+                            aria-label="Copy citation"
+                            className="inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
                           >
-                            Copy citation
+                            <span className="nerd-font" aria-hidden="true">{'󰆏'}</span>
                           </button>
-                          {!entry.file && (entry.doi || entry.arxiv_id) ? (
+                          {!entry.file && (entry.doi || entry.arxiv_id) ? (() => {
+                            const dlLabel = downloadingKey === entry.key
+                              ? downloadProgress
+                                ? downloadProgress.total
+                                  ? `Downloading ${Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%`
+                                  : "Downloading…"
+                                : "Resolving…"
+                              : "Download PDF";
+                            return (
                             <button
                               data-testid="download-pdf-btn"
                               disabled={downloadingKey === entry.key || linkingKey === entry.key}
                               onClick={() => handleDownload(entry)}
-                              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                              title={dlLabel}
+                              aria-label={dlLabel}
+                              className="inline-flex items-center justify-center gap-1 rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
                             >
                               {downloadingKey === entry.key
-                                ? downloadProgress
-                                  ? downloadProgress.total
-                                    ? `Downloading ${Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%`
-                                    : "Downloading…"
-                                  : "Resolving…"
-                                : "Download PDF"}
+                                ? <><SpinnerSvg className="h-3 w-3" />{downloadProgress?.total ? <span>{Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%</span> : null}</>
+                                : <span className="nerd-font" aria-hidden="true">{'󰇚'}</span>}
                             </button>
-                          ) : null}
+                            );
+                          })() : null}
                           <button
                             data-testid="link-pdf-btn"
                             disabled={linkingKey === entry.key || downloadingKey === entry.key}
                             onClick={() => handleLinkPdf(entry)}
-                            className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
-                          >
-                            {linkingKey === entry.key
+                            title={linkingKey === entry.key
                               ? "Linking…"
                               : entry.file
                                 ? "Re-link PDF"
                                 : "Link PDF"}
+                            aria-label={linkingKey === entry.key
+                              ? "Linking…"
+                              : entry.file
+                                ? "Re-link PDF"
+                                : "Link PDF"}
+                            className="inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
+                          >
+                            {linkingKey === entry.key
+                              ? <SpinnerSvg className="h-3 w-3" />
+                              : <span className="nerd-font" aria-hidden="true">{'󰌷'}</span>}
                           </button>
                         </div>
                         <CitedBySection bibKey={entry.key} />
