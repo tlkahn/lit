@@ -3886,4 +3886,287 @@ describe("EnrichCandidatePicker integration", () => {
       expect(useStatusMessageStore.getState().variant).toBe("error");
     });
   });
+
+  describe("lit:reveal-bib-entry with duplicate citekeys", () => {
+    const smithA: BibEntry = {
+      key: "smith2024",
+      authors: ["Smith, Alice"],
+      title: "Smith Paper Alpha",
+      year: "2024",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/ws/a.bib",
+      abstract_text: "ALPHA-ABSTRACT-UNIQUE",
+    };
+
+    const smithB: BibEntry = {
+      key: "smith2024",
+      authors: ["Smith, Bob"],
+      title: "Smith Paper Beta",
+      year: "2024",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/ws/b.bib",
+      abstract_text: "BETA-ABSTRACT-UNIQUE",
+    };
+
+    it("reveals the entry from the correct bib file when duplicate citekeys exist", async () => {
+      fixture = [smithA, smithB];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper Alpha")).toBeInTheDocument());
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "smith2024", bibFile: "b.bib" },
+          }),
+        );
+      });
+
+      // The second entry (from b.bib) should be expanded, showing its unique abstract
+      await waitFor(() =>
+        expect(screen.getByText("BETA-ABSTRACT-UNIQUE")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("ALPHA-ABSTRACT-UNIQUE")).not.toBeInTheDocument();
+    });
+
+    it("falls back to first citekey match when bibFile is not provided", async () => {
+      fixture = [smithA, smithB];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper Alpha")).toBeInTheDocument());
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "smith2024" },
+          }),
+        );
+      });
+
+      // Without bibFile, the first match (smithA) should be expanded
+      await waitFor(() =>
+        expect(screen.getByText("ALPHA-ABSTRACT-UNIQUE")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("BETA-ABSTRACT-UNIQUE")).not.toBeInTheDocument();
+    });
+
+    it("falls back to first citekey match when bibFile matches no bib_file", async () => {
+      fixture = [smithA, smithB];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper Alpha")).toBeInTheDocument());
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "smith2024", bibFile: "nonexistent.bib" },
+          }),
+        );
+      });
+
+      // bibFile doesn't match any entry, so fall back to first citekey match (smithA)
+      await waitFor(() =>
+        expect(screen.getByText("ALPHA-ABSTRACT-UNIQUE")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("BETA-ABSTRACT-UNIQUE")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("lit:reveal-bib-entry clears active search filter", () => {
+    it("clears search filter when revealing an entry filtered out by search", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Type a search query that filters OUT sanderson2009 ("The Saiva Age")
+      await user.type(screen.getByLabelText("Search references"), "Hinduism");
+
+      // Wait for the search to take effect: "An Introduction to Hinduism" should be visible
+      await waitFor(() =>
+        expect(screen.getByText("An Introduction to Hinduism")).toBeInTheDocument(),
+      );
+      // "The Saiva Age" should be filtered out
+      await waitFor(() =>
+        expect(screen.queryByText("The Saiva Age")).not.toBeInTheDocument(),
+      );
+
+      // Now dispatch the reveal event for the filtered-out entry
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "sanderson2009" },
+          }),
+        );
+      });
+
+      // The entry should become visible (expanded), proving the search was cleared
+      await waitFor(() =>
+        expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument(),
+      );
+
+      // The search input should now be empty
+      const searchInput = screen.getByLabelText("Search references") as HTMLInputElement;
+      expect(searchInput.value).toBe("");
+    });
+  });
+
+  describe("reveal flash timer cleanup on rapid clicks", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("rapid consecutive reveal events do not kill the second entry's flash early", async () => {
+      render(<ReferenceLibrary />);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(screen.getByText("The Saiva Age")).toBeInTheDocument();
+
+      // Helper: find the container div (with bib-entry-revealed class) for a given title
+      function findEntryContainer(title: string): HTMLElement | null {
+        const allTitles = screen.getAllByTestId("reference-entry-title");
+        const titleEl = allTitles.find((el) => el.textContent === title);
+        if (!titleEl) return null;
+        // Walk up to the absolutely positioned container div (the one with data-index)
+        let el: HTMLElement | null = titleEl;
+        while (el && !el.hasAttribute("data-index")) {
+          el = el.parentElement;
+        }
+        return el;
+      }
+
+      // 1. Dispatch reveal for sanderson2009
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "sanderson2009" },
+          }),
+        );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // sanderson entry should have the revealed class
+      const sandersonContainer = findEntryContainer("The Saiva Age");
+      expect(sandersonContainer).not.toBeNull();
+      expect(sandersonContainer!.className).toContain("bib-entry-revealed");
+
+      // 2. Advance 500ms (less than 1500ms) -- first entry should still be flashing
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(findEntryContainer("The Saiva Age")!.className).toContain("bib-entry-revealed");
+
+      // 3. Dispatch reveal for flood1996
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "flood1996" },
+          }),
+        );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // flood entry should now have the revealed class
+      const floodContainer = findEntryContainer("An Introduction to Hinduism");
+      expect(floodContainer).not.toBeNull();
+      expect(floodContainer!.className).toContain("bib-entry-revealed");
+
+      // 4. Advance 1000ms (total 1500ms from first dispatch, but only 1000ms from second).
+      // WITHOUT the fix, the first setTimeout fires here and sets revealedKey to null,
+      // killing flood's flash prematurely.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      const floodAfterFirstTimer = findEntryContainer("An Introduction to Hinduism");
+      expect(floodAfterFirstTimer).not.toBeNull();
+      expect(floodAfterFirstTimer!.className).toContain("bib-entry-revealed");
+
+      // 5. Advance 500ms more (total 1500ms from second dispatch). Flash should end.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      const floodFinal = findEntryContainer("An Introduction to Hinduism");
+      expect(floodFinal).not.toBeNull();
+      expect(floodFinal!.className).not.toContain("bib-entry-revealed");
+    });
+  });
+
+  describe("lit:reveal-bib-entry scroll timing uses double-rAF", () => {
+    it("defers scrollToIndex through two nested requestAnimationFrame calls", async () => {
+      // We spy on Element.prototype.scrollTo to detect when scrollToIndex
+      // ultimately fires (TanStack Virtual calls scrollTo on the container).
+      const scrollToSpy = vi.fn();
+      const origScrollTo = Element.prototype.scrollTo;
+      Element.prototype.scrollTo = scrollToSpy;
+
+      // Collect rAF callbacks in a queue so we can flush them one at a time
+      const rafQueue: FrameRequestCallback[] = [];
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((cb) => {
+          rafQueue.push(cb);
+          return rafQueue.length;
+        });
+
+      try {
+        render(<ReferenceLibrary />);
+        // Flush all rAFs until render stabilizes
+        await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+        let safety = 0;
+        while (rafQueue.length > 0 && safety < 50) {
+          const cb = rafQueue.shift()!;
+          cb(performance.now());
+          safety++;
+        }
+
+        // Clear spies so we start with a clean slate
+        scrollToSpy.mockClear();
+
+        // Dispatch the reveal event
+        act(() => {
+          window.dispatchEvent(
+            new CustomEvent("lit:reveal-bib-entry", {
+              detail: { citekey: "sanderson2009" },
+            }),
+          );
+        });
+
+        // The handler should have called requestAnimationFrame (outer rAF)
+        expect(rafQueue.length).toBeGreaterThanOrEqual(1);
+
+        // Flush ONLY the first rAF callback (the handler's outer rAF).
+        // With single-rAF (the bug), scrollToIndex fires here, which calls
+        // scrollTo on the container element.
+        // With double-rAF (the fix), this outer callback only registers
+        // another rAF — scrollToIndex has NOT fired yet.
+        const outerCb = rafQueue.shift()!;
+        act(() => {
+          outerCb(performance.now());
+        });
+
+        // KEY ASSERTION: After flushing just the outer rAF, scrollTo should
+        // NOT have been called yet. With single-rAF, scrollToIndex -> scrollTo
+        // would have already fired.
+        expect(scrollToSpy).not.toHaveBeenCalled();
+
+        // Now flush the inner rAF (the one registered by the outer callback).
+        // After this, scrollToIndex -> scrollTo should fire.
+        expect(rafQueue.length).toBeGreaterThanOrEqual(1);
+        const innerCb = rafQueue.shift()!;
+        act(() => {
+          innerCb(performance.now());
+        });
+
+        // Now scrollTo should have been called
+        expect(scrollToSpy).toHaveBeenCalled();
+      } finally {
+        rafSpy.mockRestore();
+        Element.prototype.scrollTo = origScrollTo;
+      }
+    });
+  });
 });

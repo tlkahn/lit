@@ -98,16 +98,63 @@ function getExtension(path: string): string {
 
 const CITEKEY_RE = /^\s*@\w+\s*\{\s*([^,\s]+)/;
 
+/** Regex matching a standalone closing brace — the end of a preceding BibTeX entry. */
+const ENTRY_END_RE = /^\s*\}[,;\s]*$/;
+
+/** Regex matching blank/whitespace-only lines — conventional entry separators. */
+const BLANK_LINE_RE = /^\s*$/;
+
+/** Maximum number of lines to scan backward before giving up. */
+const MAX_CITEKEY_SCAN = 200;
+
 function findCitekey(view: EditorView, pos: number): string | null {
   const doc = view.state.doc;
-  let lineNum = doc.lineAt(pos).number;
+  const startLine = doc.lineAt(pos).number;
+  let lineNum = startLine;
   while (lineNum >= 1) {
+    // Safety cap: don't scan more than MAX_CITEKEY_SCAN lines backward
+    if (startLine - lineNum > MAX_CITEKEY_SCAN) return null;
+
     const line = doc.line(lineNum);
-    const m = CITEKEY_RE.exec(line.text);
+    const text = line.text;
+
+    // Check for the @type{citekey header — success
+    const m = CITEKEY_RE.exec(text);
     if (m) return m[1]!;
+
+    // Stop at entry boundaries: blank lines or standalone closing braces.
+    // These indicate we've left the current entry without finding its header,
+    // meaning this entry is malformed (missing its @type{key, line).
+    if (BLANK_LINE_RE.test(text) || ENTRY_END_RE.test(text)) return null;
+
     lineNum--;
   }
   return null;
+}
+
+/** Shared hit-test: find the decoration at the click position, if any. */
+function hitTestDecoration(
+  view: EditorView,
+  event: MouseEvent,
+): { from: number; to: number; deco: Decoration; pos: number } | null {
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (pos === null) return null;
+
+  const pluginInstance = view.plugin(bibFileLinkPlugin);
+  if (!pluginInstance) return null;
+
+  let hitFrom: number | undefined;
+  let hitTo: number | undefined;
+  let hitDeco: Decoration | undefined;
+  pluginInstance.decorations.between(pos, pos, (from, to, value) => {
+    if (pos >= to) return; // enforce half-open [from, to) — pos at `to` is outside
+    hitFrom = from;
+    hitTo = to;
+    hitDeco = value;
+    return false; // stop after first hit
+  });
+  if (hitFrom === undefined || hitTo === undefined || hitDeco === undefined) return null;
+  return { from: hitFrom, to: hitTo, deco: hitDeco, pos };
 }
 
 function createBibFileClickHandler(): Extension {
@@ -115,39 +162,19 @@ function createBibFileClickHandler(): Extension {
     mousedown(event, view) {
       if (event.button !== 0) return false;
 
-      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-      if (pos === null) return false;
+      const hit = hitTestDecoration(view, event);
+      if (!hit) return false;
 
-      const pluginInstance = view.plugin(bibFileLinkPlugin);
-      if (!pluginInstance) return false;
+      const kind: "file" | "url" | "doi" | "title" = hit.deco.spec.kind;
 
-      let hitFrom: number | undefined;
-      let hitTo: number | undefined;
-      let hitDeco: Decoration | undefined;
-      pluginInstance.decorations.between(pos, pos, (from, to, value) => {
-        if (pos >= to) return; // enforce half-open [from, to) — pos at `to` is outside
-        hitFrom = from;
-        hitTo = to;
-        hitDeco = value;
-        return false; // stop after first hit
-      });
-      if (hitFrom === undefined || hitTo === undefined || hitDeco === undefined) return false;
-
-      const kind: "file" | "url" | "doi" | "title" = hitDeco.spec.kind;
-
-      if (kind === "title") {
-        event.preventDefault();
-        const citekey = findCitekey(view, pos);
-        if (citekey) {
-          window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey } }));
-        }
-        return true;
-      }
+      // Title clicks are handled by dblclick — let single clicks fall through
+      // so CM6 can place the cursor normally.
+      if (kind === "title") return false;
 
       if (!event.ctrlKey && !event.metaKey) return false;
 
       event.preventDefault();
-      const rawValue = view.state.doc.sliceString(hitFrom, hitTo);
+      const rawValue = view.state.doc.sliceString(hit.from, hit.to);
       if (kind === "url" || kind === "doi") {
         const resolved = kind === "doi" ? doiHref(rawValue) : rawValue.trim();
         if (!isHttpUrl(resolved)) {
@@ -196,6 +223,24 @@ function createBibFileClickHandler(): Extension {
         }
       }
       useWorkspaceStore.getState().selectPage(resolved);
+      return true;
+    },
+
+    dblclick(event, view) {
+      if (event.button !== 0) return false;
+
+      const hit = hitTestDecoration(view, event);
+      if (!hit) return false;
+
+      const kind: "file" | "url" | "doi" | "title" = hit.deco.spec.kind;
+      if (kind !== "title") return false;
+
+      event.preventDefault();
+      const citekey = findCitekey(view, hit.pos);
+      if (citekey) {
+        const bibFile = view.state.facet(bibPagePathFacet);
+        window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey, bibFile } }));
+      }
       return true;
     },
   });

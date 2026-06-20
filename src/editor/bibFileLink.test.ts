@@ -1270,7 +1270,7 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
-  it("plain click on title dispatches lit:reveal-bib-entry with citekey", () => {
+  it("single click on title does not preventDefault — cursor placement works", () => {
     const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
     const view = makeViewWithBibExt(doc, "refs/library.bib");
 
@@ -1290,15 +1290,72 @@ describe("title field decoration and click", () => {
       new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
 
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect((handler.mock.calls[0]![0] as CustomEvent).detail).toEqual({ citekey: "smith2024" });
+    // Single click must NOT fire the reveal event — CM6 handles cursor placement
+    expect(handler).not.toHaveBeenCalled();
 
     window.removeEventListener("lit:reveal-bib-entry", handler);
     view.dom.remove();
     view.destroy();
   });
 
-  it("plain click on title does not require modifier keys", () => {
+  it("double-click on title dispatches lit:reveal-bib-entry with citekey", () => {
+    const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail).toEqual({ citekey: "smith2024", bibFile: "refs/library.bib" });
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("double-click on title dispatches lit:reveal-bib-entry with both citekey and bibFile", () => {
+    const doc = "@article{smith2024,\n  title = {Some Paper Title},\n}";
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = (handler.mock.calls[0]![0] as CustomEvent).detail;
+    expect(detail).toEqual({ citekey: "smith2024", bibFile: "refs/library.bib" });
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("double-click on title does not require modifier keys", () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({ selectPage, pages: [] });
 
@@ -1318,12 +1375,130 @@ describe("title field decoration and click", () => {
     window.addEventListener("lit:reveal-bib-entry", handler);
 
     view.contentDOM.dispatchEvent(
-      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
     );
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(selectPage).not.toHaveBeenCalled();
     expect(openUrl).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("double-click on title in malformed entry (missing @header) separated by blank line does NOT dispatch reveal event", () => {
+    // Two entries: the first is well-formed, the second is missing its @type{key, header.
+    // A blank line separates them. findCitekey must stop at the blank line
+    // and return null, not walk past it to find wrongEntry2024.
+    const doc = [
+      "@article{wrongEntry2024,",
+      "  title = {Wrong Entry Title},",
+      "}",
+      "",
+      "  title = {Orphan Title Without Header},",
+      "}",
+    ].join("\n");
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    // Find the title decoration for the orphan entry (second title)
+    let orphanDecoFrom: number | undefined;
+    let count = 0;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") {
+        count++;
+        if (count === 2) orphanDecoFrom = from;
+      }
+    });
+    expect(orphanDecoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(orphanDecoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    // Must NOT dispatch — there is no valid citekey for this orphan entry
+    expect(handler).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("double-click on title after a closing brace boundary does NOT leak to preceding entry", () => {
+    // Two entries back-to-back: no blank line, but the closing } of the first
+    // entry acts as a boundary. The second lacks a header.
+    const doc = [
+      "@article{wrongEntry2024,",
+      "  title = {Wrong Entry Title},",
+      "}",
+      "  title = {Orphan Title After Brace},",
+      "}",
+    ].join("\n");
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let orphanDecoFrom: number | undefined;
+    let count = 0;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") {
+        count++;
+        if (count === 2) orphanDecoFrom = from;
+      }
+    });
+    expect(orphanDecoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(orphanDecoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    // Must NOT dispatch — the closing brace marks the end of the preceding entry
+    expect(handler).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("double-click on title in well-formed entry still works after boundary checks (regression)", () => {
+    // Ensure the boundary checks don't break normal well-formed entries.
+    // The closing brace is INSIDE the entry (at the end), the @header is above.
+    const doc = [
+      "@article{goodEntry2024,",
+      "  author = {Alice},",
+      "  title = {Good Entry Title},",
+      "}",
+    ].join("\n");
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail).toEqual({ citekey: "goodEntry2024", bibFile: "refs/library.bib" });
 
     window.removeEventListener("lit:reveal-bib-entry", handler);
     view.dom.remove();
