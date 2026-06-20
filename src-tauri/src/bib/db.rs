@@ -9,6 +9,7 @@ use crate::bib::convert::{normalize_arxiv_id, normalize_doi};
 use crate::bib::types::BibEntry;
 use crate::bib::writer::serialize_bib_entry;
 use crate::graph::error::GraphError;
+use crate::recognize::resolve::title_match::{is_punctuation, strip_combining_marks};
 
 /// Outcome of an upsert_bib_item call.
 #[derive(Debug, Clone, PartialEq)]
@@ -74,22 +75,14 @@ fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
     })
 }
 
-/// Normalize a title for dedup comparison: lowercase, strip punctuation, collapse whitespace.
-/// This is a simplified version of recognize::resolve::title_match::normalize_title,
-/// duplicated here to avoid a cross-module dependency from bib -> recognize.
+/// Normalize a title for dedup comparison: strip combining marks (NFKD),
+/// lowercase, strip punctuation, collapse whitespace.
 pub(crate) fn normalize_title_for_dedup(title: &str) -> String {
-    title
+    let decomposed = strip_combining_marks(title);
+    decomposed
         .to_lowercase()
         .chars()
-        .map(|c| {
-            if c.is_ascii_punctuation() {
-                ' '
-            } else if !c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace() {
-                ' '
-            } else {
-                c
-            }
-        })
+        .map(|c| if is_punctuation(c) { ' ' } else { c })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -2113,6 +2106,15 @@ mod tests {
             "quantum entanglement"
         );
         assert_eq!(normalize_title_for_dedup(""), "");
+    }
+
+    #[test]
+    fn test_normalize_title_for_dedup_diacritics() {
+        assert_eq!(
+            normalize_title_for_dedup("Pāṇini: A Grammar"),
+            "panini a grammar"
+        );
+        assert_eq!(normalize_title_for_dedup("Café"), "cafe");
     }
 
     #[test]
