@@ -19,8 +19,6 @@ import {
   getBibKeyStates,
   enrichBibEntry,
   applyEnrichmentCandidate,
-  bibDelete,
-  bibUpdateFields,
   downloadEntryPdf,
   linkEntryPdf,
   searchPapers,
@@ -35,6 +33,8 @@ import {
   type PaperSearchResult,
 } from "../lib/ipc";
 import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
+import { usePreferencesStore } from "../stores/preferences";
+import { setPreference } from "../lib/ipc";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
 import { localeFilter } from "../lib/localeSearch";
@@ -50,41 +50,18 @@ import { EntryTypeBadge } from "./EntryTypeBadge";
 import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
 import { distinctPublisher } from "../lib/bibUtils";
 
-type EditFieldKey =
-  | "title"
-  | "authors"
-  | "year"
-  | "journal"
-  | "publisher"
-  | "isbn"
-  | "oclc"
-  | "series";
-
-const EDIT_FIELDS: ReadonlyArray<{
-  key: EditFieldKey;
-  label: string;
-  subtitle?: string;
-}> = [
-  { key: "title", label: "Title" },
-  { key: "authors", label: "Authors", subtitle: "semicolon-separated" },
-  { key: "year", label: "Year" },
-  { key: "journal", label: "Journal" },
-  { key: "publisher", label: "Publisher" },
-  { key: "isbn", label: "ISBN" },
-  { key: "oclc", label: "OCLC" },
-  { key: "series", label: "Series" },
-];
-
-export function bibEntryToEditFields(entry: BibEntry): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const { key } of EDIT_FIELDS) {
-    if (key === "authors") {
-      result[key] = entry.authors.join("; ");
-    } else {
-      result[key] = (entry[key] as string | undefined) ?? "";
-    }
-  }
-  return result;
+/**
+ * Check whether an entry's absolute bib_file path ends with the given
+ * workspace-relative bibFile from the event. Uses a path-separator boundary
+ * to prevent false suffix matches (e.g. "other-refs.bib" matching "refs.bib").
+ */
+export function bibFileEndsWith(
+  entryBibFile: string | undefined,
+  eventBibFile: string,
+): boolean {
+  if (!entryBibFile) return false;
+  if (entryBibFile === eventBibFile) return true;
+  return entryBibFile.endsWith("/" + eventBibFile);
 }
 
 function combinedText(entry: BibEntry): string {
@@ -213,12 +190,14 @@ export function ReferenceLibrary() {
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
   const [enrichPhase, setEnrichPhase] = useState<"fetch" | "search">("fetch");
   const enrichPhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
   // Clean up enrichPhase timer on unmount
@@ -595,75 +574,6 @@ export function ReferenceLibrary() {
     [workspacePath, linkingKey, downloadingKey, show],
   );
 
-  const [deletingKey, setDeletingKey] = useState<string | null>(null);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editFields, setEditFields] = useState<Record<string, string>>({});
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  const handleDelete = useCallback(async (key: string) => {
-    if (!workspacePath) return;
-    if (!window.confirm(`Delete @${key} from the library? The .bib file on disk will not be modified.`)) return;
-    setDeletingKey(key);
-    try {
-      const deleted = await bibDelete(key, workspacePath);
-      if (deleted) {
-        show(`Deleted @${key}`);
-      } else {
-        show(`@${key} not found`, "error");
-      }
-    } catch (err) {
-      show(err instanceof Error ? err.message : String(err), "error");
-    } finally {
-      setDeletingKey(null);
-    }
-  }, [workspacePath, show]);
-
-  const startEdit = useCallback((entry: BibEntry) => {
-    setEditingKey(entry.key);
-    setEditFields(bibEntryToEditFields(entry));
-  }, []);
-
-  const cancelEdit = useCallback(() => {
-    setEditingKey(null);
-    setEditFields({});
-  }, []);
-
-  const saveEdit = useCallback(async (key: string) => {
-    if (!workspacePath) return;
-    setSavingEdit(true);
-    try {
-      const entry = entries.find((e) => e.key === key);
-      if (!entry) return;
-
-      const fields: Record<string, string> = {};
-      const original = bibEntryToEditFields(entry);
-      for (const [k, v] of Object.entries(editFields)) {
-        if (v !== original[k]) {
-          fields[k] = v;
-        }
-      }
-      if (Object.keys(fields).length === 0) {
-        setSavingEdit(false);
-        setEditingKey(null);
-        setEditFields({});
-        return;
-      }
-
-      const updated = await bibUpdateFields(key, fields, workspacePath);
-      if (updated) {
-        show(`Updated @${key}`);
-      } else {
-        show(`@${key} not found`, "error");
-      }
-    } catch (err) {
-      show(err instanceof Error ? err.message : String(err), "error");
-    } finally {
-      setSavingEdit(false);
-      setEditingKey(null);
-      setEditFields({});
-    }
-  }, [workspacePath, editFields, entries, show]);
-
   const scrollRef = useRef<HTMLDivElement>(null);
   const expandedIndex = useMemo(
     () =>
@@ -759,6 +669,70 @@ export function ReferenceLibrary() {
       setImportPdfDialogOpen(true);
     }
   }, [dropPdf.droppedPdfPath, dropPdf.clearDroppedPdfPath]);
+
+  const sectionedItemsRef = useRef(sectionedItems);
+  sectionedItemsRef.current = sectionedItems;
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+  const sortedRef = useRef(sorted);
+  sortedRef.current = sorted;
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { citekey, bibFile } = (e as CustomEvent<{ citekey: string; bibFile?: string }>).detail;
+
+      usePreferencesStore.setState({ sidebarVisible: true });
+      setPreference("workbench.sideBar.visible", true).catch(() => {});
+      window.dispatchEvent(new CustomEvent("lit:set-sidebar-tab", { detail: "references" }));
+
+      // Clear any active search so the full list is visible after reveal
+      setSearch("");
+
+      // Use the unfiltered sorted list so we can find entries hidden by a search query
+      const items = buildSectionedList(sortedRef.current).items;
+      let idx = -1;
+      if (bibFile) {
+        // Try to match both citekey AND bib file path for disambiguation
+        idx = items.findIndex(
+          (item) =>
+            item.kind === "entry" &&
+            item.entry.key === citekey &&
+            bibFileEndsWith(item.entry.bib_file, bibFile),
+        );
+      }
+      // Fall back to citekey-only match if bibFile is absent or didn't match
+      if (idx < 0) {
+        idx = items.findIndex(
+          (item) => item.kind === "entry" && item.entry.key === citekey,
+        );
+      }
+      if (idx < 0) return;
+
+      const item = items[idx]!;
+      if (item.kind !== "entry") return;
+      const entryId = `${item.entry.bib_file ?? ""}:${item.entry.key}`;
+
+      setExpandedKey(entryId);
+      setRevealedKey(entryId);
+      clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = setTimeout(() => setRevealedKey(null), 1500);
+
+      // Double-rAF: the outer rAF defers past the current frame so React
+      // can commit the setExpandedKey state and the resizeItem/measureElement
+      // effects can update the virtualizer's height map. The inner rAF then
+      // fires with accurate sizes, so scrollToIndex computes the correct offset.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          virtualizerRef.current.scrollToIndex(idx, { align: "center" });
+        });
+      });
+    };
+    window.addEventListener("lit:reveal-bib-entry", handler);
+    return () => {
+      clearTimeout(revealTimerRef.current);
+      window.removeEventListener("lit:reveal-bib-entry", handler);
+    };
+  }, []);
 
   const addButton = (
     <button
@@ -960,6 +934,7 @@ export function ReferenceLibrary() {
                 const entry = item.entry;
                 const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
                 const isExpanded = expandedKey === entryId;
+                const isRevealed = revealedKey === entryId;
                 const tags = entry.tags ?? [];
                 const state = bibKeyStates[entry.key];
                 return (
@@ -967,13 +942,14 @@ export function ReferenceLibrary() {
                     key={entryId}
                     data-index={virtualRow.index}
                     ref={virtualizer.measureElement}
-                    className={
+                    className={[
                       state?.page_id
                         ? "border-l-2 border-interactive-accent"
                         : state?.materialization === "partial"
                           ? "border-l-2 border-dashed border-text-muted"
-                          : undefined
-                    }
+                          : undefined,
+                      isRevealed ? "bib-entry-revealed" : undefined,
+                    ].filter(Boolean).join(" ") || undefined}
                     data-indicator={
                       state?.page_id ? "has-note"
                         : state?.materialization === "partial" ? "enriched"
@@ -1007,76 +983,42 @@ export function ReferenceLibrary() {
                     </button>
                     {isExpanded ? (
                       <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
-                        {editingKey === entry.key ? (
-                          <div className="space-y-2">
-                            {EDIT_FIELDS.map((field) => (
-                              <div key={field.key}>
-                                <label className="block text-xs text-text-muted">
-                                  {field.label}{field.subtitle ? ` (${field.subtitle})` : ""}
-                                </label>
-                                <input
-                                  data-testid={`edit-field-${field.key}`}
-                                  type="text"
-                                  value={editFields[field.key] ?? ""}
-                                  onChange={(e) =>
-                                    setEditFields((f) => ({ ...f, [field.key]: e.target.value }))
-                                  }
-                                  className="w-full rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal"
-                                />
-                              </div>
-                            ))}
-                            <div className="flex gap-2">
-                              <button data-testid="edit-save-btn" disabled={savingEdit}
-                                onClick={() => saveEdit(entry.key)}
-                                className="rounded bg-interactive-accent px-2 py-0.5 text-xs text-white hover:opacity-90 disabled:opacity-50">
-                                {savingEdit ? "Saving..." : "Save"}
-                              </button>
-                              <button data-testid="edit-cancel-btn" onClick={cancelEdit}
-                                className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover">
-                                Cancel
-                              </button>
-                            </div>
+                        <div className="flex items-start gap-2">
+                          <div className="font-semibold text-text-normal">{entry.title}</div>
+                          <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
+                        </div>
+                        {entry.authors.length > 0 ? (
+                          <div className="mt-1 text-text-muted">
+                            {entry.authors.join("; ")}
                           </div>
-                        ) : (
-                          <>
-                            <div className="flex items-start gap-2">
-                              <div className="font-semibold text-text-normal">{entry.title}</div>
-                              <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
-                            </div>
-                            {entry.authors.length > 0 ? (
-                              <div className="mt-1 text-text-muted">
-                                {entry.authors.join("; ")}
-                              </div>
-                            ) : null}
-                            {entry.editors && entry.editors.length > 0 ? (
-                              <div data-testid="entry-editors" className="text-text-muted">
-                                Ed. {entry.editors.join("; ")}
-                              </div>
-                            ) : null}
-                            {entry.year ? (
-                              <div className="text-text-muted">{entry.year}</div>
-                            ) : null}
-                            {entry.journal ? (
-                              <div className="text-text-muted">{entry.journal}</div>
-                            ) : null}
-                            {(() => { const dp = distinctPublisher(entry); return dp ? (
-                              <div data-testid="entry-publisher" className="text-text-muted">{dp}</div>
-                            ) : null; })()}
-                            {entry.isbn ? (
-                              <div data-testid="entry-isbn" className="text-text-muted">
-                                ISBN:{" "}
-                                <a
-                                  href={`https://openlibrary.org/isbn/${entry.isbn}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-interactive-accent hover:underline"
-                                >
-                                  {entry.isbn}
-                                </a>
-                              </div>
-                            ) : null}
-                          </>
-                        )}
+                        ) : null}
+                        {entry.editors && entry.editors.length > 0 ? (
+                          <div data-testid="entry-editors" className="text-text-muted">
+                            Ed. {entry.editors.join("; ")}
+                          </div>
+                        ) : null}
+                        {entry.year ? (
+                          <div className="text-text-muted">{entry.year}</div>
+                        ) : null}
+                        {entry.journal ? (
+                          <div className="text-text-muted">{entry.journal}</div>
+                        ) : null}
+                        {distinctPublisher(entry) ? (
+                          <div data-testid="entry-publisher" className="text-text-muted">{distinctPublisher(entry)}</div>
+                        ) : null}
+                        {entry.isbn ? (
+                          <div data-testid="entry-isbn" className="text-text-muted">
+                            ISBN:{" "}
+                            <a
+                              href={`https://openlibrary.org/isbn/${entry.isbn}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-interactive-accent hover:underline"
+                            >
+                              {entry.isbn}
+                            </a>
+                          </div>
+                        ) : null}
                         {entry.doi ? (
                           <div className="mt-1">
                             <a
@@ -1210,18 +1152,6 @@ export function ReferenceLibrary() {
                               : entry.file
                                 ? "Re-link PDF"
                                 : "Link PDF"}
-                          </button>
-                          <button data-testid="edit-entry-btn" onClick={() => startEdit(entry)}
-                            className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover">
-                            Edit
-                          </button>
-                          <button
-                            data-testid="delete-entry-btn"
-                            disabled={deletingKey === entry.key}
-                            onClick={() => handleDelete(entry.key)}
-                            className="rounded border border-border px-2 py-0.5 text-xs text-text-error hover:bg-bg-hover disabled:opacity-50"
-                          >
-                            {deletingKey === entry.key ? "Deleting..." : "Delete"}
                           </button>
                         </div>
                         <CitedBySection bibKey={entry.key} />

@@ -20,6 +20,8 @@ use crate::bib::semantic_scholar::{
 };
 use crate::bib::types::BibEntry;
 use crate::commands::bib_import::{fetch_crossref_csl_item, HTTP_CLIENT};
+use crate::recognize::resolve::isbn::{self, IsbnPath};
+use crate::recognize::resolve::BaseUrls;
 use crate::recognize::resolve::title_match::{is_punctuation, strip_combining_marks};
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
@@ -251,6 +253,7 @@ pub fn merge_enrichment_fields(
         ("pages", |e: &BibEntry| e.pages.as_deref()),
         ("publisher", |e: &BibEntry| e.publisher.as_deref()),
         ("issn", |e: &BibEntry| e.issn.as_deref()),
+        ("isbn", |e: &BibEntry| e.isbn.as_deref()),
     ];
 
     for (field_name, getter) in &enrichable {
@@ -294,6 +297,21 @@ fn merge_and_persist(
         }
     }
     Ok((new_fields, fields_added))
+}
+
+async fn try_isbn_enrichment(
+    isbn: &str,
+    client: &reqwest::Client,
+    open_library_base: &str,
+    google_books_base: &str,
+) -> Option<(BibEntry, IsbnPath)> {
+    match isbn::resolve_isbn_with_base(client, isbn, open_library_base, google_books_base).await {
+        Ok(result) => Some(result),
+        Err(e) => {
+            tracing::debug!(error = %e, "ISBN enrichment resolution failed");
+            None
+        }
+    }
 }
 
 async fn fetch_crossref(doi: &str) -> Result<CslItem, String> {
@@ -548,11 +566,15 @@ fn count_distinct_references(
 
 /// Core enrichment logic, callable outside Tauri command handlers.
 ///
-/// Three code paths:
+/// Four code paths:
 ///
 /// **Path A (DOI fast path):** When `existing.doi` is present, use it for
 /// authoritative lookup via CrossRef + S2 concurrently. This is more
 /// reliable than title matching and handles empty-title entries.
+///
+/// **Path ISBN:** When no DOI but `existing.isbn` is present, resolve via
+/// Open Library / Google Books. Reference linking is skipped (books
+/// rarely have DOI-indexed refs). Falls through to Path B on failure.
 ///
 /// **Path B (title search):** When no DOI but the title is non-empty, use
 /// `meta_search` to discover metadata across all enabled providers, score
@@ -644,11 +666,50 @@ pub(crate) async fn enrich_entry(
         });
     }
 
+    // ── Path ISBN: ISBN present, no DOI ─────────────────────────────
+    if let Some(ref isbn_val) = existing.isbn {
+        let urls = BaseUrls::production();
+        if let Some((isbn_entry, isbn_path)) = try_isbn_enrichment(
+            isbn_val, &HTTP_CLIENT, urls.open_library, urls.google_books,
+        ).await {
+            let (_new_fields, fields_added) = {
+                let store = gi.store();
+                merge_and_persist(&store.conn, bib_key, &existing, Some(&isbn_entry), None)?
+            };
+
+            let updated_entry = {
+                let store = gi.store();
+                db::get_bib_item(&store.conn, bib_key)
+                    .map_err(|e| e.to_string())?
+                    .unwrap_or(existing)
+            };
+
+            let providers_failed = if isbn_path == IsbnPath::GoogleBooks {
+                vec!["open_library".to_string()]
+            } else {
+                vec![]
+            };
+
+            return Ok(EnrichResult {
+                entry: updated_entry,
+                fields_added,
+                references_found: 0,
+                references_appended: 0,
+                shadow_nodes_created: 0,
+                references_linked: 0,
+                candidates: vec![],
+                providers_searched: vec![isbn_path.provider_name().to_string()],
+                providers_failed,
+            });
+        }
+        // ISBN resolution failed — fall through to title search (Path B)
+    }
+
     // ── Path C: No DOI and no title ─────────────────────────────────
     let title_is_empty = existing.title.trim().is_empty();
     if title_is_empty {
         return Err(
-            "Cannot enrich: entry has no DOI and no title".to_string(),
+            "Cannot enrich: entry has no DOI, no title, and ISBN lookup failed".to_string(),
         );
     }
 
@@ -1181,6 +1242,7 @@ mod tests {
             e.pages = Some("100--115".to_string());
             e.publisher = Some("Elsevier".to_string());
             e.issn = Some("1234-5678".to_string());
+            e.isbn = Some("978-0-123456-78-9".to_string());
         });
 
         let merged = merge_enrichment_fields(&existing, Some(&crossref), None);
@@ -1193,7 +1255,8 @@ mod tests {
         assert!(merged.contains_key("pages"));
         assert!(merged.contains_key("publisher"));
         assert!(merged.contains_key("issn"));
-        assert_eq!(merged.len(), 9);
+        assert!(merged.contains_key("isbn"));
+        assert_eq!(merged.len(), 10);
     }
 
     #[test]
@@ -1240,6 +1303,116 @@ mod tests {
 
         let merged = merge_enrichment_fields(&existing, Some(&source), None);
         assert!(!merged.contains_key("doi"), "empty string should not be merged");
+    }
+
+    // ── merge_enrichment_fields: ISBN ─────────────────────────────────
+
+    #[test]
+    fn merge_isbn_from_primary_source() {
+        let existing = make_entry(|_| {});
+        let primary = make_entry(|e| {
+            e.isbn = Some("978-0-123".to_string());
+        });
+        let merged = merge_enrichment_fields(&existing, Some(&primary), None);
+        assert_eq!(merged.get("isbn").unwrap(), "978-0-123");
+    }
+
+    #[test]
+    fn merge_isbn_from_secondary_when_primary_missing() {
+        let existing = make_entry(|_| {});
+        let primary = make_entry(|_| {});
+        let secondary = make_entry(|e| {
+            e.isbn = Some("978-0-456".to_string());
+        });
+        let merged = merge_enrichment_fields(&existing, Some(&primary), Some(&secondary));
+        assert_eq!(merged.get("isbn").unwrap(), "978-0-456");
+    }
+
+    #[test]
+    fn merge_preserves_existing_isbn() {
+        let existing = make_entry(|e| {
+            e.isbn = Some("978-0-existing".to_string());
+        });
+        let primary = make_entry(|e| {
+            e.isbn = Some("978-0-new".to_string());
+        });
+        let merged = merge_enrichment_fields(&existing, Some(&primary), None);
+        assert!(!merged.contains_key("isbn"), "existing isbn should not be overwritten");
+    }
+
+    // ── try_isbn_enrichment ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn isbn_enrichment_returns_resolved_entry() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        let ol_body = r#"{"ISBN:9780306406157":{"title":"A Great Book","publishers":[{"name":"Dover"}],"authors":[{"name":"J. Author"}],"publish_date":"2001"}}"#;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/books"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(ol_body))
+            .mount(&mock_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = try_isbn_enrichment(
+            "9780306406157", &client, &mock_server.uri(), "http://unused.invalid",
+        ).await;
+
+        assert!(result.is_some(), "expected Some from Open Library");
+        let (entry, isbn_path) = result.unwrap();
+        assert_eq!(isbn_path, IsbnPath::OpenLibrary);
+        assert_eq!(entry.title, "A Great Book");
+        assert_eq!(entry.publisher.as_deref(), Some("Dover"));
+    }
+
+    #[tokio::test]
+    async fn isbn_enrichment_returns_none_on_both_miss() {
+        let ol_server = wiremock::MockServer::start().await;
+        let gb_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&ol_server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&gb_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = try_isbn_enrichment(
+            "9780306406157", &client, &ol_server.uri(), &gb_server.uri(),
+        ).await;
+
+        assert!(result.is_none(), "expected None when both providers miss");
+    }
+
+    #[tokio::test]
+    async fn isbn_enrichment_open_library_fails_falls_through_to_google() {
+        let ol_server = wiremock::MockServer::start().await;
+        let gb_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&ol_server)
+            .await;
+
+        let gb_body = r#"{"totalItems":1,"items":[{"volumeInfo":{"title":"Google Book Title","authors":["G. Writer"],"publisher":"GB Press","publishedDate":"2005","industryIdentifiers":[{"type":"ISBN_13","identifier":"9780306406157"}]}}]}"#;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(gb_body))
+            .mount(&gb_server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let result = try_isbn_enrichment(
+            "9780306406157", &client, &ol_server.uri(), &gb_server.uri(),
+        ).await;
+
+        assert!(result.is_some(), "expected Some from Google Books fallback");
+        let (entry, isbn_path) = result.unwrap();
+        assert_eq!(isbn_path, IsbnPath::GoogleBooks);
+        assert_eq!(entry.title, "Google Book Title");
     }
 
     // ── fetch_crossref rejects invalid DOIs ─────────────────────────

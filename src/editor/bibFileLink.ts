@@ -35,11 +35,12 @@ export const bibPagePathFacet: Facet<string, string> = Facet.define<
  * - Multi-line values are not matched (CM6 viewport scanning is line-by-line).
  */
 export const BIB_FIELD_RE =
-  /(?:^|[\s,{])(file|url|doi)\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/gi;
+  /(?:^|[\s,{])(file|url|doi|title)\s*=\s*(?:\{([^}]+)\}|"([^"]+)")/gi;
 
 const bibFileLinkMark = Decoration.mark({ class: "cm-bib-file-link", kind: "file" });
 const bibUrlMark = Decoration.mark({ class: "cm-bib-url-link", kind: "url" });
 const bibDoiMark = Decoration.mark({ class: "cm-bib-url-link", kind: "doi" });
+const bibTitleMark = Decoration.mark({ class: "cm-bib-title-link", kind: "title" });
 
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -59,6 +60,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       const mark =
         field === "file" ? bibFileLinkMark :
         field === "doi" ? bibDoiMark :
+        field === "title" ? bibTitleMark :
         bibUrlMark;
       ranges.push({ from: valueStart, to: valueEnd, mark });
     }
@@ -94,34 +96,92 @@ function getExtension(path: string): string {
   return path.slice(dot + 1).toLowerCase();
 }
 
+const CITEKEY_RE = /^\s*@\w+\s*\{\s*([^,\s]+)/;
+
+/** Regex matching an unindented closing brace at column 0 — the end of a BibTeX entry.
+ *  Indented closing braces (field-value terminators like `  },`) are not matched. */
+const ENTRY_END_RE = /^\}[,;\s]*$/;
+
+/** Regex matching blank/whitespace-only lines — conventional entry separators. */
+const BLANK_LINE_RE = /^\s*$/;
+
+/** Maximum number of lines to scan backward before giving up. */
+const MAX_CITEKEY_SCAN = 200;
+
+function findCitekey(view: EditorView, pos: number): string | null {
+  const doc = view.state.doc;
+  const startLine = doc.lineAt(pos).number;
+  let lineNum = startLine;
+  while (lineNum >= 1) {
+    // Safety cap: don't scan more than MAX_CITEKEY_SCAN lines backward
+    if (startLine - lineNum > MAX_CITEKEY_SCAN) return null;
+
+    const line = doc.line(lineNum);
+    const text = line.text;
+
+    // Check for the @type{citekey header — success
+    const m = CITEKEY_RE.exec(text);
+    if (m) return m[1]!;
+
+    // Stop at entry boundaries: blank lines or standalone closing braces.
+    // These indicate we've left the current entry without finding its header,
+    // meaning this entry is malformed (missing its @type{key, line).
+    if (BLANK_LINE_RE.test(text) || ENTRY_END_RE.test(text)) return null;
+
+    lineNum--;
+  }
+  return null;
+}
+
+/** Shared hit-test: find the decoration at the click position, if any. */
+function hitTestDecoration(
+  view: EditorView,
+  event: MouseEvent,
+): { from: number; to: number; deco: Decoration; pos: number } | null {
+  const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  if (pos === null) return null;
+
+  const pluginInstance = view.plugin(bibFileLinkPlugin);
+  if (!pluginInstance) return null;
+
+  let hitFrom: number | undefined;
+  let hitTo: number | undefined;
+  let hitDeco: Decoration | undefined;
+  pluginInstance.decorations.between(pos, pos, (from, to, value) => {
+    if (pos >= to) return; // enforce half-open [from, to) — pos at `to` is outside
+    hitFrom = from;
+    hitTo = to;
+    hitDeco = value;
+    return false; // stop after first hit
+  });
+  if (hitFrom === undefined || hitTo === undefined || hitDeco === undefined) return null;
+  return { from: hitFrom, to: hitTo, deco: hitDeco, pos };
+}
+
 function createBibFileClickHandler(): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
       if (event.button !== 0) return false;
+
+      const hit = hitTestDecoration(view, event);
+      if (!hit) return false;
+
+      const kind: "file" | "url" | "doi" | "title" = hit.deco.spec.kind;
+
       if (!event.ctrlKey && !event.metaKey) return false;
 
-      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-      if (pos === null) return false;
-
-      const pluginInstance = view.plugin(bibFileLinkPlugin);
-      if (!pluginInstance) return false;
-
-      let hitFrom: number | undefined;
-      let hitTo: number | undefined;
-      let hitDeco: Decoration | undefined;
-      pluginInstance.decorations.between(pos, pos, (from, to, value) => {
-        if (pos >= to) return; // enforce half-open [from, to) — pos at `to` is outside
-        hitFrom = from;
-        hitTo = to;
-        hitDeco = value;
-        return false; // stop after first hit
-      });
-      if (hitFrom === undefined || hitTo === undefined || hitDeco === undefined) return false;
+      if (kind === "title") {
+        event.preventDefault();
+        const citekey = findCitekey(view, hit.pos);
+        if (citekey) {
+          const bibFile = view.state.facet(bibPagePathFacet);
+          window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey, bibFile } }));
+        }
+        return true;
+      }
 
       event.preventDefault();
-      const rawValue = view.state.doc.sliceString(hitFrom, hitTo);
-
-      const kind: "file" | "url" | "doi" = hitDeco.spec.kind;
+      const rawValue = view.state.doc.sliceString(hit.from, hit.to);
       if (kind === "url" || kind === "doi") {
         const resolved = kind === "doi" ? doiHref(rawValue) : rawValue.trim();
         if (!isHttpUrl(resolved)) {
@@ -172,6 +232,7 @@ function createBibFileClickHandler(): Extension {
       useWorkspaceStore.getState().selectPage(resolved);
       return true;
     },
+
   });
 }
 
@@ -183,5 +244,6 @@ export function bibFileLinkExtension(pagePath: string): Extension {
     createBibFileClickHandler(),
     modHeldLinkStyle("cm-bib-file-link"),
     modHeldLinkStyle("cm-bib-url-link"),
+    modHeldLinkStyle("cm-bib-title-link"),
   ];
 }

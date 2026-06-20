@@ -11,7 +11,7 @@ import {
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { ReferenceLibrary, bibEntryToEditFields } from "./ReferenceLibrary";
+import { ReferenceLibrary } from "./ReferenceLibrary";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import type { BibEntry, BacklinkEntry } from "../lib/ipc";
@@ -1672,305 +1672,6 @@ describe("ReferenceLibrary", () => {
     });
   });
 
-  it("shows Delete button in expanded row", async () => {
-    const user = userEvent.setup();
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-
-    expect(screen.getByTestId("delete-entry-btn")).toBeInTheDocument();
-    expect(screen.getByTestId("delete-entry-btn").textContent).toBe("Delete");
-  });
-
-  it("Delete button calls bibDelete and reloads on success", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_delete") return true;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("delete-entry-btn"));
-
-    await waitFor(() => {
-      const call = invokedCommands.find((c) => c.cmd === "bib_delete");
-      expect(call).toBeTruthy();
-      expect(call!.args).toEqual({ citeKey: "sanderson2009", workspacePath: "/workspace" });
-    });
-
-    vi.mocked(window.confirm).mockRestore();
-  });
-
-  it("Delete button shows confirm dialog before deleting", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_delete") return true;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("delete-entry-btn"));
-
-    expect(invokedCommands.find((c) => c.cmd === "bib_delete")).toBeUndefined();
-
-    vi.mocked(window.confirm).mockRestore();
-  });
-
-  it("Delete button shows error toast on failure", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_delete") throw new Error("DB locked");
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("delete-entry-btn"));
-
-    await waitFor(() => {
-      expect(useStatusMessageStore.getState().message).toMatch(/DB locked/);
-      expect(useStatusMessageStore.getState().variant).toBe("error");
-    });
-
-    vi.mocked(window.confirm).mockRestore();
-  });
-
-  it("shows Edit button in expanded row", async () => {
-    const user = userEvent.setup();
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-
-    expect(screen.getByTestId("edit-entry-btn")).toBeInTheDocument();
-  });
-
-  it("clicking Edit shows inline edit fields with pre-populated values", async () => {
-    const user = userEvent.setup();
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-
-    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
-    expect(titleInput.value).toBe("The Saiva Age");
-    const authorsInput = screen.getByTestId("edit-field-authors") as HTMLInputElement;
-    expect(authorsInput.value).toBe("Sanderson, Alexis");
-    const yearInput = screen.getByTestId("edit-field-year") as HTMLInputElement;
-    expect(yearInput.value).toBe("2009");
-    const journalInput = screen.getByTestId("edit-field-journal") as HTMLInputElement;
-    expect(journalInput.value).toBe("Journal of Indology");
-  });
-
-  it("Edit Cancel returns to display mode", async () => {
-    const user = userEvent.setup();
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-    expect(screen.getByTestId("edit-field-title")).toBeInTheDocument();
-
-    await user.click(screen.getByTestId("edit-cancel-btn"));
-    expect(screen.queryByTestId("edit-field-title")).not.toBeInTheDocument();
-    // Static display should be restored — title text visible (in both collapsed row and expanded card)
-    expect(screen.getAllByText("The Saiva Age").length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("Edit Save calls bibUpdateFields and reloads", async () => {
-    const user = userEvent.setup();
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_update_fields") {
-        // Simulate backend emitting the event (as bib_update_fields does in production)
-        emitMockEvent("lit:bib-items-changed", {});
-        return true;
-      }
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-
-    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
-    await user.clear(titleInput);
-    await user.type(titleInput, "Updated Title");
-
-    const beforeCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
-
-    await user.click(screen.getByTestId("edit-save-btn"));
-
-    await waitFor(() => {
-      const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-      expect(call).toBeTruthy();
-      expect(call!.args).toMatchObject({
-        citeKey: "sanderson2009",
-        workspacePath: "/workspace",
-      });
-    });
-    await waitFor(() => {
-      const afterCount = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
-      expect(afterCount).toBeGreaterThan(beforeCount);
-    });
-    // Edit mode should be exited
-    expect(screen.queryByTestId("edit-field-title")).not.toBeInTheDocument();
-  });
-
-  it("Edit Save shows error toast on failure", async () => {
-    const user = userEvent.setup();
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_update_fields") throw new Error("Update failed");
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-
-    // Change a field so the diff-based save actually sends a request
-    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
-    await user.clear(titleInput);
-    await user.type(titleInput, "Trigger Error");
-
-    await user.click(screen.getByTestId("edit-save-btn"));
-
-    await waitFor(() => {
-      expect(useStatusMessageStore.getState().message).toMatch(/Update failed/);
-      expect(useStatusMessageStore.getState().variant).toBe("error");
-    });
-  });
-
-  it("Edit Save sends empty string when field is cleared", async () => {
-    const user = userEvent.setup();
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_update_fields") return true;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-
-    const journalInput = screen.getByTestId("edit-field-journal") as HTMLInputElement;
-    await user.clear(journalInput);
-
-    await user.click(screen.getByTestId("edit-save-btn"));
-
-    await waitFor(() => {
-      const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-      expect(call).toBeTruthy();
-      expect(call!.args).toMatchObject({
-        citeKey: "sanderson2009",
-        fields: { journal: "" },
-      });
-    });
-  });
-
-  it("Edit Save does not send unchanged fields", async () => {
-    const user = userEvent.setup();
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_update_fields") return true;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-    // Don't change any fields, just click save
-    await user.click(screen.getByTestId("edit-save-btn"));
-
-    // bib_update_fields should NOT be called since nothing changed
-    await waitFor(() => {
-      expect(screen.queryByTestId("edit-field-title")).not.toBeInTheDocument();
-    });
-    const updateCall = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-    expect(updateCall).toBeUndefined();
-  });
-
-  it("Edit Save sends only changed fields", async () => {
-    const user = userEvent.setup();
-    mockInvoke((cmd, args) => {
-      invokedCommands.push({ cmd, args });
-      if (cmd === "list_bib_entries") return fixture;
-      if (cmd === "get_citing_pages") return citingFixture;
-      if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-      if (cmd === "bib_update_fields") return true;
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-
-    render(<ReferenceLibrary />);
-    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
-
-    await user.click(screen.getByText("The Saiva Age"));
-    await user.click(screen.getByTestId("edit-entry-btn"));
-
-    const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
-    await user.clear(titleInput);
-    await user.type(titleInput, "New Title Only");
-
-    await user.click(screen.getByTestId("edit-save-btn"));
-
-    await waitFor(() => {
-      const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-      expect(call).toBeTruthy();
-      const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
-      expect(fields.title).toBe("New Title Only");
-      // authors, year, journal should NOT be in the fields
-      expect(fields).not.toHaveProperty("authors");
-      expect(fields).not.toHaveProperty("year");
-      expect(fields).not.toHaveProperty("journal");
-    });
-  });
-
   describe("Drag-drop", () => {
     /** Mock the panel's bounding rect so checkHit succeeds for drops at (50,50). */
     function mockPanelHitArea() {
@@ -3105,287 +2806,6 @@ describe("ReferenceLibrary", () => {
 
       expect(screen.queryByTestId("entry-editors")).not.toBeInTheDocument();
     });
-
-    it("edit form includes publisher and isbn fields", async () => {
-      const user = userEvent.setup();
-      fixture = [bookEntry];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("The Art of Computer Programming"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const publisherInput = screen.getByTestId("edit-field-publisher") as HTMLInputElement;
-      expect(publisherInput).toBeInTheDocument();
-      expect(publisherInput.value).toBe("Addison-Wesley");
-
-      const isbnInput = screen.getByTestId("edit-field-isbn") as HTMLInputElement;
-      expect(isbnInput).toBeInTheDocument();
-      expect(isbnInput.value).toBe("978-0-201-89683-1");
-    });
-
-    it("edit form publisher and isbn fields are empty when entry lacks them", async () => {
-      const user = userEvent.setup();
-      fixture = [sanderson];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("The Saiva Age"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const publisherInput = screen.getByTestId("edit-field-publisher") as HTMLInputElement;
-      expect(publisherInput.value).toBe("");
-
-      const isbnInput = screen.getByTestId("edit-field-isbn") as HTMLInputElement;
-      expect(isbnInput.value).toBe("");
-    });
-
-    it("Edit Save sends changed publisher field", async () => {
-      const user = userEvent.setup();
-      fixture = [bookEntry];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "bib_update_fields") return true;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("The Art of Computer Programming"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const publisherInput = screen.getByTestId("edit-field-publisher") as HTMLInputElement;
-      await user.clear(publisherInput);
-      await user.type(publisherInput, "New Publisher");
-
-      await user.click(screen.getByTestId("edit-save-btn"));
-
-      await waitFor(() => {
-        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-        expect(call).toBeTruthy();
-        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
-        expect(fields.publisher).toBe("New Publisher");
-        // Unchanged fields should NOT be in fields
-        expect(fields).not.toHaveProperty("title");
-        expect(fields).not.toHaveProperty("isbn");
-      });
-    });
-
-    it("Edit Save sends changed isbn field", async () => {
-      const user = userEvent.setup();
-      fixture = [bookEntry];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "bib_update_fields") return true;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("The Art of Computer Programming"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const isbnInput = screen.getByTestId("edit-field-isbn") as HTMLInputElement;
-      await user.clear(isbnInput);
-      await user.type(isbnInput, "978-new-isbn");
-
-      await user.click(screen.getByTestId("edit-save-btn"));
-
-      await waitFor(() => {
-        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-        expect(call).toBeTruthy();
-        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
-        expect(fields.isbn).toBe("978-new-isbn");
-        expect(fields).not.toHaveProperty("title");
-        expect(fields).not.toHaveProperty("publisher");
-      });
-    });
-
-    it("Edit Save does not send publisher/isbn when unchanged", async () => {
-      const user = userEvent.setup();
-      fixture = [bookEntry];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "bib_update_fields") return true;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("The Art of Computer Programming")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("The Art of Computer Programming"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      // Change only the title
-      const titleInput = screen.getByTestId("edit-field-title") as HTMLInputElement;
-      await user.clear(titleInput);
-      await user.type(titleInput, "TAOCP");
-
-      await user.click(screen.getByTestId("edit-save-btn"));
-
-      await waitFor(() => {
-        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-        expect(call).toBeTruthy();
-        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
-        expect(fields.title).toBe("TAOCP");
-        expect(fields).not.toHaveProperty("publisher");
-        expect(fields).not.toHaveProperty("isbn");
-      });
-    });
-
-    it("edit form includes oclc and series fields", async () => {
-      const user = userEvent.setup();
-      fixture = [editedVolume];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const oclcInput = screen.getByTestId("edit-field-oclc") as HTMLInputElement;
-      expect(oclcInput).toBeInTheDocument();
-      expect(oclcInput.value).toBe("934454286");
-
-      const seriesInput = screen.getByTestId("edit-field-series") as HTMLInputElement;
-      expect(seriesInput).toBeInTheDocument();
-      expect(seriesInput.value).toBe("BKGA 93");
-    });
-
-    it("edit form oclc and series fields are empty when entry lacks them", async () => {
-      const user = userEvent.setup();
-      fixture = [sanderson];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("The Saiva Age")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("The Saiva Age"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const oclcInput = screen.getByTestId("edit-field-oclc") as HTMLInputElement;
-      expect(oclcInput.value).toBe("");
-
-      const seriesInput = screen.getByTestId("edit-field-series") as HTMLInputElement;
-      expect(seriesInput.value).toBe("");
-    });
-
-    it("Edit Save sends changed oclc field", async () => {
-      const user = userEvent.setup();
-      fixture = [editedVolume];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "bib_update_fields") return true;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const oclcInput = screen.getByTestId("edit-field-oclc") as HTMLInputElement;
-      await user.clear(oclcInput);
-      await user.type(oclcInput, "999999999");
-
-      await user.click(screen.getByTestId("edit-save-btn"));
-
-      await waitFor(() => {
-        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-        expect(call).toBeTruthy();
-        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
-        expect(fields.oclc).toBe("999999999");
-        expect(fields).not.toHaveProperty("title");
-        expect(fields).not.toHaveProperty("series");
-      });
-    });
-
-    it("Edit Save sends changed series field", async () => {
-      const user = userEvent.setup();
-      fixture = [editedVolume];
-      mockInvoke((cmd, args) => {
-        invokedCommands.push({ cmd, args });
-        if (cmd === "list_bib_entries") return fixture;
-        if (cmd === "get_citing_pages") return citingFixture;
-        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "bib_update_fields") return true;
-        throw new Error(`Unknown command: ${cmd}`);
-      });
-      render(<ReferenceLibrary />);
-      await waitFor(() =>
-        expect(screen.getByText("Tolerance, Exclusion, and Persecution")).toBeInTheDocument(),
-      );
-
-      await user.click(screen.getByText("Tolerance, Exclusion, and Persecution"));
-      await user.click(screen.getByTestId("edit-entry-btn"));
-
-      const seriesInput = screen.getByTestId("edit-field-series") as HTMLInputElement;
-      await user.clear(seriesInput);
-      await user.type(seriesInput, "New Series 42");
-
-      await user.click(screen.getByTestId("edit-save-btn"));
-
-      await waitFor(() => {
-        const call = invokedCommands.find((c) => c.cmd === "bib_update_fields");
-        expect(call).toBeTruthy();
-        const fields = (call!.args as Record<string, unknown>).fields as Record<string, string>;
-        expect(fields.series).toBe("New Series 42");
-        expect(fields).not.toHaveProperty("title");
-        expect(fields).not.toHaveProperty("oclc");
-      });
-    });
   });
 
   describe("Section headers", () => {
@@ -3639,69 +3059,6 @@ describe("ReferenceLibrary", () => {
   });
 });
 
-describe("bibEntryToEditFields", () => {
-  it("maps all fields from a fully-populated entry", () => {
-    const entry: BibEntry = {
-      key: "test2024",
-      authors: ["Smith, John", "Doe, Jane"],
-      title: "Test Title",
-      year: "2024",
-      entry_type: "article",
-      line_number: 1,
-      bib_file: "/workspace/refs.bib",
-      journal: "Test Journal",
-      publisher: "Test Press",
-      isbn: "978-0-123456-78-9",
-      oclc: "12345",
-      series: "Test Series",
-    };
-
-    expect(bibEntryToEditFields(entry)).toEqual({
-      title: "Test Title",
-      authors: "Smith, John; Doe, Jane",
-      year: "2024",
-      journal: "Test Journal",
-      publisher: "Test Press",
-      isbn: "978-0-123456-78-9",
-      oclc: "12345",
-      series: "Test Series",
-    });
-  });
-
-  it("coalesces undefined optional fields to empty string", () => {
-    const entry: BibEntry = {
-      key: "minimal2024",
-      authors: ["Solo, Han"],
-      title: "Minimal Entry",
-      year: "2024",
-      entry_type: "book",
-      line_number: 1,
-      bib_file: "/workspace/refs.bib",
-    };
-
-    const result = bibEntryToEditFields(entry);
-    expect(result.journal).toBe("");
-    expect(result.publisher).toBe("");
-    expect(result.isbn).toBe("");
-    expect(result.oclc).toBe("");
-    expect(result.series).toBe("");
-  });
-
-  it("joins multiple authors with semicolon-space separator", () => {
-    const entry: BibEntry = {
-      key: "multi2024",
-      authors: ["A", "B", "C"],
-      title: "Multi",
-      year: "2024",
-      entry_type: "article",
-      line_number: 1,
-      bib_file: "/workspace/refs.bib",
-    };
-
-    expect(bibEntryToEditFields(entry).authors).toBe("A; B; C");
-  });
-});
-
 describe("EnrichCandidatePicker integration", () => {
   const candidateA: BibEntry = {
     key: "smith2020",
@@ -3884,6 +3241,289 @@ describe("EnrichCandidatePicker integration", () => {
     await waitFor(() => {
       expect(useStatusMessageStore.getState().message).toMatch(/Apply failed/);
       expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+  });
+
+  describe("lit:reveal-bib-entry with duplicate citekeys", () => {
+    const smithA: BibEntry = {
+      key: "smith2024",
+      authors: ["Smith, Alice"],
+      title: "Smith Paper Alpha",
+      year: "2024",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/ws/a.bib",
+      abstract_text: "ALPHA-ABSTRACT-UNIQUE",
+    };
+
+    const smithB: BibEntry = {
+      key: "smith2024",
+      authors: ["Smith, Bob"],
+      title: "Smith Paper Beta",
+      year: "2024",
+      entry_type: "article",
+      line_number: 1,
+      bib_file: "/ws/b.bib",
+      abstract_text: "BETA-ABSTRACT-UNIQUE",
+    };
+
+    it("reveals the entry from the correct bib file when duplicate citekeys exist", async () => {
+      fixture = [smithA, smithB];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper Alpha")).toBeInTheDocument());
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "smith2024", bibFile: "b.bib" },
+          }),
+        );
+      });
+
+      // The second entry (from b.bib) should be expanded, showing its unique abstract
+      await waitFor(() =>
+        expect(screen.getByText("BETA-ABSTRACT-UNIQUE")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("ALPHA-ABSTRACT-UNIQUE")).not.toBeInTheDocument();
+    });
+
+    it("falls back to first citekey match when bibFile is not provided", async () => {
+      fixture = [smithA, smithB];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper Alpha")).toBeInTheDocument());
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "smith2024" },
+          }),
+        );
+      });
+
+      // Without bibFile, the first match (smithA) should be expanded
+      await waitFor(() =>
+        expect(screen.getByText("ALPHA-ABSTRACT-UNIQUE")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("BETA-ABSTRACT-UNIQUE")).not.toBeInTheDocument();
+    });
+
+    it("falls back to first citekey match when bibFile matches no bib_file", async () => {
+      fixture = [smithA, smithB];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Smith Paper Alpha")).toBeInTheDocument());
+
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "smith2024", bibFile: "nonexistent.bib" },
+          }),
+        );
+      });
+
+      // bibFile doesn't match any entry, so fall back to first citekey match (smithA)
+      await waitFor(() =>
+        expect(screen.getByText("ALPHA-ABSTRACT-UNIQUE")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("BETA-ABSTRACT-UNIQUE")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("lit:reveal-bib-entry clears active search filter", () => {
+    it("clears search filter when revealing an entry filtered out by search", async () => {
+      const user = userEvent.setup();
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Type a search query that filters OUT sanderson2009 ("The Saiva Age")
+      await user.type(screen.getByLabelText("Search references"), "Hinduism");
+
+      // Wait for the search to take effect: "An Introduction to Hinduism" should be visible
+      await waitFor(() =>
+        expect(screen.getByText("An Introduction to Hinduism")).toBeInTheDocument(),
+      );
+      // "The Saiva Age" should be filtered out
+      await waitFor(() =>
+        expect(screen.queryByText("The Saiva Age")).not.toBeInTheDocument(),
+      );
+
+      // Now dispatch the reveal event for the filtered-out entry
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "sanderson2009" },
+          }),
+        );
+      });
+
+      // The entry should become visible (expanded), proving the search was cleared
+      await waitFor(() =>
+        expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument(),
+      );
+
+      // The search input should now be empty
+      const searchInput = screen.getByLabelText("Search references") as HTMLInputElement;
+      expect(searchInput.value).toBe("");
+    });
+  });
+
+  describe("reveal flash timer cleanup on rapid clicks", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("rapid consecutive reveal events do not kill the second entry's flash early", async () => {
+      render(<ReferenceLibrary />);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(screen.getByText("The Saiva Age")).toBeInTheDocument();
+
+      // Helper: find the container div (with bib-entry-revealed class) for a given title
+      function findEntryContainer(title: string): HTMLElement | null {
+        const allTitles = screen.getAllByTestId("reference-entry-title");
+        const titleEl = allTitles.find((el) => el.textContent === title);
+        if (!titleEl) return null;
+        // Walk up to the absolutely positioned container div (the one with data-index)
+        let el: HTMLElement | null = titleEl;
+        while (el && !el.hasAttribute("data-index")) {
+          el = el.parentElement;
+        }
+        return el;
+      }
+
+      // 1. Dispatch reveal for sanderson2009
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "sanderson2009" },
+          }),
+        );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // sanderson entry should have the revealed class
+      const sandersonContainer = findEntryContainer("The Saiva Age");
+      expect(sandersonContainer).not.toBeNull();
+      expect(sandersonContainer!.className).toContain("bib-entry-revealed");
+
+      // 2. Advance 500ms (less than 1500ms) -- first entry should still be flashing
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(findEntryContainer("The Saiva Age")!.className).toContain("bib-entry-revealed");
+
+      // 3. Dispatch reveal for flood1996
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry", {
+            detail: { citekey: "flood1996" },
+          }),
+        );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // flood entry should now have the revealed class
+      const floodContainer = findEntryContainer("An Introduction to Hinduism");
+      expect(floodContainer).not.toBeNull();
+      expect(floodContainer!.className).toContain("bib-entry-revealed");
+
+      // 4. Advance 1000ms (total 1500ms from first dispatch, but only 1000ms from second).
+      // WITHOUT the fix, the first setTimeout fires here and sets revealedKey to null,
+      // killing flood's flash prematurely.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      const floodAfterFirstTimer = findEntryContainer("An Introduction to Hinduism");
+      expect(floodAfterFirstTimer).not.toBeNull();
+      expect(floodAfterFirstTimer!.className).toContain("bib-entry-revealed");
+
+      // 5. Advance 500ms more (total 1500ms from second dispatch). Flash should end.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      const floodFinal = findEntryContainer("An Introduction to Hinduism");
+      expect(floodFinal).not.toBeNull();
+      expect(floodFinal!.className).not.toContain("bib-entry-revealed");
+    });
+  });
+
+  describe("lit:reveal-bib-entry scroll timing uses double-rAF", () => {
+    it("defers scrollToIndex through two nested requestAnimationFrame calls", async () => {
+      // We spy on Element.prototype.scrollTo to detect when scrollToIndex
+      // ultimately fires (TanStack Virtual calls scrollTo on the container).
+      const scrollToSpy = vi.fn();
+      const origScrollTo = Element.prototype.scrollTo;
+      Element.prototype.scrollTo = scrollToSpy;
+
+      // Collect rAF callbacks in a queue so we can flush them one at a time
+      const rafQueue: FrameRequestCallback[] = [];
+      const rafSpy = vi
+        .spyOn(window, "requestAnimationFrame")
+        .mockImplementation((cb) => {
+          rafQueue.push(cb);
+          return rafQueue.length;
+        });
+
+      try {
+        render(<ReferenceLibrary />);
+        // Flush all rAFs until render stabilizes
+        await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+        let safety = 0;
+        while (rafQueue.length > 0 && safety < 50) {
+          const cb = rafQueue.shift()!;
+          cb(performance.now());
+          safety++;
+        }
+
+        // Clear spies so we start with a clean slate
+        scrollToSpy.mockClear();
+
+        // Dispatch the reveal event
+        act(() => {
+          window.dispatchEvent(
+            new CustomEvent("lit:reveal-bib-entry", {
+              detail: { citekey: "sanderson2009" },
+            }),
+          );
+        });
+
+        // The handler should have called requestAnimationFrame (outer rAF)
+        expect(rafQueue.length).toBeGreaterThanOrEqual(1);
+
+        // Flush ONLY the first rAF callback (the handler's outer rAF).
+        // With single-rAF (the bug), scrollToIndex fires here, which calls
+        // scrollTo on the container element.
+        // With double-rAF (the fix), this outer callback only registers
+        // another rAF — scrollToIndex has NOT fired yet.
+        const outerCb = rafQueue.shift()!;
+        act(() => {
+          outerCb(performance.now());
+        });
+
+        // KEY ASSERTION: After flushing just the outer rAF, scrollTo should
+        // NOT have been called yet. With single-rAF, scrollToIndex -> scrollTo
+        // would have already fired.
+        expect(scrollToSpy).not.toHaveBeenCalled();
+
+        // Now flush the inner rAF (the one registered by the outer callback).
+        // After this, scrollToIndex -> scrollTo should fire.
+        expect(rafQueue.length).toBeGreaterThanOrEqual(1);
+        const innerCb = rafQueue.shift()!;
+        act(() => {
+          innerCb(performance.now());
+        });
+
+        // Now scrollTo should have been called
+        expect(scrollToSpy).toHaveBeenCalled();
+      } finally {
+        rafSpy.mockRestore();
+        Element.prototype.scrollTo = origScrollTo;
+      }
     });
   });
 });
