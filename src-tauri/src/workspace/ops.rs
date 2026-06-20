@@ -221,6 +221,7 @@ pub fn persist_companion_frontmatter(
     let parsed = parse_frontmatter(&raw);
 
     if parsed.map.get("companion").and_then(|v| v.as_str()) == Some(pdf_relative) {
+        registry.record(&full_path, &raw);
         return Ok(());
     }
 
@@ -582,6 +583,19 @@ mod tests {
         write_code_file(dir.path(), "round.bib", body, &registry).unwrap();
         let code = read_code_file(dir.path(), "round.bib", &registry).unwrap();
         assert_eq!(code.body, body);
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_early_return_records_hash() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\ncompanion: foo.pdf\n---\n# Body\n";
+        fs::write(dir.path().join("note.md"), content).unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", &registry).unwrap();
+
+        let full_path = dir.path().join("note.md");
+        assert!(registry.check(&full_path, content));
     }
 
     #[test]

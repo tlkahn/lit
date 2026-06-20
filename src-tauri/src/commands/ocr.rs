@@ -285,10 +285,13 @@ pub async fn ocr_pdf_to_markdown(
     let md_relative = ocr_markdown_filename(&key);
     let md_path = ocr_markdown_path(&root, &key);
     let pages = ocr_response.pages;
+    let reg = registry.inner().clone();
+    let reg_for_write = reg.clone();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let output = ocr_cli::postproc::postprocess(&pages, &image_dir, &stem)
             .map_err(|e| format!("Post-processing failed: {e}"))?;
         write_ocr_markdown(&md_path, output.markdown.as_bytes(), overwrite)?;
+        reg_for_write.record(&md_path, &output.markdown);
         // Clean up empty image directory (text-only PDFs produce no images).
         // Done here in the blocking thread to avoid sync I/O on the async runtime.
         cleanup_empty_image_dir(&image_dir_cleanup);
@@ -306,7 +309,6 @@ pub async fn ocr_pdf_to_markdown(
 
     // Step 8c: Persist companion frontmatter so the md↔pdf pairing survives renames.
     {
-        let reg = registry.inner().clone();
         let root_clone = root.clone();
         let md_rel = md_relative.clone();
         let pdf_rel = relative_pdf.to_string();
