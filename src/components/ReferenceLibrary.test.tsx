@@ -3057,6 +3057,128 @@ describe("ReferenceLibrary", () => {
       });
     });
   });
+
+  describe("Cmd+click sidebar title to open bib file", () => {
+    it("Cmd+click on collapsed title calls selectPageAtLine with relative path and 1-based line", async () => {
+      const selectPageAtLine = vi.fn();
+      useWorkspaceStore.setState({ selectPageAtLine });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const titleEl = screen
+        .getAllByTestId("reference-entry-title")
+        .find((el) => el.textContent === "The Saiva Age")!;
+
+      fireEvent.click(titleEl, { metaKey: true });
+
+      expect(selectPageAtLine).toHaveBeenCalledWith("refs.bib", 2);
+      // Entry should NOT have expanded (stopPropagation prevented toggleExpand)
+      expect(screen.queryByText("A long abstract about Saivism.")).not.toBeInTheDocument();
+    });
+
+    it("Ctrl+click on collapsed title navigates to bib file", async () => {
+      const selectPageAtLine = vi.fn();
+      useWorkspaceStore.setState({ selectPageAtLine });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      const titleEl = screen
+        .getAllByTestId("reference-entry-title")
+        .find((el) => el.textContent === "The Saiva Age")!;
+
+      fireEvent.click(titleEl, { ctrlKey: true });
+
+      expect(selectPageAtLine).toHaveBeenCalledWith("refs.bib", 2);
+    });
+
+    it("plain click on collapsed title still expands/collapses", async () => {
+      const user = userEvent.setup();
+      const selectPageAtLine = vi.fn();
+      useWorkspaceStore.setState({ selectPageAtLine });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      expect(selectPageAtLine).not.toHaveBeenCalled();
+      expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument();
+    });
+
+    it("Cmd+click on expanded title navigates to bib file", async () => {
+      const user = userEvent.setup();
+      const selectPageAtLine = vi.fn();
+      useWorkspaceStore.setState({ selectPageAtLine });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Expand the entry first
+      await user.click(screen.getByText("The Saiva Age"));
+      expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument();
+
+      // The expanded title is the font-semibold div, not the data-testid span
+      const expandedTitle = screen.getByText("A long abstract about Saivism.")
+        .closest(".mt-1.rounded")!
+        .querySelector(".font-semibold")!;
+
+      fireEvent.click(expandedTitle, { metaKey: true });
+
+      expect(selectPageAtLine).toHaveBeenCalledWith("refs.bib", 2);
+    });
+
+    it("Cmd+click does nothing when bib_file is undefined", async () => {
+      const selectPageAtLine = vi.fn();
+      useWorkspaceStore.setState({ selectPageAtLine });
+      fixture = [
+        {
+          key: "noBib2020",
+          authors: ["NoBib, A."],
+          title: "No Bib File Entry",
+          year: "2020",
+          entry_type: "article",
+          line_number: 5,
+          bib_file: undefined,
+        },
+      ];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("No Bib File Entry")).toBeInTheDocument());
+
+      const titleEl = screen
+        .getAllByTestId("reference-entry-title")
+        .find((el) => el.textContent === "No Bib File Entry")!;
+
+      fireEvent.click(titleEl, { metaKey: true });
+
+      expect(selectPageAtLine).not.toHaveBeenCalled();
+      // The click should have bubbled up and toggled the expand
+      await waitFor(() => expect(screen.queryByRole("button", { name: /Copy citation/i })).toBeInTheDocument());
+    });
+
+    it("converts 0-based line_number to 1-based for selectPageAtLine", async () => {
+      const selectPageAtLine = vi.fn();
+      useWorkspaceStore.setState({ selectPageAtLine });
+      fixture = [
+        {
+          key: "zero2020",
+          authors: ["Zero, Z."],
+          title: "Zero Line Entry",
+          year: "2020",
+          entry_type: "article",
+          line_number: 0,
+          bib_file: "/workspace/zero.bib",
+        },
+      ];
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("Zero Line Entry")).toBeInTheDocument());
+
+      const titleEl = screen
+        .getAllByTestId("reference-entry-title")
+        .find((el) => el.textContent === "Zero Line Entry")!;
+
+      fireEvent.click(titleEl, { metaKey: true });
+
+      expect(selectPageAtLine).toHaveBeenCalledWith("zero.bib", 1);
+    });
+  });
 });
 
 describe("EnrichCandidatePicker integration", () => {

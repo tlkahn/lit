@@ -43,6 +43,7 @@ import { ImportPdfDialog } from "./ImportPdfDialog";
 import { OcrDialog } from "./OcrDialog";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
+import { useModKeyHeld } from "../hooks/useModKeyHeld";
 import { doiHref } from "../lib/urlUtils";
 import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
@@ -177,9 +178,11 @@ export function ReferenceLibrary() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
+  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
   const refreshPages = useWorkspaceStore((s) => s.refreshPages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const show = useStatusMessageStore((s) => s.show);
+  const modHeld = useModKeyHeld();
   const [entries, setEntries] = useState<BibEntry[]>([]);
   const [bibKeyStates, setBibKeyStates] = useState<Record<string, BibKeyState>>({});
   const [search, setSearch] = useState("");
@@ -434,6 +437,16 @@ export function ReferenceLibrary() {
   const toggleExpand = useCallback((key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
   }, []);
+
+  const navigateToBibFile = useCallback(
+    (entry: BibEntry) => {
+      if (!entry.bib_file || !workspacePath) return;
+      if (!entry.bib_file.startsWith(workspacePath + "/")) return;
+      const relativePath = entry.bib_file.slice(workspacePath.length + 1);
+      selectPageAtLine(relativePath, entry.line_number + 1);
+    },
+    [workspacePath, selectPageAtLine],
+  );
 
   const copyCitation = useCallback(
     (key: string) => {
@@ -969,7 +982,13 @@ export function ReferenceLibrary() {
                     >
                       <span
                         data-testid="reference-entry-title"
-                        className="w-full truncate text-sm text-text-normal"
+                        className={`w-full truncate text-sm ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
+                        onClick={(e) => {
+                          if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
+                            e.stopPropagation();
+                            navigateToBibFile(entry);
+                          }
+                        }}
                       >
                         {entry.title}
                       </span>
@@ -984,7 +1003,16 @@ export function ReferenceLibrary() {
                     {isExpanded ? (
                       <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
                         <div className="flex items-start gap-2">
-                          <div className="font-semibold text-text-normal">{entry.title}</div>
+                          <div
+                            className={`font-semibold ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
+                            onClick={(e) => {
+                              if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
+                                navigateToBibFile(entry);
+                              }
+                            }}
+                          >
+                            {entry.title}
+                          </div>
                           <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
                         </div>
                         {entry.authors.length > 0 ? (
