@@ -674,9 +674,6 @@ export function ReferenceLibrary() {
       ),
     [sectionedItems, expandedKey],
   );
-  const hasBadge = (state: BibKeyState | undefined) =>
-    !!(state?.page_id || state?.materialization === "partial");
-
   const virtualizer = useVirtualizer({
     count: sectionedItems.length,
     getScrollElement: () => scrollRef.current,
@@ -684,7 +681,6 @@ export function ReferenceLibrary() {
       const item = sectionedItems[index];
       if (!item || item.kind === "header") return 24;
       if (index === expandedIndex) return 260;
-      if (item.kind === "entry" && hasBadge(bibKeyStates[item.entry.key])) return 70;
       return 48;
     },
     overscan: 10,
@@ -702,23 +698,6 @@ export function ReferenceLibrary() {
       virtualizer.resizeItem(idx, virtualizer.options.estimateSize(idx));
     }
   }, [virtualizer, expandedIndex]);
-
-  const prevBibKeyStatesRef = useRef(bibKeyStates);
-  useEffect(() => {
-    const prev = prevBibKeyStatesRef.current;
-    prevBibKeyStatesRef.current = bibKeyStates;
-
-    for (let i = 0; i < sectionedItems.length; i++) {
-      const item = sectionedItems[i];
-      if (!item || item.kind !== "entry") continue;
-      const oldBadge = hasBadge(prev[item.entry.key]);
-      const newBadge = hasBadge(bibKeyStates[item.entry.key]);
-      if (oldBadge === newBadge) continue;
-      if (i !== expandedIndex) {
-        virtualizer.resizeItem(i, virtualizer.options.estimateSize(i));
-      }
-    }
-  }, [virtualizer, bibKeyStates, sectionedItems, expandedIndex]);
 
   useLayoutEffect(() => {
     if (expandedIndex < 0) return;
@@ -988,6 +967,18 @@ export function ReferenceLibrary() {
                     key={entryId}
                     data-index={virtualRow.index}
                     ref={virtualizer.measureElement}
+                    className={
+                      state?.page_id
+                        ? "border-l-2 border-interactive-accent"
+                        : state?.materialization === "partial"
+                          ? "border-l-2 border-dashed border-text-muted"
+                          : undefined
+                    }
+                    data-indicator={
+                      state?.page_id ? "has-note"
+                        : state?.materialization === "partial" ? "enriched"
+                        : undefined
+                    }
                     style={{
                       position: "absolute",
                       top: 0,
@@ -1013,21 +1004,6 @@ export function ReferenceLibrary() {
                         </span>
                         <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
                       </span>
-                      {state?.page_id ? (
-                        <span
-                          data-testid="badge-has-note"
-                          className="mt-0.5 inline-block rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent"
-                        >
-                          Has note
-                        </span>
-                      ) : state?.materialization === "partial" ? (
-                        <span
-                          data-testid="badge-enriched"
-                          className="mt-0.5 inline-block rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                        >
-                          Enriched
-                        </span>
-                      ) : null}
                     </button>
                     {isExpanded ? (
                       <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
@@ -1163,14 +1139,6 @@ export function ReferenceLibrary() {
                             >
                               {materializingKey === entry.key ? "Creating…" : "Create note"}
                             </button>
-                            {state.materialization === "partial" ? (
-                              <span
-                                data-testid="badge-enriched"
-                                className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                              >
-                                Enriched
-                              </span>
-                            ) : null}
                           </div>
                         ) : null}
                         {!state?.page_id ? (
