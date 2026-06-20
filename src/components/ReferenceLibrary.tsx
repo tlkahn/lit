@@ -707,26 +707,38 @@ export function ReferenceLibrary() {
     const prev = prevBibKeyStatesRef.current;
     prevBibKeyStatesRef.current = bibKeyStates;
 
-    let expandedStateChanged = false;
     for (let i = 0; i < sectionedItems.length; i++) {
       const item = sectionedItems[i];
       if (!item || item.kind !== "entry") continue;
       const oldBadge = hasBadge(prev[item.entry.key]);
       const newBadge = hasBadge(bibKeyStates[item.entry.key]);
       if (oldBadge === newBadge) continue;
-      if (i === expandedIndex) {
-        expandedStateChanged = true;
-      } else {
+      if (i !== expandedIndex) {
         virtualizer.resizeItem(i, virtualizer.options.estimateSize(i));
       }
     }
-
-    if (expandedStateChanged && expandedIndex >= 0) {
-      requestAnimationFrame(() => {
-        virtualizer.scrollToIndex(expandedIndex, { align: "auto" });
-      });
-    }
   }, [virtualizer, bibKeyStates, sectionedItems, expandedIndex]);
+
+  const scrollAfterEnrichRef = useRef<string | null>(null);
+  const prevEnrichingKeyRef = useRef(enrichingKey);
+  useEffect(() => {
+    const prevKey = prevEnrichingKeyRef.current;
+    prevEnrichingKeyRef.current = enrichingKey;
+    if (prevKey && !enrichingKey) {
+      scrollAfterEnrichRef.current = prevKey;
+    }
+  }, [enrichingKey]);
+
+  useEffect(() => {
+    const pendingKey = scrollAfterEnrichRef.current;
+    if (!pendingKey || expandedIndex < 0) return;
+    const item = sectionedItems[expandedIndex];
+    if (item?.kind !== "entry" || item.entry.key !== pendingKey) return;
+    scrollAfterEnrichRef.current = null;
+    requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(expandedIndex, { align: "auto" });
+    });
+  }, [sectionedItems, expandedIndex, virtualizer]);
 
   const scrollToLetter = useCallback(
     (letter: string, smooth: boolean) => {
