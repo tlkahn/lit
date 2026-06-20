@@ -919,9 +919,9 @@ export function ReferenceLibrary() {
                         {entry.journal ? (
                           <div className="text-text-muted">{entry.journal}</div>
                         ) : null}
-                        {(() => { const dp = distinctPublisher(entry); return dp ? (
-                          <div data-testid="entry-publisher" className="text-text-muted">{dp}</div>
-                        ) : null; })()}
+                        {distinctPublisher(entry) ? (
+                          <div data-testid="entry-publisher" className="text-text-muted">{distinctPublisher(entry)}</div>
+                        ) : null}
                         {entry.isbn ? (
                           <div data-testid="entry-isbn" className="text-text-muted">
                             ISBN:{" "}
