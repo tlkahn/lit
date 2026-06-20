@@ -74,11 +74,24 @@ fn row_to_bib_entry(row: &rusqlite::Row) -> Result<BibEntry, rusqlite::Error> {
     })
 }
 
-/// Normalize a title for dedup comparison: lowercase, strip punctuation, collapse whitespace.
-/// This is a simplified version of recognize::resolve::title_match::normalize_title,
-/// duplicated here to avoid a cross-module dependency from bib -> recognize.
+fn is_combining_mark(c: char) -> bool {
+    matches!(c,
+        '\u{0300}'..='\u{036F}' |
+        '\u{1AB0}'..='\u{1AFF}' |
+        '\u{1DC0}'..='\u{1DFF}' |
+        '\u{20D0}'..='\u{20FF}' |
+        '\u{FE20}'..='\u{FE2F}'
+    )
+}
+
+/// Normalize a title for dedup comparison: strip diacritics, lowercase, strip punctuation,
+/// collapse whitespace. This is a simplified version of
+/// recognize::resolve::title_match::normalize_title, duplicated here to avoid a
+/// cross-module dependency from bib -> recognize.
 pub(crate) fn normalize_title_for_dedup(title: &str) -> String {
-    title
+    use unicode_normalization::UnicodeNormalization;
+    let decomposed: String = title.nfkd().filter(|c| !is_combining_mark(*c)).collect();
+    decomposed
         .to_lowercase()
         .chars()
         .map(|c| {
@@ -2113,6 +2126,15 @@ mod tests {
             "quantum entanglement"
         );
         assert_eq!(normalize_title_for_dedup(""), "");
+    }
+
+    #[test]
+    fn test_normalize_title_for_dedup_diacritics() {
+        assert_eq!(
+            normalize_title_for_dedup("Pāṇini: A Grammar"),
+            "panini a grammar"
+        );
+        assert_eq!(normalize_title_for_dedup("Café"), "cafe");
     }
 
     #[test]

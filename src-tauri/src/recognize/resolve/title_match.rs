@@ -1,6 +1,22 @@
+use unicode_normalization::UnicodeNormalization;
+
 use crate::bib::types::BibEntry;
 
 const TITLE_MATCH_THRESHOLD: f64 = 0.85;
+
+pub(crate) fn is_combining_mark(c: char) -> bool {
+    matches!(c,
+        '\u{0300}'..='\u{036F}' |
+        '\u{1AB0}'..='\u{1AFF}' |
+        '\u{1DC0}'..='\u{1DFF}' |
+        '\u{20D0}'..='\u{20FF}' |
+        '\u{FE20}'..='\u{FE2F}'
+    )
+}
+
+pub(crate) fn strip_diacritics(s: &str) -> String {
+    s.nfkd().filter(|c| !is_combining_mark(*c)).collect()
+}
 
 /// Returns true if the character is punctuation (ASCII or Unicode general
 /// category P). We avoid adding a dependency by checking ASCII punctuation
@@ -20,7 +36,8 @@ pub(crate) fn is_punctuation(c: char) -> bool {
 /// Unicode punctuation (char::is_ascii_punctuation or general category P),
 /// then trim.
 pub fn normalize_title(title: &str) -> String {
-    let lowered = title.to_lowercase();
+    let decomposed = strip_diacritics(title);
+    let lowered = decomposed.to_lowercase();
     let stripped: String = lowered
         .chars()
         .map(|c| if is_punctuation(c) { ' ' } else { c })
@@ -334,5 +351,57 @@ mod tests {
             &["Smith, John".to_string()],
             &["John Smith".to_string()]
         ));
+    }
+
+    // ── diacritics tests ────────────────────────────────────────────
+
+    #[test]
+    fn normalize_title_strips_diacritics_panini() {
+        assert_eq!(normalize_title("Pāṇini"), "panini");
+    }
+
+    #[test]
+    fn normalize_title_strips_diacritics_cafe() {
+        assert_eq!(normalize_title("Café"), "cafe");
+    }
+
+    #[test]
+    fn normalize_title_strips_diacritics_with_punctuation() {
+        assert_eq!(normalize_title("Pāṇini: A Study"), "panini a study");
+    }
+
+    #[test]
+    fn titles_match_diacritics_ignored() {
+        assert!(titles_match("Pāṇini: A Study", "Panini A Study"));
+    }
+
+    #[test]
+    fn titles_match_accented_european() {
+        assert!(titles_match("Théorème de Gödel", "Theoreme de Godel"));
+    }
+
+    #[test]
+    fn best_title_match_diacritics() {
+        let entries = vec![
+            make_bib_entry("classical mechanics fundamentals", vec!["Doe"]),
+            make_bib_entry("Pāṇini: His Work and Its Traditions", vec!["Cardona"]),
+            make_bib_entry("organic chemistry basics", vec!["Jones"]),
+        ];
+        let result = best_title_match(&entries, "Panini His Work and Its Traditions");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().title, "Pāṇini: His Work and Its Traditions");
+    }
+
+    #[test]
+    fn normalize_title_preserves_digits_after_diacritic_strip() {
+        assert_eq!(
+            normalize_title("Théorème 42 de Gödel"),
+            "theoreme 42 de godel"
+        );
+    }
+
+    #[test]
+    fn normalize_title_multiple_combining_marks() {
+        assert_eq!(normalize_title("r\u{0331}\u{0304}"), "r");
     }
 }

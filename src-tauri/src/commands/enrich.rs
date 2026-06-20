@@ -20,7 +20,7 @@ use crate::bib::semantic_scholar::{
 };
 use crate::bib::types::BibEntry;
 use crate::commands::bib_import::{fetch_crossref_csl_item, HTTP_CLIENT};
-use crate::recognize::resolve::title_match::is_punctuation;
+use crate::recognize::resolve::title_match::{is_punctuation, strip_diacritics};
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
 
@@ -30,7 +30,9 @@ const MAX_REFERENCES: usize = 30;
 /// with spaces (via [`is_punctuation`](crate::recognize::resolve::title_match::is_punctuation)),
 /// split into words. Returns an owned `Vec<String>` preserving word order.
 fn normalize_words(s: &str) -> Vec<String> {
-    s.to_lowercase()
+    let decomposed = strip_diacritics(s);
+    decomposed
+        .to_lowercase()
         .chars()
         .map(|c| if is_punctuation(c) { ' ' } else { c })
         .collect::<String>()
@@ -2702,6 +2704,33 @@ mod tests {
         // No DOI, no title -> None
         let none_id2 = ref_identity_key(None, "", "2023");
         assert!(none_id2.is_none(), "should return None when title is empty");
+    }
+
+    // ── diacritics tests ────────────────────────────────────────────
+
+    #[test]
+    fn title_similarity_diacritics_panini() {
+        assert_eq!(title_similarity("Pāṇini", "Panini"), 1.0);
+    }
+
+    #[test]
+    fn title_similarity_diacritics_mixed() {
+        let score = title_similarity(
+            "Théorème de la linguistique",
+            "Theoreme de la linguistique",
+        );
+        assert!(
+            score > 0.85,
+            "diacritics-only difference should score above 0.85, got {}",
+            score,
+        );
+    }
+
+    #[test]
+    fn ref_identity_key_diacritics_normalization() {
+        let id1 = ref_identity_key(None, "Pāṇini Grammar", "2020");
+        let id2 = ref_identity_key(None, "Panini Grammar", "2020");
+        assert_eq!(id1, id2, "diacritics should not affect identity key");
     }
 
     // ── F7: references_found dedup tests ────────────────────────────
