@@ -1470,6 +1470,86 @@ describe("title field decoration and click", () => {
     view.destroy();
   });
 
+  it("double-click on title preceded by multi-line brace field still reveals correctly", () => {
+    // An entry where the abstract field has a closing `}` on its own indented line
+    // above the title. The backward scan must NOT treat the indented `},` as an
+    // entry boundary.
+    const doc = [
+      "@article{braceField2024,",
+      "  abstract = {",
+      "    A long abstract that spans",
+      "    multiple lines in the bib file",
+      "  },",
+      "  title = {Title After Brace Field},",
+      "}",
+    ].join("\n");
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail).toEqual({ citekey: "braceField2024", bibFile: "refs/library.bib" });
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("double-click on title preceded by several multi-line brace fields still reveals correctly", () => {
+    // An entry with TWO multi-line brace fields (abstract and keywords) above the title,
+    // each with indented `},` on their own line.
+    const doc = [
+      "@article{multiBrace2024,",
+      "  abstract = {",
+      "    Some abstract text",
+      "  },",
+      "  keywords = {",
+      "    machine learning,",
+      "    deep learning",
+      "  },",
+      "  title = {Title After Multiple Brace Fields},",
+      "}",
+    ].join("\n");
+    const view = makeViewWithBibExt(doc, "refs/library.bib");
+
+    const pluginInst = view.plugin(bibFileLinkPlugin)!;
+    let decoFrom: number | undefined;
+    pluginInst.decorations.between(0, doc.length, (from, _to, value) => {
+      if (value.spec.kind === "title") decoFrom = from;
+    });
+    expect(decoFrom).toBeDefined();
+
+    vi.spyOn(view, "posAtCoords").mockReturnValue(decoFrom! + 3);
+
+    const handler = vi.fn();
+    window.addEventListener("lit:reveal-bib-entry", handler);
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("dblclick", { button: 0, bubbles: true }),
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect((handler.mock.calls[0]![0] as CustomEvent).detail).toEqual({ citekey: "multiBrace2024", bibFile: "refs/library.bib" });
+
+    window.removeEventListener("lit:reveal-bib-entry", handler);
+    view.dom.remove();
+    view.destroy();
+  });
+
   it("double-click on title in well-formed entry still works after boundary checks (regression)", () => {
     // Ensure the boundary checks don't break normal well-formed entries.
     // The closing brace is INSIDE the entry (at the end), the @header is above.

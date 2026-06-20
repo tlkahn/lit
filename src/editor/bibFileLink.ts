@@ -98,8 +98,9 @@ function getExtension(path: string): string {
 
 const CITEKEY_RE = /^\s*@\w+\s*\{\s*([^,\s]+)/;
 
-/** Regex matching a standalone closing brace — the end of a preceding BibTeX entry. */
-const ENTRY_END_RE = /^\s*\}[,;\s]*$/;
+/** Regex matching an unindented closing brace at column 0 — the end of a BibTeX entry.
+ *  Indented closing braces (field-value terminators like `  },`) are not matched. */
+const ENTRY_END_RE = /^\}[,;\s]*$/;
 
 /** Regex matching blank/whitespace-only lines — conventional entry separators. */
 const BLANK_LINE_RE = /^\s*$/;
