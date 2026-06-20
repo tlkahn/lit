@@ -903,7 +903,8 @@ describe("ReferenceLibrary", () => {
 
     const link = screen.getByTestId("has-note-link");
     expect(link).toBeInTheDocument();
-    expect(link.textContent).toContain("notes/sanderson.md");
+    expect(link).toHaveAttribute("aria-label", "Open note");
+    expect(link).toHaveAttribute("title", expect.stringContaining("notes/sanderson.md"));
 
     await user.click(link);
     expect(selectPage).toHaveBeenCalledWith("notes/sanderson.md");
@@ -954,7 +955,7 @@ describe("ReferenceLibrary", () => {
 
     const btn = screen.getByTestId("create-note-btn");
     expect(btn).toBeInTheDocument();
-    expect(btn.textContent).toBe("Create note");
+    expect(btn).toHaveAttribute("aria-label", "Create note");
   });
 
   it("shows 'Create note' button with enriched indicator for partial entries", async () => {
@@ -978,8 +979,8 @@ describe("ReferenceLibrary", () => {
     await user.click(screen.getByText("The Saiva Age"));
 
     const link = screen.getByTestId("has-note-link");
-    expect(link.textContent).toContain("Open note:");
-    expect(link.textContent).toContain("notes/sanderson.md");
+    expect(link).toHaveAttribute("aria-label", "Open note");
+    expect(link).toHaveAttribute("title", expect.stringContaining("notes/sanderson.md"));
   });
 
   it("clicking 'Create note' calls materializeCitation and navigates to the new page", async () => {
@@ -1074,7 +1075,7 @@ describe("ReferenceLibrary", () => {
     await user.click(btn);
 
     await waitFor(() => expect(btn).toBeDisabled());
-    expect(btn).toHaveTextContent("Creating…");
+    expect(btn).toHaveAttribute("aria-label", "Creating…");
 
     // Resolve the pending call
     resolveMaterialize({
@@ -1326,10 +1327,10 @@ describe("ReferenceLibrary", () => {
 
       const btn = screen.getByTestId("fetch-details-btn");
       expect(btn).toBeInTheDocument();
-      expect(btn.textContent).toBe("Fetch details");
+      expect(btn).toHaveAttribute("aria-label", "Fetch details");
     });
 
-    it("shows 'Refresh' button for partial materialization entries without page_id", async () => {
+    it("shows 'Refresh metadata' button for partial materialization entries without page_id", async () => {
       const user = userEvent.setup();
       bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
       mockInvoke((cmd, args) => {
@@ -1347,7 +1348,7 @@ describe("ReferenceLibrary", () => {
 
       const btn = screen.getByTestId("fetch-details-btn");
       expect(btn).toBeInTheDocument();
-      expect(btn.textContent).toBe("Refresh");
+      expect(btn).toHaveAttribute("aria-label", "Refresh metadata");
     });
 
     it("hides button when page_id is set (materialized entry)", async () => {
@@ -1406,7 +1407,7 @@ describe("ReferenceLibrary", () => {
 
       const btn = screen.getByTestId("fetch-details-btn");
       expect(btn).toBeInTheDocument();
-      expect(btn.textContent).toBe("Fetch details");
+      expect(btn).toHaveAttribute("aria-label", "Fetch details");
     });
 
     it("clicking 'Fetch details' calls enrich_bib_entry with correct args", async () => {
@@ -1597,7 +1598,7 @@ describe("ReferenceLibrary", () => {
       await waitFor(() => {
         const btn = screen.getByTestId("fetch-details-btn");
         expect(btn).toBeDisabled();
-        expect(btn.textContent).toMatch(/Fetching/i);
+        expect(btn).toHaveAttribute("aria-label", expect.stringMatching(/Fetching/i));
       });
 
       await act(async () => {
@@ -1607,7 +1608,7 @@ describe("ReferenceLibrary", () => {
       await waitFor(() => {
         const btn = screen.getByTestId("fetch-details-btn");
         expect(btn).not.toBeDisabled();
-        expect(btn.textContent).toBe("Fetch details");
+        expect(btn).toHaveAttribute("aria-label", "Fetch details");
       });
     });
   });
@@ -2090,7 +2091,7 @@ describe("ReferenceLibrary", () => {
       await user.click(screen.getByText("The Saiva Age"));
 
       expect(screen.getByTestId("download-pdf-btn")).toBeInTheDocument();
-      expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Download PDF");
+      expect(screen.getByTestId("download-pdf-btn")).toHaveAttribute("aria-label", "Download PDF");
     });
 
     it("shows 'Download PDF' button for entry with arxiv_id but no file", async () => {
@@ -2163,7 +2164,7 @@ describe("ReferenceLibrary", () => {
       await waitFor(() => {
         const btn = screen.getByTestId("download-pdf-btn");
         expect(btn).toBeDisabled();
-        expect(btn.textContent).toBe("Resolving…");
+        expect(btn).toHaveAttribute("aria-label", "Resolving…");
       });
 
       await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
@@ -2220,7 +2221,7 @@ describe("ReferenceLibrary", () => {
       await waitFor(() => {
         const btn = screen.getByTestId("download-pdf-btn");
         expect(btn).not.toBeDisabled();
-        expect(btn.textContent).toBe("Download PDF");
+        expect(btn).toHaveAttribute("aria-label", "Download PDF");
       });
     });
 
@@ -2237,7 +2238,7 @@ describe("ReferenceLibrary", () => {
       await waitFor(() => {
         const btn = screen.getByTestId("download-pdf-btn");
         expect(btn).not.toBeDisabled();
-        expect(btn.textContent).toBe("Download PDF");
+        expect(btn).toHaveAttribute("aria-label", "Download PDF");
       });
     });
 
@@ -2279,7 +2280,7 @@ describe("ReferenceLibrary", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Downloading 50%");
+        expect(screen.getByTestId("download-pdf-btn")).toHaveAttribute("aria-label", "Downloading 50%");
       });
 
       await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
@@ -2308,7 +2309,7 @@ describe("ReferenceLibrary", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Downloading…");
+        expect(screen.getByTestId("download-pdf-btn")).toHaveAttribute("aria-label", "Downloading…");
       });
 
       await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
@@ -2337,7 +2338,7 @@ describe("ReferenceLibrary", () => {
       });
 
       await new Promise((r) => setTimeout(r, 20));
-      expect(screen.getByTestId("download-pdf-btn").textContent).toBe("Resolving…");
+      expect(screen.getByTestId("download-pdf-btn")).toHaveAttribute("aria-label", "Resolving…");
 
       await act(async () => { resolveDownload("assets/pdf/sanderson2009.pdf"); });
     });
@@ -2390,7 +2391,7 @@ describe("ReferenceLibrary", () => {
       await user.click(screen.getByText("The Saiva Age"));
 
       expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
-      expect(screen.getByTestId("ocr-btn").textContent).toBe("OCR to Markdown");
+      expect(screen.getByTestId("ocr-btn")).toHaveAttribute("aria-label", "OCR to Markdown");
     });
 
     it("hides OCR button when entry has no file", async () => {
