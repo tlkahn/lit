@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
+use crate::workspace::file_lock::FilePathLock;
 
 pub(super) fn lookup_graph_index(registry: &GraphRegistry, root: &PathBuf) -> Option<Arc<GraphIndex>> {
     let indices = registry.indices.lock().unwrap();
@@ -65,13 +66,17 @@ pub fn write_page(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     registry: State<Arc<WriteHashRegistry>>,
+    file_lock: State<Arc<FilePathLock>>,
     graph_state: State<Arc<GraphRegistry>>,
     queue: State<Arc<ReindexQueue>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let root = get_workspace_root(&state, window.label())?;
+    let full_path = root.join(&relative_path);
     let t_start = std::time::Instant::now();
-    ops::write_page(&root, &relative_path, &body, &frontmatter, &registry).map_err(|e| e.to_string())?;
+    file_lock.with_lock(&full_path, || {
+        ops::write_page(&root, &relative_path, &body, &frontmatter, &registry)
+    }).map_err(|e| e.to_string())?;
     let write_ms = t_start.elapsed().as_millis() as u64;
 
     // Reindex off the hot path: rapid autosaves coalesce in the background

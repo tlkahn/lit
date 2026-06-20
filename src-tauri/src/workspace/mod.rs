@@ -1,3 +1,4 @@
+pub mod file_lock;
 pub mod frontmatter;
 pub mod frontmatter_merge;
 pub mod merge;

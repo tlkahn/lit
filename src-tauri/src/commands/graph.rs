@@ -607,6 +607,7 @@ pub fn link_unlinked_mention(
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<GraphRegistry>>,
     registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    file_lock: State<Arc<crate::workspace::file_lock::FilePathLock>>,
     app_handle: tauri::AppHandle,
     source_id: String,
     source_line: u32,
@@ -614,20 +615,23 @@ pub fn link_unlinked_mention(
 ) -> Result<(), String> {
     let root =
         crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let full_path = root.join(&source_id);
 
-    let page = crate::workspace::ops::read_page(&root, &source_id, &registry)
-        .map_err(|e| e.to_string())?;
-
-    let new_body =
-        crate::graph::extract::replace_mention_with_wikilink(&page.body, source_line, &matched_text)
+    file_lock.with_lock(&full_path, || {
+        let page = crate::workspace::ops::read_page(&root, &source_id, &registry)
             .map_err(|e| e.to_string())?;
 
-    let fm: indexmap::IndexMap<String, serde_yaml::Value> =
-        crate::workspace::frontmatter::parse_raw_yaml(&page.raw_yaml)
-            .unwrap_or_default();
+        let new_body =
+            crate::graph::extract::replace_mention_with_wikilink(&page.body, source_line, &matched_text)
+                .map_err(|e| e.to_string())?;
 
-    crate::workspace::ops::write_page(&root, &source_id, &new_body, &fm, &registry)
-        .map_err(|e| e.to_string())?;
+        let fm: indexmap::IndexMap<String, serde_yaml::Value> =
+            crate::workspace::frontmatter::parse_raw_yaml(&page.raw_yaml)
+                .unwrap_or_default();
+
+        crate::workspace::ops::write_page(&root, &source_id, &new_body, &fm, &registry)
+            .map_err(|e| e.to_string())
+    })?;
 
     let gi = {
         let indices = graph_state.indices.lock().unwrap();

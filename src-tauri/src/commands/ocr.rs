@@ -171,6 +171,7 @@ pub async fn ocr_pdf_to_markdown(
     pdfium_config: tauri::State<'_, crate::pdf::PdfiumConfig>,
     graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
     registry: tauri::State<'_, Arc<WriteHashRegistry>>,
+    file_lock: tauri::State<'_, Arc<crate::workspace::file_lock::FilePathLock>>,
     app_handle: tauri::AppHandle,
     window: tauri::Window,
 ) -> Result<String, String> {
@@ -284,10 +285,13 @@ pub async fn ocr_pdf_to_markdown(
     let md_relative = ocr_markdown_filename(&key);
     let md_path = ocr_markdown_path(&root, &key);
     let pages = ocr_response.pages;
+    let reg = registry.inner().clone();
+    let reg_for_write = reg.clone();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let output = ocr_cli::postproc::postprocess(&pages, &image_dir, &stem)
             .map_err(|e| format!("Post-processing failed: {e}"))?;
         write_ocr_markdown(&md_path, output.markdown.as_bytes(), overwrite)?;
+        reg_for_write.record(&md_path, &output.markdown);
         // Clean up empty image directory (text-only PDFs produce no images).
         // Done here in the blocking thread to avoid sync I/O on the async runtime.
         cleanup_empty_image_dir(&image_dir_cleanup);
@@ -305,16 +309,19 @@ pub async fn ocr_pdf_to_markdown(
 
     // Step 8c: Persist companion frontmatter so the md↔pdf pairing survives renames.
     {
-        let reg = registry.inner().clone();
         let root_clone = root.clone();
         let md_rel = md_relative.clone();
         let pdf_rel = relative_pdf.to_string();
+        let flock = file_lock.inner().clone();
+        let full_path = root.join(&md_rel);
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = crate::workspace::ops::persist_companion_frontmatter(
-                &root_clone, &md_rel, &pdf_rel, &reg,
-            ) {
-                eprintln!("[ocr] failed to persist companion frontmatter: {e}");
-            }
+            flock.with_lock(&full_path, || {
+                if let Err(e) = crate::workspace::ops::persist_companion_frontmatter(
+                    &root_clone, &md_rel, &pdf_rel, &reg,
+                ) {
+                    eprintln!("[ocr] failed to persist companion frontmatter: {e}");
+                }
+            });
         })
         .await
         .map_err(|e| format!("Companion frontmatter task failed: {e}"))?;
