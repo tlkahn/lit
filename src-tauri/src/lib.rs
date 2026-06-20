@@ -126,6 +126,7 @@ pub fn run() {
         .manage(InitialFile(Mutex::new(cli_file)))
         .manage(InitialLine(Mutex::new(cli_line)))
         .manage(InitialCol(Mutex::new(cli_col)))
+        .manage(Arc::new(workspace::file_lock::FilePathLock::new()))
         .manage(Arc::new(WriteHashRegistry::new()))
         .manage(Arc::new(GraphRegistry::new()))
         .manage(Arc::new(commands::reindex_queue::ReindexQueue::new()))
