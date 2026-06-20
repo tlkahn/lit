@@ -1,20 +1,11 @@
+use unicode_normalization::char::is_combining_mark;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::bib::types::BibEntry;
 
 const TITLE_MATCH_THRESHOLD: f64 = 0.85;
 
-pub(crate) fn is_combining_mark(c: char) -> bool {
-    matches!(c,
-        '\u{0300}'..='\u{036F}' |
-        '\u{1AB0}'..='\u{1AFF}' |
-        '\u{1DC0}'..='\u{1DFF}' |
-        '\u{20D0}'..='\u{20FF}' |
-        '\u{FE20}'..='\u{FE2F}'
-    )
-}
-
-pub(crate) fn strip_diacritics(s: &str) -> String {
+pub(crate) fn strip_combining_marks(s: &str) -> String {
     s.nfkd().filter(|c| !is_combining_mark(*c)).collect()
 }
 
@@ -36,7 +27,7 @@ pub(crate) fn is_punctuation(c: char) -> bool {
 /// Unicode punctuation (char::is_ascii_punctuation or general category P),
 /// then trim.
 pub fn normalize_title(title: &str) -> String {
-    let decomposed = strip_diacritics(title);
+    let decomposed = strip_combining_marks(title);
     let lowered = decomposed.to_lowercase();
     let stripped: String = lowered
         .chars()
@@ -115,7 +106,7 @@ fn extract_last_name(author: &str) -> String {
         // Single token like "WHO"
         trimmed
     };
-    last.to_lowercase()
+    strip_combining_marks(last).to_lowercase()
 }
 
 #[cfg(test)]
@@ -350,6 +341,14 @@ mod tests {
         assert!(authors_overlap(
             &["Smith, John".to_string()],
             &["John Smith".to_string()]
+        ));
+    }
+
+    #[test]
+    fn authors_overlap_diacritics() {
+        assert!(authors_overlap(
+            &["Müller, Hans".to_string()],
+            &["Muller".to_string()]
         ));
     }
 

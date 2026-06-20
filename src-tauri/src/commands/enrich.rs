@@ -20,7 +20,7 @@ use crate::bib::semantic_scholar::{
 };
 use crate::bib::types::BibEntry;
 use crate::commands::bib_import::{fetch_crossref_csl_item, HTTP_CLIENT};
-use crate::recognize::resolve::title_match::{is_punctuation, strip_diacritics};
+use crate::recognize::resolve::title_match::{is_punctuation, strip_combining_marks};
 use crate::commands::graph::GraphRegistry;
 use crate::commands::page::lookup_graph_index;
 
@@ -30,7 +30,7 @@ const MAX_REFERENCES: usize = 30;
 /// with spaces (via [`is_punctuation`](crate::recognize::resolve::title_match::is_punctuation)),
 /// split into words. Returns an owned `Vec<String>` preserving word order.
 fn normalize_words(s: &str) -> Vec<String> {
-    let decomposed = strip_diacritics(s);
+    let decomposed = strip_combining_marks(s);
     decomposed
         .to_lowercase()
         .chars()
