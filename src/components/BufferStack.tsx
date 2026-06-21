@@ -1,20 +1,25 @@
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useOverflowMenu } from "../hooks/useOverflowMenu";
 import { usePaneStore, collectLeaves, findLeaf, getPanePosition } from "../stores/panes";
 
 export function BufferStack() {
   const root = usePaneStore((s) => s.root);
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
-  const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [animatedIn, setAnimatedIn] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
   const hasBeenOpenRef = useRef(false);
 
   const leaves = collectLeaves(root);
   const openBuffers = leaves.filter((l) => l.pagePath !== null);
   const shouldShowChip = openBuffers.length > 1;
+
+  const { open, setOpen, triggerRef, menuRef } = useOverflowMenu({
+    anchor: "above-left",
+    dismissOnScroll: false,
+    onResize: true,
+    extraDeps: [leaves.length],
+  });
 
   useEffect(() => {
     if (!shouldShowChip) setOpen(false);
@@ -30,61 +35,19 @@ export function BufferStack() {
       return () => clearTimeout(t);
     } else if (hasBeenOpenRef.current) {
       setAnimatedIn(false);
-      buttonRef.current?.focus();
+      triggerRef.current?.focus();
     }
   }, [open]);
 
   useEffect(() => {
-    if (open && popoverRef.current) {
-      popoverRef.current.focus();
+    if (open && menuRef.current) {
+      menuRef.current.focus();
     }
   }, [open]);
 
   useEffect(() => {
     setHighlightedIndex((prev) => Math.min(prev, Math.max(leaves.length - 1, 0)));
   }, [leaves.length]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleMouseDown = (e: MouseEvent) => {
-      if (
-        buttonRef.current && !buttonRef.current.contains(e.target as Node) &&
-        popoverRef.current && !popoverRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", handleMouseDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleMouseDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  useLayoutEffect(() => {
-    if (!open || !popoverRef.current || !buttonRef.current) return;
-    const position = () => {
-      if (!popoverRef.current || !buttonRef.current) return;
-      const btnRect = buttonRef.current.getBoundingClientRect();
-      const menu = popoverRef.current;
-      const rect = menu.getBoundingClientRect();
-      const vw = window.innerWidth;
-      let left = btnRect.left;
-      let top = btnRect.top - rect.height - 4;
-      if (left + rect.width > vw) left = vw - rect.width;
-      if (left < 0) left = 0;
-      if (top < 0) top = 0;
-      menu.style.left = `${left}px`;
-      menu.style.top = `${top}px`;
-    };
-    position();
-    window.addEventListener("resize", position);
-    return () => window.removeEventListener("resize", position);
-  }, [open, leaves.length]);
 
   if (openBuffers.length === 0) return null;
 
@@ -113,7 +76,7 @@ export function BufferStack() {
   return (
     <>
       <button
-        ref={buttonRef}
+        ref={triggerRef}
         data-testid="buffer-stack-chip"
         className="flex items-center gap-1"
         aria-haspopup="listbox"
@@ -126,7 +89,7 @@ export function BufferStack() {
       </button>
       {open && createPortal(
         <div
-          ref={popoverRef}
+          ref={menuRef}
           data-testid="buffer-stack-popover"
           role="listbox"
           tabIndex={0}
@@ -155,7 +118,7 @@ export function BufferStack() {
                 setOpen(false);
               }
             } else if (e.key === "Tab") {
-              const closeButtons = popoverRef.current?.querySelectorAll<HTMLElement>('[data-testid^="buffer-stack-close-"]');
+              const closeButtons = menuRef.current?.querySelectorAll<HTMLElement>('[data-testid^="buffer-stack-close-"]');
               if (!closeButtons?.length) return;
               const first = closeButtons[0]!;
               const last = closeButtons[closeButtons.length - 1]!;
@@ -165,10 +128,10 @@ export function BufferStack() {
               } else if (!e.shiftKey && document.activeElement === last) {
                 e.preventDefault();
                 first.focus();
-              } else if (e.shiftKey && document.activeElement === popoverRef.current) {
+              } else if (e.shiftKey && document.activeElement === menuRef.current) {
                 e.preventDefault();
                 last.focus();
-              } else if (!e.shiftKey && document.activeElement === popoverRef.current) {
+              } else if (!e.shiftKey && document.activeElement === menuRef.current) {
                 e.preventDefault();
                 first.focus();
               }

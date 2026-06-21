@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { SortDropdown } from "./SortDropdown";
 import type { SortConfig, SortKey } from "../lib/pageSort";
 
@@ -113,6 +115,14 @@ describe("SortDropdown", () => {
     const btn = screen.getByRole("button", { name: "Sort files" });
     const icon = btn.querySelector(".nerd-font")!;
     expect(icon.textContent).toBe("");
+  });
+
+  it("uses useOverflowMenu hook for dismissal and positioning", () => {
+    const src = readFileSync(
+      resolve(__dirname, "SortDropdown.tsx"),
+      "utf-8",
+    );
+    expect(src).toContain("useOverflowMenu");
   });
 
   it("sort icon has accent when non-default sort is active", () => {
