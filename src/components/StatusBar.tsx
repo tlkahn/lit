@@ -50,8 +50,8 @@ function BottomPanelTabs() {
         <>
           <TabButton
             tab="linked"
-            label="Linked References"
-            glyph="󱉟"
+            label="Backlinks"
+            glyph="󱞫"
             count={linkedCount}
             active={activeTab === "linked"}
             unfolded={unfolded}

@@ -90,13 +90,13 @@ const PageItem = memo(function PageItem({
             if (e.key === "Escape") onRenameCancel();
           }}
           onBlur={commitRename}
-          className="w-full rounded border border-interactive-accent bg-bg-primary px-2 py-1 text-sm text-text-normal outline-none"
+          className="w-full rounded border border-interactive-accent bg-bg-primary px-2 py-1 text-xs text-text-normal outline-none"
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
         />
       ) : (
         <button
           onClick={() => onSelect(page.relative_path)}
-          className={`w-full select-none truncate rounded-md px-2 py-1 text-start text-sm ${
+          className={`w-full select-none truncate rounded-md px-2 py-1 text-start text-xs ${
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
               : "text-text-normal hover:bg-bg-hover"
@@ -189,7 +189,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           onClick={() => setTab("files")}
           title="Files"
           aria-label="Files"
-          className={`flex-1 px-3 py-2 text-sm font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium ${
             tab === "files"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -201,7 +201,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           onClick={() => setTab("outline")}
           title="Outline"
           aria-label="Outline"
-          className={`flex-1 px-3 py-2 text-sm font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium ${
             tab === "outline"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -213,7 +213,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           onClick={() => setTab("trash")}
           title="Trash"
           aria-label="Trash"
-          className={`flex-1 px-3 py-2 text-sm font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium ${
             tab === "trash"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -225,7 +225,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           onClick={() => setTab("references")}
           title="References"
           aria-label="References"
-          className={`flex-1 px-3 py-2 text-sm font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium ${
             tab === "references"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -242,7 +242,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border-none bg-bg-hover px-2 py-1 text-sm text-text-normal"
+              className="min-w-0 flex-1 rounded-md border-none bg-bg-hover px-2 py-1 text-xs text-text-normal"
               aria-label="Search pages"
             />
             <SortDropdown sortConfig={sortConfig} onSelectKey={selectSortKey} />
@@ -271,7 +271,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                     {row.type === "folder" ? (
                       <button
                         onClick={() => toggleCollapse(row.folderPath)}
-                        className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 text-start text-sm text-text-muted hover:bg-bg-hover"
+                        className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 text-start text-xs text-text-muted hover:bg-bg-hover"
                         style={{ paddingInlineStart: `${row.depth * 12 + 8}px` }}
                       >
                         <span className="text-xs">{row.isCollapsed ? "▸" : "▾"}</span>
