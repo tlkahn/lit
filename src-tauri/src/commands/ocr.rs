@@ -238,6 +238,11 @@ pub async fn ocr_pdf_to_markdown(
     .map_err(|e| format!("Failed to read PDF: {e}"))?;
 
     // Step 5: Truncate if lead/trail > 0
+    let trimmed_pdf_relative: Option<String> = if lead > 0 || trail > 0 {
+        Some(format!("assets/pdf/{key}-trimmed.pdf"))
+    } else {
+        None
+    };
     let ocr_bytes = if lead > 0 || trail > 0 {
         emit_progress(
             &window,
@@ -246,6 +251,7 @@ pub async fn ocr_pdf_to_markdown(
             &format!("Truncating PDF (lead={lead}, trail={trail})"),
         );
         // Pdfium is !Send -- must create and use entirely within one blocking thread.
+        let trimmed_disk_path = root.join(trimmed_pdf_relative.as_deref().unwrap());
         let lib_path = pdfium_config.lib_path().to_string();
         let bytes = pdf_bytes;
         tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -257,8 +263,15 @@ pub async fn ocr_pdf_to_markdown(
             let page_count = doc.page_count();
             doc.truncate(lead, trail)
                 .map_err(|_| format!("Cannot skip more pages than the document contains ({page_count} pages)"))?;
-            doc.save_to_vec()
-                .map_err(|e| format!("Failed to save truncated PDF: {e}"))
+            let trimmed = doc.save_to_vec()
+                .map_err(|e| format!("Failed to save truncated PDF: {e}"))?;
+            if let Some(parent) = trimmed_disk_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create trimmed PDF directory: {e}"))?;
+            }
+            std::fs::write(&trimmed_disk_path, &trimmed)
+                .map_err(|e| format!("Failed to write trimmed PDF: {e}"))?;
+            Ok(trimmed)
         })
         .await
         .map_err(|e| format!("Truncation task failed: {e}"))??
@@ -331,7 +344,7 @@ pub async fn ocr_pdf_to_markdown(
     {
         let root_clone = root.clone();
         let md_rel = md_relative.clone();
-        let pdf_rel = relative_pdf.to_string();
+        let pdf_rel = trimmed_pdf_relative.as_deref().unwrap_or(relative_pdf).to_string();
         let flock = file_lock.inner().clone();
         let full_path = root.join(&md_rel);
         tokio::task::spawn_blocking(move || {
@@ -1437,5 +1450,81 @@ mod tests {
             &search_paths,
         );
         assert_eq!(reverse, Some("smith2024.md".to_string()));
+    }
+
+    #[test]
+    fn ocr_companion_frontmatter_trimmed_pdf_roundtrip() {
+        use crate::workspace::frontmatter::parse_frontmatter;
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("smith2024.md"), "# OCR\n").unwrap();
+        let trimmed_dir = root.join("assets").join("pdf");
+        std::fs::create_dir_all(&trimmed_dir).unwrap();
+        std::fs::write(trimmed_dir.join("smith2024-trimmed.pdf"), b"trimmed pdf").unwrap();
+
+        let registry = WriteHashRegistry::new();
+        crate::workspace::ops::persist_companion_frontmatter(
+            root,
+            "smith2024.md",
+            "assets/pdf/smith2024-trimmed.pdf",
+            &registry,
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(root.join("smith2024.md")).unwrap();
+        let parsed = parse_frontmatter(&content);
+        assert_eq!(
+            parsed.map.get("companion").unwrap().as_str().unwrap(),
+            "assets/pdf/smith2024-trimmed.pdf"
+        );
+
+        let search_paths = vec![".".to_string(), "assets/pdf".to_string()];
+        let found = crate::commands::workspace::find_companion(
+            "smith2024.md",
+            root,
+            &search_paths,
+        );
+        assert_eq!(found, Some("assets/pdf/smith2024-trimmed.pdf".to_string()));
+    }
+
+    #[test]
+    fn ocr_companion_frontmatter_updated_on_re_ocr() {
+        use crate::workspace::frontmatter::parse_frontmatter;
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let trimmed_dir = root.join("assets").join("pdf");
+        std::fs::create_dir_all(&trimmed_dir).unwrap();
+
+        std::fs::write(root.join("smith2024.md"), "# OCR output\n").unwrap();
+        std::fs::write(trimmed_dir.join("smith2024-trimmed.pdf"), b"trimmed v1").unwrap();
+        let registry = WriteHashRegistry::new();
+        crate::workspace::ops::persist_companion_frontmatter(
+            root,
+            "smith2024.md",
+            "assets/pdf/smith2024-trimmed.pdf",
+            &registry,
+        )
+        .unwrap();
+
+        // Re-OCR without trimming updates companion to original PDF
+        std::fs::write(trimmed_dir.join("smith2024.pdf"), b"original").unwrap();
+        crate::workspace::ops::persist_companion_frontmatter(
+            root,
+            "smith2024.md",
+            "assets/pdf/smith2024.pdf",
+            &registry,
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(root.join("smith2024.md")).unwrap();
+        let parsed = parse_frontmatter(&content);
+        assert_eq!(
+            parsed.map.get("companion").unwrap().as_str().unwrap(),
+            "assets/pdf/smith2024.pdf"
+        );
     }
 }

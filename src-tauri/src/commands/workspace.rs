@@ -121,6 +121,26 @@ fn canonicalize_within_root(root: &Path, absolute: &Path, candidate: &Path) -> S
         })
 }
 
+/// Read the first 4 KiB of a markdown file and return the `companion:`
+/// frontmatter value if it points to an existing file under `root`.
+fn companion_from_frontmatter(root: &Path, relative_path: &str) -> Option<String> {
+    use std::io::Read;
+    let full_path = root.join(relative_path);
+    let mut file = std::fs::File::open(&full_path).ok()?;
+    let mut buf = [0u8; 4096];
+    let n = file.read(&mut buf).ok()?;
+    let header = std::str::from_utf8(&buf[..n]).ok()?;
+    let parsed = crate::workspace::frontmatter::parse_frontmatter(header);
+    let companion_value = parsed.map.get("companion")?.as_str()?;
+    let candidate = Path::new(companion_value);
+    let absolute = root.join(companion_value);
+    if absolute.is_file() {
+        Some(canonicalize_within_root(root, &absolute, candidate))
+    } else {
+        None
+    }
+}
+
 /// Given a workspace-relative path to a markdown or PDF file, return the
 /// path of its sibling with the swapped extension (md<->pdf) if that sibling
 /// exists on disk. Looks first in the same directory under `root`, then in
@@ -137,6 +157,11 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
         "pdf" => "md",
         _ => return None,
     };
+    if ext == "md" {
+        if let Some(companion) = companion_from_frontmatter(root, relative_path) {
+            return Some(companion);
+        }
+    }
     let candidate = rel.with_extension(target_ext);
     let absolute = root.join(&candidate);
     if absolute.is_file() {
@@ -1057,5 +1082,68 @@ mod tests {
         }];
         annotate_companions(&mut pages, root, &["pdfs".to_string()]);
         assert!(pages[0].has_companion);
+    }
+
+    #[test]
+    fn find_companion_uses_frontmatter_companion() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("paper.md"),
+            "---\ncompanion: assets/pdf/paper-trimmed.pdf\n---\nContent\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/paper-trimmed.pdf"), b"trimmed").unwrap();
+        std::fs::write(root.join("paper.pdf"), b"original").unwrap();
+        assert_eq!(
+            find_companion("paper.md", root, &[]),
+            Some("assets/pdf/paper-trimmed.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_falls_back_when_frontmatter_target_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("paper.md"),
+            "---\ncompanion: assets/pdf/paper-trimmed.pdf\n---\nContent\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("paper.pdf"), b"sibling").unwrap();
+        assert_eq!(
+            find_companion("paper.md", root, &[]),
+            Some("paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_frontmatter_not_checked_for_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "---\ncompanion: other.pdf\n---\n").unwrap();
+        std::fs::write(root.join("paper.pdf"), b"pdf").unwrap();
+        std::fs::write(root.join("other.pdf"), b"other").unwrap();
+        assert_eq!(
+            find_companion("paper.pdf", root, &[]),
+            Some("paper.md".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_frontmatter_no_companion_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("paper.md"),
+            "---\ntitle: Test\n---\nContent\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("paper.pdf"), b"pdf").unwrap();
+        assert_eq!(
+            find_companion("paper.md", root, &[]),
+            Some("paper.pdf".to_string())
+        );
     }
 }
