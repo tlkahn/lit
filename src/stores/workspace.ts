@@ -15,7 +15,7 @@ import {
   usePanePdfLinkStore,
   deserializeLinks,
 } from "./panePdfLink";
-import { usePaneHistoryStore, initPaneHistoryTracking, deserializeHistory, type PaneHistoryStack } from "./paneHistory";
+import { usePaneHistoryStore, initPaneHistoryTracking, setPageExistsCheck, deserializeHistory, type PaneHistoryStack } from "./paneHistory";
 import {
   loadLayout,
   validateLayout,
@@ -138,6 +138,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       startLayoutSync(path, () => get().paneViewStates);
       initPanePdfLinkCleanup();
       initPaneHistoryTracking();
+      setPageExistsCheck((path) => {
+        const pages = useWorkspaceStore.getState().pages;
+        if (pages.length === 0) return true;
+        return pages.some((p) => p.relative_path === path);
+      });
 
       const unlisten = await listen<IndexProgress>("lit:index-progress", (event) => {
         set({ indexProgress: event.payload });

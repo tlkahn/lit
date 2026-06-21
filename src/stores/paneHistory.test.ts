@@ -5,10 +5,10 @@ import {
   stopPaneHistoryTracking,
   serializeHistory,
   deserializeHistory,
+  setPageExistsCheck,
 } from "./paneHistory";
 import type { PaneHistoryStack } from "./paneHistory";
 import { usePaneStore } from "./panes";
-import { useWorkspaceStore } from "./workspace";
 
 function resetStore() {
   usePaneHistoryStore.setState({ stacks: new Map() });
@@ -16,9 +16,7 @@ function resetStore() {
     root: { type: "leaf", id: "p1", pagePath: null },
     focusedPaneId: "p1",
   });
-  // Reset workspace pages so the pageExists guard (empty => all valid) is active
-  // by default. Tests that need specific pages call setWorkspacePages explicitly.
-  useWorkspaceStore.setState({ pages: [] });
+  setPageExistsCheck(() => true);
 }
 
 describe("paneHistory", () => {
@@ -691,26 +689,13 @@ describe("paneHistory", () => {
   });
 
   describe("navigate skips deleted pages", () => {
-    function setWorkspacePages(paths: string[]) {
-      useWorkspaceStore.setState({
-        pages: paths.map((p) => ({
-          title: p,
-          relative_path: p,
-          frontmatter: {},
-          created_at: null,
-          modified_at: null,
-          file_type: "markdown" as const,
-        })),
-      });
-    }
-
     it("goBack skips a single deleted intermediate page", () => {
       const store = usePaneHistoryStore.getState();
       store.pushPage("p1", "a.md");
       store.pushPage("p1", "b.md");
       store.pushPage("p1", "c.md");
       // b.md deleted from workspace
-      setWorkspacePages(["a.md", "c.md"]);
+      setPageExistsCheck((p) => ["a.md", "c.md"].includes(p));
       const target = usePaneHistoryStore.getState().goBack("p1");
       expect(target).toBe("a.md");
       const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
@@ -727,7 +712,7 @@ describe("paneHistory", () => {
       usePaneHistoryStore.getState().goBack("p1");
       usePaneHistoryStore.getState().goBack("p1");
       // b.md deleted from workspace
-      setWorkspacePages(["a.md", "c.md"]);
+      setPageExistsCheck((p) => ["a.md", "c.md"].includes(p));
       const target = usePaneHistoryStore.getState().goForward("p1");
       expect(target).toBe("c.md");
       const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
@@ -742,7 +727,7 @@ describe("paneHistory", () => {
       store.pushPage("p1", "c.md");
       store.pushPage("p1", "d.md");
       // b.md and c.md deleted
-      setWorkspacePages(["a.md", "d.md"]);
+      setPageExistsCheck((p) => ["a.md", "d.md"].includes(p));
       const target = usePaneHistoryStore.getState().goBack("p1");
       expect(target).toBe("a.md");
       const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
@@ -756,7 +741,7 @@ describe("paneHistory", () => {
       store.pushPage("p1", "b.md");
       store.pushPage("p1", "c.md");
       // a.md and b.md deleted
-      setWorkspacePages(["c.md"]);
+      setPageExistsCheck((p) => p === "c.md");
       const target = usePaneHistoryStore.getState().goBack("p1");
       expect(target).toBeNull();
       const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
@@ -773,7 +758,7 @@ describe("paneHistory", () => {
       usePaneHistoryStore.getState().goBack("p1");
       usePaneHistoryStore.getState().goBack("p1");
       // b.md and c.md deleted
-      setWorkspacePages(["a.md"]);
+      setPageExistsCheck((p) => p === "a.md");
       const target = usePaneHistoryStore.getState().goForward("p1");
       expect(target).toBeNull();
       const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
@@ -786,7 +771,7 @@ describe("paneHistory", () => {
       store.pushPage("p1", "a.md");
       store.pushPage("p1", "b.md");
       // a.md deleted
-      setWorkspacePages(["b.md"]);
+      setPageExistsCheck((p) => p === "b.md");
       // Before navigation, canGoBack is stale (still reports true)
       expect(usePaneHistoryStore.getState().canGoBack("p1")).toBe(true);
       // Navigate triggers pruning
@@ -802,7 +787,7 @@ describe("paneHistory", () => {
       store.pushPage("p1", "b.md");
       store.pushPage("p1", "c.md");
       // All pages exist
-      setWorkspacePages(["a.md", "b.md", "c.md"]);
+      setPageExistsCheck((p) => ["a.md", "b.md", "c.md"].includes(p));
       const back1 = usePaneHistoryStore.getState().goBack("p1");
       expect(back1).toBe("b.md");
       const back2 = usePaneHistoryStore.getState().goBack("p1");

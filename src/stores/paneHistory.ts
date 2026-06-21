@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { usePaneStore, findLeaf, collectLeaves, type PaneNode } from "./panes";
-import { useWorkspaceStore } from "./workspace";
 
 const MAX_ENTRIES = 50;
 
@@ -23,16 +22,8 @@ export interface PaneHistoryStore {
 
 let _isHistoryNavigation = false;
 
-/**
- * Check whether a page still exists in the workspace.
- * When pages is empty (not yet loaded), assume all entries are valid
- * to avoid breaking navigation before the workspace finishes loading.
- */
-function pageExists(path: string): boolean {
-  const pages = useWorkspaceStore.getState().pages;
-  if (pages.length === 0) return true;
-  return pages.some((p) => p.relative_path === path);
-}
+let _pageExists: (path: string) => boolean = () => true;
+export function setPageExistsCheck(fn: (path: string) => boolean) { _pageExists = fn; }
 
 function navigate(
   get: () => PaneHistoryStore,
@@ -50,7 +41,7 @@ function navigate(
 
   // Scan in the requested direction, collecting dead entries, stopping at first live one.
   while (scanIdx >= 0 && scanIdx < entries.length) {
-    if (pageExists(entries[scanIdx]!)) {
+    if (_pageExists(entries[scanIdx]!)) {
       targetIdx = scanIdx;
       break;
     }
