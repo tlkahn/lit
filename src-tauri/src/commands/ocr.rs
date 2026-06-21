@@ -332,6 +332,32 @@ pub async fn ocr_pdf_to_markdown(
     Ok(md_relative)
 }
 
+fn is_companion_current(root: &std::path::Path, key: &str, pdf_relative: &str) -> bool {
+    let md_path = ocr_markdown_path(root, key);
+    let md_meta = match std::fs::metadata(&md_path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let pdf_meta = match std::fs::metadata(root.join(pdf_relative)) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let md_mtime = md_meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let pdf_mtime = pdf_meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    md_mtime >= pdf_mtime
+}
+
+#[tauri::command]
+pub async fn is_ocr_companion_current(
+    key: String,
+    workspace_path: String,
+    pdf_relative: String,
+) -> Result<bool, String> {
+    validate_key(&key)?;
+    let root = PathBuf::from(&workspace_path);
+    Ok(is_companion_current(&root, &key, &pdf_relative))
+}
+
 #[tauri::command]
 pub async fn check_ocr_target_exists(
     key: String,
@@ -1196,6 +1222,98 @@ mod tests {
             parsed.map.get("companion").unwrap().as_str().unwrap(),
             "assets/pdf/smith2024.pdf"
         );
+    }
+
+    // --- is_companion_current tests ---
+
+    #[test]
+    fn test_companion_current_no_md() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("assets/pdf/smith.pdf"), b"fake pdf").ok();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/smith.pdf"), b"fake pdf").unwrap();
+        assert!(!is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_md_newer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = pdf_dir.join("smith.pdf");
+        std::fs::write(&pdf_path, b"fake pdf").unwrap();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, b"# OCR output").unwrap();
+
+        use filetime::FileTime;
+        let old = FileTime::from_unix_time(1_000_000, 0);
+        let new = FileTime::from_unix_time(2_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, old).unwrap();
+        filetime::set_file_mtime(&md_path, new).unwrap();
+
+        assert!(is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_pdf_newer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = pdf_dir.join("smith.pdf");
+        std::fs::write(&pdf_path, b"fake pdf").unwrap();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, b"# OCR output").unwrap();
+
+        use filetime::FileTime;
+        let old = FileTime::from_unix_time(1_000_000, 0);
+        let new = FileTime::from_unix_time(2_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, new).unwrap();
+        filetime::set_file_mtime(&md_path, old).unwrap();
+
+        assert!(!is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_same_mtime() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = pdf_dir.join("smith.pdf");
+        std::fs::write(&pdf_path, b"fake pdf").unwrap();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, b"# OCR output").unwrap();
+
+        use filetime::FileTime;
+        let same = FileTime::from_unix_time(1_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, same).unwrap();
+        filetime::set_file_mtime(&md_path, same).unwrap();
+
+        assert!(is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_no_file_field() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        // No PDF exists at this path
+        assert!(!is_companion_current(root, "smith2024", "nonexistent.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_rejects_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(is_ocr_companion_current(
+            "../escape".to_string(),
+            dir.path().to_string_lossy().to_string(),
+            "assets/pdf/test.pdf".to_string(),
+        ));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid citation key"));
     }
 
     #[test]

@@ -446,6 +446,7 @@ pub fn run() {
             commands::recognize::import_recognized_entry,
             commands::ocr::ocr_pdf_to_markdown,
             commands::ocr::check_ocr_target_exists,
+            commands::ocr::is_ocr_companion_current,
             commands::paper_search::list_search_providers,
             commands::paper_search::search_papers,
             context_menu::show_sidebar_context_menu,
