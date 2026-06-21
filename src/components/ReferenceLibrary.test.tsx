@@ -8,6 +8,7 @@ import {
   emitMockEvent,
   mockOnDragDropEvent,
   emitDragDropEvent,
+  mockDialogOpen,
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -2362,6 +2363,7 @@ describe("ReferenceLibrary", () => {
       handlers?: {
         checkOcrTargetExists?: (cmd: string, args: unknown) => unknown;
         ocrPdfToMarkdown?: (cmd: string, args: unknown) => unknown;
+        isOcrCompanionCurrent?: (cmd: string, args: unknown) => unknown;
       },
     ) {
       mockInvoke((cmd, args) => {
@@ -2373,10 +2375,15 @@ describe("ReferenceLibrary", () => {
           if (handlers?.checkOcrTargetExists) return handlers.checkOcrTargetExists(cmd, args as unknown);
           return false;
         }
+        if (cmd === "is_ocr_companion_current") {
+          if (handlers?.isOcrCompanionCurrent) return handlers.isOcrCompanionCurrent(cmd, args as unknown);
+          return false;
+        }
         if (cmd === "ocr_pdf_to_markdown") {
           if (handlers?.ocrPdfToMarkdown) return handlers.ocrPdfToMarkdown(cmd, args as unknown);
           return "ocr/sanderson2009.md";
         }
+        if (cmd === "link_entry_pdf") return null;
         throw new Error(`Unknown command: ${cmd}`);
       });
     }
@@ -2481,6 +2488,63 @@ describe("ReferenceLibrary", () => {
         expect(screen.getByTestId("ocr-error")).toHaveTextContent("OCR engine not found");
       });
       expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument();
+    });
+
+    it("hides OCR button when OCR companion markdown is current", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: () => true,
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows OCR button when OCR companion markdown is not current", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("re-shows OCR button after PDF re-link invalidates companion check", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      let companionCurrentResult = true;
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: () => companionCurrentResult,
+      });
+      mockDialogOpen("/new/path/to/file.pdf");
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Expand the entry — OCR button should be hidden (companion is current)
+      await user.click(screen.getByText("The Saiva Age"));
+      await waitFor(() => {
+        expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+      });
+
+      // Now simulate re-link: after link succeeds the map entry is deleted
+      // so prop becomes undefined -> button reappears
+      companionCurrentResult = false;
+      await user.click(screen.getByTestId("link-pdf-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      });
     });
   });
 
