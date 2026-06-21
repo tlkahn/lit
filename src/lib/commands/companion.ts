@@ -41,20 +41,28 @@ export function initCompanionCommands(): void {
               (l) => l.pagePath == null && l.id !== sourceId,
             );
             let targetId: string | null;
+            let failReason = "";
             if (vacant) {
               targetId = vacant.id;
             } else if (leaves.length > 1) {
               const idx = leaves.findIndex((l) => l.id === sourceId);
-              targetId = leaves[(idx + 1) % leaves.length]!.id;
+              if (idx === -1) {
+                targetId = null;
+                failReason = "Source pane was closed";
+              } else {
+                targetId = leaves[(idx + 1) % leaves.length]!.id;
+              }
             } else {
               targetId = store.splitPane(sourceId, "horizontal");
+              if (targetId == null) failReason = "Cannot split: maximum panes reached";
             }
             if (targetId == null) {
               useStatusMessageStore
                 .getState()
-                .show("Cannot split: maximum panes reached or source pane closed", "error");
+                .show(failReason, "error");
               return;
             }
+            if (findLeaf(store.root, targetId)?.pagePath === companion) return;
             store.focusPane(targetId);
             store.setPanePage(targetId, companion);
             const linkStore = usePanePdfLinkStore.getState();

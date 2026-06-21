@@ -253,7 +253,7 @@ describe("initCompanionCommands", () => {
 
     await vi.waitFor(() => {
       expect(mockStatusState.show).toHaveBeenCalledWith(
-        expect.stringContaining("maximum panes"),
+        "Cannot split: maximum panes reached",
         "error",
       );
     });
@@ -262,18 +262,40 @@ describe("initCompanionCommands", () => {
   });
 
   it("shows error when source pane was closed during async lookup", async () => {
-    mockPaneState.splitPane.mockReturnValue(null);
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "other-pane", pagePath: "other.md" },
+      ],
+      sizes: [0.5, 0.5],
+    };
+    mockFindCompanionFile.mockImplementation(() => {
+      mockPaneState.root = {
+        type: "split",
+        id: "root",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "other-pane", pagePath: "other.md" },
+          { type: "leaf", id: "third-pane", pagePath: "third.md" },
+        ],
+        sizes: [0.5, 0.5],
+      };
+      return Promise.resolve("paper.pdf");
+    });
     initCompanionCommands();
     executeCommand("companion.open");
 
     await vi.waitFor(() => {
-      expect(mockPaneState.splitPane).toHaveBeenCalledWith("src-pane", "horizontal");
       expect(mockStatusState.show).toHaveBeenCalledWith(
-        expect.stringContaining("source pane closed"),
+        "Source pane was closed",
         "error",
       );
     });
     expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
+    expect(mockLinkState.linkPanes).not.toHaveBeenCalled();
   });
 
   it("registers companion.toggleSync", () => {
