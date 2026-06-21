@@ -57,12 +57,19 @@ function BottomPanelTabs() {
       onKeyDown={(e) => {
         if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
         e.preventDefault();
+        const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="tab"]');
+        if (buttons.length === 0) return;
         const step = e.key === "ArrowRight" ? 1 : -1;
         const len = visibleTabs.length;
-        const idx = (visibleTabs.indexOf(activeTab) + step + len) % len;
+        const cur = visibleTabs.indexOf(activeTab);
+        let idx: number;
+        if (cur === -1) {
+          idx = step === 1 ? 0 : len - 1;
+        } else {
+          idx = (cur + step + len) % len;
+        }
         const nextTab = visibleTabs[idx]!;
         handleTabClick(nextTab);
-        const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="tab"]');
         buttons[idx]?.focus();
       }}
     >

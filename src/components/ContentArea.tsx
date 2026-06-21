@@ -378,7 +378,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
-      {currentPanePage && focusedFileType === "markdown" && (<div className="title-bar px-6 py-3">
+      {currentPanePage && focusedFileType === "markdown" && (<div className="title-bar zen-hide px-6 py-3">
         <div className="flex items-center gap-2">
           {([
             { dir: "back", can: canGoBack, onClick: () => usePaneHistoryStore.getState().goBack(focusedPaneId), label: "Go back", glyph: "‹" },

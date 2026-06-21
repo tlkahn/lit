@@ -155,6 +155,17 @@ describe("ContentArea", () => {
     });
   });
 
+  it("title-bar div has zen-hide class for hiding in zen mode", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      const titleBar = document.querySelector(".title-bar");
+      expect(titleBar).not.toBeNull();
+      expect(titleBar!.classList.contains("zen-hide")).toBe(true);
+    });
+  });
+
   it("switches content on page change", async () => {
     setPage("Hello.md");
     const { unmount } = render(<ContentArea />);

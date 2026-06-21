@@ -147,7 +147,7 @@ select:disabled {
 
 /* Zen mode: hide sidebar and title bar */
 .focus-mode-zen aside { display: none; }
-.focus-mode-zen .title-bar { display: none; }
+.focus-mode-zen .zen-hide { display: none; }
 
 /* Prose typography — theme-compatible color overrides */
 .prose {

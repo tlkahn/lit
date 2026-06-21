@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, act, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke } from "../test/tauri-mock";
 import { StatusBar } from "./StatusBar";
@@ -453,6 +453,67 @@ describe("StatusBar", () => {
       const unlinkedIdx = buttons.indexOf("tab-unlinked");
       expect(linkedIdx).toBeLessThan(outgoingIdx);
       expect(outgoingIdx).toBeLessThan(unlinkedIdx);
+    });
+
+    it("ArrowLeft navigates to last visible tab when activeTab is not in visibleTabs", () => {
+      // activeTab = "annotations" but annotationEnabled = false, so visibleTabs = ["linked","outgoing","unlinked"]
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      usePreferencesStore.setState({ experimentalUnlinkedReferences: true, annotationEnabled: false });
+      useBottomPanelStore.setState({ activeTab: "annotations", unfolded: true });
+      render(<StatusBar />);
+      const tabsEl = screen.getByTestId("bottom-panel-tabs");
+      fireEvent.keyDown(tabsEl, { key: "ArrowLeft" });
+      expect(useBottomPanelStore.getState().activeTab).toBe("unlinked");
+    });
+
+    it("ArrowLeft from stale unlinked activeTab lands on last visible tab", () => {
+      // activeTab = "unlinked" but experimentalUnlinkedReferences = false
+      // visibleTabs = ["linked","outgoing","annotations"]
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      usePreferencesStore.setState({ experimentalUnlinkedReferences: false, annotationEnabled: true });
+      useBottomPanelStore.setState({ activeTab: "unlinked", unfolded: true });
+      render(<StatusBar />);
+      const tabsEl = screen.getByTestId("bottom-panel-tabs");
+      fireEvent.keyDown(tabsEl, { key: "ArrowLeft" });
+      expect(useBottomPanelStore.getState().activeTab).toBe("annotations");
+    });
+
+    it("ArrowRight from stale activeTab lands on first visible tab", () => {
+      // activeTab = "annotations" but annotationEnabled = false
+      // visibleTabs = ["linked","outgoing","unlinked"]
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      usePreferencesStore.setState({ experimentalUnlinkedReferences: true, annotationEnabled: false });
+      useBottomPanelStore.setState({ activeTab: "annotations", unfolded: true });
+      render(<StatusBar />);
+      const tabsEl = screen.getByTestId("bottom-panel-tabs");
+      fireEvent.keyDown(tabsEl, { key: "ArrowRight" });
+      expect(useBottomPanelStore.getState().activeTab).toBe("linked");
+    });
+
+    it("ArrowRight does not mutate state when no tabs are rendered (hasPage is false)", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: null },
+        focusedPaneId: "p1",
+      });
+      useBottomPanelStore.setState({ activeTab: "linked", unfolded: false });
+      render(<StatusBar />);
+      const tabsEl = screen.getByTestId("bottom-panel-tabs");
+      fireEvent.keyDown(tabsEl, { key: "ArrowRight" });
+      expect(useBottomPanelStore.getState().activeTab).toBe("linked");
+      expect(useBottomPanelStore.getState().unfolded).toBe(false);
     });
   });
 

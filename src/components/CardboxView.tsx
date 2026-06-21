@@ -793,7 +793,7 @@ export default function CardboxView() {
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="cardbox-view">
       {/* Search + filter controls */}
-      <div className="shrink-0 space-y-2 border-b border-border px-6 py-3">
+      <div className="zen-hide shrink-0 space-y-2 border-b border-border px-6 py-3" data-testid="cardbox-toolbar">
         {connectionsForUuid ? (
           <>
             <div className="flex items-center gap-2" data-testid="cardbox-breadcrumb">
