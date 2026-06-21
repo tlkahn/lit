@@ -16,6 +16,7 @@ import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, i
 import { YamlHighlighter } from "./YamlHighlighter";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
+import { usePaneHistoryStore, initPaneHistoryTracking, stopPaneHistoryTracking } from "../stores/paneHistory";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 import { useAppKeybindings } from "../hooks/useAppKeybindings";
 import { CardboxErrorBoundary } from "./CardboxErrorBoundary";
@@ -68,6 +69,14 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     [viewMode],
   );
   const body = usePaneField(focusedPaneId, bodySel);
+
+  const canGoBack = usePaneHistoryStore((s) => s.canGoBack(focusedPaneId));
+  const canGoForward = usePaneHistoryStore((s) => s.canGoForward(focusedPaneId));
+
+  useEffect(() => {
+    initPaneHistoryTracking();
+    return stopPaneHistoryTracking;
+  }, []);
 
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -376,6 +385,24 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
       {currentPanePage && focusedFileType === "markdown" && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
+          <button
+            disabled={!canGoBack}
+            onClick={() => usePaneHistoryStore.getState().goBack(focusedPaneId)}
+            className="text-text-faint hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed px-0.5"
+            aria-label="Go back"
+            data-testid="history-back"
+          >
+            ‹
+          </button>
+          <button
+            disabled={!canGoForward}
+            onClick={() => usePaneHistoryStore.getState().goForward(focusedPaneId)}
+            className="text-text-faint hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed px-0.5"
+            aria-label="Go forward"
+            data-testid="history-forward"
+          >
+            ›
+          </button>
           <input
             ref={titleInputRef}
             className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-text-normal outline-none"

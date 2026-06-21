@@ -15,6 +15,7 @@ import {
   usePanePdfLinkStore,
   deserializeLinks,
 } from "./panePdfLink";
+import { usePaneHistoryStore } from "./paneHistory";
 import {
   loadLayout,
   validateLayout,
@@ -263,6 +264,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         };
       });
       usePaneStore.getState().clearPageFromPanes(relativePath);
+      usePaneHistoryStore.getState().clearPath(relativePath);
     } catch (e) {
       set({ error: String(e) });
     }
