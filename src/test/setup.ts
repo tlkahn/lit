@@ -8,7 +8,7 @@ globalThis.ResizeObserver = class {
     this.cb = cb;
   }
   observe(target: Element) {
-    if (!(target instanceof HTMLElement) || !(target.hasAttribute("data-virtual-scroll") || target.hasAttribute("data-masonry-content"))) {
+    if (!(target instanceof HTMLElement) || !(target.hasAttribute("data-virtual-scroll") || target.hasAttribute("data-masonry-content") || target.hasAttribute("data-bib-actions"))) {
       return;
     }
     const h = target.clientHeight;
