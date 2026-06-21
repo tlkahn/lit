@@ -67,6 +67,7 @@ export interface PreferencesState {
   searchPubmedApiKeySet: boolean;
   searchGoogleBooksApiKeySet: boolean;
   searchBaseApiKeySet: boolean;
+  autoRevealInSidebar: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
 }
@@ -217,6 +218,7 @@ function mapPreferences(prefs: Preferences) {
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
+    autoRevealInSidebar: (prefs["workbench.autoRevealInSidebar"] as boolean) ?? false,
     ...(searchProviders !== null ? { searchEnabledProviders: searchProviders } : {}),
     searchCrossrefEmail: (prefs["search.crossrefEmail"] as string) ?? "",
     searchUnpaywallEmail: (prefs["search.unpaywallEmail"] as string) ?? "",
@@ -334,6 +336,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   searchPubmedApiKeySet: false,
   searchGoogleBooksApiKeySet: false,
   searchBaseApiKeySet: false,
+  autoRevealInSidebar: false,
   loaded: false,
 
   loadPreferences: async () => {

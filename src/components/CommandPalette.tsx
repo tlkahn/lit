@@ -11,6 +11,7 @@ import { initFuseFractureCommands } from "../lib/commands/fuseFracture";
 import { initAcademicExportCommands } from "../lib/commands/academicExport";
 import { initCompanionCommands } from "../lib/commands/companion";
 import { initOcrCommands } from "../lib/commands/ocr";
+import { initSidebarCommands } from "../lib/commands/sidebar";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 const omniContentHintProvider: PaletteProvider = {
@@ -48,6 +49,7 @@ function ensureRegistered(): void {
   initAcademicExportCommands();
   initCompanionCommands();
   initOcrCommands();
+  initSidebarCommands();
 }
 
 export function _resetRegistration(): void {

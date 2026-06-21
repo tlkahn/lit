@@ -19,6 +19,12 @@ pub const EVENT_CTX_SIDEBAR_EXTERNAL_EDITOR: &str = "context-menu://sidebar/exte
 pub const EVENT_CTX_SIDEBAR_EXPORT_NETWORK: &str = "context-menu://sidebar/export-network";
 pub const EVENT_CTX_SIDEBAR_TRASH: &str = "context-menu://sidebar/trash";
 
+pub const CTX_SIDEBAR_REVEAL_FILE_TREE: &str = "ctx_sidebar_reveal_file_tree";
+pub const CTX_SIDEBAR_REVEAL_LIBRARY: &str = "ctx_sidebar_reveal_library";
+
+pub const EVENT_CTX_SIDEBAR_REVEAL_FILE_TREE: &str = "context-menu://sidebar/reveal-file-tree";
+pub const EVENT_CTX_SIDEBAR_REVEAL_LIBRARY: &str = "context-menu://sidebar/reveal-library";
+
 pub const CTX_MINDMAP_EDIT: &str = "ctx_mindmap_edit";
 pub const CTX_MINDMAP_EXPORT_NETWORK: &str = "ctx_mindmap_export_network";
 
@@ -73,6 +79,8 @@ pub enum ContextMenuAction {
     SidebarExternalEditor,
     SidebarExportNetwork,
     SidebarTrash,
+    SidebarRevealFileTree,
+    SidebarRevealLibrary,
     MindmapEdit,
     MindmapExportNetwork,
     GraphMerge,
@@ -99,6 +107,8 @@ impl ContextMenuAction {
             CTX_SIDEBAR_EXTERNAL_EDITOR => Some(Self::SidebarExternalEditor),
             CTX_SIDEBAR_EXPORT_NETWORK => Some(Self::SidebarExportNetwork),
             CTX_SIDEBAR_TRASH => Some(Self::SidebarTrash),
+            CTX_SIDEBAR_REVEAL_FILE_TREE => Some(Self::SidebarRevealFileTree),
+            CTX_SIDEBAR_REVEAL_LIBRARY => Some(Self::SidebarRevealLibrary),
             CTX_MINDMAP_EDIT => Some(Self::MindmapEdit),
             CTX_MINDMAP_EXPORT_NETWORK => Some(Self::MindmapExportNetwork),
             CTX_GRAPH_MERGE => Some(Self::GraphMerge),
@@ -180,6 +190,16 @@ pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
             label: "Move to Trash".into(),
             enabled: true,
         },
+        MenuItemSpec {
+            id: CTX_SIDEBAR_REVEAL_FILE_TREE,
+            label: "Reveal in File Tree".into(),
+            enabled: true,
+        },
+        MenuItemSpec {
+            id: CTX_SIDEBAR_REVEAL_LIBRARY,
+            label: "Reveal in Reference Library".into(),
+            enabled: true,
+        },
     ]
 }
 
@@ -195,6 +215,8 @@ pub fn dispatch_sidebar_action(
         ContextMenuAction::SidebarExternalEditor => EVENT_CTX_SIDEBAR_EXTERNAL_EDITOR,
         ContextMenuAction::SidebarExportNetwork => EVENT_CTX_SIDEBAR_EXPORT_NETWORK,
         ContextMenuAction::SidebarTrash => EVENT_CTX_SIDEBAR_TRASH,
+        ContextMenuAction::SidebarRevealFileTree => EVENT_CTX_SIDEBAR_REVEAL_FILE_TREE,
+        ContextMenuAction::SidebarRevealLibrary => EVENT_CTX_SIDEBAR_REVEAL_LIBRARY,
         _ => unreachable!("dispatch_sidebar_action called with non-sidebar action"),
     };
     (event, payload)
@@ -797,9 +819,9 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_menu_items_returns_four_specs() {
+    fn sidebar_menu_items_returns_six_specs() {
         let items = sidebar_menu_items();
-        assert_eq!(items.len(), 4);
+        assert_eq!(items.len(), 6);
         assert_eq!(items[0].id, CTX_SIDEBAR_RENAME);
         assert_eq!(items[0].label, "Rename");
         assert!(items[0].enabled);
@@ -812,6 +834,12 @@ mod tests {
         assert_eq!(items[3].id, CTX_SIDEBAR_TRASH);
         assert_eq!(items[3].label, "Move to Trash");
         assert!(items[3].enabled);
+        assert_eq!(items[4].id, CTX_SIDEBAR_REVEAL_FILE_TREE);
+        assert_eq!(items[4].label, "Reveal in File Tree");
+        assert!(items[4].enabled);
+        assert_eq!(items[5].id, CTX_SIDEBAR_REVEAL_LIBRARY);
+        assert_eq!(items[5].label, "Reveal in Reference Library");
+        assert!(items[5].enabled);
     }
 
     #[test]

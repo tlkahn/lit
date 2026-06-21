@@ -690,63 +690,72 @@ export function ReferenceLibrary() {
   virtualizerRef.current = virtualizer;
   const sortedRef = useRef(sorted);
   sortedRef.current = sorted;
+  const bibKeyStatesRef = useRef(bibKeyStates);
+  bibKeyStatesRef.current = bibKeyStates;
+
+  const revealEntry = useCallback((citekey: string, bibFile?: string) => {
+    usePreferencesStore.setState({ sidebarVisible: true });
+    setPreference("workbench.sideBar.visible", true).catch(() => {});
+    window.dispatchEvent(new CustomEvent("lit:set-sidebar-tab", { detail: "references" }));
+
+    setSearch("");
+
+    const items = buildSectionedList(sortedRef.current).items;
+    let idx = -1;
+    if (bibFile) {
+      idx = items.findIndex(
+        (item) =>
+          item.kind === "entry" &&
+          item.entry.key === citekey &&
+          bibFileEndsWith(item.entry.bib_file, bibFile),
+      );
+    }
+    if (idx < 0) {
+      idx = items.findIndex(
+        (item) => item.kind === "entry" && item.entry.key === citekey,
+      );
+    }
+    if (idx < 0) return;
+
+    const item = items[idx]!;
+    if (item.kind !== "entry") return;
+    const entryId = `${item.entry.bib_file ?? ""}:${item.entry.key}`;
+
+    setExpandedKey(entryId);
+    setRevealedKey(entryId);
+    clearTimeout(revealTimerRef.current);
+    revealTimerRef.current = setTimeout(() => setRevealedKey(null), 1500);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        virtualizerRef.current.scrollToIndex(idx, { align: "center" });
+      });
+    });
+  }, []);
 
   useEffect(() => {
     const handler = (e: Event) => {
       const { citekey, bibFile } = (e as CustomEvent<{ citekey: string; bibFile?: string }>).detail;
-
-      usePreferencesStore.setState({ sidebarVisible: true });
-      setPreference("workbench.sideBar.visible", true).catch(() => {});
-      window.dispatchEvent(new CustomEvent("lit:set-sidebar-tab", { detail: "references" }));
-
-      // Clear any active search so the full list is visible after reveal
-      setSearch("");
-
-      // Use the unfiltered sorted list so we can find entries hidden by a search query
-      const items = buildSectionedList(sortedRef.current).items;
-      let idx = -1;
-      if (bibFile) {
-        // Try to match both citekey AND bib file path for disambiguation
-        idx = items.findIndex(
-          (item) =>
-            item.kind === "entry" &&
-            item.entry.key === citekey &&
-            bibFileEndsWith(item.entry.bib_file, bibFile),
-        );
-      }
-      // Fall back to citekey-only match if bibFile is absent or didn't match
-      if (idx < 0) {
-        idx = items.findIndex(
-          (item) => item.kind === "entry" && item.entry.key === citekey,
-        );
-      }
-      if (idx < 0) return;
-
-      const item = items[idx]!;
-      if (item.kind !== "entry") return;
-      const entryId = `${item.entry.bib_file ?? ""}:${item.entry.key}`;
-
-      setExpandedKey(entryId);
-      setRevealedKey(entryId);
-      clearTimeout(revealTimerRef.current);
-      revealTimerRef.current = setTimeout(() => setRevealedKey(null), 1500);
-
-      // Double-rAF: the outer rAF defers past the current frame so React
-      // can commit the setExpandedKey state and the resizeItem/measureElement
-      // effects can update the virtualizer's height map. The inner rAF then
-      // fires with accurate sizes, so scrollToIndex computes the correct offset.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          virtualizerRef.current.scrollToIndex(idx, { align: "center" });
-        });
-      });
+      revealEntry(citekey, bibFile);
     };
     window.addEventListener("lit:reveal-bib-entry", handler);
     return () => {
       clearTimeout(revealTimerRef.current);
       window.removeEventListener("lit:reveal-bib-entry", handler);
     };
-  }, []);
+  }, [revealEntry]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { relativePath } = (e as CustomEvent<{ relativePath: string }>).detail;
+      const states = bibKeyStatesRef.current;
+      const citekey = Object.keys(states).find((k) => states[k]?.page_id === relativePath);
+      if (!citekey) return;
+      revealEntry(citekey);
+    };
+    window.addEventListener("lit:reveal-bib-entry-for-page", handler);
+    return () => window.removeEventListener("lit:reveal-bib-entry-for-page", handler);
+  }, [revealEntry]);
 
   const addButton = (
     <button

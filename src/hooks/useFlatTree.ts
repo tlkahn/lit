@@ -41,6 +41,14 @@ export function useFlatTree(
     });
   }, []);
 
+  const expandPaths = useCallback((paths: string[]) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const p of paths) next.add(p);
+      return next;
+    });
+  }, []);
+
   const rows = useMemo(() => {
     const result: FlatRow[] = [];
 
@@ -90,5 +98,5 @@ export function useFlatTree(
     return result;
   }, [root, expanded, pageComparator]);
 
-  return { rows, toggleCollapse };
+  return { rows, toggleCollapse, expandPaths };
 }

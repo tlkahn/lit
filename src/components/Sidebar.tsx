@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
-import { openInExternalEditor } from "../lib/ipc";
+import { usePreferencesStore } from "../stores/preferences";
+import { openInExternalEditor, setPreference } from "../lib/ipc";
 import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
 import { executeCommand } from "../lib/commandRegistry";
 import { localeFilter } from "../lib/localeSearch";
@@ -35,6 +36,7 @@ const PageItem = memo(function PageItem({
   page,
   isActive,
   isRenaming,
+  isRevealed,
   onSelect,
   onRenameCommit,
   onRenameCancel,
@@ -43,6 +45,7 @@ const PageItem = memo(function PageItem({
   page: PageMeta;
   isActive: boolean;
   isRenaming: boolean;
+  isRevealed: boolean;
   onSelect: (path: string) => void;
   onRenameCommit: (path: string, newName: string) => void;
   onRenameCancel: () => void;
@@ -100,7 +103,7 @@ const PageItem = memo(function PageItem({
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
               : "text-text-normal hover:bg-bg-hover"
-          }`}
+          }${isRevealed ? " sidebar-item-revealed" : ""}`}
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
         >
@@ -146,7 +149,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   const { sortConfig, selectSortKey, comparator } = useSidebarSort(workspacePath ?? "");
   const tree = useMemo(() => buildTree(filtered), [filtered]);
-  const { rows, toggleCollapse } = useFlatTree(tree, comparator);
+  const { rows, toggleCollapse, expandPaths } = useFlatTree(tree, comparator);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -155,6 +158,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     estimateSize: () => 32,
     overscan: 10,
   });
+
+  const [revealedPath, setRevealedPath] = useState<string | null>(null);
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
 
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
 
@@ -175,11 +186,71 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     return () => window.removeEventListener("lit:set-sidebar-tab", handler);
   }, [setTab]);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { relativePath } = (e as CustomEvent<{ relativePath: string }>).detail;
+
+      usePreferencesStore.setState({ sidebarVisible: true });
+      setPreference("workbench.sideBar.visible", true).catch(() => {});
+      setTab("files");
+      setSearch("");
+
+      const parts = relativePath.split("/");
+      const ancestorPaths: string[] = [];
+      for (let i = 1; i < parts.length; i++) {
+        ancestorPaths.push(parts.slice(0, i).join("/"));
+      }
+      expandPaths(ancestorPaths);
+
+      setRevealedPath(relativePath);
+      clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = setTimeout(() => setRevealedPath(null), 1500);
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const idx = rowsRef.current.findIndex(
+            (r) => r.type === "page" && r.page.relative_path === relativePath,
+          );
+          if (idx >= 0) {
+            virtualizerRef.current.scrollToIndex(idx, { align: "center" });
+          }
+        });
+      });
+    };
+    window.addEventListener("lit:reveal-in-file-tree", handler);
+    return () => {
+      clearTimeout(revealTimerRef.current);
+      window.removeEventListener("lit:reveal-in-file-tree", handler);
+    };
+  }, [setTab, expandPaths]);
+
+  const autoRevealInSidebar = usePreferencesStore((s) => s.autoRevealInSidebar);
+  useEffect(() => {
+    if (!autoRevealInSidebar || !currentPagePath || tab !== "files") return;
+    window.dispatchEvent(
+      new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: currentPagePath } }),
+    );
+  }, [autoRevealInSidebar, currentPagePath, tab]);
+
+  const dispatchRevealFileTree = useCallback((relativePath: string) => {
+    window.dispatchEvent(
+      new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath } }),
+    );
+  }, []);
+
+  const dispatchRevealLibrary = useCallback((relativePath: string) => {
+    window.dispatchEvent(
+      new CustomEvent("lit:reveal-bib-entry-for-page", { detail: { relativePath } }),
+    );
+  }, []);
+
   useSidebarContextMenu({
     onRename: (relativePath) => setRenamingPath(relativePath),
     onExternalEditor: (relativePath) => openInExternalEditor(relativePath, 1, 1),
     onExportNetwork: (relativePath) => onExportNetworkRef.current?.(relativePath),
     onTrash: (relativePath) => deletePageAction(relativePath),
+    onRevealFileTree: dispatchRevealFileTree,
+    onRevealLibrary: dispatchRevealLibrary,
   });
 
   return (
@@ -282,6 +353,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                         page={row.page}
                         isActive={currentPagePath === row.page.relative_path}
                         isRenaming={renamingPath === row.page.relative_path}
+                        isRevealed={revealedPath === row.page.relative_path}
                         onSelect={selectPage}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
