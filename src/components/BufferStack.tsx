@@ -152,7 +152,7 @@ export function BufferStack() {
                 data-testid={`buffer-stack-row-${leaf.id}`}
                 role="option"
                 aria-selected={isActive}
-                className={`flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-1 text-[13px] text-text-normal hover:bg-bg-hover ${
+                className={`flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-1 text-xs text-text-normal hover:bg-bg-hover ${
                   isActive
                     ? "border-l-2 border-interactive-accent bg-interactive-accent/10"
                     : ""
@@ -171,7 +171,7 @@ export function BufferStack() {
                   {pos && (
                     <span
                       data-testid={`buffer-stack-position-${leaf.id}`}
-                      className="text-[11px] text-text-faint"
+                      className="text-xs text-text-faint"
                     >
                       {pos}
                     </span>

@@ -50,7 +50,7 @@ export function SortDropdown({ sortConfig, onSelectKey }: SortDropdownProps) {
                   onSelectKey(key);
                   setOpen(false);
                 }}
-                className={`flex w-full items-center justify-between rounded-md px-3 py-1 text-start text-[13px] hover:bg-interactive-accent hover:text-text-on-accent ${
+                className={`flex w-full items-center justify-between rounded-md px-3 py-1 text-start text-xs hover:bg-interactive-accent hover:text-text-on-accent ${
                   active ? "text-interactive-accent" : "text-text-normal"
                 }`}
               >

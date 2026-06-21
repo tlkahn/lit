@@ -832,7 +832,7 @@ export default function CardboxView() {
                   <button
                     key={type}
                     onClick={() => toggleType(type)}
-                    className={`rounded-full px-2 py-0.5 text-[11px] transition-opacity duration-150 ${
+                    className={`rounded-full px-2 py-0.5 text-xs transition-opacity duration-150 ${
                       activeTypes === null || activeTypes.has(type) ? "opacity-100" : "opacity-40"
                     }`}
                     data-annotation-type={type}

@@ -351,7 +351,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
                     setOpen(false);
                     a.onClick();
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50"
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-1 text-start text-xs text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50"
                 >
                   {a.spinner
                     ? <SpinnerSvg className="h-3 w-3" />
