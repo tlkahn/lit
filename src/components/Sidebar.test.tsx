@@ -52,8 +52,8 @@ beforeEach(() => {
 describe("Sidebar tabs", () => {
   it("renders Files and Outline tab buttons", () => {
     render(<Sidebar />);
-    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Outline" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Outline" })).toBeInTheDocument();
   });
 
   it("Files tab is active by default", () => {
@@ -71,24 +71,24 @@ describe("Sidebar tabs", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "Outline" }));
+    await user.click(screen.getByRole("tab", { name: "Outline" }));
     expect(screen.getByText("No page selected")).toBeInTheDocument();
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("tab", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
   });
 
   it("renders a References tab button", () => {
     render(<Sidebar />);
-    expect(screen.getByRole("button", { name: "References" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "References" })).toBeInTheDocument();
   });
 
   it("clicking References switches to the references panel", async () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
     expect(await screen.findByText(/No references found/i)).toBeInTheDocument();
   });
@@ -98,7 +98,7 @@ describe("Sidebar tabs", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     expect(localStorage.getItem("lit-sidebar-tab")).toBe("references");
     localStorage.removeItem("lit-sidebar-tab");
   });
@@ -113,7 +113,7 @@ describe("Sidebar tabs", () => {
 
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Outline" }));
+    await user.click(screen.getByRole("tab", { name: "Outline" }));
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
     expect(screen.getByText("Hello")).toBeInTheDocument();
   });
@@ -518,15 +518,15 @@ describe("Sidebar references panel persistence", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     await screen.findByText("Persisted Ref");
     const before = countBibScans();
     expect(before).toBe(1);
 
-    await user.click(screen.getByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("tab", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     expect(countBibScans()).toBe(before);
   });
 
@@ -535,16 +535,16 @@ describe("Sidebar references panel persistence", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     const title = await screen.findByText("Persisted Ref");
     await user.click(title);
     // expanded detail card shows the year as its own row
     expect(screen.getByText("2020")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("tab", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     // still expanded after returning
     expect(screen.getByText("2020")).toBeInTheDocument();
   });
@@ -554,10 +554,10 @@ describe("Sidebar references panel persistence", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     await screen.findByText("Original Title");
 
-    await user.click(screen.getByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("tab", { name: "Files" }));
     expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
 
     // mutate fixture and fire a file event while References is hidden
@@ -566,7 +566,7 @@ describe("Sidebar references panel persistence", () => {
       emitMockEvent("workspace://file-modified", { path: "/workspace/r.bib" });
     });
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     expect(await screen.findByText("Updated Title")).toBeInTheDocument();
   });
 
@@ -575,10 +575,10 @@ describe("Sidebar references panel persistence", () => {
     const user = userEvent.setup();
     render(<Sidebar />);
 
-    await user.click(screen.getByRole("button", { name: "References" }));
+    await user.click(screen.getByRole("tab", { name: "References" }));
     await screen.findByText("Persisted Ref");
 
-    await user.click(screen.getByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("tab", { name: "Files" }));
 
     const input = screen.queryByLabelText("Search references");
     expect(input).toBeInTheDocument();

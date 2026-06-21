@@ -172,12 +172,29 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   return (
     <aside className="flex h-full shrink-0 flex-col bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }}>
-      <div className="flex items-center border-b border-border-subtle">
+      <div
+        className="flex items-center border-b border-border-subtle"
+        role="tablist"
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          const tabs: SidebarTab[] = ["files", "outline", "trash", "references"];
+          const step = e.key === "ArrowRight" ? 1 : -1;
+          const len = tabs.length;
+          const idx = (tabs.indexOf(tab) + step + len) % len;
+          const nextTab = tabs[idx]!;
+          setTab(nextTab);
+          const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
+          buttons[idx]?.focus();
+        }}
+      >
         <button
           onClick={() => setTab("files")}
           title="Files"
+          role="tab"
+          aria-selected={tab === "files"}
           aria-label="Files"
-          className={`flex-1 px-3 py-2 text-xs font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent ${
             tab === "files"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -188,8 +205,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         <button
           onClick={() => setTab("outline")}
           title="Outline"
+          role="tab"
+          aria-selected={tab === "outline"}
           aria-label="Outline"
-          className={`flex-1 px-3 py-2 text-xs font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent ${
             tab === "outline"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -200,8 +219,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         <button
           onClick={() => setTab("trash")}
           title="Trash"
+          role="tab"
+          aria-selected={tab === "trash"}
           aria-label="Trash"
-          className={`flex-1 px-3 py-2 text-xs font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent ${
             tab === "trash"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
@@ -212,8 +233,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         <button
           onClick={() => setTab("references")}
           title="References"
+          role="tab"
+          aria-selected={tab === "references"}
           aria-label="References"
-          className={`flex-1 px-3 py-2 text-xs font-medium ${
+          className={`flex-1 px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent ${
             tab === "references"
               ? "text-text-normal opacity-100"
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"

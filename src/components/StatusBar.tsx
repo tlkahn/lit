@@ -44,8 +44,28 @@ function BottomPanelTabs() {
   // markdown-only concepts; hide the entire group for code files.
   if (fileType === "code") return null;
 
+  // Build the list of visible tabs for arrow-key navigation.
+  const visibleTabs: TabId[] = ["linked", "outgoing"];
+  if (experimentalUnlinkedReferences) visibleTabs.push("unlinked");
+  if (annotationEnabled) visibleTabs.push("annotations");
+
   return (
-    <div className="flex items-center" data-testid="bottom-panel-tabs">
+    <div
+      className="flex items-center"
+      role="tablist"
+      data-testid="bottom-panel-tabs"
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        const step = e.key === "ArrowRight" ? 1 : -1;
+        const len = visibleTabs.length;
+        const idx = (visibleTabs.indexOf(activeTab) + step + len) % len;
+        const nextTab = visibleTabs[idx]!;
+        handleTabClick(nextTab);
+        const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="tab"]');
+        buttons[idx]?.focus();
+      }}
+    >
       {hasPage && (
         <>
           <TabButton
@@ -190,7 +210,7 @@ function TabButton({
       aria-label={label}
       aria-selected={active && unfolded}
       data-testid={`tab-${tab}`}
-      className={`px-2 text-xs ${highlight}`}
+      className={`px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent ${highlight}`}
       onClick={() => onClick(tab)}
     >
       <span className="nerd-font" aria-hidden="true">{glyph}</span>

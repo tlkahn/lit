@@ -131,7 +131,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
   });
 
@@ -184,7 +184,7 @@ describe("App", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
 
     render(<App />);
-    const container = screen.getByRole("button", { name: "Files" }).closest("aside")!.parentElement!.parentElement!;
+    const container = screen.getByRole("tab", { name: "Files" }).closest("aside")!.parentElement!.parentElement!;
     expect(container.className).toContain("flex-row");
     expect(container.className).not.toContain("flex-row-reverse");
   });
@@ -194,7 +194,7 @@ describe("App", () => {
     usePreferencesStore.setState({ sidebarLocation: "right" });
 
     render(<App />);
-    const container = screen.getByRole("button", { name: "Files" }).closest("aside")!.parentElement!.parentElement!;
+    const container = screen.getByRole("tab", { name: "Files" }).closest("aside")!.parentElement!.parentElement!;
     expect(container.className).toContain("flex-row-reverse");
   });
 
@@ -384,7 +384,7 @@ describe("App", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: false });
     render(<App />);
     expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     expect(screen.getByTestId("status-bar")).toBeInTheDocument();
   });
 
@@ -392,14 +392,14 @@ describe("App", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
     render(<App />);
     expect(screen.queryByTestId("indexing-screen")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     expect(screen.getByTestId("status-bar")).toBeInTheDocument();
   });
 
   it("shows Sidebar and ContentArea while graphReady is false", () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: samplePages, graphReady: false });
     render(<App />);
-    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
   });
 
@@ -421,7 +421,7 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Files" })).toBeInTheDocument();
     });
 
     const before = useWorkspaceStore.getState().reloadTrigger;
