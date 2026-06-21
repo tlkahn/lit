@@ -796,6 +796,82 @@ describe("Sidebar reveal and search interaction", () => {
     expect(screen.queryByText("No page selected")).not.toBeInTheDocument();
   });
 
+  it("manual reveal expands collapsed parent folder", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Nested", "docs/Nested.md"),
+        makePage("Outside", "Outside.md"),
+      ],
+    });
+
+    render(<Sidebar />);
+
+    // Folder starts collapsed — Nested is not visible
+    expect(screen.getByText("docs")).toBeInTheDocument();
+    expect(screen.queryByText("Nested")).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: "docs/Nested.md" } }),
+      );
+    });
+
+    // Parent folder should expand and file should become visible
+    expect(screen.getByText("Nested")).toBeInTheDocument();
+  });
+
+  it("manual reveal expands deeply nested collapsed folders", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Deep", "a/b/Deep.md"),
+        makePage("Outside", "Outside.md"),
+      ],
+    });
+
+    render(<Sidebar />);
+
+    // Top-level folder starts collapsed — nested file is not visible
+    expect(screen.getByText("a")).toBeInTheDocument();
+    expect(screen.queryByText("Deep")).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: "a/b/Deep.md" } }),
+      );
+    });
+
+    // All ancestor folders should expand and file should become visible
+    expect(screen.getByText("Deep")).toBeInTheDocument();
+  });
+
+  it("manual reveal with active search + collapsed parent (file matches filter)", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Nested", "docs/Nested.md"),
+        makePage("Outside", "Outside.md"),
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Type a filter that matches the nested file
+    await user.type(screen.getByLabelText("Search pages"), "Nested");
+    expect(screen.queryByText("Outside")).not.toBeInTheDocument();
+
+    // The file matches the filter but is behind a collapsed folder —
+    // dispatch reveal
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: "docs/Nested.md" } }),
+      );
+    });
+
+    // Search should be preserved and file should become visible
+    expect(screen.getByLabelText("Search pages")).toHaveValue("Nested");
+    expect(screen.getByText("Nested")).toBeInTheDocument();
+  });
+
   it("manual reveal preserves search when the target page matches the filter", async () => {
     useWorkspaceStore.setState({
       pages: [
