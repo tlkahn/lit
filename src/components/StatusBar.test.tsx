@@ -302,7 +302,8 @@ describe("StatusBar", () => {
       });
       useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), linked: { count: 3, hasOpened: true } } });
       render(<StatusBar />);
-      expect(screen.getByTestId("tab-linked")).toHaveTextContent("Linked References (3)");
+      expect(screen.getByTestId("tab-linked").querySelector(".nerd-font")).toBeTruthy();
+      expect(screen.getByTestId("tab-linked")).toHaveTextContent("3");
     });
 
     it("hides unlinked tab when experimentalUnlinkedReferences is false", () => {
@@ -339,7 +340,7 @@ describe("StatusBar", () => {
       useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), annotations: { count: 0, hasOpened: false } } });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-annotations")).toBeInTheDocument();
-      expect(screen.getByTestId("tab-annotations")).toHaveTextContent("Annotations");
+      expect(screen.getByTestId("tab-annotations")).toHaveAttribute("aria-label", "Annotations");
     });
 
     it("shows annotations tab when enabled and count > 0", () => {
@@ -351,7 +352,7 @@ describe("StatusBar", () => {
       usePreferencesStore.setState({ annotationEnabled: true });
       useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), annotations: { count: 2, hasOpened: false } } });
       render(<StatusBar />);
-      expect(screen.getByTestId("tab-annotations")).toHaveTextContent("Annotations (2)");
+      expect(screen.getByTestId("tab-annotations")).toHaveTextContent("2");
     });
 
     it("layout order: BufferStack then tabs then cursor position", () => {
@@ -407,7 +408,7 @@ describe("StatusBar", () => {
       });
       render(<StatusBar />);
       expect(screen.getByTestId("tab-outgoing")).toBeInTheDocument();
-      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("Outgoing Links");
+      expect(screen.getByTestId("tab-outgoing")).toHaveAttribute("aria-label", "Outgoing Links");
     });
 
     it("shows count in outgoing links button text when outgoingCount is set", () => {
@@ -418,7 +419,7 @@ describe("StatusBar", () => {
       });
       useBottomPanelStore.setState({ tabMeta: { ...defaultTabMeta(), outgoing: { count: 7, hasOpened: false } } });
       render(<StatusBar />);
-      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("Outgoing Links (7)");
+      expect(screen.getByTestId("tab-outgoing")).toHaveTextContent("7");
     });
 
     it("clicking outgoing links tab activates it", async () => {
