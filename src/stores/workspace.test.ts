@@ -71,21 +71,6 @@ describe("WorkspaceStore", () => {
         case "delete_page":
           return null;
         case "trash_page":
-          return {
-            trash_name: `${(args as Record<string, unknown>)?.relativePath}.123.md`,
-            original_path: (args as Record<string, unknown>)?.relativePath,
-            deleted_at: 123,
-          };
-        case "restore_page":
-          return "restored.md";
-        case "purge_page":
-          return null;
-        case "list_trash":
-          return [
-            { trash_name: "a.123.md", original_path: "a.md", deleted_at: 123 },
-            { trash_name: "b.456.md", original_path: "b.md", deleted_at: 456 },
-          ];
-        case "empty_trash":
           return null;
         case "ensure_graph_ready":
           return null;
@@ -597,65 +582,6 @@ describe("WorkspaceStore", () => {
     expect(useWorkspaceStore.getState().pages).toHaveLength(2);
   });
 
-  it("trashItems defaults to []", () => {
-    expect(useWorkspaceStore.getState().trashItems).toEqual([]);
-  });
-
-  it("loadTrash populates trashItems", async () => {
-    await act(async () => {
-      await useWorkspaceStore.getState().loadTrash();
-    });
-
-    expect(useWorkspaceStore.getState().trashItems).toHaveLength(2);
-    expect(useWorkspaceStore.getState().trashItems[0]!.trash_name).toBe("a.123.md");
-  });
-
-  it("restorePage removes item from trashItems and refreshes pages", async () => {
-    useWorkspaceStore.setState({
-      workspacePath: "/workspace",
-      trashItems: [
-        { trash_name: "a.123.md", original_path: "a.md", deleted_at: 123 },
-        { trash_name: "b.456.md", original_path: "b.md", deleted_at: 456 },
-      ],
-    });
-
-    await act(async () => {
-      await useWorkspaceStore.getState().restorePage("a.123.md");
-    });
-
-    const state = useWorkspaceStore.getState();
-    expect(state.trashItems).toHaveLength(1);
-    expect(state.trashItems[0]!.trash_name).toBe("b.456.md");
-  });
-
-  it("purgePage removes item from trashItems", async () => {
-    useWorkspaceStore.setState({
-      trashItems: [
-        { trash_name: "a.123.md", original_path: "a.md", deleted_at: 123 },
-      ],
-    });
-
-    await act(async () => {
-      await useWorkspaceStore.getState().purgePage("a.123.md");
-    });
-
-    expect(useWorkspaceStore.getState().trashItems).toHaveLength(0);
-  });
-
-  it("emptyTrash clears trashItems", async () => {
-    useWorkspaceStore.setState({
-      trashItems: [
-        { trash_name: "a.123.md", original_path: "a.md", deleted_at: 123 },
-        { trash_name: "b.456.md", original_path: "b.md", deleted_at: 456 },
-      ],
-    });
-
-    await act(async () => {
-      await useWorkspaceStore.getState().emptyTrash();
-    });
-
-    expect(useWorkspaceStore.getState().trashItems).toHaveLength(0);
-  });
 });
 
 describe("getRecentWorkspaces", () => {

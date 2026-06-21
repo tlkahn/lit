@@ -4,19 +4,6 @@ import { useEffect, useRef } from "react";
 import { readPage, previewSplit } from "./ipc";
 import type { PageContent, SplitPlan } from "./ipc";
 
-export async function showTrashContextMenu(trashName: string): Promise<void> {
-  return invoke<void>("show_trash_context_menu", { trashName });
-}
-
-interface TrashContextPayload {
-  trash_name: string;
-}
-
-interface TrashContextMenuHandlers {
-  onRestore: (trashName: string) => void;
-  onPurge: (trashName: string) => void;
-}
-
 export async function showSidebarContextMenu(relativePath: string): Promise<void> {
   return invoke<void>("show_sidebar_context_menu", { relativePath });
 }
@@ -101,33 +88,6 @@ export function useMindmapContextMenu(handlers: MindmapContextMenuHandlers) {
     unlisteners.push(
       listen<MindmapContextPayload>("context-menu://mindmap/export-network", (event) => {
         if (!cancelled) handlersRef.current.onExportNetwork(event.payload.node_id);
-      }),
-    );
-
-    return () => {
-      cancelled = true;
-      for (const p of unlisteners) p.then((u) => u());
-    };
-  }, []);
-}
-
-export function useTrashContextMenu(handlers: TrashContextMenuHandlers) {
-  const handlersRef = useRef(handlers);
-  handlersRef.current = handlers;
-
-  useEffect(() => {
-    let cancelled = false;
-    const unlisteners: Array<Promise<() => void>> = [];
-
-    unlisteners.push(
-      listen<TrashContextPayload>("context-menu://trash/restore", (event) => {
-        if (!cancelled) handlersRef.current.onRestore(event.payload.trash_name);
-      }),
-    );
-
-    unlisteners.push(
-      listen<TrashContextPayload>("context-menu://trash/purge", (event) => {
-        if (!cancelled) handlersRef.current.onPurge(event.payload.trash_name);
       }),
     );
 
