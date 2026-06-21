@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { usePaneStore, findLeaf, collectLeaves, type PaneNode } from "./panes";
+import { useWorkspaceStore } from "./workspace";
 
 const MAX_ENTRIES = 50;
 
@@ -22,6 +23,17 @@ export interface PaneHistoryStore {
 
 let _isHistoryNavigation = false;
 
+/**
+ * Check whether a page still exists in the workspace.
+ * When pages is empty (not yet loaded), assume all entries are valid
+ * to avoid breaking navigation before the workspace finishes loading.
+ */
+function pageExists(path: string): boolean {
+  const pages = useWorkspaceStore.getState().pages;
+  if (pages.length === 0) return true;
+  return pages.some((p) => p.relative_path === path);
+}
+
 function navigate(
   get: () => PaneHistoryStore,
   set: (s: Partial<PaneHistoryStore>) => void,
@@ -30,14 +42,75 @@ function navigate(
 ): string | null {
   const stack = get().stacks.get(paneId);
   if (!stack) return null;
-  const newIndex = stack.index + delta;
-  if (newIndex < 0 || newIndex >= stack.entries.length) return null;
-  const target = stack.entries[newIndex]!;
+
+  const entries = [...stack.entries];
+  const deadIndices: number[] = [];
+  let scanIdx = stack.index + delta;
+  let targetIdx = -1;
+
+  // Scan in the requested direction, collecting dead entries, stopping at first live one.
+  while (scanIdx >= 0 && scanIdx < entries.length) {
+    if (pageExists(entries[scanIdx]!)) {
+      targetIdx = scanIdx;
+      break;
+    }
+    deadIndices.push(scanIdx);
+    scanIdx += delta;
+  }
+
+  // Nothing to prune and no valid target -- boundary reached (same as old behavior).
+  if (deadIndices.length === 0 && targetIdx === -1) return null;
+
+  // Prune dead entries if any were found.
+  if (deadIndices.length > 0) {
+    // Sort descending so splice indices remain valid during removal.
+    for (const i of deadIndices.sort((a, b) => b - a)) {
+      entries.splice(i, 1);
+    }
+    // Recompute the current index: subtract the count of removed entries
+    // that were at positions <= the original index.
+    const removedBeforeCurrent = deadIndices.filter((i) => i <= stack.index).length;
+    const adjustedCurrentIndex = stack.index - removedBeforeCurrent;
+
+    if (targetIdx === -1) {
+      // No valid target in this direction -- commit the prune and no-op.
+      const newIndex = Math.max(0, Math.min(adjustedCurrentIndex, entries.length - 1));
+      const stacks = new Map(get().stacks);
+      if (entries.length === 0) {
+        stacks.delete(paneId);
+      } else {
+        stacks.set(paneId, { entries, index: newIndex });
+      }
+      set({ stacks });
+      return null;
+    }
+
+    // Recompute targetIdx in the pruned array: subtract the count of removed
+    // entries that were at positions before the original target index.
+    const removedBeforeTarget = deadIndices.filter((i) => i < targetIdx).length;
+    targetIdx -= removedBeforeTarget;
+  }
+
+  const target = entries[targetIdx]!;
+
+  // Existing pane-leaf guard (unchanged behavior).
   const paneState = usePaneStore.getState();
   const leaf = findLeaf(paneState.root, paneId);
-  if (!leaf || leaf.pagePath === target) return null;
+  if (!leaf || leaf.pagePath === target) {
+    // Still commit pruning even if we cannot navigate.
+    if (deadIndices.length > 0) {
+      const removedBeforeCurrent = deadIndices.filter((i) => i <= stack.index).length;
+      const adjustedCurrentIndex = stack.index - removedBeforeCurrent;
+      const newIndex = Math.max(0, Math.min(adjustedCurrentIndex, entries.length - 1));
+      const stacks = new Map(get().stacks);
+      stacks.set(paneId, { entries, index: newIndex });
+      set({ stacks });
+    }
+    return null;
+  }
+
   const stacks = new Map(get().stacks);
-  stacks.set(paneId, { ...stack, index: newIndex });
+  stacks.set(paneId, { entries, index: targetIdx });
   set({ stacks });
   try {
     _isHistoryNavigation = true;

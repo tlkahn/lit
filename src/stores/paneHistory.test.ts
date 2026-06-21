@@ -8,6 +8,7 @@ import {
 } from "./paneHistory";
 import type { PaneHistoryStack } from "./paneHistory";
 import { usePaneStore } from "./panes";
+import { useWorkspaceStore } from "./workspace";
 
 function resetStore() {
   usePaneHistoryStore.setState({ stacks: new Map() });
@@ -15,6 +16,9 @@ function resetStore() {
     root: { type: "leaf", id: "p1", pagePath: null },
     focusedPaneId: "p1",
   });
+  // Reset workspace pages so the pageExists guard (empty => all valid) is active
+  // by default. Tests that need specific pages call setWorkspacePages explicitly.
+  useWorkspaceStore.setState({ pages: [] });
 }
 
 describe("paneHistory", () => {
@@ -587,6 +591,130 @@ describe("paneHistory", () => {
       // If the flag was stuck true, d.md would NOT be pushed
       const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
       expect(stack.entries).toContain("d.md");
+    });
+  });
+
+  describe("navigate skips deleted pages", () => {
+    function setWorkspacePages(paths: string[]) {
+      useWorkspaceStore.setState({
+        pages: paths.map((p) => ({
+          title: p,
+          relative_path: p,
+          frontmatter: {},
+          created_at: null,
+          modified_at: null,
+          file_type: "markdown" as const,
+        })),
+      });
+    }
+
+    it("goBack skips a single deleted intermediate page", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      store.pushPage("p1", "c.md");
+      // b.md deleted from workspace
+      setWorkspacePages(["a.md", "c.md"]);
+      const target = usePaneHistoryStore.getState().goBack("p1");
+      expect(target).toBe("a.md");
+      const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
+      expect(stack.entries).toEqual(["a.md", "c.md"]);
+      expect(stack.index).toBe(0);
+    });
+
+    it("goForward skips a single deleted intermediate page", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      store.pushPage("p1", "c.md");
+      // Go back twice to index 0
+      usePaneHistoryStore.getState().goBack("p1");
+      usePaneHistoryStore.getState().goBack("p1");
+      // b.md deleted from workspace
+      setWorkspacePages(["a.md", "c.md"]);
+      const target = usePaneHistoryStore.getState().goForward("p1");
+      expect(target).toBe("c.md");
+      const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
+      expect(stack.entries).toEqual(["a.md", "c.md"]);
+      expect(stack.index).toBe(1);
+    });
+
+    it("goBack skips multiple consecutive deleted pages", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      store.pushPage("p1", "c.md");
+      store.pushPage("p1", "d.md");
+      // b.md and c.md deleted
+      setWorkspacePages(["a.md", "d.md"]);
+      const target = usePaneHistoryStore.getState().goBack("p1");
+      expect(target).toBe("a.md");
+      const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
+      expect(stack.entries).toEqual(["a.md", "d.md"]);
+      expect(stack.index).toBe(0);
+    });
+
+    it("goBack returns null when all back entries are deleted", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      store.pushPage("p1", "c.md");
+      // a.md and b.md deleted
+      setWorkspacePages(["c.md"]);
+      const target = usePaneHistoryStore.getState().goBack("p1");
+      expect(target).toBeNull();
+      const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
+      expect(stack.entries).toEqual(["c.md"]);
+      expect(stack.index).toBe(0);
+    });
+
+    it("goForward returns null when all forward entries are deleted", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      store.pushPage("p1", "c.md");
+      // Go back twice to index 0
+      usePaneHistoryStore.getState().goBack("p1");
+      usePaneHistoryStore.getState().goBack("p1");
+      // b.md and c.md deleted
+      setWorkspacePages(["a.md"]);
+      const target = usePaneHistoryStore.getState().goForward("p1");
+      expect(target).toBeNull();
+      const stack = usePaneHistoryStore.getState().stacks.get("p1")!;
+      expect(stack.entries).toEqual(["a.md"]);
+      expect(stack.index).toBe(0);
+    });
+
+    it("navigate prunes dead entries and canGoBack/canGoForward reflect reality after prune", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      // a.md deleted
+      setWorkspacePages(["b.md"]);
+      // Before navigation, canGoBack is stale (still reports true)
+      expect(usePaneHistoryStore.getState().canGoBack("p1")).toBe(true);
+      // Navigate triggers pruning
+      const target = usePaneHistoryStore.getState().goBack("p1");
+      expect(target).toBeNull();
+      // After pruning, canGoBack reflects reality
+      expect(usePaneHistoryStore.getState().canGoBack("p1")).toBe(false);
+    });
+
+    it("existing pages navigate exactly as before (no regression)", () => {
+      const store = usePaneHistoryStore.getState();
+      store.pushPage("p1", "a.md");
+      store.pushPage("p1", "b.md");
+      store.pushPage("p1", "c.md");
+      // All pages exist
+      setWorkspacePages(["a.md", "b.md", "c.md"]);
+      const back1 = usePaneHistoryStore.getState().goBack("p1");
+      expect(back1).toBe("b.md");
+      const back2 = usePaneHistoryStore.getState().goBack("p1");
+      expect(back2).toBe("a.md");
+      const fwd1 = usePaneHistoryStore.getState().goForward("p1");
+      expect(fwd1).toBe("b.md");
+      const fwd2 = usePaneHistoryStore.getState().goForward("p1");
+      expect(fwd2).toBe("c.md");
     });
   });
 
