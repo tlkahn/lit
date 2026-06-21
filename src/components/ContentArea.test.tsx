@@ -52,6 +52,7 @@ const samplePage = {
     created_at: 1000,
     modified_at: 2000,
     file_type: 'markdown' as const,
+    has_companion: false,
   },
 };
 
@@ -65,6 +66,7 @@ const otherPage = {
     created_at: 1000,
     modified_at: 2000,
     file_type: 'markdown' as const,
+    has_companion: false,
   },
 };
 
@@ -383,6 +385,7 @@ const multiHeadingPage = {
     created_at: 1000,
     modified_at: 2000,
     file_type: 'markdown' as const,
+    has_companion: false,
   },
 };
 
@@ -770,6 +773,7 @@ describe("ContentArea PDF rendering", () => {
       created_at: 1000,
       modified_at: 2000,
       file_type: "pdf" as const,
+      has_companion: false,
     };
     useWorkspaceStore.setState({
       workspacePath: "/test",
@@ -804,6 +808,7 @@ describe("ContentArea PDF rendering", () => {
       created_at: 1000,
       modified_at: 2000,
       file_type: "pdf" as const,
+      has_companion: false,
     };
     useWorkspaceStore.setState({
       workspacePath: "/test",
@@ -846,6 +851,7 @@ describe("ContentArea PDF rendering", () => {
       created_at: 1000,
       modified_at: 2000,
       file_type: "pdf" as const,
+      has_companion: false,
     };
     useWorkspaceStore.setState({
       workspacePath: "/test",
@@ -879,6 +885,7 @@ describe("ContentArea PDF rendering", () => {
       created_at: 1000,
       modified_at: 2000,
       file_type: "pdf" as const,
+      has_companion: false,
     };
     useWorkspaceStore.setState({
       workspacePath: "/test",
@@ -1394,6 +1401,7 @@ describe("ContentArea code file rendering", () => {
     created_at: 1000,
     modified_at: 2000,
     file_type: "code" as const,
+    has_companion: false,
   };
 
   function setupCodePane() {

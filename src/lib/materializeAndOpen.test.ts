@@ -51,6 +51,7 @@ describe("materializeAndOpen", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown" as const,
+      has_companion: false,
     };
     const recordDeparture = vi.fn();
     const callOrder: string[] = [];
@@ -97,6 +98,7 @@ describe("materializeAndOpen", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown" as const,
+      has_companion: false,
     };
     materializeMock.mockResolvedValueOnce(meta);
 
@@ -126,6 +128,7 @@ describe("materializeAndOpen", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown" as const,
+      has_companion: false,
     };
     const newMeta = {
       title: "New",
@@ -134,6 +137,7 @@ describe("materializeAndOpen", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown" as const,
+      has_companion: false,
     };
     materializeMock.mockResolvedValueOnce(newMeta);
 

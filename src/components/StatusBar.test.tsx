@@ -462,7 +462,7 @@ describe("StatusBar", () => {
         workspacePath: "/test",
         graphReady: true,
         pages: [
-          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const },
+          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const, has_companion: false },
         ],
       });
       usePaneStore.setState({
@@ -479,7 +479,7 @@ describe("StatusBar", () => {
         workspacePath: "/test",
         graphReady: true,
         pages: [
-          { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+          { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
         ],
       });
       usePaneStore.setState({
@@ -496,7 +496,7 @@ describe("StatusBar", () => {
         workspacePath: "/test",
         graphReady: true,
         pages: [
-          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const },
+          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const, has_companion: false },
         ],
       });
       usePaneStore.setState({
@@ -512,7 +512,7 @@ describe("StatusBar", () => {
         workspacePath: "/test",
         graphReady: true,
         pages: [
-          { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+          { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
         ],
       });
       usePaneStore.setState({
@@ -528,7 +528,7 @@ describe("StatusBar", () => {
         workspacePath: "/test",
         graphReady: true,
         pages: [
-          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const },
+          { title: "refs", relative_path: "lib/refs.bib", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "code" as const, has_companion: false },
         ],
       });
       usePaneStore.setState({
@@ -553,6 +553,7 @@ describe("StatusBar", () => {
             created_at: 1000,
             modified_at: 1000,
             file_type: "markdown" as const,
+            has_companion: false,
           };
         }
         throw new Error(`Unknown command: ${cmd}`);
@@ -596,6 +597,7 @@ describe("StatusBar", () => {
             created_at: 1000,
             modified_at: 1000,
             file_type: "markdown" as const,
+            has_companion: false,
           },
         ],
       });
@@ -635,7 +637,7 @@ describe("StatusBar", () => {
   describe("PDF page nav", () => {
     it("renders ‹ N/M › when a PDF pane is focused and has currentPage + pageCount", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -652,7 +654,7 @@ describe("StatusBar", () => {
 
     it("returns null when focused pane is not a PDF", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "md", pagePath: "notes/hello.md" },
@@ -664,7 +666,7 @@ describe("StatusBar", () => {
 
     it("prev disabled on page 0, next disabled on last page", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -689,7 +691,7 @@ describe("StatusBar", () => {
       const goToPage = vi.fn();
       pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -712,7 +714,7 @@ describe("StatusBar", () => {
       const goToPage = vi.fn();
       pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -741,7 +743,7 @@ describe("StatusBar", () => {
       pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
       pdfPaneRef.registerPdfCurrentPage("pdf", () => livePage);
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -766,7 +768,7 @@ describe("StatusBar", () => {
       pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
       pdfPaneRef.registerPdfCurrentPage("pdf", () => livePage);
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -811,7 +813,7 @@ describe("StatusBar", () => {
       });
 
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
@@ -858,8 +860,8 @@ describe("StatusBar", () => {
 
     it("renders page nav when a markdown pane is focused but linked to a PDF pane", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: {
@@ -888,8 +890,8 @@ describe("StatusBar", () => {
       const goToPage = vi.fn();
       pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const },
+        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
+        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: {
@@ -920,7 +922,7 @@ describe("StatusBar", () => {
 
     it("returns null when a markdown pane is focused with no linked PDF", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const },
+        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
       ] });
       usePaneStore.setState({
         root: { type: "leaf", id: "md", pagePath: "notes/hello.md" },

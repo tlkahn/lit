@@ -14,6 +14,7 @@ function page(title: string, overrides?: Partial<PageMeta>): PageMeta {
     created_at: null,
     modified_at: null,
     file_type: "markdown",
+    has_companion: false,
     ...overrides,
   };
 }

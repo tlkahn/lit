@@ -15,6 +15,7 @@ function makeRoot(
       created_at: null,
       modified_at: null,
       file_type: 'markdown' as const,
+      has_companion: false,
     })),
     children: children ?? new Map(),
   };
@@ -33,6 +34,7 @@ function makeFolder(
       created_at: null,
       modified_at: null,
       file_type: 'markdown' as const,
+      has_companion: false,
     })),
     children: children ?? new Map(),
   };

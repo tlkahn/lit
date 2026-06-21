@@ -61,6 +61,7 @@ pub fn scan_pages(root: &Path) -> Result<Vec<PageMeta>, WorkspaceError> {
             created_at,
             modified_at,
             file_type,
+            has_companion: false,
         });
     }
 

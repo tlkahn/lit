@@ -13,6 +13,7 @@ export interface PageMeta {
   created_at: number | null;
   modified_at: number | null;
   file_type: 'markdown' | 'pdf' | 'code';
+  has_companion: boolean;
 }
 
 export interface PageContent {

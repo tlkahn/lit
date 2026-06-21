@@ -16,6 +16,7 @@ const samplePages = [
     created_at: 1000,
     modified_at: 2000,
     file_type: 'markdown' as const,
+    has_companion: false,
   },
   {
     title: "Page B",
@@ -24,6 +25,7 @@ const samplePages = [
     created_at: 1000,
     modified_at: 2000,
     file_type: 'markdown' as const,
+    has_companion: false,
   },
 ];
 
@@ -62,6 +64,7 @@ describe("WorkspaceStore", () => {
             created_at: 3000,
             modified_at: 3000,
             file_type: 'markdown',
+            has_companion: false,
           };
         case "rename_page":
           return `${(args as Record<string, unknown>)?.newName as string}.md`;

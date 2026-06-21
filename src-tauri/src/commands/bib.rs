@@ -361,6 +361,7 @@ pub async fn materialize_citation(
         created_at,
         modified_at,
         file_type: FileType::Markdown,
+        has_companion: false,
     };
 
     // 15. Reindex

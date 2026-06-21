@@ -24,6 +24,8 @@ pub struct PageMeta {
     pub modified_at: Option<u64>,
     #[serde(default)]
     pub file_type: FileType,
+    #[serde(default)]
+    pub has_companion: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +93,7 @@ mod tests {
             created_at: None,
             modified_at: None,
             file_type: FileType::Pdf,
+            has_companion: false,
         };
         let json = serde_json::to_string(&meta).unwrap();
         assert!(json.contains("\"file_type\":\"pdf\""));

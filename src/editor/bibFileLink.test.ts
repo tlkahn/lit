@@ -192,7 +192,7 @@ describe("click handler — decoration hit-testing", () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({
       selectPage,
-      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const }],
+      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const, has_companion: false }],
     });
 
     const doc = "  file = {papers/foo.pdf},";
@@ -306,7 +306,7 @@ describe("click handler — decoration hit-testing", () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({
       selectPage,
-      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const }],
+      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const, has_companion: false }],
     });
 
     const doc = "  file = {papers/foo.pdf},";
@@ -339,7 +339,7 @@ describe("click handler — decoration hit-testing", () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({
       selectPage,
-      pages: [{ relative_path: "refs/assets/doc.pdf", title: "doc", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const }],
+      pages: [{ relative_path: "refs/assets/doc.pdf", title: "doc", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const, has_companion: false }],
     });
 
     const doc = '  file = "assets/doc.pdf",';
@@ -1214,7 +1214,7 @@ describe("click handler — URL/DOI fields", () => {
     const selectPage = vi.fn();
     useWorkspaceStore.setState({
       selectPage,
-      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const }],
+      pages: [{ relative_path: "refs/papers/foo.pdf", title: "foo", frontmatter: {}, created_at: null, modified_at: null, file_type: "pdf" as const, has_companion: false }],
     });
 
     const doc = "  file = {papers/foo.pdf},\n  url = {https://example.com},";

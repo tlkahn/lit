@@ -65,6 +65,7 @@ vi.mock("../../lib/materializeAndOpen", () => ({
     created_at: null,
     modified_at: null,
     file_type: "markdown",
+    has_companion: false,
   })),
 }));
 
@@ -455,6 +456,7 @@ describe("F3: cache-invalidation-gaps", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown",
+      has_companion: false,
     });
     invalidateBibKeyStatesCache();
 
@@ -1079,6 +1081,7 @@ describe("F7: materialize-and-open shared helper", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown",
+      has_companion: false,
     });
     invalidateBibKeyStatesCache();
 
@@ -1130,6 +1133,7 @@ describe("F7: materialize-and-open shared helper", () => {
         created_at: null,
         modified_at: null,
         file_type: "markdown",
+        has_companion: false,
       };
     });
     invalidateBibKeyStatesCache();
@@ -1166,6 +1170,7 @@ describe("F7: materialize-and-open shared helper", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown",
+      has_companion: false,
     });
     invalidateBibKeyStatesCache();
 
@@ -1213,6 +1218,7 @@ describe("F7: materialize-and-open shared helper", () => {
         created_at: null,
         modified_at: null,
         file_type: "markdown" as const,
+        has_companion: false,
       };
       // The real materializeAndOpen calls setState -- we verify it was called
       (useWorkspaceStore.setState as ReturnType<typeof vi.fn>)(
