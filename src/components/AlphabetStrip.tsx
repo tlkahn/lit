@@ -150,7 +150,7 @@ export function AlphabetStrip({
       {dragState && (
         <div
           data-testid="alphabet-float-indicator"
-          className="pointer-events-none absolute right-5 flex h-10 w-10 items-center justify-center rounded-full bg-interactive-accent text-lg font-bold text-white"
+          className="pointer-events-none absolute right-5 flex h-10 w-10 items-center justify-center rounded-full bg-interactive-accent text-lg font-bold text-text-on-accent"
           style={{ top: Math.max(0, dragState.y - 20) }}
         >
           {dragState.letter}

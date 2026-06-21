@@ -42,7 +42,7 @@ export function ConfirmDeleteDialog({ open, nodeName, childCount, onConfirm, onC
             Cancel
           </button>
           <button
-            className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:opacity-90"
+            className="rounded bg-destructive px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90"
             onClick={onConfirm}
             data-testid="confirm-delete-btn"
           >

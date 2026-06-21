@@ -37,7 +37,7 @@ export function GraphDeleteDialog({ deleteConfirm, onClose }: GraphDeleteDialogP
             Cancel
           </button>
           <button
-            className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:opacity-90"
+            className="rounded bg-destructive px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90"
             data-testid="confirm-delete-btn"
             onClick={async () => {
               const ids = deleteConfirm.nodeIds;

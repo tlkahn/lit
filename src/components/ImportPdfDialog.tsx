@@ -411,7 +411,7 @@ export function ImportPdfDialog({ open, onClose, onImported, initialPdfPath }: I
               data-testid="import-pdf-confirm-save-btn"
               disabled={saving}
               onClick={handleConfirmSave}
-              className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+              className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-50"
             >
               {saving ? "Saving..." : "Save"}
             </button>

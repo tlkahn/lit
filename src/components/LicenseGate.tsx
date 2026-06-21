@@ -86,7 +86,7 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
         </p>
         <div className="flex gap-3">
           <button
-            className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:opacity-90"
+            className="rounded bg-interactive-accent px-4 py-2 text-sm text-text-on-accent hover:opacity-90"
             onClick={() => openUrl("https://lit.solar/buy")}
             data-testid="splash-buy-license"
           >

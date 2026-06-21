@@ -334,7 +334,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
 
   if (error) {
     return (
-      <div data-testid="shortcuts-error" className="py-8 text-center text-sm text-red-500">
+      <div data-testid="shortcuts-error" className="py-8 text-center text-sm text-text-error">
         Failed to load shortcuts
       </div>
     );
@@ -382,7 +382,7 @@ export function KeyboardShortcutsPanel({ platform }: KeyboardShortcutsPanelProps
           <div className="flex gap-2">
             <button
               data-testid="reset-all-confirm-btn"
-              className="rounded bg-interactive-accent px-2 py-1 text-xs text-white"
+              className="rounded bg-interactive-accent px-2 py-1 text-xs text-text-on-accent"
               onClick={handleResetAll}
             >
               Confirm

@@ -198,14 +198,14 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
         <div className="flex gap-1 px-5 pb-3">
           <button
             data-testid="add-reference-mode-doi"
-            className={`rounded px-3 py-1 text-sm ${mode === "doi" ? "bg-interactive-accent text-white" : "text-text-muted hover:bg-bg-secondary"}`}
+            className={`rounded px-3 py-1 text-sm ${mode === "doi" ? "bg-interactive-accent text-text-on-accent" : "text-text-muted hover:bg-bg-secondary"}`}
             onClick={() => setMode("doi")}
           >
             DOI
           </button>
           <button
             data-testid="add-reference-mode-import"
-            className={`rounded px-3 py-1 text-sm ${mode === "import" ? "bg-interactive-accent text-white" : "text-text-muted hover:bg-bg-secondary"}`}
+            className={`rounded px-3 py-1 text-sm ${mode === "import" ? "bg-interactive-accent text-text-on-accent" : "text-text-muted hover:bg-bg-secondary"}`}
             onClick={() => setMode("import")}
           >
             Import
@@ -233,7 +233,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
                     data-testid="add-reference-lookup-btn"
                     disabled={!doi.trim() || looking}
                     onClick={handleLookup}
-                    className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                    className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-50"
                   >
                     {looking ? "Looking up..." : "Lookup"}
                   </button>
@@ -323,7 +323,7 @@ export function AddReferenceDialog({ open, onClose, onSaved }: AddReferenceDialo
             data-testid="add-reference-save-btn"
             disabled={!canSave}
             onClick={mode === "doi" ? handleSave : handleImport}
-            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {saving
               ? mode === "doi"

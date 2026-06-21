@@ -186,7 +186,7 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
                 <button
                   data-testid="ocr-overwrite-yes"
                   onClick={handleConfirmOverwrite}
-                  className="rounded bg-interactive-accent px-3 py-1 text-sm text-white hover:opacity-90"
+                  className="rounded bg-interactive-accent px-3 py-1 text-sm text-text-on-accent hover:opacity-90"
                 >
                   Overwrite
                 </button>
@@ -234,7 +234,7 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
             data-testid="ocr-start-btn"
             disabled={processing || overwriteConfirm}
             onClick={() => handleStartOcr(false)}
-            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {processing ? "Processing..." : "Start OCR"}
           </button>

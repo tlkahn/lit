@@ -480,7 +480,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
                 }}
               />
               {yamlError && (
-                <p className="mt-1 text-xs text-red-500" data-testid="yaml-error">
+                <p className="mt-1 text-xs text-text-error" data-testid="yaml-error">
                   {yamlError}
                 </p>
               )}

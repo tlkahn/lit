@@ -300,7 +300,7 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
             data-testid="academic-export-btn"
             disabled={!outputPath || exporting}
             onClick={handleExport}
-            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {exporting ? "Exporting..." : `Export to ${FORMAT_LABELS[format]}`}
           </button>

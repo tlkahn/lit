@@ -113,7 +113,7 @@ export function CustomProviderForm({ initial, onCancel, onSaved }: CustomProvide
       </label>
 
       {error && (
-        <p className="text-sm text-red-500" data-testid="custom-provider-error">
+        <p className="text-sm text-text-error" data-testid="custom-provider-error">
           {error}
         </p>
       )}
@@ -131,7 +131,7 @@ export function CustomProviderForm({ initial, onCancel, onSaved }: CustomProvide
           type="button"
           data-testid="custom-provider-save"
           onClick={handleSave}
-          className="rounded bg-accent px-3 py-1 text-sm text-white hover:opacity-90"
+          className="rounded bg-accent px-3 py-1 text-sm text-text-on-accent hover:opacity-90"
         >
           Save
         </button>

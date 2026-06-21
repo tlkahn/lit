@@ -234,7 +234,7 @@ export function MergePreviewDialog({
             Cancel
           </button>
           <button
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-50"
             onClick={handleConfirm}
             disabled={confirming}
             data-testid="merge-confirm-btn"

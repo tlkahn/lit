@@ -68,7 +68,7 @@ export function LicenseEntryDialog({ open, onClose }: LicenseEntryDialogProps) {
           data-testid="license-entry-input"
         />
         {error && (
-          <p className="mb-3 text-xs text-red-500" data-testid="license-entry-error">
+          <p className="mb-3 text-xs text-text-error" data-testid="license-entry-error">
             {error}
           </p>
         )}
@@ -81,7 +81,7 @@ export function LicenseEntryDialog({ open, onClose }: LicenseEntryDialogProps) {
             Cancel
           </button>
           <button
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-40"
             onClick={handleActivate}
             disabled={key.trim().length === 0 || submitting}
             data-testid="license-entry-activate"

@@ -376,7 +376,7 @@ export function AnnotationBuilderModal({
             </button>
           )}
           <button
-            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90"
             data-testid="annotation-insert-btn"
             onClick={handleInsert}
           >

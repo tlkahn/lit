@@ -97,7 +97,7 @@ export function PassphraseModal() {
           autoFocus
         />
         {error && (
-          <p className="mb-3 text-xs text-red-500" data-testid="passphrase-modal-error">
+          <p className="mb-3 text-xs text-text-error" data-testid="passphrase-modal-error">
             {error}
           </p>
         )}
@@ -110,7 +110,7 @@ export function PassphraseModal() {
             Cancel
           </button>
           <button
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+            className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90 disabled:opacity-40"
             onClick={handleSubmit}
             disabled={!canSubmit}
             data-testid="passphrase-modal-submit"

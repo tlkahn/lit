@@ -572,7 +572,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         className="flex flex-1 items-center justify-center bg-bg-primary-alt"
         data-testid="pdf-error"
       >
-        <p className="text-red-500">{error}</p>
+        <p className="text-text-error">{error}</p>
       </main>
     );
   }

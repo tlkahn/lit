@@ -17,7 +17,7 @@ export function ToggleSwitch({ checked, onChange, testId, label }: ToggleSwitchP
         className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors ${
           checked
             ? "border-transparent bg-toggle-active"
-            : "border-border bg-white dark:bg-[#1c2128]"
+            : "border-border bg-bg-secondary"
         }`}
       >
         <span

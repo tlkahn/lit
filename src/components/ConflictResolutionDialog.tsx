@@ -70,7 +70,7 @@ export function ConflictResolutionDialog({
           </button>
           {!isMenuConflict && (
             <button
-              className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
+              className="rounded bg-interactive-accent px-3 py-1.5 text-sm text-text-on-accent hover:opacity-90"
               onClick={onRebind}
               data-testid="conflict-rebind-btn"
             >

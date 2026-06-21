@@ -196,7 +196,7 @@ export function EnrichCandidatePicker({
                   data-testid="enrich-apply-btn"
 
                   onClick={() => onApply(candidate)}
-                  className="shrink-0 rounded bg-interactive-accent px-3 py-1.5 text-xs text-white hover:opacity-90"
+                  className="shrink-0 rounded bg-interactive-accent px-3 py-1.5 text-xs text-text-on-accent hover:opacity-90"
                 >
                   Apply
                 </button>
