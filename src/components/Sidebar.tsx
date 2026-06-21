@@ -197,23 +197,15 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
       ensureSidebarVisible();
       setTab("files");
 
-      // Try to reveal without clearing the search filter first.
-      // Check the current rows (via ref) to see if the target is already
-      // visible in the filtered tree, since revealPath's closure over `root`
-      // may be stale relative to the latest rendered rows.
-      const currentRows = rowsRef.current;
-      const visibleIdx = currentRows.findIndex(
-        (r) => r.type === "page" && r.page.relative_path === relativePath,
-      );
+      // revealPath expands ancestor folders synchronously and returns the
+      // target's row index. Returns -1 only when the file is absent from
+      // the current tree (filtered out by search).
+      const idx = revealPath(relativePath);
 
-      if (visibleIdx >= 0) {
-        // Target is visible in the (possibly filtered) tree -- reveal it
-        // by expanding ancestors and scrolling, without clearing search.
-        const idx = revealPath(relativePath);
-        triggerReveal(relativePath, idx >= 0 ? idx : visibleIdx);
+      if (idx >= 0) {
+        triggerReveal(relativePath, idx);
       } else {
-        // Target is filtered out -- clear search and defer the reveal
-        // until React re-renders with the unfiltered tree.
+        // Target is filtered out — clear search and defer.
         setSearch("");
         pendingRevealRef.current = relativePath;
       }
