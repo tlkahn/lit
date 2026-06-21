@@ -83,9 +83,13 @@ export function findBibKeyForPage(
   const matches = Object.keys(states).filter(
     (k) => states[k]?.page_id === relativePath,
   );
-  if (matches.length === 0) return undefined;
-  matches.sort();
-  return matches[0];
+  if (matches.length > 0) {
+    matches.sort();
+    return matches[0];
+  }
+  const stem = relativePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
+  if (stem && states[stem] != null) return stem;
+  return undefined;
 }
 
 function combinedText(entry: BibEntry): string {
@@ -757,16 +761,17 @@ export function ReferenceLibrary() {
       const states = bibKeyStatesRef.current;
       const citekey = findBibKeyForPage(states, relativePath);
       if (!citekey) {
-        // If states haven't loaded yet (empty), defer the reveal
         if (Object.keys(states).length === 0) {
           pendingRevealForPageRef.current = relativePath;
+        } else {
+          show("No matching reference found for this page");
         }
         return;
       }
       pendingRevealForPageRef.current = null;
       revealEntry(citekey);
     });
-  }, [revealEntry]);
+  }, [revealEntry, show]);
 
   // Retry deferred reveal-for-page when bibKeyStates become available
   useEffect(() => {
@@ -776,8 +781,10 @@ export function ReferenceLibrary() {
     pendingRevealForPageRef.current = null;
     if (citekey) {
       revealEntry(citekey);
+    } else {
+      show("No matching reference found for this page");
     }
-  }, [bibKeyStates, revealEntry]);
+  }, [bibKeyStates, revealEntry, show]);
 
   const addButton = (
     <button

@@ -3779,6 +3779,35 @@ describe("findBibKeyForPage", () => {
     expect(findBibKeyForPage(states, "notes/foo.md")).toBe("alpha2020");
   });
 
+  it("falls back to stem match when no page_id matches", () => {
+    const states: Record<string, BibKeyState> = {
+      marugn2001: { materialization: "created", page_id: null },
+      other2022: { materialization: "created", page_id: "notes/other.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/marugn2001.md")).toBe("marugn2001");
+  });
+
+  it("prefers exact page_id match over stem match", () => {
+    const states: Record<string, BibKeyState> = {
+      foo2020: { materialization: "created", page_id: "notes/foo2020.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/foo2020.md")).toBe("foo2020");
+  });
+
+  it("stem match works for nested paths", () => {
+    const states: Record<string, BibKeyState> = {
+      deep2023: { materialization: "created", page_id: null },
+    };
+    expect(findBibKeyForPage(states, "a/b/c/deep2023.md")).toBe("deep2023");
+  });
+
+  it("returns undefined when stem does not match any citekey", () => {
+    const states: Record<string, BibKeyState> = {
+      alpha2020: { materialization: "created", page_id: null },
+    };
+    expect(findBibKeyForPage(states, "notes/nomatch.md")).toBeUndefined();
+  });
+
   it("ignores citekeys with null page_id", () => {
     const states: Record<string, BibKeyState> = {
       nullEntry: { materialization: "created", page_id: null },
