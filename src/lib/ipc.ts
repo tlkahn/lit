@@ -555,6 +555,14 @@ export async function checkOcrTargetExists(
   return invoke<boolean>("check_ocr_target_exists", { key, workspacePath });
 }
 
+export async function isOcrCompanionCurrent(
+  key: string,
+  workspacePath: string,
+  pdfRelative: string,
+): Promise<boolean> {
+  return invoke<boolean>("is_ocr_companion_current", { key, workspacePath, pdfRelative });
+}
+
 // PDF recognition
 
 export type ConfirmReason = "no_text_layer" | "no_identifier" | "no_match" | "offline_error";

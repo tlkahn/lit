@@ -33,6 +33,7 @@ interface BibEntryActionsProps {
   downloadingKey: string | null;
   downloadProgress: { bytes: number; total: number | null } | null;
   linkingKey: string | null;
+  ocrCompanionCurrent?: boolean;
 }
 
 const TRIGGER_WIDTH = 28;
@@ -47,6 +48,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
     onCopyCitation, onDownloadPdf, onLinkPdf,
     materializingKey, enrichingKey, enrichPhase,
     downloadingKey, downloadProgress, linkingKey,
+    ocrCompanionCurrent,
   } = props;
 
   const actions = useMemo<BibActionDescriptor[]>(() => {
@@ -100,13 +102,15 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         onClick: () => onOpenPdf(entry.file!),
         testId: "open-pdf-btn",
       });
-      list.push({
-        key: "ocr",
-        icon: "󱄄",
-        label: "OCR to Markdown",
-        onClick: () => onOcr(entry),
-        testId: "ocr-btn",
-      });
+      if (!ocrCompanionCurrent) {
+        list.push({
+          key: "ocr",
+          icon: "󱄄",
+          label: "OCR to Markdown",
+          onClick: () => onOcr(entry),
+          testId: "ocr-btn",
+        });
+      }
     }
 
     list.push({
@@ -160,6 +164,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
     onCopyCitation, onDownloadPdf, onLinkPdf,
     materializingKey, enrichingKey, enrichPhase,
     downloadingKey, downloadProgress, linkingKey,
+    ocrCompanionCurrent,
   ]);
 
   const containerRef = useRef<HTMLDivElement>(null);

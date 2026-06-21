@@ -8,6 +8,7 @@ import {
   emitMockEvent,
   mockOnDragDropEvent,
   emitDragDropEvent,
+  mockDialogOpen,
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -2362,6 +2363,7 @@ describe("ReferenceLibrary", () => {
       handlers?: {
         checkOcrTargetExists?: (cmd: string, args: unknown) => unknown;
         ocrPdfToMarkdown?: (cmd: string, args: unknown) => unknown;
+        isOcrCompanionCurrent?: (cmd: string, args: unknown) => unknown;
       },
     ) {
       mockInvoke((cmd, args) => {
@@ -2373,10 +2375,15 @@ describe("ReferenceLibrary", () => {
           if (handlers?.checkOcrTargetExists) return handlers.checkOcrTargetExists(cmd, args as unknown);
           return false;
         }
+        if (cmd === "is_ocr_companion_current") {
+          if (handlers?.isOcrCompanionCurrent) return handlers.isOcrCompanionCurrent(cmd, args as unknown);
+          return false;
+        }
         if (cmd === "ocr_pdf_to_markdown") {
           if (handlers?.ocrPdfToMarkdown) return handlers.ocrPdfToMarkdown(cmd, args as unknown);
           return "ocr/sanderson2009.md";
         }
+        if (cmd === "link_entry_pdf") return null;
         throw new Error(`Unknown command: ${cmd}`);
       });
     }
@@ -2481,6 +2488,239 @@ describe("ReferenceLibrary", () => {
         expect(screen.getByTestId("ocr-error")).toHaveTextContent("OCR engine not found");
       });
       expect(screen.getByTestId("ocr-dialog")).toBeInTheDocument();
+    });
+
+    it("hides OCR button when OCR companion markdown is current", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: () => true,
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows OCR button when OCR companion markdown is not current", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      setupMockWithOcr(fixture);
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("does not collide ocrCompanionCurrentMap for entries with same citekey in different bib files", async () => {
+      const user = userEvent.setup();
+      const entryA: BibEntry = {
+        ...sanderson,
+        key: "sanderson2009",
+        bib_file: "/workspace/refs.bib",
+        file: "assets/pdf/sanderson2009.pdf",
+      };
+      const entryB: BibEntry = {
+        ...sanderson,
+        key: "sanderson2009",
+        bib_file: "/workspace/other.bib",
+        file: "assets/pdf/sanderson2009-other.pdf",
+      };
+      fixture = [entryA, entryB];
+      // isOcrCompanionCurrent returns true for entry A's file, but defers
+      // entry B's response so the stale map value from A is read during render
+      let resolveBCheck: ((v: boolean) => void) | null = null;
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: (_cmd, args) => {
+          const a = args as { pdfRelative: string };
+          if (a.pdfRelative === "assets/pdf/sanderson2009.pdf") return true;
+          // For entry B, return a promise that we control
+          return new Promise<boolean>((resolve) => { resolveBCheck = resolve; });
+        },
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getAllByText("The Saiva Age").length).toBe(2));
+
+      const titles = screen.getAllByText("The Saiva Age");
+      const titleA = titles[0]!;
+      const titleB = titles[1]!;
+
+      // Expand first entry (refs.bib) — companion IS current, OCR button hidden
+      await user.click(titleA);
+      await waitFor(() => {
+        expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+      });
+
+      // Collapse first entry
+      await user.click(titleA);
+
+      // Expand second entry (other.bib) — before the async check resolves,
+      // the map still has the value from entry A under the shared bare key.
+      // With the bug, entry B reads map["sanderson2009"] = true -> button hidden.
+      await user.click(titleB);
+
+      // The check for B hasn't resolved yet. The render should NOT use A's cached value.
+      // With the bug (bare key), ocrCompanionCurrentMap["sanderson2009"] is true (from A),
+      // so the button is incorrectly hidden before B's check resolves.
+      // With the fix (composite key), ocrCompanionCurrentMap for B's composite key is undefined,
+      // so the button is shown (undefined != true).
+      expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+
+      // Now resolve B's check as false
+      await act(async () => { resolveBCheck!(false); });
+      // Button should still be visible
+      expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+    });
+
+    it("re-shows OCR button after PDF re-link invalidates companion check", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      let companionCurrentResult = true;
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: () => companionCurrentResult,
+      });
+      mockDialogOpen("/new/path/to/file.pdf");
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Expand the entry — OCR button should be hidden (companion is current)
+      await user.click(screen.getByText("The Saiva Age"));
+      await waitFor(() => {
+        expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+      });
+
+      // Now simulate re-link: after link succeeds the map entry is deleted
+      // so prop becomes undefined -> button reappears
+      companionCurrentResult = false;
+      await user.click(screen.getByTestId("link-pdf-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("clears stale true when is_ocr_companion_current rejects after a prior success", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      let callCount = 0;
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: () => {
+          callCount++;
+          if (callCount === 1) return true;
+          throw new Error("file not found");
+        },
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Expand the entry — first check returns true, so OCR button is hidden
+      await user.click(screen.getByTestId("reference-entry-title"));
+      await waitFor(() => {
+        expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();
+      });
+
+      // Collapse the entry
+      await user.click(screen.getByTestId("reference-entry-title"));
+
+      // Re-expand the entry — second check rejects, stale true should be cleared
+      await user.click(screen.getByTestId("reference-entry-title"));
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("discards in-flight companion check result after entry collapse", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      let resolveFirst: ((v: boolean) => void) | null = null;
+      let resolveSecond: ((v: boolean) => void) | null = null;
+      let callCount = 0;
+      setupMockWithOcr(fixture, {
+        isOcrCompanionCurrent: () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise<boolean>((resolve) => { resolveFirst = resolve; });
+          }
+          return new Promise<boolean>((resolve) => { resolveSecond = resolve; });
+        },
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Expand the entry — IPC call is in-flight (deferred promise)
+      await user.click(screen.getByTestId("reference-entry-title"));
+      expect(callCount).toBe(1);
+
+      // Collapse the entry before IPC resolves
+      await user.click(screen.getByTestId("reference-entry-title"));
+
+      // The first IPC resolves with true AFTER collapse — should be discarded
+      await act(async () => { resolveFirst!(true); });
+
+      // Re-expand the entry — triggers a fresh check
+      await user.click(screen.getByTestId("reference-entry-title"));
+      expect(callCount).toBe(2);
+
+      // Before the second IPC resolves, the OCR button should be visible.
+      // BUG: without cleanup, the stale first result (true) was written to the map
+      // during collapse, so re-expand immediately sees ocrCompanionCurrent=true
+      // and hides the button even though that result is stale.
+      expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+
+      // Resolve the second (fresh) IPC with false — button remains visible
+      await act(async () => { resolveSecond!(false); });
+      expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+    });
+
+    it("does not re-issue is_ocr_companion_current IPC when entries reload but expanded entry file is unchanged", async () => {
+      const user = userEvent.setup();
+      let companionCallCount = 0;
+      // Return a fresh array each time (mimics real IPC deserialization)
+      // but with the same entry content
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return [{ ...sandersonWithFile }];
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "is_ocr_companion_current") {
+          companionCallCount++;
+          return false;
+        }
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Expand the entry — triggers the first companion check
+      await user.click(screen.getByText("The Saiva Age"));
+      await waitFor(() => expect(companionCallCount).toBe(1));
+
+      // Emit lit:graph-updated which triggers loadEntries (new entries array reference)
+      // but the expanded entry's file field is unchanged
+      await act(async () => {
+        emitMockEvent("lit:graph-updated", {});
+      });
+
+      // Wait for the entries reload to settle
+      await waitFor(() => {
+        const listCalls = invokedCommands.filter((c) => c.cmd === "list_bib_entries");
+        // At least 2 list_bib_entries calls: mount + graph-updated
+        expect(listCalls.length).toBeGreaterThanOrEqual(2);
+      });
+
+      // Give any redundant effect a chance to fire
+      await new Promise((r) => setTimeout(r, 50));
+
+      // The companion check should NOT have been re-issued
+      expect(companionCallCount).toBe(1);
     });
   });
 

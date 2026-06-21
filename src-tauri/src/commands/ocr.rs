@@ -112,6 +112,26 @@ fn validate_key(key: &str) -> Result<(), String> {
         .map_err(|e| format!("Invalid citation key: {e}"))
 }
 
+/// Validate that a relative path is safe: no `..` traversal, not absolute,
+/// no null bytes, and not empty.
+fn validate_relative_path(p: &str) -> Result<(), String> {
+    if p.is_empty() {
+        return Err("relative path must not be empty".to_string());
+    }
+    if p.starts_with('/') || p.starts_with('\\') {
+        return Err(format!("path must be relative, got: {p}"));
+    }
+    if p.contains('\0') {
+        return Err(format!("path contains null byte: {p}"));
+    }
+    for component in p.split(['/', '\\']) {
+        if component == ".." {
+            return Err(format!("path contains '..' traversal: {p}"));
+        }
+    }
+    Ok(())
+}
+
 /// Map an `ocr_cli::error::Error` to a user-facing error string.
 fn map_ocr_error(e: &ocr_cli::error::Error) -> String {
     match e {
@@ -331,6 +351,35 @@ pub async fn ocr_pdf_to_markdown(
     crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
     emit_progress(&window, &key, "done", "OCR complete");
     Ok(md_relative)
+}
+
+fn is_companion_current(root: &std::path::Path, key: &str, pdf_relative: &str) -> bool {
+    let md_path = ocr_markdown_path(root, key);
+    let md_meta = match std::fs::metadata(&md_path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let pdf_meta = match std::fs::metadata(root.join(pdf_relative)) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let md_mtime = md_meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let pdf_mtime = pdf_meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    md_mtime >= pdf_mtime
+}
+
+#[tauri::command]
+pub async fn is_ocr_companion_current(
+    key: String,
+    workspace_path: String,
+    pdf_relative: String,
+) -> Result<bool, String> {
+    validate_key(&key)?;
+    validate_relative_path(&pdf_relative)?;
+    let root = PathBuf::from(&workspace_path);
+    tokio::task::spawn_blocking(move || is_companion_current(&root, &key, &pdf_relative))
+        .await
+        .map_err(|e| format!("Join error: {e}"))
 }
 
 #[tauri::command]
@@ -1197,6 +1246,158 @@ mod tests {
             parsed.map.get("companion").unwrap().as_str().unwrap(),
             "assets/pdf/smith2024.pdf"
         );
+    }
+
+    // --- is_companion_current tests ---
+
+    #[test]
+    fn test_companion_current_no_md() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/smith.pdf"), b"fake pdf").unwrap();
+        assert!(!is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_md_newer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = pdf_dir.join("smith.pdf");
+        std::fs::write(&pdf_path, b"fake pdf").unwrap();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, b"# OCR output").unwrap();
+
+        use filetime::FileTime;
+        let old = FileTime::from_unix_time(1_000_000, 0);
+        let new = FileTime::from_unix_time(2_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, old).unwrap();
+        filetime::set_file_mtime(&md_path, new).unwrap();
+
+        assert!(is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_pdf_newer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = pdf_dir.join("smith.pdf");
+        std::fs::write(&pdf_path, b"fake pdf").unwrap();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, b"# OCR output").unwrap();
+
+        use filetime::FileTime;
+        let old = FileTime::from_unix_time(1_000_000, 0);
+        let new = FileTime::from_unix_time(2_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, new).unwrap();
+        filetime::set_file_mtime(&md_path, old).unwrap();
+
+        assert!(!is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_same_mtime() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        let pdf_path = pdf_dir.join("smith.pdf");
+        std::fs::write(&pdf_path, b"fake pdf").unwrap();
+        let md_path = root.join("smith2024.md");
+        std::fs::write(&md_path, b"# OCR output").unwrap();
+
+        use filetime::FileTime;
+        let same = FileTime::from_unix_time(1_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, same).unwrap();
+        filetime::set_file_mtime(&md_path, same).unwrap();
+
+        assert!(is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_no_file_field() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        // No PDF exists at this path
+        assert!(!is_companion_current(root, "smith2024", "nonexistent.pdf"));
+    }
+
+    #[test]
+    fn test_companion_current_rejects_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(is_ocr_companion_current(
+            "../escape".to_string(),
+            dir.path().to_string_lossy().to_string(),
+            "assets/pdf/test.pdf".to_string(),
+        ));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid citation key"));
+    }
+
+    // --- validate_relative_path tests ---
+
+    #[test]
+    fn validate_relative_path_rejects_dotdot() {
+        let err = validate_relative_path("../escape").unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_nested_dotdot() {
+        let err = validate_relative_path("a/../../b").unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_absolute() {
+        let err = validate_relative_path("/etc/passwd").unwrap_err();
+        assert!(err.contains("relative"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_null_byte() {
+        let err = validate_relative_path("foo\0bar.pdf").unwrap_err();
+        assert!(err.contains("null"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_empty() {
+        let err = validate_relative_path("").unwrap_err();
+        assert!(err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_accepts_normal() {
+        validate_relative_path("assets/pdf/test.pdf").unwrap();
+    }
+
+    #[test]
+    fn validate_relative_path_accepts_simple_filename() {
+        validate_relative_path("test.pdf").unwrap();
+    }
+
+    #[test]
+    fn validate_relative_path_accepts_dotfile() {
+        validate_relative_path(".hidden/test.pdf").unwrap();
+    }
+
+    #[test]
+    fn test_is_ocr_companion_current_rejects_pdf_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(is_ocr_companion_current(
+            "valid-key".to_string(),
+            dir.path().to_string_lossy().to_string(),
+            "../../etc/passwd".to_string(),
+        ));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
     }
 
     #[test]
