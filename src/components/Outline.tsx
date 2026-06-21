@@ -5,11 +5,11 @@ export function Outline() {
   const headings = useWorkspaceStore((s) => s.currentPageHeadings);
 
   if (!currentPagePath) {
-    return <p className="p-3 text-sm text-text-faint">No page selected</p>;
+    return <p className="p-3 text-xs text-text-faint">No page selected</p>;
   }
 
   if (headings.length === 0) {
-    return <p className="p-3 text-sm text-text-faint">No headings</p>;
+    return <p className="p-3 text-xs text-text-faint">No headings</p>;
   }
 
   return (
@@ -17,7 +17,7 @@ export function Outline() {
       {headings.map((h, i) => (
         <button
           key={`${h.line}-${i}`}
-          className="w-full select-none truncate rounded-md py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
+          className="w-full select-none truncate rounded-md py-1 text-start text-xs text-text-normal hover:bg-bg-hover"
           style={{ paddingInlineStart: `${(h.level - 1) * 12 + 8}px` }}
           onClick={() => {
             window.dispatchEvent(
