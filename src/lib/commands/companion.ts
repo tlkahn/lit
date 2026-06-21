@@ -36,20 +36,29 @@ export function initCompanionCommands(): void {
               return;
             }
             const store = usePaneStore.getState();
-            const vacant = collectLeaves(store.root).find(
+            const leaves = collectLeaves(store.root);
+            const vacant = leaves.find(
               (l) => l.pagePath == null && l.id !== sourceId,
             );
-            const newId = vacant?.id ?? store.splitPane(sourceId, "horizontal");
-            if (newId == null) {
+            let targetId: string | null;
+            if (vacant) {
+              targetId = vacant.id;
+            } else if (leaves.length > 1) {
+              const idx = leaves.findIndex((l) => l.id === sourceId);
+              targetId = leaves[(idx + 1) % leaves.length]!.id;
+            } else {
+              targetId = store.splitPane(sourceId, "horizontal");
+            }
+            if (targetId == null) {
               useStatusMessageStore
                 .getState()
                 .show("Cannot split: maximum panes reached or source pane closed", "error");
               return;
             }
-            store.focusPane(newId);
-            store.setPanePage(newId, companion);
+            store.focusPane(targetId);
+            store.setPanePage(targetId, companion);
             const linkStore = usePanePdfLinkStore.getState();
-            linkStore.linkPanes(sourceId, newId);
+            linkStore.linkPanes(sourceId, targetId);
 
             if (!pagePath.toLowerCase().endsWith(".pdf")) {
               const view = getPaneView(sourceId);
@@ -57,11 +66,11 @@ export function initCompanionCommands(): void {
                 const offset = view.state.selection.main.head;
                 const markers = getCachedPageMarkers(view.state.doc);
                 const pageIndex = pageForOffset(markers, offset);
-                linkStore.setPendingPdfSync(newId, pageIndex);
+                linkStore.setPendingPdfSync(targetId, pageIndex);
               }
             } else {
               const page = getPdfCurrentPage(sourceId) ?? linkStore.currentPage.get(sourceId) ?? 0;
-              linkStore.setPendingEditorSync(newId, page);
+              linkStore.setPendingEditorSync(targetId, page);
             }
 
             useStatusMessageStore

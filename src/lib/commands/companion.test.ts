@@ -153,7 +153,7 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("splits when no vacant pane exists (all panes have pages)", async () => {
+  it("reuses next non-source pane when no vacant pane exists", async () => {
     mockPaneState.root = {
       type: "split",
       id: "root",
@@ -164,6 +164,19 @@ describe("initCompanionCommands", () => {
       ],
       sizes: [0.5, 0.5],
     };
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("other-pane", "paper.pdf");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "other-pane");
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("other-pane");
+    });
+  });
+
+  it("splits only when source is the sole pane", async () => {
+    resetPaneState("paper.md");
     initCompanionCommands();
     executeCommand("companion.open");
 
