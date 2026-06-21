@@ -5,6 +5,7 @@ import { usePaneStore, createInitialState, collectLeaves, stopLayoutSync } from 
 import type { PaneLeaf, PaneSplit } from "./panes";
 import { saveLayout, STALE_THRESHOLD_MS } from "../lib/paneLayout";
 import { usePanePdfLinkStore } from "./panePdfLink";
+import { usePaneHistoryStore, stopPaneHistoryTracking } from "./paneHistory";
 import { act } from "@testing-library/react";
 
 const samplePages = [
@@ -961,5 +962,25 @@ describe("Layout Persistence", () => {
     });
 
     expect(localStorage.getItem("lit-pane-layout-/other-workspace")).not.toBeNull();
+  });
+
+  it("openWorkspace activates pane history tracking", async () => {
+    usePaneHistoryStore.setState({ stacks: new Map() });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/my/workspace");
+    });
+
+    // Navigate a pane — if tracking is active, history should record it
+    usePaneStore.getState().setPanePage(
+      usePaneStore.getState().focusedPaneId,
+      "Page A.md",
+    );
+    const paneId = usePaneStore.getState().focusedPaneId;
+    const stack = usePaneHistoryStore.getState().stacks.get(paneId);
+    expect(stack).toBeDefined();
+    expect(stack!.entries).toContain("Page A.md");
+
+    stopPaneHistoryTracking();
   });
 });

@@ -15,6 +15,7 @@ import {
   usePanePdfLinkStore,
   deserializeLinks,
 } from "./panePdfLink";
+import { usePaneHistoryStore, initPaneHistoryTracking, setPageExistsCheck, deserializeHistory, type PaneHistoryStack } from "./paneHistory";
 import {
   loadLayout,
   validateLayout,
@@ -121,13 +122,27 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           ([x, y]) => liveIds.has(x) && liveIds.has(y),
         );
         usePanePdfLinkStore.setState({ links: deserializeLinks(validLinks) });
+        // Restore pane history, dropping entries for pane IDs that no longer
+        // exist in the validated layout tree (same pruning as pdfLinks).
+        const validHistory: Record<string, PaneHistoryStack> = {};
+        for (const [id, stack] of Object.entries(stored.paneHistory ?? {})) {
+          if (liveIds.has(id)) validHistory[id] = stack;
+        }
+        usePaneHistoryStore.setState({ stacks: deserializeHistory(validHistory) });
       } else {
         usePaneStore.setState(createInitialState());
         set({ paneViewStates: {} });
         usePanePdfLinkStore.setState({ links: new Map() });
+        usePaneHistoryStore.setState({ stacks: new Map() });
       }
       startLayoutSync(path, () => get().paneViewStates);
       initPanePdfLinkCleanup();
+      initPaneHistoryTracking();
+      setPageExistsCheck((path) => {
+        const pages = useWorkspaceStore.getState().pages;
+        if (pages.length === 0) return true;
+        return pages.some((p) => p.relative_path === path);
+      });
 
       const unlisten = await listen<IndexProgress>("lit:index-progress", (event) => {
         set({ indexProgress: event.payload });
@@ -200,6 +215,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           viewStates: newViewStates,
         };
       });
+      usePaneHistoryStore.getState().renamePath(oldPath, newPath);
     } catch (e) {
       set({ error: String(e) });
     }
@@ -263,6 +279,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         };
       });
       usePaneStore.getState().clearPageFromPanes(relativePath);
+      usePaneHistoryStore.getState().clearPath(relativePath);
     } catch (e) {
       set({ error: String(e) });
     }

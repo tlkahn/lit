@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { PaneLeaf, PaneSplit } from "../stores/panes";
 import type { ViewState } from "../types";
+import type { PaneHistoryStack } from "../stores/paneHistory";
 import {
   STALE_THRESHOLD_MS,
   layoutStorageKey,
@@ -108,6 +109,7 @@ describe("deserializeLayout", () => {
       focusedPaneId: "a",
       paneViewStates: { a: { scrollTop: 0, cursor: 0 } },
       pdfLinks: [] as [string, string][],
+      paneHistory: {} as Record<string, PaneHistoryStack>,
       savedAt: 12345,
     };
     const result = deserializeLayout(JSON.stringify(stored));
@@ -535,5 +537,58 @@ describe("cleanupStaleLayouts", () => {
     // Now past threshold — should remove
     cleanupStaleLayouts(savedAt + STALE_THRESHOLD_MS + 1);
     expect(localStorage.getItem("lit-pane-layout-/ws")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cycle 10: paneHistory persistence in layout
+// ---------------------------------------------------------------------------
+
+describe("serializeLayout paneHistory", () => {
+  it("includes paneHistory when passed", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "note.md" };
+    const history: Record<string, PaneHistoryStack> = {
+      p1: { entries: ["a.md"], index: 0 },
+    };
+    const json = serializeLayout(root, "a", {}, [], history);
+    const parsed = JSON.parse(json);
+    expect(parsed.paneHistory).toEqual(history);
+  });
+
+  it("defaults paneHistory to {} when not passed", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    const json = serializeLayout(root, "a", {});
+    const parsed = JSON.parse(json);
+    expect(parsed.paneHistory).toEqual({});
+  });
+});
+
+describe("deserializeLayout paneHistory", () => {
+  it("restores paneHistory from stored data", () => {
+    const history: Record<string, PaneHistoryStack> = {
+      p1: { entries: ["a.md", "b.md"], index: 1 },
+    };
+    const data = {
+      root: { type: "leaf", id: "a", pagePath: null },
+      focusedPaneId: "a",
+      paneViewStates: {},
+      pdfLinks: [],
+      paneHistory: history,
+      savedAt: 100,
+    };
+    const result = deserializeLayout(JSON.stringify(data));
+    expect(result!.paneHistory).toEqual(history);
+  });
+
+  it("defaults paneHistory to {} for legacy data without the field", () => {
+    const data = {
+      root: { type: "leaf", id: "a", pagePath: null },
+      focusedPaneId: "a",
+      paneViewStates: {},
+      pdfLinks: [],
+      savedAt: 100,
+    };
+    const result = deserializeLayout(JSON.stringify(data));
+    expect(result!.paneHistory).toEqual({});
   });
 });

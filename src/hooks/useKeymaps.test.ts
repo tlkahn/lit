@@ -10,6 +10,7 @@ import {
 } from "../lib/commandRegistry";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
+import { usePaneHistoryStore } from "../stores/paneHistory";
 import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
@@ -33,6 +34,7 @@ describe("useKeymaps", () => {
     resetEditorViewRef();
     document.body.innerHTML = "";
     usePaneStore.setState(createInitialState());
+    usePaneHistoryStore.setState({ stacks: new Map() });
     useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, tabMeta: defaultTabMeta() });
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
@@ -53,8 +55,10 @@ describe("useKeymaps", () => {
           { key: "Mod-Shift-d", command: "pane.splitDown" },
           { key: "Mod-Alt-ArrowRight", command: "pane.focusNext" },
           { key: "Mod-Alt-ArrowLeft", command: "pane.focusPrev" },
-          { key: "Mod-]", command: "pane.focusContentNext" },
-          { key: "Mod-[", command: "pane.focusContentPrev" },
+          { key: "Mod-[", command: "pane.historyBack" },
+          { key: "Mod-]", command: "pane.historyForward" },
+          { key: "Mod-Shift-]", command: "pane.focusContentNext" },
+          { key: "Mod-Shift-[", command: "pane.focusContentPrev" },
           { key: "Ctrl-g", command: "editor.selectNextOccurrence", when: "editorFocus" },
           { key: "Ctrl-`", command: "panel.toggleBottom" },
         ];
@@ -933,7 +937,7 @@ describe("useKeymaps", () => {
     expect(ids).toContain("pane.focusContentPrev");
   });
 
-  it("Mod-] keydown triggers pane.focusContentNext", async () => {
+  it("Mod-Shift-] keydown triggers pane.focusContentNext", async () => {
     const { result } = await loadHook();
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -956,7 +960,7 @@ describe("useKeymaps", () => {
     input1.focus();
 
     document.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "]", ctrlKey: true, bubbles: true }),
+      new KeyboardEvent("keydown", { key: "]", ctrlKey: true, shiftKey: true, bubbles: true }),
     );
 
     expect(usePaneStore.getState().focusedPaneId).toBe(leaf2!.id);
@@ -1091,5 +1095,99 @@ describe("useKeymaps", () => {
 
     hook1.unmount();
     hook2.unmount();
+  });
+
+  it("pane.historyBack is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pane.historyBack")).toBe(true);
+  });
+
+  it("pane.historyForward is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("pane.historyForward")).toBe(true);
+  });
+
+  it("Mod-[ keydown triggers pane.historyBack", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const leaf: PaneLeaf = { type: "leaf", id: "hist-leaf", pagePath: "b.md" };
+    usePaneStore.setState({ root: leaf, focusedPaneId: "hist-leaf" });
+
+    // Seed history: ["a.md", "b.md"] at index 1 => canGoBack is true
+    usePaneHistoryStore.setState({
+      stacks: new Map([["hist-leaf", { entries: ["a.md", "b.md"], index: 1 }]]),
+    });
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "[", ctrlKey: true, bubbles: true }),
+    );
+
+    const stack = usePaneHistoryStore.getState().stacks.get("hist-leaf")!;
+    expect(stack.index).toBe(0);
+  });
+
+  it("Mod-] keydown triggers pane.historyForward", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const leaf: PaneLeaf = { type: "leaf", id: "hist-leaf", pagePath: "a.md" };
+    usePaneStore.setState({ root: leaf, focusedPaneId: "hist-leaf" });
+
+    // Seed history: ["a.md", "b.md"] at index 0 => canGoForward is true
+    usePaneHistoryStore.setState({
+      stacks: new Map([["hist-leaf", { entries: ["a.md", "b.md"], index: 0 }]]),
+    });
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "]", ctrlKey: true, bubbles: true }),
+    );
+
+    const stack = usePaneHistoryStore.getState().stacks.get("hist-leaf")!;
+    expect(stack.index).toBe(1);
+  });
+
+  it("Mod-[ keydown does NOT trigger pane.historyBack when canGoBack is false", async () => {
+    const { result } = await loadHook();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const leaf: PaneLeaf = { type: "leaf", id: "hist-leaf", pagePath: "a.md" };
+    usePaneStore.setState({ root: leaf, focusedPaneId: "hist-leaf" });
+
+    // Seed history: ["a.md"] at index 0 => canGoBack is false
+    usePaneHistoryStore.setState({
+      stacks: new Map([["hist-leaf", { entries: ["a.md"], index: 0 }]]),
+    });
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "[", ctrlKey: true, bubbles: true }),
+    );
+
+    const stack = usePaneHistoryStore.getState().stacks.get("hist-leaf")!;
+    expect(stack.index).toBe(0);
+    expect(usePaneStore.getState().root).toMatchObject({ pagePath: "a.md" });
+  });
+
+  it("pane.historyBack and pane.historyForward visible in command palette only when navigable", async () => {
+    await loadHook();
+
+    const leaf: PaneLeaf = { type: "leaf", id: "hist-leaf", pagePath: "a.md" };
+    usePaneStore.setState({ root: leaf, focusedPaneId: "hist-leaf" });
+
+    // No history seeded -- neither should be visible
+    const visibleBefore = getVisibleCommands("history");
+    const idsBefore = visibleBefore.map((c) => c.id);
+    expect(idsBefore).not.toContain("pane.historyBack");
+    expect(idsBefore).not.toContain("pane.historyForward");
+
+    // Seed history: ["a.md", "b.md"] at index 1 => canGoBack true, canGoForward false
+    usePaneHistoryStore.setState({
+      stacks: new Map([["hist-leaf", { entries: ["a.md", "b.md"], index: 1 }]]),
+    });
+
+    const visibleAfter = getVisibleCommands("history");
+    const idsAfter = visibleAfter.map((c) => c.id);
+    expect(idsAfter).toContain("pane.historyBack");
+    expect(idsAfter).not.toContain("pane.historyForward");
   });
 });

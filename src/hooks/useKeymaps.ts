@@ -12,6 +12,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
 import { getCurrentEditorView, getPaneView, setFocusedPane, isFocusInsideContentPane } from "../lib/editorViewRef";
 import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
+import { usePaneHistoryStore } from "../stores/paneHistory";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import { canFire } from "../lib/fireClassification";
@@ -180,6 +181,26 @@ export function ensureCommandsRegistered() {
       const { focusedPaneId } = usePaneStore.getState();
       usePaneStore.getState().closePane(focusedPaneId);
       transferDomFocus();
+    },
+  });
+  registerCommand({
+    id: "pane.historyBack",
+    label: "Navigate Back",
+    keywords: ["back", "history", "previous", "page"],
+    when: () => usePaneHistoryStore.getState().canGoBack(usePaneStore.getState().focusedPaneId),
+    action: () => {
+      const { focusedPaneId } = usePaneStore.getState();
+      usePaneHistoryStore.getState().goBack(focusedPaneId);
+    },
+  });
+  registerCommand({
+    id: "pane.historyForward",
+    label: "Navigate Forward",
+    keywords: ["forward", "history", "next", "page"],
+    when: () => usePaneHistoryStore.getState().canGoForward(usePaneStore.getState().focusedPaneId),
+    action: () => {
+      const { focusedPaneId } = usePaneStore.getState();
+      usePaneHistoryStore.getState().goForward(focusedPaneId);
     },
   });
   registerCommand({

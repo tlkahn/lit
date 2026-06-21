@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { ViewState } from "../types";
 import { saveLayout } from "../lib/paneLayout";
 import { usePanePdfLinkStore, serializeLinks } from "./panePdfLink";
+import { usePaneHistoryStore, serializeHistory } from "./paneHistory";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -299,6 +300,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 
 let unsub: (() => void) | null = null;
 let pdfLinkUnsub: (() => void) | null = null;
+let historyUnsub: (() => void) | null = null;
 let beforeUnloadHandler: (() => void) | null = null;
 
 export function startLayoutSync(
@@ -309,7 +311,8 @@ export function startLayoutSync(
   const flush = () => {
     const { root, focusedPaneId } = usePaneStore.getState();
     const pdfLinks = serializeLinks(usePanePdfLinkStore.getState().links);
-    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks);
+    const paneHistory = serializeHistory(usePaneHistoryStore.getState().stacks);
+    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks, paneHistory);
   };
   unsub = usePaneStore.subscribe(flush);
   // Also persist link changes that don't touch the pane tree (e.g. a standalone
@@ -324,6 +327,16 @@ export function startLayoutSync(
       flush();
     }
   });
+  // Persist when pane history stacks change (e.g. navigation pushes a new
+  // page). Guard on the `stacks` reference identity so we only flush when the
+  // Map is actually replaced — same pattern as the pdfLinks subscription.
+  let prevStacks = usePaneHistoryStore.getState().stacks;
+  historyUnsub = usePaneHistoryStore.subscribe((state) => {
+    if (state.stacks !== prevStacks) {
+      prevStacks = state.stacks;
+      flush();
+    }
+  });
   beforeUnloadHandler = flush;
   window.addEventListener("beforeunload", beforeUnloadHandler);
 }
@@ -333,6 +346,8 @@ export function stopLayoutSync(): void {
   unsub = null;
   pdfLinkUnsub?.();
   pdfLinkUnsub = null;
+  historyUnsub?.();
+  historyUnsub = null;
   if (beforeUnloadHandler) {
     window.removeEventListener("beforeunload", beforeUnloadHandler);
     beforeUnloadHandler = null;
