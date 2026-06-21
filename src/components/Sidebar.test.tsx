@@ -123,8 +123,8 @@ describe("Sidebar accent-insensitive filter", () => {
   it("filters pages with accent-insensitive matching", async () => {
     useWorkspaceStore.setState({
       pages: [
-        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
-        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
+        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const, has_companion: false },
+        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const, has_companion: false },
       ],
     });
 
@@ -140,7 +140,7 @@ describe("Sidebar accent-insensitive filter", () => {
   it("filters pages matching diacritics like ü to u", async () => {
     useWorkspaceStore.setState({
       pages: [
-        { title: "Über alles", relative_path: "Über alles.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
+        { title: "Über alles", relative_path: "Über alles.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const, has_companion: false },
       ],
     });
 
@@ -157,8 +157,8 @@ describe("Sidebar context menu during search", () => {
   it("context menu interaction does not break active search filter", async () => {
     useWorkspaceStore.setState({
       pages: [
-        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
-        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const },
+        { title: "Café Notes", relative_path: "Café Notes.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const, has_companion: false },
+        { title: "Other", relative_path: "Other.md", frontmatter: {}, created_at: 1000, modified_at: 1000, file_type: 'markdown' as const, has_companion: false },
       ],
     });
 
@@ -179,7 +179,7 @@ describe("Sidebar context menu during search", () => {
   });
 });
 
-function makePage(title: string, relativePath?: string, fileType: 'markdown' | 'pdf' = 'markdown') {
+function makePage(title: string, relativePath?: string, fileType: 'markdown' | 'pdf' = 'markdown', hasCompanion = false) {
   return {
     title,
     relative_path: relativePath ?? `${title}.md`,
@@ -187,6 +187,7 @@ function makePage(title: string, relativePath?: string, fileType: 'markdown' | '
     created_at: 1000,
     modified_at: 1000,
     file_type: fileType,
+    has_companion: hasCompanion,
   };
 }
 
@@ -595,5 +596,48 @@ describe("Sidebar references panel persistence", () => {
     }
     expect(hiddenWrapper).not.toBeNull();
     expect(hiddenWrapper!.style.display).toBe("none");
+  });
+});
+
+describe("Sidebar companion indicator", () => {
+  it("renders companion glyph when has_companion is true", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("paper", "paper.md", "markdown", true)],
+    });
+
+    render(<Sidebar />);
+    expect(screen.getByLabelText("Has companion")).toBeInTheDocument();
+  });
+
+  it("does not render companion glyph when has_companion is false", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("paper", "paper.md", "markdown", false)],
+    });
+
+    render(<Sidebar />);
+    expect(screen.queryByLabelText("Has companion")).not.toBeInTheDocument();
+  });
+
+  it("renders companion glyph for PDF files with companion", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("paper", "paper.pdf", "pdf", true)],
+    });
+
+    render(<Sidebar />);
+    expect(screen.getByLabelText("Has companion")).toBeInTheDocument();
+  });
+
+  it("companion glyph click calls executeCommand", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("paper", "paper.md", "markdown", true)],
+      selectPage,
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByLabelText("Has companion"));
+    expect(selectPage).toHaveBeenCalledWith("paper.md");
   });
 });

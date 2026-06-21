@@ -119,12 +119,12 @@ describe("initFuseFractureCommands", () => {
 
   describe("command actions", () => {
     const docA: PageContent = {
-      meta: { title: "Alpha", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" },
+      meta: { title: "Alpha", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown", has_companion: false },
       body: "body A",
       raw_yaml: "",
     };
     const docB: PageContent = {
-      meta: { title: "Beta", relative_path: "b.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" },
+      meta: { title: "Beta", relative_path: "b.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown", has_companion: false },
       body: "body B",
       raw_yaml: "",
     };
@@ -170,7 +170,7 @@ describe("initFuseFractureCommands", () => {
       };
 
       const pageContent: PageContent = {
-        meta: { title: "Hello", relative_path: "hello.md", frontmatter: { tag: "test" }, created_at: null, modified_at: null, file_type: "markdown" },
+        meta: { title: "Hello", relative_path: "hello.md", frontmatter: { tag: "test" }, created_at: null, modified_at: null, file_type: "markdown", has_companion: false },
         body: "# Section 1\nbody 1\n# Section 2\nbody 2",
         raw_yaml: "",
       };

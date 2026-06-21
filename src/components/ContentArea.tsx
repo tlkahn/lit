@@ -72,6 +72,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   const canGoBack = usePaneHistoryStore((s) => s.canGoBack(focusedPaneId));
   const canGoForward = usePaneHistoryStore((s) => s.canGoForward(focusedPaneId));
+  const hasCompanion = useWorkspaceStore((s) => s.pages.find((p) => p.relative_path === currentPanePage)?.has_companion ?? false);
 
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -413,6 +414,14 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               }
             }}
           />
+          {hasCompanion && (
+            <button
+              onClick={() => executeCommand("companion.open")}
+              className="nerd-font flex-shrink-0 text-text-faint opacity-50 hover:opacity-100"
+              title="Open companion file"
+              data-testid="companion-button"
+            >{'󰌷'}</button>
+          )}
           {Object.keys(frontmatter).length > 0 && (
             <button
               onClick={() => setShowFrontmatter(!showFrontmatter)}

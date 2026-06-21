@@ -13,6 +13,7 @@ function meta(
     created_at: null,
     modified_at: null,
     file_type,
+    has_companion: false,
   };
 }
 

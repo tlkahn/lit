@@ -43,6 +43,7 @@ pub fn read_page(root: &Path, relative_path: &str, registry: &WriteHashRegistry)
             created_at,
             modified_at,
             file_type: FileType::Markdown,
+            has_companion: false,
         },
         body: parsed.body.to_string(),
         raw_yaml: parsed.raw_yaml,
@@ -148,6 +149,7 @@ pub fn create_page(
         created_at,
         modified_at,
         file_type: FileType::Markdown,
+        has_companion: false,
     })
 }
 

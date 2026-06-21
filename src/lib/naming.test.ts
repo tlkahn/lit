@@ -10,6 +10,7 @@ function makePage(title: string, path?: string): PageMeta {
     created_at: 1000,
     modified_at: 2000,
     file_type: 'markdown',
+    has_companion: false,
   };
 }
 

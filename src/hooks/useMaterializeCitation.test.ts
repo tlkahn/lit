@@ -29,6 +29,7 @@ const fakeMeta: PageMeta = {
   created_at: null,
   modified_at: null,
   file_type: "markdown",
+  has_companion: false,
 };
 
 describe("useMaterializeCitation", () => {
@@ -113,6 +114,7 @@ describe("useMaterializeCitation", () => {
       created_at: null,
       modified_at: null,
       file_type: "markdown",
+      has_companion: false,
     };
 
     const { result } = renderHook(() =>

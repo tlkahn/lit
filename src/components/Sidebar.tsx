@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { openInExternalEditor } from "../lib/ipc";
 import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
+import { executeCommand } from "../lib/commandRegistry";
 import { localeFilter } from "../lib/localeSearch";
 import { useSidebarTab, type SidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
@@ -107,6 +108,17 @@ const PageItem = memo(function PageItem({
             <span className="nerd-font mr-1 opacity-60" aria-label="PDF file">{''}</span>
           )}
           {page.title}
+          {page.has_companion && (
+            <span
+              className="nerd-font ml-1 opacity-40 hover:opacity-80"
+              aria-label="Has companion"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(page.relative_path);
+                executeCommand("companion.open");
+              }}
+            >{'󰌷'}</span>
+          )}
         </button>
       )}
     </div>

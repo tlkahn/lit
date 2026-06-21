@@ -155,6 +155,12 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
     None
 }
 
+fn annotate_companions(pages: &mut [PageMeta], root: &Path, search_paths: &[String]) {
+    for page in pages.iter_mut() {
+        page.has_companion = find_companion(&page.relative_path, root, search_paths).is_some();
+    }
+}
+
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
     let workspaces = registry.workspaces.lock().unwrap();
     workspaces
@@ -178,7 +184,11 @@ pub fn open_workspace(
         return Err(format!("Not a valid directory: {path}"));
     }
 
-    let pages = scan_pages(&root).map_err(|e| e.to_string())?;
+    let mut pages = scan_pages(&root).map_err(|e| e.to_string())?;
+
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+    annotate_companions(&mut pages, &root, &search_paths);
 
     app_handle
         .asset_protocol_scope()
@@ -254,9 +264,14 @@ pub fn allow_asset_scope(
 pub fn list_pages(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Vec<PageMeta>, String> {
     let root = get_workspace_root(&state, window.label())?;
-    scan_pages(&root).map_err(|e| e.to_string())
+    let mut pages = scan_pages(&root).map_err(|e| e.to_string())?;
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let search_paths = crate::preferences::companion_search_paths(&prefs);
+    annotate_companions(&mut pages, &root, &search_paths);
+    Ok(pages)
 }
 
 #[tauri::command]
@@ -410,6 +425,7 @@ pub fn get_startup_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
 
     #[test]
     fn registry_starts_empty() {
@@ -960,5 +976,86 @@ mod tests {
             registry.find_window_for_workspace(Path::new("/nonexistent/path")),
             Some("win-1".to_string())
         );
+    }
+
+    #[test]
+    fn annotate_companions_sets_true_for_md_with_pdf_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+
+        let mut pages = vec![PageMeta {
+            title: "paper".to_string(),
+            relative_path: "paper.md".to_string(),
+            frontmatter: IndexMap::new(),
+            created_at: None,
+            modified_at: None,
+            file_type: crate::workspace::page::FileType::Markdown,
+            has_companion: false,
+        }];
+        annotate_companions(&mut pages, root, &[]);
+        assert!(pages[0].has_companion);
+    }
+
+    #[test]
+    fn annotate_companions_sets_true_for_pdf_with_md_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+
+        let mut pages = vec![PageMeta {
+            title: "paper".to_string(),
+            relative_path: "paper.pdf".to_string(),
+            frontmatter: IndexMap::new(),
+            created_at: None,
+            modified_at: None,
+            file_type: crate::workspace::page::FileType::Pdf,
+            has_companion: false,
+        }];
+        annotate_companions(&mut pages, root, &[]);
+        assert!(pages[0].has_companion);
+    }
+
+    #[test]
+    fn annotate_companions_remains_false_when_no_companion() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+
+        let mut pages = vec![PageMeta {
+            title: "paper".to_string(),
+            relative_path: "paper.md".to_string(),
+            frontmatter: IndexMap::new(),
+            created_at: None,
+            modified_at: None,
+            file_type: crate::workspace::page::FileType::Markdown,
+            has_companion: false,
+        }];
+        annotate_companions(&mut pages, root, &[]);
+        assert!(!pages[0].has_companion);
+    }
+
+    #[test]
+    fn annotate_companions_via_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+
+        let mut pages = vec![PageMeta {
+            title: "paper".to_string(),
+            relative_path: "notes/paper.md".to_string(),
+            frontmatter: IndexMap::new(),
+            created_at: None,
+            modified_at: None,
+            file_type: crate::workspace::page::FileType::Markdown,
+            has_companion: false,
+        }];
+        annotate_companions(&mut pages, root, &["pdfs".to_string()]);
+        assert!(pages[0].has_companion);
     }
 }

@@ -61,8 +61,8 @@ describe("useSidebarSort", () => {
   it("comparator matches current sortConfig", () => {
     const { result } = renderHook(() => useSidebarSort("/workspace"));
     const cmp = result.current.comparator;
-    const a = { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" as const };
-    const b = { title: "B", relative_path: "b.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" as const };
+    const a = { title: "A", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" as const, has_companion: false };
+    const b = { title: "B", relative_path: "b.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown" as const, has_companion: false };
     expect(cmp(a, b)).toBeLessThan(0);
   });
 
