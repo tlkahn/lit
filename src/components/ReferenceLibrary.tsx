@@ -839,7 +839,7 @@ export function ReferenceLibrary() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleSearchPapers();
               }}
-              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-normal"
             />
             <select
               data-testid="search-mode-select"
@@ -877,11 +877,11 @@ export function ReferenceLibrary() {
               duplicateKeys={duplicateKeys}
             />
           ) : searching ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-text-faint">
+            <div className="flex flex-1 items-center justify-center text-xs text-text-faint">
               Searching...
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-text-faint">
+            <div className="flex flex-1 items-center justify-center text-xs text-text-faint">
               Enter a query to search academic papers
             </div>
           )}
@@ -889,7 +889,7 @@ export function ReferenceLibrary() {
       )}
 
       {mode === "library" && entries.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-sm text-text-faint">
+        <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-xs text-text-faint">
           <div>No references found. Add .bib files to your workspace.</div>
           <div className="mt-2 flex gap-2">{addButton}{importPdfButton}</div>
         </div>
@@ -902,7 +902,7 @@ export function ReferenceLibrary() {
               aria-label="Search references"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-normal"
             />
             {addButton}
             {importPdfButton}
@@ -983,7 +983,7 @@ export function ReferenceLibrary() {
                     >
                       <span
                         data-testid="reference-entry-title"
-                        className={`w-full truncate text-sm ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
+                        className={`w-full truncate text-xs ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
                         onClick={(e) => {
                           if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
                             e.stopPropagation();
@@ -1002,7 +1002,7 @@ export function ReferenceLibrary() {
                       </span>
                     </button>
                     {isExpanded ? (
-                      <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-sm">
+                      <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-xs">
                         <div className="flex items-start gap-2">
                           <div
                             className={`font-semibold ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}

@@ -20,7 +20,7 @@ export function TrashPanel() {
 
   if (trashItems.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center p-4 text-sm text-text-faint">
+      <div className="flex flex-1 items-center justify-center p-4 text-xs text-text-faint">
         Trash is empty
       </div>
     );
@@ -52,7 +52,7 @@ export function TrashPanel() {
             }}
           >
             <div
-              className="w-full select-none truncate rounded px-2 py-1 text-start text-sm text-text-normal hover:bg-bg-hover"
+              className="w-full select-none truncate rounded px-2 py-1 text-start text-xs text-text-normal hover:bg-bg-hover"
               title={item.original_path}
             >
               {item.original_path}
