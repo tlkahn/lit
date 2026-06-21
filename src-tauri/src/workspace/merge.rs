@@ -77,7 +77,6 @@ pub fn plan_merge(docs: &[MergeInput]) -> MergePlan {
 pub struct MergeResult {
     pub merged_path: String,
     pub merged_content: String,
-    pub trashed: Vec<trash::TrashEntry>,
     pub planned_rewrites: PlannedVaultRewrite,
     pub source_snapshots: Vec<(String, String)>,
 }
@@ -205,16 +204,14 @@ pub fn merge_documents_inner(
     }
     fs::write(&full_merged, &merged_content).map_err(|e| e.to_string())?;
 
-    let mut trashed = Vec::new();
+    // Not atomic — if a mid-loop trash fails, earlier sources are already in system trash.
     for (path, _) in &ordered {
-        let entry = trash::trash_page(root, path).map_err(|e| e.to_string())?;
-        trashed.push(entry);
+        trash::trash_page(root, path).map_err(|e| e.to_string())?;
     }
 
     Ok(MergeResult {
         merged_path,
         merged_content,
-        trashed,
         planned_rewrites,
         source_snapshots,
     })
@@ -496,7 +493,7 @@ mod tests {
 
         assert!(!root.join("A.md").exists());
         assert!(!root.join("B.md").exists());
-        assert_eq!(result.trashed.len(), 2);
+        let _ = result;
     }
 
     #[test]

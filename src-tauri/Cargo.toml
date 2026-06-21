@@ -71,6 +71,11 @@ tempfile = "3"
 quick-xml = "0.38"
 strsim = "0.11"
 
+# macOS system trash via NSFileManager.trashItemAtURL (already transitive via tauri → muda).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSURL", "NSString", "NSError"] }
+
 [[bin]]
 name = "lit-cli"
 path = "src/bin/lit-cli.rs"

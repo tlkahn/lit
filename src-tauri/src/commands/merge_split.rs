@@ -371,12 +371,7 @@ pub fn execute_split(
             action_type: "delete_file".into(),
             path: relative_path.clone(),
             old_path: None,
-            before_content: Some(
-                std::fs::read_to_string(
-                    root.join(".trash").join(&result.trash_entry.trash_name),
-                )
-                .unwrap_or_default(),
-            ),
+            before_content: Some(result.original_content.clone()),
             after_content: None,
         });
 

@@ -3157,6 +3157,8 @@ dependencies = [
  "llm-openai",
  "lmpdf",
  "notify-debouncer-mini",
+ "objc2",
+ "objc2-foundation",
  "ocr-cli",
  "petgraph",
  "quick-xml",
