@@ -82,30 +82,8 @@ export async function deletePage(relativePath: string): Promise<void> {
 
 // Trash commands
 
-export interface TrashEntry {
-  trash_name: string;
-  original_path: string;
-  deleted_at: number;
-}
-
-export async function trashPage(relativePath: string): Promise<TrashEntry> {
-  return invoke<TrashEntry>("trash_page", { relativePath });
-}
-
-export async function restorePage(trashName: string): Promise<string> {
-  return invoke<string>("restore_page", { trashName });
-}
-
-export async function purgePage(trashName: string): Promise<void> {
-  return invoke<void>("purge_page", { trashName });
-}
-
-export async function listTrash(): Promise<TrashEntry[]> {
-  return invoke<TrashEntry[]>("list_trash");
-}
-
-export async function emptyTrash(): Promise<void> {
-  return invoke<void>("empty_trash");
+export async function trashPage(relativePath: string): Promise<void> {
+  return invoke<void>("trash_page", { relativePath });
 }
 
 export async function acknowledgeFileHash(relativePath: string): Promise<void> {

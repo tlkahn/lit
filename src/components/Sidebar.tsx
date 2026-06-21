@@ -9,7 +9,6 @@ import { useSidebarTab, type SidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { Outline } from "./Outline";
-import { TrashPanel } from "./TrashPanel";
 import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SortDropdown } from "./SortDropdown";
 import type { PageMeta } from "../lib/ipc";
@@ -210,18 +209,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           <span className="nerd-font text-base" aria-hidden="true">{'󰲞'}</span>
         </button>
         <button
-          onClick={() => setTab("trash")}
-          title="Trash"
-          aria-label="Trash"
-          className={`flex-1 px-3 py-2 text-xs font-medium ${
-            tab === "trash"
-              ? "text-text-normal opacity-100"
-              : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
-          }`}
-        >
-          <span className="nerd-font text-base" aria-hidden="true">{'󰆴'}</span>
-        </button>
-        <button
           onClick={() => setTab("references")}
           title="References"
           aria-label="References"
@@ -296,8 +283,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
         </>
       ) : tab === "outline" ? (
         <Outline />
-      ) : tab === "trash" ? (
-        <TrashPanel />
       ) : null}
       <div
         className="flex flex-1 flex-col overflow-hidden"
