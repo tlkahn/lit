@@ -7,9 +7,10 @@ import { ensureSidebarVisible } from "../lib/sidebarVisibility";
 import {
   onRevealInFileTree,
   onSetSidebarTab,
-  dispatchRevealInFileTree,
   dispatchRevealBibEntryForPage,
 } from "../lib/sidebarEvents";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { join } from "@tauri-apps/api/path";
 import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
 import { executeCommand } from "../lib/commandRegistry";
 import { localeFilter } from "../lib/localeSearch";
@@ -242,10 +243,6 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     }
   }, [autoRevealInSidebar, currentPagePath, setTab, revealPath, triggerReveal]);
 
-  const dispatchRevealFileTree = useCallback((relativePath: string) => {
-    dispatchRevealInFileTree(relativePath);
-  }, []);
-
   const dispatchRevealLibrary = useCallback((relativePath: string) => {
     dispatchRevealBibEntryForPage(relativePath);
   }, []);
@@ -255,7 +252,11 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     onExternalEditor: (relativePath) => openInExternalEditor(relativePath, 1, 1),
     onExportNetwork: (relativePath) => onExportNetworkRef.current?.(relativePath),
     onTrash: (relativePath) => deletePageAction(relativePath),
-    onRevealFileTree: dispatchRevealFileTree,
+    onShowInFinder: (relativePath) => {
+      if (workspacePath) {
+        join(workspacePath, relativePath).then((abs) => revealItemInDir(abs));
+      }
+    },
     onRevealLibrary: dispatchRevealLibrary,
   });
 

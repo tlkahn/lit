@@ -17,7 +17,7 @@ interface SidebarContextMenuHandlers {
   onExternalEditor: (relativePath: string) => void;
   onExportNetwork: (relativePath: string) => void;
   onTrash: (relativePath: string) => void;
-  onRevealFileTree: (relativePath: string) => void;
+  onShowInFinder: (relativePath: string) => void;
   onRevealLibrary: (relativePath: string) => void;
 }
 
@@ -54,8 +54,8 @@ export function useSidebarContextMenu(handlers: SidebarContextMenuHandlers) {
     );
 
     unlisteners.push(
-      listen<SidebarContextPayload>("context-menu://sidebar/reveal-file-tree", (event) => {
-        if (!cancelled) handlersRef.current.onRevealFileTree(event.payload.relative_path);
+      listen<SidebarContextPayload>("context-menu://sidebar/show-in-finder", (event) => {
+        if (!cancelled) handlersRef.current.onShowInFinder(event.payload.relative_path);
       }),
     );
 

@@ -13,10 +13,10 @@ pub const EVENT_CTX_SIDEBAR_EXTERNAL_EDITOR: &str = "context-menu://sidebar/exte
 pub const EVENT_CTX_SIDEBAR_EXPORT_NETWORK: &str = "context-menu://sidebar/export-network";
 pub const EVENT_CTX_SIDEBAR_TRASH: &str = "context-menu://sidebar/trash";
 
-pub const CTX_SIDEBAR_REVEAL_FILE_TREE: &str = "ctx_sidebar_reveal_file_tree";
+pub const CTX_SIDEBAR_SHOW_IN_FINDER: &str = "ctx_sidebar_show_in_finder";
 pub const CTX_SIDEBAR_REVEAL_LIBRARY: &str = "ctx_sidebar_reveal_library";
 
-pub const EVENT_CTX_SIDEBAR_REVEAL_FILE_TREE: &str = "context-menu://sidebar/reveal-file-tree";
+pub const EVENT_CTX_SIDEBAR_SHOW_IN_FINDER: &str = "context-menu://sidebar/show-in-finder";
 pub const EVENT_CTX_SIDEBAR_REVEAL_LIBRARY: &str = "context-menu://sidebar/reveal-library";
 
 pub const CTX_MINDMAP_EDIT: &str = "ctx_mindmap_edit";
@@ -71,7 +71,7 @@ pub enum ContextMenuAction {
     SidebarExternalEditor,
     SidebarExportNetwork,
     SidebarTrash,
-    SidebarRevealFileTree,
+    SidebarShowInFinder,
     SidebarRevealLibrary,
     MindmapEdit,
     MindmapExportNetwork,
@@ -97,7 +97,7 @@ impl ContextMenuAction {
             CTX_SIDEBAR_EXTERNAL_EDITOR => Some(Self::SidebarExternalEditor),
             CTX_SIDEBAR_EXPORT_NETWORK => Some(Self::SidebarExportNetwork),
             CTX_SIDEBAR_TRASH => Some(Self::SidebarTrash),
-            CTX_SIDEBAR_REVEAL_FILE_TREE => Some(Self::SidebarRevealFileTree),
+            CTX_SIDEBAR_SHOW_IN_FINDER => Some(Self::SidebarShowInFinder),
             CTX_SIDEBAR_REVEAL_LIBRARY => Some(Self::SidebarRevealLibrary),
             CTX_MINDMAP_EDIT => Some(Self::MindmapEdit),
             CTX_MINDMAP_EXPORT_NETWORK => Some(Self::MindmapExportNetwork),
@@ -176,8 +176,14 @@ pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
             enabled: true,
         },
         MenuItemSpec {
-            id: CTX_SIDEBAR_REVEAL_FILE_TREE,
-            label: "Reveal in File Tree".into(),
+            id: CTX_SIDEBAR_SHOW_IN_FINDER,
+            label: if cfg!(target_os = "macos") {
+                "Show in Finder"
+            } else if cfg!(target_os = "windows") {
+                "Show in Explorer"
+            } else {
+                "Show in File Manager"
+            }.into(),
             enabled: true,
         },
         MenuItemSpec {
@@ -200,7 +206,7 @@ pub fn dispatch_sidebar_action(
         ContextMenuAction::SidebarExternalEditor => EVENT_CTX_SIDEBAR_EXTERNAL_EDITOR,
         ContextMenuAction::SidebarExportNetwork => EVENT_CTX_SIDEBAR_EXPORT_NETWORK,
         ContextMenuAction::SidebarTrash => EVENT_CTX_SIDEBAR_TRASH,
-        ContextMenuAction::SidebarRevealFileTree => EVENT_CTX_SIDEBAR_REVEAL_FILE_TREE,
+        ContextMenuAction::SidebarShowInFinder => EVENT_CTX_SIDEBAR_SHOW_IN_FINDER,
         ContextMenuAction::SidebarRevealLibrary => EVENT_CTX_SIDEBAR_REVEAL_LIBRARY,
         _ => unreachable!("dispatch_sidebar_action called with non-sidebar action"),
     };
@@ -695,8 +701,14 @@ mod tests {
         assert_eq!(items[3].id, CTX_SIDEBAR_TRASH);
         assert_eq!(items[3].label, "Move to Trash");
         assert!(items[3].enabled);
-        assert_eq!(items[4].id, CTX_SIDEBAR_REVEAL_FILE_TREE);
-        assert_eq!(items[4].label, "Reveal in File Tree");
+        assert_eq!(items[4].id, CTX_SIDEBAR_SHOW_IN_FINDER);
+        if cfg!(target_os = "macos") {
+            assert_eq!(items[4].label, "Show in Finder");
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(items[4].label, "Show in Explorer");
+        } else {
+            assert_eq!(items[4].label, "Show in File Manager");
+        }
         assert!(items[4].enabled);
         assert_eq!(items[5].id, CTX_SIDEBAR_REVEAL_LIBRARY);
         assert_eq!(items[5].label, "Reveal in Reference Library");
@@ -723,6 +735,7 @@ mod tests {
             CTX_SIDEBAR_EXTERNAL_EDITOR,
             CTX_SIDEBAR_EXPORT_NETWORK,
             CTX_SIDEBAR_TRASH,
+            CTX_SIDEBAR_SHOW_IN_FINDER,
         ];
         for ctx_id in &ctx_ids {
             for app_id in &app_menu_ids {

@@ -371,7 +371,7 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
-      onRevealFileTree: vi.fn(),
+      onShowInFinder: vi.fn(),
       onRevealLibrary: vi.fn(),
     };
 
@@ -393,7 +393,7 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
-      onRevealFileTree: vi.fn(),
+      onShowInFinder: vi.fn(),
       onRevealLibrary: vi.fn(),
     };
 
@@ -413,7 +413,7 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
-      onRevealFileTree: vi.fn(),
+      onShowInFinder: vi.fn(),
       onRevealLibrary: vi.fn(),
     };
 
@@ -433,7 +433,7 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
-      onRevealFileTree: vi.fn(),
+      onShowInFinder: vi.fn(),
       onRevealLibrary: vi.fn(),
     };
 
@@ -453,7 +453,7 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
-      onRevealFileTree: vi.fn(),
+      onShowInFinder: vi.fn(),
       onRevealLibrary: vi.fn(),
     };
 
