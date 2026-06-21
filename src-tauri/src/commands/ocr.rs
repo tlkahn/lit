@@ -328,6 +328,7 @@ pub async fn ocr_pdf_to_markdown(
     }
 
     // Step 9: Done
+    crate::commands::graph::notify_bib_changed(&graph_state, &root, &app_handle);
     emit_progress(&window, &key, "done", "OCR complete");
     Ok(md_relative)
 }
