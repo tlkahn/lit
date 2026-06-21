@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath } from "./pathUtils";
+import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath, getAncestorPaths } from "./pathUtils";
 
 describe("resolveRelativePath", () => {
   it("resolves simple relative path", () => {
@@ -118,6 +118,43 @@ describe("isOpenablePath", () => {
 
   it("rejects relative path", () => {
     expect(isOpenablePath("papers/foo.pdf")).toBe(false);
+  });
+});
+
+describe("getAncestorPaths", () => {
+  it("returns empty array for root-level file", () => {
+    expect(getAncestorPaths("readme.md")).toEqual([]);
+  });
+
+  it("returns single ancestor for one-level nesting", () => {
+    expect(getAncestorPaths("docs/readme.md")).toEqual(["docs"]);
+  });
+
+  it("returns multiple ancestors for deep nesting", () => {
+    expect(getAncestorPaths("docs/api/v2/endpoints.md")).toEqual([
+      "docs",
+      "docs/api",
+      "docs/api/v2",
+    ]);
+  });
+
+  it("strips leading slash", () => {
+    expect(getAncestorPaths("/docs/readme.md")).toEqual(["docs"]);
+  });
+
+  it("strips trailing slash", () => {
+    expect(getAncestorPaths("docs/readme.md/")).toEqual(["docs"]);
+  });
+
+  it("collapses consecutive slashes", () => {
+    expect(getAncestorPaths("docs//api///endpoints.md")).toEqual([
+      "docs",
+      "docs/api",
+    ]);
+  });
+
+  it("handles path that is just a slash", () => {
+    expect(getAncestorPaths("/")).toEqual([]);
   });
 });
 

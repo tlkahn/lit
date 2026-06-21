@@ -1,5 +1,6 @@
 import { registerOnce } from "../commandRegistry";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { dispatchRevealInFileTree, dispatchRevealBibEntryForPage } from "../sidebarEvents";
 
 function hasPage(): boolean {
   return (
@@ -19,9 +20,7 @@ export function initSidebarCommands(): void {
       action: () => {
         const path = useWorkspaceStore.getState().currentPagePath;
         if (path) {
-          window.dispatchEvent(
-            new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: path } }),
-          );
+          dispatchRevealInFileTree(path);
         }
       },
     },
@@ -34,9 +33,7 @@ export function initSidebarCommands(): void {
       action: () => {
         const path = useWorkspaceStore.getState().currentPagePath;
         if (path) {
-          window.dispatchEvent(
-            new CustomEvent("lit:reveal-bib-entry-for-page", { detail: { relativePath: path } }),
-          );
+          dispatchRevealBibEntryForPage(path);
         }
       },
     },

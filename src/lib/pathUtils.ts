@@ -33,6 +33,21 @@ export function isOpenablePath(path: string): boolean {
   return path.startsWith("/");
 }
 
+/**
+ * Compute ancestor folder paths for a given relative file path.
+ * Normalizes the input by filtering empty segments (from leading/trailing/
+ * consecutive slashes) so that e.g. "/docs/readme.md" produces ["docs"],
+ * matching the folder-key convention used by buildRows.
+ */
+export function getAncestorPaths(relativePath: string): string[] {
+  const parts = relativePath.split("/").filter((seg) => seg !== "");
+  const ancestors: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    ancestors.push(parts.slice(0, i).join("/"));
+  }
+  return ancestors;
+}
+
 export function frontmatterLineCount(rawYaml: string): number {
   if (!rawYaml) return 0;
   return rawYaml.trimEnd().split("\n").length + 2;

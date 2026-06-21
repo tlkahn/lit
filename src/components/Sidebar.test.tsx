@@ -641,3 +641,189 @@ describe("Sidebar companion indicator", () => {
     expect(selectPage).toHaveBeenCalledWith("paper.md");
   });
 });
+
+describe("Sidebar reveal and search interaction", () => {
+  it("auto-reveal does not clear the search filter when the active page matches the filter", async () => {
+    const { usePreferencesStore } = await import("../stores/preferences");
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Alpha Note", "Alpha Note.md"),
+        makePage("Beta Note", "Beta Note.md"),
+        makePage("Other", "Other.md"),
+      ],
+      currentPagePath: null,
+    });
+    usePreferencesStore.setState({ autoRevealInSidebar: true, sidebarVisible: true });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Type a filter
+    await user.type(screen.getByLabelText("Search pages"), "Note");
+
+    // Verify filter is applied
+    expect(screen.getByText("Alpha Note")).toBeInTheDocument();
+    expect(screen.getByText("Beta Note")).toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+
+    // Switch to a page that matches the filter -- auto-reveal fires
+    act(() => {
+      useWorkspaceStore.setState({ currentPagePath: "Beta Note.md" });
+    });
+
+    // Search should still be "Note" -- not cleared
+    expect(screen.getByLabelText("Search pages")).toHaveValue("Note");
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+    expect(screen.getByText("Beta Note")).toBeInTheDocument();
+  });
+
+  it("auto-reveal skips when the active page is filtered out, preserving search", async () => {
+    const { usePreferencesStore } = await import("../stores/preferences");
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Alpha Note", "Alpha Note.md"),
+        makePage("Beta Note", "Beta Note.md"),
+        makePage("Other", "Other.md"),
+      ],
+      currentPagePath: null,
+    });
+    usePreferencesStore.setState({ autoRevealInSidebar: true, sidebarVisible: true });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Type a filter
+    await user.type(screen.getByLabelText("Search pages"), "Alpha");
+
+    // Verify filter is applied
+    expect(screen.getByText("Alpha Note")).toBeInTheDocument();
+    expect(screen.queryByText("Beta Note")).not.toBeInTheDocument();
+
+    // Switch to a page that does NOT match the filter
+    act(() => {
+      useWorkspaceStore.setState({ currentPagePath: "Beta Note.md" });
+    });
+
+    // Search should still be "Alpha" -- not cleared
+    expect(screen.getByLabelText("Search pages")).toHaveValue("Alpha");
+    expect(screen.getByText("Alpha Note")).toBeInTheDocument();
+    expect(screen.queryByText("Beta Note")).not.toBeInTheDocument();
+  });
+
+  it("manual reveal clears search when the target page is filtered out", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Alpha Note", "Alpha Note.md"),
+        makePage("Beta Note", "Beta Note.md"),
+        makePage("Other", "Other.md"),
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Type a filter that excludes "Beta Note"
+    await user.type(screen.getByLabelText("Search pages"), "Alpha");
+    expect(screen.queryByText("Beta Note")).not.toBeInTheDocument();
+
+    // Manual reveal for a filtered-out page
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: "Beta Note.md" } }),
+      );
+    });
+
+    // Search should be cleared so Beta Note becomes visible
+    expect(screen.getByLabelText("Search pages")).toHaveValue("");
+    expect(screen.getByText("Beta Note")).toBeInTheDocument();
+  });
+
+  it("auto-reveal switches to files tab when on a non-files tab", async () => {
+    const { usePreferencesStore } = await import("../stores/preferences");
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+      currentPagePath: null,
+    });
+    usePreferencesStore.setState({ autoRevealInSidebar: true, sidebarVisible: true });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Switch to the Outline tab
+    await user.click(screen.getByRole("button", { name: "Outline" }));
+
+    // Verify outline is shown and search input is absent
+    expect(screen.getByText("No page selected")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+
+    // Trigger auto-reveal by setting currentPagePath
+    act(() => {
+      useWorkspaceStore.setState({ currentPagePath: "Alpha.md" });
+    });
+
+    // Auto-reveal should switch to the files tab
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+
+  it("manual reveal switches to files tab when on a non-files tab", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+      currentPagePath: null,
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Switch to the Outline tab
+    await user.click(screen.getByRole("button", { name: "Outline" }));
+
+    // Verify outline is shown and search input is absent
+    expect(screen.getByText("No page selected")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+
+    // Dispatch manual reveal event
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: "Alpha.md" } }),
+      );
+    });
+
+    // Manual reveal should switch to the files tab
+    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    // Outline-specific content should no longer be shown
+    expect(screen.queryByText("No page selected")).not.toBeInTheDocument();
+  });
+
+  it("manual reveal preserves search when the target page matches the filter", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("Alpha Note", "Alpha Note.md"),
+        makePage("Beta Note", "Beta Note.md"),
+        makePage("Other", "Other.md"),
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Type a filter that includes "Beta Note"
+    await user.type(screen.getByLabelText("Search pages"), "Note");
+    expect(screen.getByText("Alpha Note")).toBeInTheDocument();
+    expect(screen.getByText("Beta Note")).toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+
+    // Manual reveal for a page that IS in the filtered list
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: "Beta Note.md" } }),
+      );
+    });
+
+    // Search should still be "Note" -- not cleared
+    expect(screen.getByLabelText("Search pages")).toHaveValue("Note");
+    expect(screen.getByText("Beta Note")).toBeInTheDocument();
+    expect(screen.queryByText("Other")).not.toBeInTheDocument();
+  });
+});

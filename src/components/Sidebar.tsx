@@ -2,13 +2,21 @@ import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, me
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
-import { openInExternalEditor, setPreference } from "../lib/ipc";
+import { openInExternalEditor } from "../lib/ipc";
+import { ensureSidebarVisible } from "../lib/sidebarVisibility";
+import {
+  onRevealInFileTree,
+  onSetSidebarTab,
+  dispatchRevealInFileTree,
+  dispatchRevealBibEntryForPage,
+} from "../lib/sidebarEvents";
 import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
 import { executeCommand } from "../lib/commandRegistry";
 import { localeFilter } from "../lib/localeSearch";
-import { useSidebarTab, type SidebarTab } from "../hooks/useSidebarTab";
+import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
+import { useRevealFlash } from "../hooks/useRevealFlash";
 import { Outline } from "./Outline";
 import { TrashPanel } from "./TrashPanel";
 import { ReferenceLibrary } from "./ReferenceLibrary";
@@ -149,7 +157,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   const { sortConfig, selectSortKey, comparator } = useSidebarSort(workspacePath ?? "");
   const tree = useMemo(() => buildTree(filtered), [filtered]);
-  const { rows, toggleCollapse, expandPaths } = useFlatTree(tree, comparator);
+  const { rows, toggleCollapse, revealPath } = useFlatTree(tree, comparator);
+
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -159,13 +170,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     overscan: 10,
   });
 
-  const [revealedPath, setRevealedPath] = useState<string | null>(null);
-  const revealTimerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
   const virtualizerRef = useRef(virtualizer);
   virtualizerRef.current = virtualizer;
+
+  const { revealedKey: revealedPath, triggerReveal } = useRevealFlash(virtualizerRef);
 
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
 
@@ -178,70 +186,77 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   onExportNetworkRef.current = onExportNetwork;
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      const tab = (e as CustomEvent<SidebarTab>).detail;
+    return onSetSidebarTab((tab) => {
       setTab(tab);
-    };
-    window.addEventListener("lit:set-sidebar-tab", handler);
-    return () => window.removeEventListener("lit:set-sidebar-tab", handler);
+    });
   }, [setTab]);
 
+  const pendingRevealRef = useRef<string | null>(null);
+
   useEffect(() => {
-    const handler = (e: Event) => {
-      const { relativePath } = (e as CustomEvent<{ relativePath: string }>).detail;
-
-      usePreferencesStore.setState({ sidebarVisible: true });
-      setPreference("workbench.sideBar.visible", true).catch(() => {});
+    return onRevealInFileTree(({ relativePath }) => {
+      ensureSidebarVisible();
       setTab("files");
-      setSearch("");
 
-      const parts = relativePath.split("/");
-      const ancestorPaths: string[] = [];
-      for (let i = 1; i < parts.length; i++) {
-        ancestorPaths.push(parts.slice(0, i).join("/"));
+      // Try to reveal without clearing the search filter first.
+      // Check the current rows (via ref) to see if the target is already
+      // visible in the filtered tree, since revealPath's closure over `root`
+      // may be stale relative to the latest rendered rows.
+      const currentRows = rowsRef.current;
+      const visibleIdx = currentRows.findIndex(
+        (r) => r.type === "page" && r.page.relative_path === relativePath,
+      );
+
+      if (visibleIdx >= 0) {
+        // Target is visible in the (possibly filtered) tree -- reveal it
+        // by expanding ancestors and scrolling, without clearing search.
+        const idx = revealPath(relativePath);
+        triggerReveal(relativePath, idx >= 0 ? idx : visibleIdx);
+      } else {
+        // Target is filtered out -- clear search and defer the reveal
+        // until React re-renders with the unfiltered tree.
+        setSearch("");
+        pendingRevealRef.current = relativePath;
       }
-      expandPaths(ancestorPaths);
+    });
+  }, [setTab, revealPath, triggerReveal]);
 
-      setRevealedPath(relativePath);
-      clearTimeout(revealTimerRef.current);
-      revealTimerRef.current = setTimeout(() => setRevealedPath(null), 1500);
+  // Deferred reveal: when rows update after clearing search, complete the
+  // pending reveal. `rows` gets a new reference whenever `root`/`expanded`/
+  // `pageComparator` change, which happens when `deferredSearch` catches up
+  // after setSearch("").
+  useEffect(() => {
+    const target = pendingRevealRef.current;
+    if (!target) return;
+    pendingRevealRef.current = null;
 
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const idx = rowsRef.current.findIndex(
-            (r) => r.type === "page" && r.page.relative_path === relativePath,
-          );
-          if (idx >= 0) {
-            virtualizerRef.current.scrollToIndex(idx, { align: "center" });
-          }
-        });
-      });
-    };
-    window.addEventListener("lit:reveal-in-file-tree", handler);
-    return () => {
-      clearTimeout(revealTimerRef.current);
-      window.removeEventListener("lit:reveal-in-file-tree", handler);
-    };
-  }, [setTab, expandPaths]);
+    const idx = revealPath(target);
+    triggerReveal(target, idx);
+  }, [rows, revealPath, triggerReveal]);
 
   const autoRevealInSidebar = usePreferencesStore((s) => s.autoRevealInSidebar);
   useEffect(() => {
-    if (!autoRevealInSidebar || !currentPagePath || tab !== "files") return;
-    window.dispatchEvent(
-      new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath: currentPagePath } }),
-    );
-  }, [autoRevealInSidebar, currentPagePath, tab]);
+    if (!autoRevealInSidebar || !currentPagePath) return;
+
+    // Auto-reveal directly instead of dispatching lit:reveal-in-file-tree,
+    // so we can preserve any active search filter. If the page is filtered
+    // out by the current search, silently skip -- the user intentionally
+    // typed a filter and auto-reveal should not wipe it.
+    ensureSidebarVisible();
+    setTab("files");
+
+    const idx = revealPath(currentPagePath);
+    if (idx >= 0) {
+      triggerReveal(currentPagePath, idx);
+    }
+  }, [autoRevealInSidebar, currentPagePath, setTab, revealPath, triggerReveal]);
 
   const dispatchRevealFileTree = useCallback((relativePath: string) => {
-    window.dispatchEvent(
-      new CustomEvent("lit:reveal-in-file-tree", { detail: { relativePath } }),
-    );
+    dispatchRevealInFileTree(relativePath);
   }, []);
 
   const dispatchRevealLibrary = useCallback((relativePath: string) => {
-    window.dispatchEvent(
-      new CustomEvent("lit:reveal-bib-entry-for-page", { detail: { relativePath } }),
-    );
+    dispatchRevealBibEntryForPage(relativePath);
   }, []);
 
   useSidebarContextMenu({
