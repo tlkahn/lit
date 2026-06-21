@@ -51,6 +51,7 @@ function BottomPanelTabs() {
           <TabButton
             tab="linked"
             label="Linked References"
+            glyph="󱉟"
             count={linkedCount}
             active={activeTab === "linked"}
             unfolded={unfolded}
@@ -59,6 +60,7 @@ function BottomPanelTabs() {
           <TabButton
             tab="outgoing"
             label="Outgoing Links"
+            glyph="󰌷"
             count={outgoingCount}
             active={activeTab === "outgoing"}
             unfolded={unfolded}
@@ -68,6 +70,7 @@ function BottomPanelTabs() {
             <TabButton
               tab="unlinked"
               label="Unlinked References"
+              glyph="󰌸"
               count={unlinkedCount}
               active={activeTab === "unlinked"}
               unfolded={unfolded}
@@ -78,6 +81,7 @@ function BottomPanelTabs() {
             <TabButton
               tab="annotations"
               label="Annotations"
+              glyph="󰆈"
               count={annotationCount}
               active={activeTab === "annotations"}
               unfolded={unfolded}
@@ -158,6 +162,7 @@ function PdfPageNav() {
 function TabButton({
   tab,
   label,
+  glyph,
   count,
   active,
   unfolded,
@@ -165,6 +170,7 @@ function TabButton({
 }: {
   tab: TabId;
   label: string;
+  glyph: string;
   count: number | null;
   active: boolean;
   unfolded: boolean;
@@ -177,17 +183,18 @@ function TabButton({
     highlight = "text-text-muted";
   }
 
-  const text = count !== null && count > 0 ? `${label} (${count})` : label;
-
   return (
     <button
       role="tab"
+      title={label}
+      aria-label={label}
       aria-selected={active && unfolded}
       data-testid={`tab-${tab}`}
       className={`px-2 text-xs ${highlight}`}
       onClick={() => onClick(tab)}
     >
-      {text}
+      <span className="nerd-font" aria-hidden="true">{glyph}</span>
+      {count !== null && count > 0 && <span className="text-[10px] ml-0.5">{count}</span>}
     </button>
   );
 }
