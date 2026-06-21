@@ -12,7 +12,6 @@ export interface BibActionDescriptor {
   onClick: () => void;
   disabled?: boolean;
   testId?: string;
-  variant: "accent" | "bordered";
   spinner?: boolean;
   renderContent?: React.ReactNode;
 }
@@ -38,11 +37,8 @@ interface BibEntryActionsProps {
 
 const TRIGGER_WIDTH = 28;
 
-function variantClass(variant: "accent" | "bordered"): string {
-  return variant === "accent"
-    ? "inline-flex items-center justify-center rounded bg-interactive-accent/15 px-1.5 py-0.5 text-xs text-interactive-accent hover:underline"
-    : "inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50";
-}
+const BUTTON_CLASS =
+  "inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50";
 
 export function BibEntryActions(props: BibEntryActionsProps) {
   const {
@@ -64,7 +60,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         title: `Open note: ${state.page_id}`,
         onClick: () => onOpenNote(state.page_id!),
         testId: "has-note-link",
-        variant: "accent",
       });
     } else if (state) {
       const createLabel = materializingKey === entry.key ? "Creating…" : "Create note";
@@ -75,7 +70,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         onClick: () => onCreateNote(entry.key),
         disabled: materializingKey !== null,
         testId: "create-note-btn",
-        variant: "bordered",
         spinner: materializingKey === entry.key,
       });
     }
@@ -93,7 +87,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         onClick: () => onEnrich(entry),
         disabled: enrichingKey === entry.key,
         testId: "fetch-details-btn",
-        variant: "bordered",
         spinner: enrichingKey === entry.key,
       });
     }
@@ -106,7 +99,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         title: `Open PDF: ${entry.file}`,
         onClick: () => onOpenPdf(entry.file!),
         testId: "open-pdf-btn",
-        variant: "accent",
       });
       list.push({
         key: "ocr",
@@ -114,7 +106,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         label: "OCR to Markdown",
         onClick: () => onOcr(entry),
         testId: "ocr-btn",
-        variant: "accent",
       });
     }
 
@@ -123,7 +114,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
       icon: "󰆏",
       label: "Copy citation",
       onClick: () => onCopyCitation(entry.key),
-      variant: "bordered",
     });
 
     if (!entry.file && (entry.doi || entry.arxiv_id)) {
@@ -141,7 +131,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         onClick: () => onDownloadPdf(entry),
         disabled: downloadingKey === entry.key || linkingKey === entry.key,
         testId: "download-pdf-btn",
-        variant: "bordered",
         spinner: downloadingKey === entry.key,
         renderContent: downloadingKey === entry.key
           ? <>{downloadProgress?.total ? <span>{Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%</span> : null}</>
@@ -161,7 +150,6 @@ export function BibEntryActions(props: BibEntryActionsProps) {
       onClick: () => onLinkPdf(entry),
       disabled: linkingKey === entry.key || downloadingKey === entry.key,
       testId: "link-pdf-btn",
-      variant: "bordered",
       spinner: linkingKey === entry.key,
     });
 
@@ -389,7 +377,7 @@ export function ActionButton({ action: a }: { action: BibActionDescriptor }) {
       onClick={a.onClick}
       title={a.title ?? a.label}
       aria-label={a.label}
-      className={variantClass(a.variant) + (a.renderContent ? " gap-1" : "")}
+      className={BUTTON_CLASS + (a.renderContent ? " gap-1" : "")}
     >
       {a.spinner
         ? <><SpinnerSvg className="h-3 w-3" />{a.renderContent}</>

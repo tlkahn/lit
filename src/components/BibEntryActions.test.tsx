@@ -374,7 +374,6 @@ describe("BibEntryActions", () => {
       icon: "X",
       label: "Custom",
       onClick: vi.fn(),
-      variant: "bordered",
       spinner: true,
       renderContent: <span>progress</span>,
     };
