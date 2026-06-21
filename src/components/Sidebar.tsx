@@ -292,7 +292,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
           }`}
         >
-          <span className="nerd-font text-base" aria-hidden="true">{'󰲞'}</span>
+          <span className="nerd-font text-base" aria-hidden="true">{'󰠶'}</span>
         </button>
         <button
           onClick={() => setTab("references")}
