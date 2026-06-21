@@ -4,13 +4,10 @@ use std::path::Path;
 
 /// Move a file to the macOS system trash via `NSFileManager.trashItemAtURL`.
 /// The file becomes visible in Finder → Trash and recoverable via "Put Back".
-fn system_trash(path: &Path) -> Result<(), WorkspaceError> {
+fn system_trash(canonical_path: &Path) -> Result<(), WorkspaceError> {
     use objc2_foundation::{NSFileManager, NSString, NSURL};
 
-    let abs = path
-        .canonicalize()
-        .map_err(|e| WorkspaceError::IoError(e.to_string()))?;
-    let path_str = abs
+    let path_str = canonical_path
         .to_str()
         .ok_or_else(|| WorkspaceError::IoError("Non-UTF-8 path".into()))?;
     let url = NSURL::fileURLWithPath(&NSString::from_str(path_str));
@@ -22,8 +19,7 @@ fn system_trash(path: &Path) -> Result<(), WorkspaceError> {
 
 /// Move the page at `relative_path` to the macOS system trash.
 pub fn trash_page(root: &Path, relative_path: &str) -> Result<(), WorkspaceError> {
-    validate_within_root(root, relative_path)?;
-    let full_path = root.join(relative_path);
+    let full_path = validate_within_root(root, relative_path)?;
     if !full_path.exists() {
         return Err(WorkspaceError::PageNotFound(relative_path.to_string()));
     }

@@ -204,6 +204,7 @@ pub fn merge_documents_inner(
     }
     fs::write(&full_merged, &merged_content).map_err(|e| e.to_string())?;
 
+    // Not atomic — if a mid-loop trash fails, earlier sources are already in system trash.
     for (path, _) in &ordered {
         trash::trash_page(root, path).map_err(|e| e.to_string())?;
     }
