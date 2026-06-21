@@ -3816,4 +3816,30 @@ describe("findBibKeyForPage", () => {
     };
     expect(findBibKeyForPage(states, "notes/target.md")).toBe("validEntry");
   });
+
+  it("falls back to entries array when stem is not in states", () => {
+    const states: Record<string, BibKeyState> = {
+      other2020: { materialization: "created", page_id: null },
+    };
+    const entries: BibEntry[] = [
+      { key: "uncited2023", title: "Uncited Paper", authors: [], year: "2023", entry_type: "article", bib_file: "refs.bib", line_number: 1 },
+    ];
+    expect(findBibKeyForPage(states, "notes/uncited2023.md", entries)).toBe("uncited2023");
+  });
+
+  it("entries fallback is skipped when entries is undefined", () => {
+    const states: Record<string, BibKeyState> = {};
+    expect(findBibKeyForPage(states, "notes/uncited2023.md")).toBeUndefined();
+    expect(findBibKeyForPage(states, "notes/uncited2023.md", undefined)).toBeUndefined();
+  });
+
+  it("page_id and states matches take priority over entries fallback", () => {
+    const states: Record<string, BibKeyState> = {
+      fromState: { materialization: "created", page_id: "notes/priority.md" },
+    };
+    const entries: BibEntry[] = [
+      { key: "priority", title: "Entry Match", authors: [], year: "2023", entry_type: "article", bib_file: "refs.bib", line_number: 1 },
+    ];
+    expect(findBibKeyForPage(states, "notes/priority.md", entries)).toBe("fromState");
+  });
 });

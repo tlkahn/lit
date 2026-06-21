@@ -79,6 +79,7 @@ export function bibFileEndsWith(
 export function findBibKeyForPage(
   states: Record<string, BibKeyState>,
   relativePath: string,
+  entries?: BibEntry[],
 ): string | undefined {
   const matches = Object.keys(states).filter(
     (k) => states[k]?.page_id === relativePath,
@@ -89,6 +90,10 @@ export function findBibKeyForPage(
   }
   const stem = relativePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
   if (stem && states[stem] != null) return stem;
+  if (stem && entries) {
+    const match = entries.find((e) => e.key === stem);
+    if (match) return match.key;
+  }
   return undefined;
 }
 
@@ -717,6 +722,8 @@ export function ReferenceLibrary() {
   sortedRef.current = sorted;
   const bibKeyStatesRef = useRef(bibKeyStates);
   bibKeyStatesRef.current = bibKeyStates;
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const pendingRevealForPageRef = useRef<string | null>(null);
 
   const revealEntry = useCallback((citekey: string, bibFile?: string) => {
@@ -759,7 +766,7 @@ export function ReferenceLibrary() {
   useEffect(() => {
     return onRevealBibEntryForPage(({ relativePath }) => {
       const states = bibKeyStatesRef.current;
-      const citekey = findBibKeyForPage(states, relativePath);
+      const citekey = findBibKeyForPage(states, relativePath, entriesRef.current);
       if (!citekey) {
         if (Object.keys(states).length === 0) {
           pendingRevealForPageRef.current = relativePath;
@@ -777,7 +784,7 @@ export function ReferenceLibrary() {
   useEffect(() => {
     const pendingPath = pendingRevealForPageRef.current;
     if (!pendingPath || Object.keys(bibKeyStates).length === 0) return;
-    const citekey = findBibKeyForPage(bibKeyStates, pendingPath);
+    const citekey = findBibKeyForPage(bibKeyStates, pendingPath, entries);
     pendingRevealForPageRef.current = null;
     if (citekey) {
       revealEntry(citekey);
