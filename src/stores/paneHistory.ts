@@ -239,6 +239,19 @@ export function initPaneHistoryTracking(): void {
   if (trackingUnsub) return;
   prevRoot = usePaneStore.getState().root;
   prevLeaves = collectLeafMap(prevRoot);
+
+  // Seed the currently-open document of each pane as its first history entry.
+  // This covers the doc restored from the previous session's layout (and any doc
+  // already open before tracking starts), which the subscription below would
+  // otherwise never record because it only fires on subsequent changes. pushPage
+  // dedups when a restored stack's current entry already equals the live
+  // pagePath, so restored stacks are preserved untouched.
+  for (const [id, pagePath] of prevLeaves) {
+    if (pagePath !== null) {
+      usePaneHistoryStore.getState().pushPage(id, pagePath);
+    }
+  }
+
   trackingUnsub = usePaneStore.subscribe((state) => {
     if (state.root === prevRoot) return;
     prevRoot = state.root;

@@ -517,6 +517,98 @@ describe("paneHistory", () => {
     });
   });
 
+  describe("initPaneHistoryTracking seeds current document", () => {
+    afterEach(() => {
+      stopPaneHistoryTracking();
+    });
+
+    it("seeds the open doc so opening a second doc enables back to the first", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "a.md" },
+        focusedPaneId: "p1",
+      });
+
+      initPaneHistoryTracking();
+
+      // The restored/initial doc is seeded as the first history entry.
+      expect(usePaneHistoryStore.getState().stacks.get("p1")).toEqual({
+        entries: ["a.md"],
+        index: 0,
+      });
+
+      // Opening a second doc records it and enables back to the first.
+      usePaneStore.getState().setPanePage("p1", "b.md");
+      expect(usePaneHistoryStore.getState().canGoBack("p1")).toBe(true);
+      expect(usePaneHistoryStore.getState().goBack("p1")).toBe("a.md");
+    });
+
+    it("leaves back disabled for a single-doc session (no phantom entry)", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "a.md" },
+        focusedPaneId: "p1",
+      });
+
+      initPaneHistoryTracking();
+
+      expect(usePaneHistoryStore.getState().canGoBack("p1")).toBe(false);
+      expect(usePaneHistoryStore.getState().canGoForward("p1")).toBe(false);
+    });
+
+    it("does not disturb a restored stack whose current entry matches the live page", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "b.md" },
+        focusedPaneId: "p1",
+      });
+      usePaneHistoryStore.setState({
+        stacks: new Map([["p1", { entries: ["a.md", "b.md"], index: 1 }]]),
+      });
+      const stacksBefore = usePaneHistoryStore.getState().stacks;
+
+      initPaneHistoryTracking();
+
+      // Seeding dedups -- the restored stack is untouched (same reference).
+      expect(usePaneHistoryStore.getState().stacks).toBe(stacksBefore);
+    });
+
+    it("skips a leaf with null pagePath (no stack created)", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: null },
+        focusedPaneId: "p1",
+      });
+
+      initPaneHistoryTracking();
+
+      expect(usePaneHistoryStore.getState().stacks.has("p1")).toBe(false);
+    });
+
+    it("seeds each pane independently in a split layout", () => {
+      usePaneStore.setState({
+        root: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          children: [
+            { type: "leaf", id: "p1", pagePath: "a.md" },
+            { type: "leaf", id: "p2", pagePath: "b.md" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "p1",
+      });
+
+      initPaneHistoryTracking();
+
+      expect(usePaneHistoryStore.getState().stacks.get("p1")).toEqual({
+        entries: ["a.md"],
+        index: 0,
+      });
+      expect(usePaneHistoryStore.getState().stacks.get("p2")).toEqual({
+        entries: ["b.md"],
+        index: 0,
+      });
+    });
+  });
+
   describe("_isHistoryNavigation flag resilience", () => {
     afterEach(() => {
       stopPaneHistoryTracking();
@@ -530,7 +622,9 @@ describe("paneHistory", () => {
       store.pushPage("p1", "c.md");
       usePaneStore.getState().setPanePage("p1", "c.md");
 
-      // Start tracking so the subscriber records navigations
+      // Start tracking so the subscriber records navigations. Init before any
+      // goBack so the live leaf still equals the stack's current entry and
+      // seeding dedups.
       initPaneHistoryTracking();
 
       // Monkey-patch setPanePage to throw
@@ -564,11 +658,13 @@ describe("paneHistory", () => {
       store.pushPage("p1", "b.md");
       usePaneStore.getState().setPanePage("p1", "b.md");
 
+      // Start tracking so the subscriber records navigations. Init before the
+      // goBack below so the live leaf still equals the stack's current entry
+      // (b.md) and seeding dedups rather than appending.
+      initPaneHistoryTracking();
+
       // Go back to a.md (index 0) so we can go forward
       usePaneHistoryStore.getState().goBack("p1");
-
-      // Start tracking so the subscriber records navigations
-      initPaneHistoryTracking();
 
       // Monkey-patch setPanePage to throw
       const original = usePaneStore.getState().setPanePage;
