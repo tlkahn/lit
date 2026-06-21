@@ -112,6 +112,26 @@ fn validate_key(key: &str) -> Result<(), String> {
         .map_err(|e| format!("Invalid citation key: {e}"))
 }
 
+/// Validate that a relative path is safe: no `..` traversal, not absolute,
+/// no null bytes, and not empty.
+fn validate_relative_path(p: &str) -> Result<(), String> {
+    if p.is_empty() {
+        return Err("relative path must not be empty".to_string());
+    }
+    if p.starts_with('/') || p.starts_with('\\') {
+        return Err(format!("path must be relative, got: {p}"));
+    }
+    if p.contains('\0') {
+        return Err(format!("path contains null byte: {p}"));
+    }
+    for component in p.split(['/', '\\']) {
+        if component == ".." {
+            return Err(format!("path contains '..' traversal: {p}"));
+        }
+    }
+    Ok(())
+}
+
 /// Map an `ocr_cli::error::Error` to a user-facing error string.
 fn map_ocr_error(e: &ocr_cli::error::Error) -> String {
     match e {
@@ -354,8 +374,11 @@ pub async fn is_ocr_companion_current(
     pdf_relative: String,
 ) -> Result<bool, String> {
     validate_key(&key)?;
+    validate_relative_path(&pdf_relative)?;
     let root = PathBuf::from(&workspace_path);
-    Ok(is_companion_current(&root, &key, &pdf_relative))
+    tokio::task::spawn_blocking(move || is_companion_current(&root, &key, &pdf_relative))
+        .await
+        .map_err(|e| format!("Join error: {e}"))
 }
 
 #[tauri::command]
@@ -1230,7 +1253,6 @@ mod tests {
     fn test_companion_current_no_md() {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path();
-        std::fs::write(root.join("assets/pdf/smith.pdf"), b"fake pdf").ok();
         std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
         std::fs::write(root.join("assets/pdf/smith.pdf"), b"fake pdf").unwrap();
         assert!(!is_companion_current(root, "smith2024", "assets/pdf/smith.pdf"));
@@ -1314,6 +1336,67 @@ mod tests {
         ));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid citation key"));
+    }
+
+    // --- validate_relative_path tests ---
+
+    #[test]
+    fn validate_relative_path_rejects_dotdot() {
+        let err = validate_relative_path("../escape").unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_nested_dotdot() {
+        let err = validate_relative_path("a/../../b").unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_absolute() {
+        let err = validate_relative_path("/etc/passwd").unwrap_err();
+        assert!(err.contains("relative"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_null_byte() {
+        let err = validate_relative_path("foo\0bar.pdf").unwrap_err();
+        assert!(err.contains("null"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_rejects_empty() {
+        let err = validate_relative_path("").unwrap_err();
+        assert!(err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_relative_path_accepts_normal() {
+        validate_relative_path("assets/pdf/test.pdf").unwrap();
+    }
+
+    #[test]
+    fn validate_relative_path_accepts_simple_filename() {
+        validate_relative_path("test.pdf").unwrap();
+    }
+
+    #[test]
+    fn validate_relative_path_accepts_dotfile() {
+        validate_relative_path(".hidden/test.pdf").unwrap();
+    }
+
+    #[test]
+    fn test_is_ocr_companion_current_rejects_pdf_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(is_ocr_companion_current(
+            "valid-key".to_string(),
+            dir.path().to_string_lossy().to_string(),
+            "../../etc/passwd".to_string(),
+        ));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
     }
 
     #[test]

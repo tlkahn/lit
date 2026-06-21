@@ -240,24 +240,37 @@ export function ReferenceLibrary() {
     };
   }, []);
 
-  // Check if OCR companion markdown is current when an entry is expanded
-  useEffect(() => {
-    if (!expandedKey || !workspacePath) return;
-    const expanded = entries.find(
+  // Derive stable primitives from the expanded entry to avoid re-firing the
+  // companion-check effect on every entries array rebuild (F5).
+  const expandedEntry = useMemo(() => {
+    if (!expandedKey) return undefined;
+    return entries.find(
       (e) => `${e.bib_file ?? ""}:${e.key}` === expandedKey,
     );
-    if (!expanded?.file) return;
+  }, [entries, expandedKey]);
+
+  const expandedFile = expandedEntry?.file;
+  const expandedBibKey = expandedEntry?.key;
+
+  // Check if OCR companion markdown is current when an entry is expanded
+  useEffect(() => {
+    if (!expandedKey || !workspacePath || !expandedFile || !expandedBibKey) {
+      return () => { ocrCheckIdRef.current++; };
+    }
     const id = ++ocrCheckIdRef.current;
-    isOcrCompanionCurrent(expanded.key, workspacePath, expanded.file).then(
+    isOcrCompanionCurrent(expandedBibKey, workspacePath, expandedFile).then(
       (result) => {
         if (id !== ocrCheckIdRef.current) return;
-        setOcrCompanionCurrentMap((prev) => ({ ...prev, [expanded.key]: result }));
+        setOcrCompanionCurrentMap((prev) => ({ ...prev, [expandedKey]: result }));
       },
       () => {
         // On error, treat as not current (don't hide button)
+        if (id !== ocrCheckIdRef.current) return;
+        setOcrCompanionCurrentMap((prev) => ({ ...prev, [expandedKey]: false }));
       },
     );
-  }, [expandedKey, entries, workspacePath]);
+    return () => { ocrCheckIdRef.current++; };
+  }, [expandedKey, expandedFile, expandedBibKey, workspacePath]);
 
   // --- Search tab state ---
   const [mode, setMode] = useState<"library" | "search">("library");
@@ -591,7 +604,7 @@ export function ReferenceLibrary() {
         show(`Downloaded PDF for @${entry.key}`);
         setOcrCompanionCurrentMap((prev) => {
           const next = { ...prev };
-          delete next[entry.key];
+          delete next[`${entry.bib_file ?? ""}:${entry.key}`];
           return next;
         });
       } catch (err) {
@@ -629,7 +642,7 @@ export function ReferenceLibrary() {
         show(`Linked PDF for @${entry.key}`);
         setOcrCompanionCurrentMap((prev) => {
           const next = { ...prev };
-          delete next[entry.key];
+          delete next[`${entry.bib_file ?? ""}:${entry.key}`];
           return next;
         });
       } catch (err) {
@@ -1177,7 +1190,7 @@ export function ReferenceLibrary() {
                           downloadingKey={downloadingKey}
                           downloadProgress={downloadProgress}
                           linkingKey={linkingKey}
-                          ocrCompanionCurrent={ocrCompanionCurrentMap[entry.key]}
+                          ocrCompanionCurrent={ocrCompanionCurrentMap[entryId]}
                         />
                         <CitedBySection bibKey={entry.key} />
                       </div>
@@ -1206,9 +1219,10 @@ export function ReferenceLibrary() {
           onClose={() => setOcrEntry(null)}
           onComplete={(path) => {
             const key = ocrEntry.key;
+            const compositeKey = `${ocrEntry.bib_file ?? ""}:${key}`;
             setOcrEntry(null);
             show("OCR complete for @" + key);
-            setOcrCompanionCurrentMap((prev) => ({ ...prev, [key]: true }));
+            setOcrCompanionCurrentMap((prev) => ({ ...prev, [compositeKey]: true }));
             refreshPages();
             selectPage(path);
           }}
