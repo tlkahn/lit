@@ -6,7 +6,7 @@ use serde::Serialize;
 use super::normalize::{page_name_to_filename, validate_page_name};
 use super::ops;
 use super::split::{plan_split, SplitPlan};
-use super::trash::{self, TrashEntry};
+use super::trash;
 use super::write_hash::WriteHashRegistry;
 use super::WorkspaceError;
 use crate::graph::rewriter::{rewrite_body_for_split, PlannedRewrite};
@@ -14,7 +14,7 @@ use crate::graph::rewriter::{rewrite_body_for_split, PlannedRewrite};
 #[derive(Debug, Clone, Serialize)]
 pub struct SplitResult {
     pub created_paths: Vec<String>,
-    pub trash_entry: TrashEntry,
+    pub original_content: String,
     pub rewrite_actions: Vec<PlannedRewrite>,
 }
 
@@ -90,20 +90,19 @@ pub fn execute_split(
         }
     };
 
-    let trash_entry = match trash::trash_page(root, relative_path) {
-        Ok(entry) => entry,
-        Err(e) => {
-            for pr in &rewrite_actions {
-                let _ = std::fs::write(root.join(&pr.relative_path), &pr.before_content);
-            }
-            cleanup_created_files(root, &target_paths);
-            return Err(e);
+    let original_content = std::fs::read_to_string(root.join(relative_path))?;
+
+    if let Err(e) = trash::trash_page(root, relative_path) {
+        for pr in &rewrite_actions {
+            let _ = std::fs::write(root.join(&pr.relative_path), &pr.before_content);
         }
-    };
+        cleanup_created_files(root, &target_paths);
+        return Err(e);
+    }
 
     Ok(SplitResult {
         created_paths: target_paths,
-        trash_entry,
+        original_content,
         rewrite_actions,
     })
 }
@@ -322,8 +321,8 @@ mod tests {
         let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert!(!tmp.path().join("Doc.md").exists());
-        assert_eq!(result.trash_entry.original_path, "Doc.md");
-        assert!(tmp.path().join(".trash").exists());
+        assert!(result.original_content.contains("Alpha body."));
+        assert!(!tmp.path().join(".trash").exists());
     }
 
     // R9: vault links rewritten
@@ -374,7 +373,7 @@ mod tests {
         let result = execute_split(tmp.path(), "Doc.md", &registry, None).unwrap();
 
         assert_eq!(result.created_paths, vec!["Alpha.md", "Beta.md"]);
-        assert_eq!(result.trash_entry.original_path, "Doc.md");
+        assert!(result.original_content.contains("## Alpha"));
     }
 
     // R11: name collision error
