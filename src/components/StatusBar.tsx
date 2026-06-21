@@ -97,24 +97,11 @@ function BottomPanelTabs() {
 function PdfPageNav() {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const fileType = useLeafFileType(focusedPaneId);
-  // When the focused pane is not itself a PDF (the common companion workflow:
-  // markdown editor focused, linked PDF visible in a split), resolve the linked
-  // PDF pane so the status bar still drives page navigation. The selector returns
-  // a primitive string|null, so it stays render-stable.
-  const linkedPaneId = usePanePdfLinkStore((s) => s.getLinkedPane(focusedPaneId) ?? null);
-  const pdfPaneId = fileType === "pdf" ? focusedPaneId : linkedPaneId;
-  // Confirm the resolved partner is actually a PDF (links are editor<->PDF, but
-  // guard defensively against a stray non-PDF link).
-  const linkedFileType = useLeafFileType(pdfPaneId);
+  const pdfPaneId = focusedPaneId;
   const currentPage = usePanePdfLinkStore((s) => (pdfPaneId ? s.currentPage.get(pdfPaneId) ?? null : null));
   const pageCount = usePanePdfLinkStore((s) => (pdfPaneId ? s.pageCount.get(pdfPaneId) ?? null : null));
 
-  if (
-    (fileType !== "pdf" && linkedFileType !== "pdf") ||
-    pdfPaneId == null ||
-    currentPage == null ||
-    pageCount == null
-  )
+  if (fileType !== "pdf" || pdfPaneId == null || currentPage == null || pageCount == null)
     return null;
 
   const handlePrev = () => {

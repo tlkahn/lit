@@ -858,7 +858,7 @@ describe("StatusBar", () => {
       unmount();
     });
 
-    it("renders page nav when a markdown pane is focused but linked to a PDF pane", () => {
+    it("hides page nav when a markdown pane is focused even if linked to a PDF pane", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
         { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
         { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
@@ -882,42 +882,7 @@ describe("StatusBar", () => {
         pageCount: new Map([["pdf", 10]]),
       });
       render(<StatusBar />);
-      expect(screen.getByTestId("status-bar-pdf-nav")).toBeInTheDocument();
-      expect(screen.getByTestId("status-bar-pdf-page")).toHaveTextContent("5/10");
-    });
-
-    it("prev/next operate on the linked PDF pane while the editor is focused", async () => {
-      const goToPage = vi.fn();
-      pdfPaneRef.registerPdfGoToPage("pdf", goToPage);
-      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [
-        { title: "hello", relative_path: "notes/hello.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" as const, has_companion: false },
-        { title: "doc", relative_path: "notes/hello.pdf", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "pdf" as const, has_companion: false },
-      ] });
-      usePaneStore.setState({
-        root: {
-          type: "split",
-          id: "s1",
-          direction: "horizontal",
-          children: [
-            { type: "leaf", id: "md", pagePath: "notes/hello.md" },
-            { type: "leaf", id: "pdf", pagePath: "notes/hello.pdf" },
-          ],
-          sizes: [0.5, 0.5],
-        },
-        focusedPaneId: "md",
-      });
-      usePanePdfLinkStore.setState({
-        links: new Map([["md", "pdf"], ["pdf", "md"]]),
-        currentPage: new Map([["pdf", 3]]),
-        pageCount: new Map([["pdf", 10]]),
-      });
-      render(<StatusBar />);
-
-      await userEvent.click(screen.getByTestId("status-bar-pdf-next"));
-      expect(goToPage).toHaveBeenCalledWith(4);
-
-      await userEvent.click(screen.getByTestId("status-bar-pdf-prev"));
-      expect(goToPage).toHaveBeenCalledWith(2);
+      expect(screen.queryByTestId("status-bar-pdf-nav")).toBeNull();
     });
 
     it("returns null when a markdown pane is focused with no linked PDF", () => {
