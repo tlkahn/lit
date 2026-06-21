@@ -10,7 +10,7 @@ describe("GraphDeleteDialog", () => {
     useGraphSelectionStore.setState({ selectedNodes: [], selectionMode: "none" });
     mockInvoke((cmd) => {
       switch (cmd) {
-        case "delete_page":
+        case "trash_page":
           return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
@@ -78,7 +78,7 @@ describe("GraphDeleteDialog", () => {
     mockInvoke((cmd, args) => {
       if (cmd === "trash_page") {
         trashedIds.push((args as { relativePath: string }).relativePath);
-        return { trash_name: "x", original_path: "x" };
+        return undefined;
       }
       throw new Error(`Unknown: ${cmd}`);
     });

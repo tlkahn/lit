@@ -76,12 +76,6 @@ export async function renamePage(oldPath: string, newName: string): Promise<stri
   return invoke<string>("rename_page", { oldPath, newName });
 }
 
-export async function deletePage(relativePath: string): Promise<void> {
-  return invoke<void>("delete_page", { relativePath });
-}
-
-// Trash commands
-
 export async function trashPage(relativePath: string): Promise<void> {
   return invoke<void>("trash_page", { relativePath });
 }

@@ -12,7 +12,6 @@ import {
   type CodeFileContent,
   createPage,
   renamePage,
-  deletePage,
   trashPage,
   acknowledgeFileHash,
   parseRawYaml,
@@ -184,8 +183,6 @@ describe("ipc", () => {
           return { ...sampleMeta, title: (args as Record<string, unknown>)?.name };
         case "rename_page":
           return "New.md";
-        case "delete_page":
-          return null;
         case "trash_page":
           return null;
         case "acknowledge_file_hash":
@@ -958,12 +955,6 @@ describe("ipc", () => {
       oldPath: "Old.md",
       newName: "New",
     });
-  });
-
-  it("deletePage calls with relativePath", async () => {
-    await deletePage("Doomed.md");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("delete_page", { relativePath: "Doomed.md" });
   });
 
   it("acknowledgeFileHash calls with relativePath", async () => {
