@@ -33,10 +33,15 @@ import {
   type PaperSearchResult,
 } from "../lib/ipc";
 import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
-import { usePreferencesStore } from "../stores/preferences";
-import { setPreference } from "../lib/ipc";
+import { ensureSidebarVisible } from "../lib/sidebarVisibility";
+import {
+  onRevealBibEntry,
+  onRevealBibEntryForPage,
+  dispatchSetSidebarTab,
+} from "../lib/sidebarEvents";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
+import { useRevealFlash } from "../hooks/useRevealFlash";
 import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { ImportPdfDialog } from "./ImportPdfDialog";
@@ -64,6 +69,27 @@ export function bibFileEndsWith(
   if (!entryBibFile) return false;
   if (entryBibFile === eventBibFile) return true;
   return entryBibFile.endsWith("/" + eventBibFile);
+}
+
+/**
+ * Find the citekey whose page_id matches the given relativePath.
+ * When multiple citekeys share the same page_id, returns the
+ * lexicographically smallest one to ensure deterministic selection.
+ */
+export function findBibKeyForPage(
+  states: Record<string, BibKeyState>,
+  relativePath: string,
+): string | undefined {
+  const matches = Object.keys(states).filter(
+    (k) => states[k]?.page_id === relativePath,
+  );
+  if (matches.length > 0) {
+    matches.sort();
+    return matches[0];
+  }
+  const stem = relativePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
+  if (stem && states[stem] != null) return stem;
+  return undefined;
 }
 
 function combinedText(entry: BibEntry): string {
@@ -194,14 +220,12 @@ export function ReferenceLibrary() {
   const [enrichingKey, setEnrichingKey] = useState<string | null>(null);
   const [enrichPhase, setEnrichPhase] = useState<"fetch" | "search">("fetch");
   const enrichPhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const revealTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
   const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
-  const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
 
   // Clean up enrichPhase timer on unmount
@@ -688,65 +712,79 @@ export function ReferenceLibrary() {
   sectionedItemsRef.current = sectionedItems;
   const virtualizerRef = useRef(virtualizer);
   virtualizerRef.current = virtualizer;
+  const { revealedKey, triggerReveal } = useRevealFlash(virtualizerRef);
   const sortedRef = useRef(sorted);
   sortedRef.current = sorted;
+  const bibKeyStatesRef = useRef(bibKeyStates);
+  bibKeyStatesRef.current = bibKeyStates;
+  const pendingRevealForPageRef = useRef<string | null>(null);
+
+  const revealEntry = useCallback((citekey: string, bibFile?: string) => {
+    ensureSidebarVisible();
+    dispatchSetSidebarTab("references");
+
+    setSearch("");
+
+    const items = buildSectionedList(sortedRef.current).items;
+    let idx = -1;
+    if (bibFile) {
+      idx = items.findIndex(
+        (item) =>
+          item.kind === "entry" &&
+          item.entry.key === citekey &&
+          bibFileEndsWith(item.entry.bib_file, bibFile),
+      );
+    }
+    if (idx < 0) {
+      idx = items.findIndex(
+        (item) => item.kind === "entry" && item.entry.key === citekey,
+      );
+    }
+    if (idx < 0) return;
+
+    const item = items[idx]!;
+    if (item.kind !== "entry") return;
+    const entryId = `${item.entry.bib_file ?? ""}:${item.entry.key}`;
+
+    setExpandedKey(entryId);
+    triggerReveal(entryId, idx);
+  }, [triggerReveal]);
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      const { citekey, bibFile } = (e as CustomEvent<{ citekey: string; bibFile?: string }>).detail;
+    return onRevealBibEntry(({ citekey, bibFile }) => {
+      revealEntry(citekey, bibFile);
+    });
+  }, [revealEntry]);
 
-      usePreferencesStore.setState({ sidebarVisible: true });
-      setPreference("workbench.sideBar.visible", true).catch(() => {});
-      window.dispatchEvent(new CustomEvent("lit:set-sidebar-tab", { detail: "references" }));
-
-      // Clear any active search so the full list is visible after reveal
-      setSearch("");
-
-      // Use the unfiltered sorted list so we can find entries hidden by a search query
-      const items = buildSectionedList(sortedRef.current).items;
-      let idx = -1;
-      if (bibFile) {
-        // Try to match both citekey AND bib file path for disambiguation
-        idx = items.findIndex(
-          (item) =>
-            item.kind === "entry" &&
-            item.entry.key === citekey &&
-            bibFileEndsWith(item.entry.bib_file, bibFile),
-        );
+  useEffect(() => {
+    return onRevealBibEntryForPage(({ relativePath }) => {
+      const states = bibKeyStatesRef.current;
+      const citekey = findBibKeyForPage(states, relativePath);
+      if (!citekey) {
+        if (Object.keys(states).length === 0) {
+          pendingRevealForPageRef.current = relativePath;
+        } else {
+          show("No matching reference found for this page");
+        }
+        return;
       }
-      // Fall back to citekey-only match if bibFile is absent or didn't match
-      if (idx < 0) {
-        idx = items.findIndex(
-          (item) => item.kind === "entry" && item.entry.key === citekey,
-        );
-      }
-      if (idx < 0) return;
+      pendingRevealForPageRef.current = null;
+      revealEntry(citekey);
+    });
+  }, [revealEntry, show]);
 
-      const item = items[idx]!;
-      if (item.kind !== "entry") return;
-      const entryId = `${item.entry.bib_file ?? ""}:${item.entry.key}`;
-
-      setExpandedKey(entryId);
-      setRevealedKey(entryId);
-      clearTimeout(revealTimerRef.current);
-      revealTimerRef.current = setTimeout(() => setRevealedKey(null), 1500);
-
-      // Double-rAF: the outer rAF defers past the current frame so React
-      // can commit the setExpandedKey state and the resizeItem/measureElement
-      // effects can update the virtualizer's height map. The inner rAF then
-      // fires with accurate sizes, so scrollToIndex computes the correct offset.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          virtualizerRef.current.scrollToIndex(idx, { align: "center" });
-        });
-      });
-    };
-    window.addEventListener("lit:reveal-bib-entry", handler);
-    return () => {
-      clearTimeout(revealTimerRef.current);
-      window.removeEventListener("lit:reveal-bib-entry", handler);
-    };
-  }, []);
+  // Retry deferred reveal-for-page when bibKeyStates become available
+  useEffect(() => {
+    const pendingPath = pendingRevealForPageRef.current;
+    if (!pendingPath || Object.keys(bibKeyStates).length === 0) return;
+    const citekey = findBibKeyForPage(bibKeyStates, pendingPath);
+    pendingRevealForPageRef.current = null;
+    if (citekey) {
+      revealEntry(citekey);
+    } else {
+      show("No matching reference found for this page");
+    }
+  }, [bibKeyStates, revealEntry, show]);
 
   const addButton = (
     <button

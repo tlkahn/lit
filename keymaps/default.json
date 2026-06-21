@@ -35,5 +35,7 @@
   { "key": "Mod-Shift-o", "command": "companion.open" },
   { "key": "Mod-Shift-y", "command": "companion.toggleSync" },
   { "key": "Mod-Enter", "command": "app.fireAnnotation", "when": "editorFocus" },
-  { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" }
+  { "key": "Mod-z", "command": "lit.undoOperation", "when": "!editorFocus" },
+  { "key": "Mod-Shift->", "command": "sidebar.revealInFileTree" },
+  { "key": "Mod-Shift-<", "command": "sidebar.revealInLibrary" }
 ]

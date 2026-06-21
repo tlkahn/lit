@@ -371,6 +371,8 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
+      onRevealFileTree: vi.fn(),
+      onRevealLibrary: vi.fn(),
     };
 
     const { renderHook } = await import("@testing-library/react");
@@ -391,6 +393,8 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
+      onRevealFileTree: vi.fn(),
+      onRevealLibrary: vi.fn(),
     };
 
     const { renderHook } = await import("@testing-library/react");
@@ -409,6 +413,8 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
+      onRevealFileTree: vi.fn(),
+      onRevealLibrary: vi.fn(),
     };
 
     const { renderHook } = await import("@testing-library/react");
@@ -427,6 +433,8 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
+      onRevealFileTree: vi.fn(),
+      onRevealLibrary: vi.fn(),
     };
 
     const { renderHook } = await import("@testing-library/react");
@@ -445,6 +453,8 @@ describe("useSidebarContextMenu", () => {
       onExternalEditor: vi.fn(),
       onExportNetwork: vi.fn(),
       onTrash: vi.fn(),
+      onRevealFileTree: vi.fn(),
+      onRevealLibrary: vi.fn(),
     };
 
     const { renderHook } = await import("@testing-library/react");

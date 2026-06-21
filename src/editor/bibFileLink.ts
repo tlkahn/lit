@@ -8,6 +8,7 @@ import {
 } from "@codemirror/view";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getFileDir, isAbsolutePath, isOpenablePath, resolveRelativePath } from "../lib/pathUtils";
+import { dispatchRevealBibEntry } from "../lib/sidebarEvents";
 import { doiHref, isHttpUrl } from "../lib/urlUtils";
 import { INDEXED_EXTENSIONS } from "../hooks/useLeafFileType";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -175,7 +176,7 @@ function createBibFileClickHandler(): Extension {
         const citekey = findCitekey(view, hit.pos);
         if (citekey) {
           const bibFile = view.state.facet(bibPagePathFacet);
-          window.dispatchEvent(new CustomEvent("lit:reveal-bib-entry", { detail: { citekey, bibFile } }));
+          dispatchRevealBibEntry(citekey, bibFile);
         }
         return true;
       }

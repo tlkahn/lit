@@ -1097,6 +1097,44 @@ describe("useKeymaps", () => {
     hook2.unmount();
   });
 
+  // --- Shifted punctuation: Mod-Shift-> (sidebar.revealInFileTree) ---
+
+  it("macOS Cmd+Shift+. (key='.') triggers Mod-Shift-> binding (sidebar.revealInFileTree)", async () => {
+    const { platform } = await import("../lib/keymapResolver");
+    const originalIsMac = platform.isMac;
+    platform.isMac = true;
+
+    const actionFn = vi.fn();
+    registerHandler("sidebar.revealInFileTree", actionFn);
+
+    mockInvoke((cmd) => {
+      if (cmd === "get_keymaps") {
+        return [
+          { key: "Mod-Shift->", command: "sidebar.revealInFileTree" },
+        ];
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    try {
+      const { result } = await loadHook();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const event = new KeyboardEvent("keydown", {
+        key: ".",
+        keyCode: 190,
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+      });
+      document.dispatchEvent(event);
+
+      expect(actionFn).toHaveBeenCalledTimes(1);
+    } finally {
+      platform.isMac = originalIsMac;
+    }
+  });
+
   it("pane.historyBack is registered after ensureCommandsRegistered", async () => {
     await loadHook();
     expect(hasCommand("pane.historyBack")).toBe(true);

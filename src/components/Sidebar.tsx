@@ -1,13 +1,22 @@
 import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePreferencesStore } from "../stores/preferences";
 import { openInExternalEditor } from "../lib/ipc";
+import { ensureSidebarVisible } from "../lib/sidebarVisibility";
+import {
+  onRevealInFileTree,
+  onSetSidebarTab,
+  dispatchRevealInFileTree,
+  dispatchRevealBibEntryForPage,
+} from "../lib/sidebarEvents";
 import { showSidebarContextMenu, useSidebarContextMenu } from "../lib/contextMenuIpc";
 import { executeCommand } from "../lib/commandRegistry";
 import { localeFilter } from "../lib/localeSearch";
-import { useSidebarTab, type SidebarTab } from "../hooks/useSidebarTab";
+import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
+import { useRevealFlash } from "../hooks/useRevealFlash";
 import { Outline } from "./Outline";
 import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SortDropdown } from "./SortDropdown";
@@ -34,6 +43,7 @@ const PageItem = memo(function PageItem({
   page,
   isActive,
   isRenaming,
+  isRevealed,
   onSelect,
   onRenameCommit,
   onRenameCancel,
@@ -42,6 +52,7 @@ const PageItem = memo(function PageItem({
   page: PageMeta;
   isActive: boolean;
   isRenaming: boolean;
+  isRevealed: boolean;
   onSelect: (path: string) => void;
   onRenameCommit: (path: string, newName: string) => void;
   onRenameCancel: () => void;
@@ -99,7 +110,7 @@ const PageItem = memo(function PageItem({
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
               : "text-text-normal hover:bg-bg-hover"
-          }`}
+          }${isRevealed ? " sidebar-item-revealed" : ""}`}
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
         >
@@ -145,7 +156,10 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   const { sortConfig, selectSortKey, comparator } = useSidebarSort(workspacePath ?? "");
   const tree = useMemo(() => buildTree(filtered), [filtered]);
-  const { rows, toggleCollapse } = useFlatTree(tree, comparator);
+  const { rows, toggleCollapse, revealPath } = useFlatTree(tree, comparator);
+
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -154,6 +168,11 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     estimateSize: () => 32,
     overscan: 10,
   });
+
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
+
+  const { revealedKey: revealedPath, triggerReveal } = useRevealFlash(virtualizerRef);
 
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
 
@@ -166,19 +185,86 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   onExportNetworkRef.current = onExportNetwork;
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      const tab = (e as CustomEvent<SidebarTab>).detail;
+    return onSetSidebarTab((tab) => {
       setTab(tab);
-    };
-    window.addEventListener("lit:set-sidebar-tab", handler);
-    return () => window.removeEventListener("lit:set-sidebar-tab", handler);
+    });
   }, [setTab]);
+
+  const pendingRevealRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return onRevealInFileTree(({ relativePath }) => {
+      ensureSidebarVisible();
+      setTab("files");
+
+      // Try to reveal without clearing the search filter first.
+      // Check the current rows (via ref) to see if the target is already
+      // visible in the filtered tree, since revealPath's closure over `root`
+      // may be stale relative to the latest rendered rows.
+      const currentRows = rowsRef.current;
+      const visibleIdx = currentRows.findIndex(
+        (r) => r.type === "page" && r.page.relative_path === relativePath,
+      );
+
+      if (visibleIdx >= 0) {
+        // Target is visible in the (possibly filtered) tree -- reveal it
+        // by expanding ancestors and scrolling, without clearing search.
+        const idx = revealPath(relativePath);
+        triggerReveal(relativePath, idx >= 0 ? idx : visibleIdx);
+      } else {
+        // Target is filtered out -- clear search and defer the reveal
+        // until React re-renders with the unfiltered tree.
+        setSearch("");
+        pendingRevealRef.current = relativePath;
+      }
+    });
+  }, [setTab, revealPath, triggerReveal]);
+
+  // Deferred reveal: when rows update after clearing search, complete the
+  // pending reveal. `rows` gets a new reference whenever `root`/`expanded`/
+  // `pageComparator` change, which happens when `deferredSearch` catches up
+  // after setSearch("").
+  useEffect(() => {
+    const target = pendingRevealRef.current;
+    if (!target) return;
+    pendingRevealRef.current = null;
+
+    const idx = revealPath(target);
+    triggerReveal(target, idx);
+  }, [rows, revealPath, triggerReveal]);
+
+  const autoRevealInSidebar = usePreferencesStore((s) => s.autoRevealInSidebar);
+  useEffect(() => {
+    if (!autoRevealInSidebar || !currentPagePath) return;
+
+    // Auto-reveal directly instead of dispatching lit:reveal-in-file-tree,
+    // so we can preserve any active search filter. If the page is filtered
+    // out by the current search, silently skip -- the user intentionally
+    // typed a filter and auto-reveal should not wipe it.
+    ensureSidebarVisible();
+    setTab("files");
+
+    const idx = revealPath(currentPagePath);
+    if (idx >= 0) {
+      triggerReveal(currentPagePath, idx);
+    }
+  }, [autoRevealInSidebar, currentPagePath, setTab, revealPath, triggerReveal]);
+
+  const dispatchRevealFileTree = useCallback((relativePath: string) => {
+    dispatchRevealInFileTree(relativePath);
+  }, []);
+
+  const dispatchRevealLibrary = useCallback((relativePath: string) => {
+    dispatchRevealBibEntryForPage(relativePath);
+  }, []);
 
   useSidebarContextMenu({
     onRename: (relativePath) => setRenamingPath(relativePath),
     onExternalEditor: (relativePath) => openInExternalEditor(relativePath, 1, 1),
     onExportNetwork: (relativePath) => onExportNetworkRef.current?.(relativePath),
     onTrash: (relativePath) => deletePageAction(relativePath),
+    onRevealFileTree: dispatchRevealFileTree,
+    onRevealLibrary: dispatchRevealLibrary,
   });
 
   return (
@@ -269,6 +355,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                         page={row.page}
                         isActive={currentPagePath === row.page.relative_path}
                         isRenaming={renamingPath === row.page.relative_path}
+                        isRevealed={revealedPath === row.page.relative_path}
                         onSelect={selectPage}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}

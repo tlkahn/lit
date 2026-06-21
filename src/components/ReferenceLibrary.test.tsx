@@ -11,10 +11,10 @@ import {
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { ReferenceLibrary } from "./ReferenceLibrary";
+import { ReferenceLibrary, findBibKeyForPage } from "./ReferenceLibrary";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { setCurrentEditorView } from "../lib/editorViewRef";
-import type { BibEntry, BacklinkEntry } from "../lib/ipc";
+import type { BibEntry, BacklinkEntry, BibKeyState } from "../lib/ipc";
 
 const sanderson: BibEntry = {
   key: "sanderson2009",
@@ -3648,5 +3648,172 @@ describe("EnrichCandidatePicker integration", () => {
         Element.prototype.scrollTo = origScrollTo;
       }
     });
+  });
+
+  describe("lit:reveal-bib-entry-for-page deferred reveal", () => {
+    it("defers reveal when bibKeyStates are not yet loaded and completes once they arrive", async () => {
+      // Start with graphReady: false so getBibKeyStates returns {}
+      useWorkspaceStore.setState({ graphReady: false });
+      bibKeyStatesFixture = {};
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Dispatch the reveal event before bib key states are loaded
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry-for-page", {
+            detail: { relativePath: "notes/sanderson.md" },
+          }),
+        );
+      });
+
+      // Entry should NOT be expanded yet (no bibKeyStates to look up)
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByText("A long abstract about Saivism.")).not.toBeInTheDocument();
+
+      // Now set graphReady to true and provide bib key states with a matching entry
+      bibKeyStatesFixture = {
+        sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" },
+      };
+      act(() => {
+        useWorkspaceStore.setState({ graphReady: true });
+      });
+
+      // The deferred reveal should now complete, expanding the entry
+      await waitFor(() =>
+        expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument(),
+      );
+    });
+
+    it("clears pending reveal when bibKeyStates load but page has no matching entry", async () => {
+      // Start with graphReady: false
+      useWorkspaceStore.setState({ graphReady: false });
+      bibKeyStatesFixture = {};
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Dispatch reveal for a path that won't match any entry
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry-for-page", {
+            detail: { relativePath: "notes/nonexistent.md" },
+          }),
+        );
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Now load bib key states (none matching the path)
+      bibKeyStatesFixture = {
+        sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" },
+      };
+      act(() => {
+        useWorkspaceStore.setState({ graphReady: true });
+      });
+
+      // Wait for states to load and the retry to happen
+      await waitFor(() =>
+        expect(document.querySelector('[data-indicator="has-note"]')).toBeInTheDocument(),
+      );
+
+      // No entry should have been expanded (no match for nonexistent.md)
+      expect(screen.queryByText("A long abstract about Saivism.")).not.toBeInTheDocument();
+    });
+
+    it("immediate reveal works when bibKeyStates are already loaded (regression guard)", async () => {
+      // bibKeyStates are already loaded (graphReady: true by default in beforeEach)
+      bibKeyStatesFixture = {
+        sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" },
+      };
+
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      // Wait for bib key states to load
+      await waitFor(() =>
+        expect(document.querySelector('[data-indicator="has-note"]')).toBeInTheDocument(),
+      );
+
+      // Dispatch the reveal event — should work immediately since states are loaded
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:reveal-bib-entry-for-page", {
+            detail: { relativePath: "notes/sanderson.md" },
+          }),
+        );
+      });
+
+      // Entry should be expanded immediately
+      await waitFor(() =>
+        expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument(),
+      );
+    });
+  });
+});
+
+describe("findBibKeyForPage", () => {
+  it("returns undefined when no citekey matches the page_id", () => {
+    const states: Record<string, BibKeyState> = {
+      alpha2020: { materialization: "created", page_id: "notes/alpha.md" },
+      beta2021: { materialization: "created", page_id: "notes/beta.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/unrelated.md")).toBeUndefined();
+  });
+
+  it("returns the single matching citekey", () => {
+    const states: Record<string, BibKeyState> = {
+      alpha2020: { materialization: "created", page_id: "notes/alpha.md" },
+      beta2021: { materialization: "created", page_id: "notes/beta.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/beta.md")).toBe("beta2021");
+  });
+
+  it("returns the lexicographically smallest citekey when multiple keys share the same page_id", () => {
+    const states: Record<string, BibKeyState> = {
+      zebra2024: { materialization: "created", page_id: "notes/foo.md" },
+      alpha2020: { materialization: "created", page_id: "notes/foo.md" },
+      middle2022: { materialization: "created", page_id: "notes/foo.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/foo.md")).toBe("alpha2020");
+  });
+
+  it("falls back to stem match when no page_id matches", () => {
+    const states: Record<string, BibKeyState> = {
+      marugn2001: { materialization: "created", page_id: null },
+      other2022: { materialization: "created", page_id: "notes/other.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/marugn2001.md")).toBe("marugn2001");
+  });
+
+  it("prefers exact page_id match over stem match", () => {
+    const states: Record<string, BibKeyState> = {
+      foo2020: { materialization: "created", page_id: "notes/foo2020.md" },
+    };
+    expect(findBibKeyForPage(states, "notes/foo2020.md")).toBe("foo2020");
+  });
+
+  it("stem match works for nested paths", () => {
+    const states: Record<string, BibKeyState> = {
+      deep2023: { materialization: "created", page_id: null },
+    };
+    expect(findBibKeyForPage(states, "a/b/c/deep2023.md")).toBe("deep2023");
+  });
+
+  it("returns undefined when stem does not match any citekey", () => {
+    const states: Record<string, BibKeyState> = {
+      alpha2020: { materialization: "created", page_id: null },
+    };
+    expect(findBibKeyForPage(states, "notes/nomatch.md")).toBeUndefined();
+  });
+
+  it("ignores citekeys with null page_id", () => {
+    const states: Record<string, BibKeyState> = {
+      nullEntry: { materialization: "created", page_id: null },
+      validEntry: { materialization: "created", page_id: "notes/target.md" },
+      anotherNull: { materialization: "created", page_id: null },
+    };
+    expect(findBibKeyForPage(states, "notes/target.md")).toBe("validEntry");
   });
 });

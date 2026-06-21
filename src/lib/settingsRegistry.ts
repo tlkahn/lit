@@ -112,6 +112,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    label: "Auto-Reveal Active File in Sidebar",
+    storeField: "autoRevealInSidebar",
+    jsonKey: "workbench.autoRevealInSidebar",
+    controlType: "toggle",
+    testId: "settings-autoRevealInSidebar",
+    keywords: ["reveal", "scroll", "sync", "follow", "track"],
+  },
+  {
+    category: "Appearance",
     label: "Bottom Panel Position",
     storeField: "bottomPanelPosition",
     jsonKey: "workbench.bottomPanel.position",
