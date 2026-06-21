@@ -531,6 +531,16 @@ describe("useKeymaps", () => {
     expect(hasCommand("app.batchFireAnnotations")).toBe(true);
   });
 
+  it("companion.open is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("companion.open")).toBe(true);
+  });
+
+  it("companion.toggleSync is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("companion.toggleSync")).toBe(true);
+  });
+
   // --- Cycle B4: when guard on global keydown handler ---
 
   it("Mod-Enter does not fire app.fireAnnotation when no editor is focused", async () => {

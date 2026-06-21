@@ -17,6 +17,7 @@ import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import { canFire } from "../lib/fireClassification";
 import { fireAnnotation } from "../lib/fireOrchestrator";
 import { batchFireReplacingAnnotations } from "../lib/batchFire";
+import { initCompanionCommands } from "../lib/commands/companion";
 import type { EditorView } from "@codemirror/view";
 
 function transferDomFocus() {
@@ -276,6 +277,7 @@ export function ensureCommandsRegistered() {
       if (view) batchFireReplacingAnnotations(view);
     },
   });
+  initCompanionCommands();
 }
 
 export function useKeymaps(): {
