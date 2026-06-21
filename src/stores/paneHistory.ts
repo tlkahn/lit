@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { usePaneStore, collectLeaves, type PaneNode } from "./panes";
+import { usePaneStore, findLeaf, collectLeaves, type PaneNode } from "./panes";
 
 const MAX_ENTRIES = 50;
 
@@ -17,19 +17,47 @@ export interface PaneHistoryStore {
   canGoForward(paneId: string): boolean;
   removePaneHistory(paneId: string): void;
   clearPath(pagePath: string): void;
+  renamePath(oldPath: string, newPath: string): void;
 }
 
 let _isHistoryNavigation = false;
+
+function navigate(
+  get: () => PaneHistoryStore,
+  set: (s: Partial<PaneHistoryStore>) => void,
+  paneId: string,
+  delta: -1 | 1,
+): string | null {
+  const stack = get().stacks.get(paneId);
+  if (!stack) return null;
+  const newIndex = stack.index + delta;
+  if (newIndex < 0 || newIndex >= stack.entries.length) return null;
+  const target = stack.entries[newIndex]!;
+  const paneState = usePaneStore.getState();
+  const leaf = findLeaf(paneState.root, paneId);
+  if (!leaf || leaf.pagePath === target) return null;
+  const stacks = new Map(get().stacks);
+  stacks.set(paneId, { ...stack, index: newIndex });
+  set({ stacks });
+  try {
+    _isHistoryNavigation = true;
+    paneState.setPanePage(paneId, target);
+  } finally {
+    _isHistoryNavigation = false;
+  }
+  return target;
+}
 
 export const usePaneHistoryStore = create<PaneHistoryStore>((set, get) => ({
   stacks: new Map(),
 
   pushPage: (paneId, pagePath) => {
-    const stacks = new Map(get().stacks);
-    const stack = stacks.get(paneId) ?? { entries: [], index: -1 };
+    const currentStacks = get().stacks;
+    const stack = currentStacks.get(paneId) ?? { entries: [], index: -1 };
 
     if (stack.entries[stack.index] === pagePath) return;
 
+    const stacks = new Map(currentStacks);
     const entries = stack.entries.slice(0, stack.index + 1);
     entries.push(pagePath);
     if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
@@ -37,33 +65,9 @@ export const usePaneHistoryStore = create<PaneHistoryStore>((set, get) => ({
     set({ stacks });
   },
 
-  goBack: (paneId) => {
-    const stack = get().stacks.get(paneId);
-    if (!stack || stack.index <= 0) return null;
-    const newIndex = stack.index - 1;
-    const target = stack.entries[newIndex]!;
-    const stacks = new Map(get().stacks);
-    stacks.set(paneId, { ...stack, index: newIndex });
-    set({ stacks });
-    _isHistoryNavigation = true;
-    usePaneStore.getState().setPanePage(paneId, target);
-    _isHistoryNavigation = false;
-    return target;
-  },
+  goBack: (paneId) => navigate(get, set, paneId, -1),
 
-  goForward: (paneId) => {
-    const stack = get().stacks.get(paneId);
-    if (!stack || stack.index >= stack.entries.length - 1) return null;
-    const newIndex = stack.index + 1;
-    const target = stack.entries[newIndex]!;
-    const stacks = new Map(get().stacks);
-    stacks.set(paneId, { ...stack, index: newIndex });
-    set({ stacks });
-    _isHistoryNavigation = true;
-    usePaneStore.getState().setPanePage(paneId, target);
-    _isHistoryNavigation = false;
-    return target;
-  },
+  goForward: (paneId) => navigate(get, set, paneId, 1),
 
   canGoBack: (paneId) => {
     const stack = get().stacks.get(paneId);
@@ -95,15 +99,52 @@ export const usePaneHistoryStore = create<PaneHistoryStore>((set, get) => ({
       }
       let newIndex: number;
       if (currentEntry && currentEntry !== pagePath) {
-        newIndex = filtered.indexOf(currentEntry);
+        let removedBefore = 0;
+        for (let i = 0; i <= stack.index; i++) {
+          if (stack.entries[i] === pagePath) removedBefore++;
+        }
+        newIndex = Math.min(stack.index - removedBefore, filtered.length - 1);
       } else {
-        newIndex = Math.min(stack.index, filtered.length - 1);
+        newIndex = Math.max(0, Math.min(stack.index - 1, filtered.length - 1));
       }
       stacks.set(paneId, { entries: filtered, index: newIndex });
     }
     if (changed) set({ stacks });
   },
+
+  renamePath: (oldPath, newPath) => {
+    const stacks = new Map(get().stacks);
+    let changed = false;
+    for (const [paneId, stack] of stacks) {
+      const entries = stack.entries.map((e) => (e === oldPath ? newPath : e));
+      if (entries.some((e, i) => e !== stack.entries[i])) {
+        changed = true;
+        stacks.set(paneId, { ...stack, entries });
+      }
+    }
+    if (changed) set({ stacks });
+  },
 }));
+
+// ---------------------------------------------------------------------------
+// Serialization helpers for persistence (see paneLayout.ts / workspace.ts).
+// The store holds a Map<string, PaneHistoryStack>; persistence needs a plain
+// JSON-safe object.
+// ---------------------------------------------------------------------------
+
+/** Convert the in-memory Map to a plain object for JSON serialization. */
+export function serializeHistory(
+  stacks: Map<string, PaneHistoryStack>,
+): Record<string, PaneHistoryStack> {
+  return Object.fromEntries(stacks);
+}
+
+/** Build the in-memory Map from a plain object read from JSON. */
+export function deserializeHistory(
+  data: Record<string, PaneHistoryStack>,
+): Map<string, PaneHistoryStack> {
+  return new Map(Object.entries(data));
+}
 
 // ---------------------------------------------------------------------------
 // Auto-tracking: subscribe to pane store, push page on navigation
@@ -111,6 +152,7 @@ export const usePaneHistoryStore = create<PaneHistoryStore>((set, get) => ({
 
 let trackingUnsub: (() => void) | null = null;
 let prevLeaves: Map<string, string | null> | null = null;
+let prevRoot: PaneNode | null = null;
 
 function collectLeafMap(root: PaneNode): Map<string, string | null> {
   const map = new Map<string, string | null>();
@@ -122,8 +164,11 @@ function collectLeafMap(root: PaneNode): Map<string, string | null> {
 
 export function initPaneHistoryTracking(): void {
   if (trackingUnsub) return;
-  prevLeaves = collectLeafMap(usePaneStore.getState().root);
+  prevRoot = usePaneStore.getState().root;
+  prevLeaves = collectLeafMap(prevRoot);
   trackingUnsub = usePaneStore.subscribe((state) => {
+    if (state.root === prevRoot) return;
+    prevRoot = state.root;
     const currentLeaves = collectLeafMap(state.root);
 
     if (!_isHistoryNavigation) {
@@ -151,4 +196,5 @@ export function stopPaneHistoryTracking(): void {
   trackingUnsub?.();
   trackingUnsub = null;
   prevLeaves = null;
+  prevRoot = null;
 }

@@ -1,6 +1,7 @@
 import type { PaneNode } from "../stores/panes";
 import { findLeaf, collectLeaves } from "../stores/panes";
 import type { ViewState } from "../types";
+import type { PaneHistoryStack } from "../stores/paneHistory";
 
 export const LAYOUT_KEY_PREFIX = "lit-pane-layout-";
 export const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000;
@@ -11,6 +12,8 @@ export interface StoredLayout {
   paneViewStates: Record<string, ViewState>;
   /** Undirected editor<->PDF link pairs, each pair stored once. */
   pdfLinks: [string, string][];
+  /** Per-pane navigation history stacks, keyed by pane ID. */
+  paneHistory: Record<string, PaneHistoryStack>;
   savedAt: number;
 }
 
@@ -23,12 +26,14 @@ export function serializeLayout(
   focusedPaneId: string,
   paneViewStates: Record<string, ViewState>,
   pdfLinks: [string, string][] = [],
+  paneHistory: Record<string, PaneHistoryStack> = {},
 ): string {
   const stored: StoredLayout = {
     root,
     focusedPaneId,
     paneViewStates,
     pdfLinks,
+    paneHistory,
     savedAt: Date.now(),
   };
   return JSON.stringify(stored);
@@ -46,6 +51,7 @@ export function deserializeLayout(raw: string | null): StoredLayout | null {
       focusedPaneId: parsed.focusedPaneId,
       paneViewStates: parsed.paneViewStates ?? {},
       pdfLinks: parsed.pdfLinks ?? [],
+      paneHistory: parsed.paneHistory ?? {},
       savedAt: parsed.savedAt ?? 0,
     };
   } catch {
@@ -92,10 +98,11 @@ export function saveLayout(
   focusedPaneId: string,
   paneViewStates: Record<string, ViewState>,
   pdfLinks: [string, string][] = [],
+  paneHistory: Record<string, PaneHistoryStack> = {},
 ): void {
   localStorage.setItem(
     layoutStorageKey(workspacePath),
-    serializeLayout(root, focusedPaneId, paneViewStates, pdfLinks),
+    serializeLayout(root, focusedPaneId, paneViewStates, pdfLinks, paneHistory),
   );
 }
 
