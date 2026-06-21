@@ -1,10 +1,10 @@
-import { useMemo, useRef, useState, useLayoutEffect } from "react";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { SpinnerSvg } from "./SpinnerSvg";
 import { useOverflowMenu } from "../hooks/useOverflowMenu";
 import type { BibEntry, BibKeyState } from "../lib/ipc";
 
-interface BibActionDescriptor {
+export interface BibActionDescriptor {
   key: string;
   icon: string;
   label: string;
@@ -103,6 +103,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         key: "open-pdf",
         icon: "󰈦",
         label: "Open PDF",
+        title: `Open PDF: ${entry.file}`,
         onClick: () => onOpenPdf(entry.file!),
         testId: "open-pdf-btn",
         variant: "accent",
@@ -175,23 +176,74 @@ export function BibEntryActions(props: BibEntryActionsProps) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(actions.length);
+  const widthsRef = useRef<number[]>([]);
   const { open, setOpen, triggerRef, menuRef } = useOverflowMenu();
+
+  // Close the overflow menu when the action set structurally changes
+  // (e.g., download completes: "Download PDF" disappears, "Open PDF" + "OCR" appear).
+  // We watch actions.length rather than actions to avoid closing on label-only
+  // updates (e.g., download progress percentage changes).
+  useEffect(() => {
+    setOpen(false);
+  }, [actions.length]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    // Reset cached widths when action set changes (new buttons appear/disappear)
+    widthsRef.current = [];
+    setVisibleCount(actions.length);
+
+    // gap-1.5 = 6px
+    const GAP = 6;
+
     function measure() {
       const el = containerRef.current;
       if (!el) return;
-      const children = el.children;
       const containerWidth = el.clientWidth;
-      let count = 0;
+
+      // Update cached widths for any action buttons currently in the DOM
+      const children = Array.from(el.children).filter(
+        (c) => !c.hasAttribute("data-overflow-trigger"),
+      ) as HTMLElement[];
       for (let i = 0; i < children.length; i++) {
-        const child = children[i] as HTMLElement;
-        if (child.hasAttribute("data-overflow-trigger")) continue;
-        const right = child.offsetLeft + child.offsetWidth;
-        if (right > containerWidth - TRIGGER_WIDTH) break;
+        const w = children[i]!.offsetWidth;
+        if (w > 0) widthsRef.current[i] = w;
+      }
+
+      // Pass 1: check if ALL actions fit without any overflow trigger
+      let totalWidth = 0;
+      let allMeasured = true;
+      for (let i = 0; i < actions.length; i++) {
+        const w = widthsRef.current[i];
+        if (w === undefined) {
+          allMeasured = false;
+          break;
+        }
+        totalWidth += w + (i > 0 ? GAP : 0);
+      }
+
+      if (allMeasured && totalWidth <= containerWidth) {
+        // Everything fits — no overflow trigger needed
+        setVisibleCount(actions.length);
+        return;
+      }
+
+      // Pass 2: not all fit (or not all measured) — reserve space for trigger + gap
+      const budget = containerWidth - TRIGGER_WIDTH - GAP;
+      let usedWidth = 0;
+      let count = 0;
+      for (let i = 0; i < actions.length; i++) {
+        const w = widthsRef.current[i];
+        if (w === undefined) {
+          // Not yet measured — assume it fits (will be measured on next render)
+          count++;
+          continue;
+        }
+        const needed = usedWidth + w + (count > 0 ? GAP : 0);
+        if (needed > budget) break;
+        usedWidth = needed;
         count++;
       }
       setVisibleCount(count || 1);
@@ -202,7 +254,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
     const ro = new ResizeObserver(measure);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [actions.length]);
+  }, [actions]);
 
   const hasOverflow = visibleCount < actions.length;
 
@@ -260,7 +312,8 @@ export function BibEntryActions(props: BibEntryActionsProps) {
   );
 }
 
-function ActionButton({ action: a }: { action: BibActionDescriptor }) {
+/** @internal exported for testing only */
+export function ActionButton({ action: a }: { action: BibActionDescriptor }) {
   return (
     <button
       data-testid={a.testId}
@@ -268,7 +321,7 @@ function ActionButton({ action: a }: { action: BibActionDescriptor }) {
       onClick={a.onClick}
       title={a.title ?? a.label}
       aria-label={a.label}
-      className={variantClass(a.variant) + (a.key === "download-pdf" ? " gap-1" : "")}
+      className={variantClass(a.variant) + (a.renderContent ? " gap-1" : "")}
     >
       {a.spinner
         ? <><SpinnerSvg className="h-3 w-3" />{a.renderContent}</>

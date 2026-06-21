@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { BufferStack } from "./BufferStack";
 import { usePaneStore, collectLeaves } from "../stores/panes";
 
@@ -982,5 +984,13 @@ describe("BufferStack", () => {
     render(<BufferStack />);
     fireEvent.click(screen.getByTestId("buffer-stack-chip"));
     expect(screen.getByTestId("buffer-stack-popover").className).toContain("outline-none");
+  });
+
+  it("uses useOverflowMenu hook for dismissal logic", () => {
+    const src = readFileSync(
+      resolve(__dirname, "BufferStack.tsx"),
+      "utf-8",
+    );
+    expect(src).toContain("useOverflowMenu");
   });
 });
