@@ -177,6 +177,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(actions.length);
   const widthsRef = useRef<number[]>([]);
+  const needsRemeasureRef = useRef(false);
   const { open, setOpen, triggerRef, menuRef } = useOverflowMenu();
 
   // Close the overflow menu when the action set structurally changes
@@ -238,6 +239,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         const w = widthsRef.current[i];
         if (w === undefined) {
           // Not yet measured — assume it fits (will be measured on next render)
+          needsRemeasureRef.current = true;
           count++;
           continue;
         }
@@ -255,6 +257,72 @@ export function BibEntryActions(props: BibEntryActionsProps) {
     ro.observe(container);
     return () => ro.disconnect();
   }, [actions]);
+
+  // Correction pass: after the [actions] effect optimistically shows all buttons
+  // (because some widths were unknown), this effect runs on the subsequent render
+  // when all buttons are in the DOM and measures them accurately.
+  // Keyed on [visibleCount]: runs whenever visibleCount changes (including when
+  // the [actions] effect sets it to actions.length). On that render the DOM has
+  // all buttons visible, so we can measure them all and compute the correct count.
+  // Both effects are useLayoutEffect so no visible flash.
+  useLayoutEffect(() => {
+    if (!needsRemeasureRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const GAP = 6;
+
+    // Populate widths from the now-rendered DOM children
+    const children = Array.from(el.children).filter(
+      (c) => !c.hasAttribute("data-overflow-trigger"),
+    ) as HTMLElement[];
+
+    // If the DOM doesn't yet have all buttons, wait for the next render
+    if (children.length < actions.length) return;
+
+    // All buttons are in the DOM — clear the flag and measure accurately
+    needsRemeasureRef.current = false;
+
+    for (let i = 0; i < children.length; i++) {
+      const w = children[i]!.offsetWidth;
+      if (w > 0) widthsRef.current[i] = w;
+    }
+
+    const containerWidth = el.clientWidth;
+
+    // Pass 1: check if all fit without trigger
+    let totalWidth = 0;
+    let allMeasured = true;
+    for (let i = 0; i < actions.length; i++) {
+      const w = widthsRef.current[i];
+      if (w === undefined) {
+        allMeasured = false;
+        break;
+      }
+      totalWidth += w + (i > 0 ? GAP : 0);
+    }
+    if (allMeasured && totalWidth <= containerWidth) {
+      setVisibleCount(actions.length);
+      return;
+    }
+
+    // Pass 2: reserve trigger + gap
+    const budget = containerWidth - TRIGGER_WIDTH - GAP;
+    let usedWidth = 0;
+    let count = 0;
+    for (let i = 0; i < actions.length; i++) {
+      const w = widthsRef.current[i];
+      if (w === undefined) {
+        count++;
+        continue;
+      }
+      const needed = usedWidth + w + (count > 0 ? GAP : 0);
+      if (needed > budget) break;
+      usedWidth = needed;
+      count++;
+    }
+    setVisibleCount(count || 1);
+  }, [visibleCount, actions]);
 
   const hasOverflow = visibleCount < actions.length;
 

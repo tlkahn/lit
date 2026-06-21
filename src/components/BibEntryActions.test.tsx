@@ -558,4 +558,113 @@ describe("BibEntryActions", () => {
 
     globalThis.ResizeObserver = OriginalRO;
   });
+
+  it("remeasures after action set grows while overflow was active", () => {
+    // Setup: manual ResizeObserver so we control when measure() fires
+    let roCallback: ResizeObserverCallback | null = null;
+    const OriginalRO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(cb: ResizeObserverCallback) {
+        roCallback = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+
+    // Mock offsetWidth at the prototype level so that newly-created elements
+    // during React re-renders also return the correct width. This is critical
+    // because the correction useLayoutEffect measures elements that were just
+    // created during the same React commit cycle.
+    const BUTTON_WIDTH = 60;
+    const TRIG_WIDTH = 28;
+    const originalOffsetWidthDesc = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "offsetWidth",
+    );
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      get() {
+        if (this.hasAttribute("data-overflow-trigger")) return TRIG_WIDTH;
+        if (this.hasAttribute("data-bib-actions")) return 0; // container itself
+        // Any button inside the actions container
+        if (this.closest("[data-bib-actions]")) return BUTTON_WIDTH;
+        return 0;
+      },
+    });
+
+    const h = handlers();
+    // baseEntry has doi, no file, shadow state => 5 buttons:
+    // create-note, enrich, copy-citation, download-pdf, link-pdf
+    const state: BibKeyState = { materialization: "shadow", page_id: null };
+    const { container, rerender } = render(
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} />,
+    );
+
+    const actionsContainer = container.querySelector("[data-bib-actions]") as HTMLElement;
+    expect(actionsContainer).toBeTruthy();
+
+    // Container is narrow: 160px. Only 2 buttons fit with trigger.
+    // Budget = 160 - 28 (trigger) - 6 (gap) = 126px.
+    // Button 1: 60 <= 126 (fits). Button 2: 60+6+60 = 126 <= 126 (fits).
+    // Button 3: 126+6+60 = 192 > 126 (doesn't fit). visibleCount = 2.
+    (actionsContainer as unknown as { _clientWidth: number })._clientWidth = 160;
+
+    // Trigger initial RO callback to force overflow
+    act(() => {
+      roCallback!(
+        [{ target: actionsContainer, contentRect: actionsContainer.getBoundingClientRect(), borderBoxSize: [{ blockSize: 0, inlineSize: 160 }] } as unknown as ResizeObserverEntry],
+        {} as ResizeObserver,
+      );
+    });
+
+    // Confirm overflow is active: only 2 non-trigger buttons visible + trigger
+    let visibleButtons = actionsContainer.querySelectorAll("button:not([data-overflow-trigger])");
+    expect(visibleButtons.length).toBe(2);
+    expect(actionsContainer.querySelector("[data-overflow-trigger]")).toBeTruthy();
+
+    // --- Trigger the bug: action set GROWS ---
+    // Simulate download completing: entry gains a file.
+    // "Download PDF" disappears, but "Open PDF" + "OCR" appear.
+    // Actions go from 5 to 6 (create-note, enrich, open-pdf, ocr, copy-citation, link-pdf).
+    const entryWithFile = { ...baseEntry, file: "papers/smith.pdf" };
+    act(() => {
+      rerender(
+        <BibEntryActions entry={entryWithFile} state={state} {...h} {...defaultLoading} />,
+      );
+    });
+
+    // Do NOT manually fire RO callback — the container didn't resize.
+    // This is the key: the component must self-heal without a resize event.
+
+    // The invariant: every action must be reachable.
+    // With 160px container, budget = 160 - 28 - 6 = 126px.
+    // 6 buttons at 60px each cannot all fit. So visibleCount must be < 6.
+    visibleButtons = actionsContainer.querySelectorAll("button:not([data-overflow-trigger])");
+    const overflowTrigger = actionsContainer.querySelector("[data-overflow-trigger]");
+
+    // If all 6 non-trigger buttons are visible, the bug is present:
+    // some buttons are clipped in the overflow:hidden row with no overflow trigger.
+    // The correct state: at most 2 visible buttons + overflow trigger.
+    expect(visibleButtons.length).toBeLessThan(6);
+    expect(overflowTrigger).toBeTruthy();
+
+    // Open the overflow menu and verify remaining actions are accessible there
+    act(() => {
+      fireEvent.click(overflowTrigger!);
+    });
+    const menu = screen.getByTestId("bib-overflow-menu");
+    const menuButtons = menu.querySelectorAll("button");
+    // Total actions reachable = visible buttons + menu buttons = 6
+    expect(visibleButtons.length + menuButtons.length).toBe(6);
+
+    // Restore mocks
+    if (originalOffsetWidthDesc) {
+      Object.defineProperty(HTMLElement.prototype, "offsetWidth", originalOffsetWidthDesc);
+    } else {
+      // @ts-expect-error -- restoring prototype
+      delete HTMLElement.prototype.offsetWidth;
+    }
+    globalThis.ResizeObserver = OriginalRO;
+  });
 });
