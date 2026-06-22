@@ -16,6 +16,7 @@ export function HistoryNavButtons({ paneId, testIdPrefix }: HistoryNavButtonsPro
         { dir: "forward", can: canGoForward, onClick: () => usePaneHistoryStore.getState().goForward(paneId), label: "Go forward", glyph: "›" },
       ] as const).map((btn) => (
         <button
+          type="button"
           key={btn.dir}
           disabled={!btn.can}
           onClick={btn.onClick}

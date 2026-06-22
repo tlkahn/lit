@@ -128,7 +128,7 @@ export function ensureCommandsRegistered() {
     id: "app.toggleFrontmatter",
     label: "Toggle Frontmatter",
     keywords: ["frontmatter", "yaml", "metadata", "info"],
-    when: () => useWorkspaceStore.getState().currentPagePath != null,
+    when: () => useWorkspaceStore.getState().currentPagePath != null && usePaneStore.getState().root.type !== "split",
     action: () => {
       window.dispatchEvent(new CustomEvent("lit:toggle-frontmatter"));
     },

@@ -80,4 +80,10 @@ describe("HistoryNavButtons", () => {
     expect(screen.getByTestId("history-back").textContent).toBe("‹");
     expect(screen.getByTestId("history-forward").textContent).toBe("›");
   });
+
+  it('buttons have type="button" to prevent implicit form submission', () => {
+    render(<HistoryNavButtons paneId="p1" testIdPrefix="history-" />);
+    expect(screen.getByTestId("history-back")).toHaveAttribute("type", "button");
+    expect(screen.getByTestId("history-forward")).toHaveAttribute("type", "button");
+  });
 });
