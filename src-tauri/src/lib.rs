@@ -2,7 +2,7 @@ pub mod annotation;
 pub mod bib;
 pub mod pdf;
 pub mod recognize;
-pub mod cli;
+pub use lit_cli as cli;
 mod commands;
 pub mod llm;
 pub mod llm_context;
@@ -39,6 +39,21 @@ pub struct InitialWorkspace(pub Mutex<Option<String>>);
 pub struct InitialFile(pub Mutex<Option<String>>);
 pub struct InitialLine(pub Mutex<Option<u32>>);
 pub struct InitialCol(pub Mutex<Option<u32>>);
+
+fn cli_init_script(
+    workspace: &Option<String>,
+    file: &Option<String>,
+    line: &Option<u32>,
+    col: &Option<u32>,
+) -> Option<String> {
+    if workspace.is_none() && file.is_none() {
+        return None;
+    }
+    Some(format!(
+        "window.__LIT_CLI__ = {};",
+        serde_json::json!({ "workspace": workspace, "file": file, "line": line, "col": col })
+    ))
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -234,7 +249,7 @@ pub fn run() {
                     .title("Lit")
                     .inner_size(1024.0, 768.0);
 
-            if let Some(script) = cli::cli_init_script(&setup_workspace, &setup_file, &setup_line, &setup_col) {
+            if let Some(script) = cli_init_script(&setup_workspace, &setup_file, &setup_line, &setup_col) {
                 builder = builder.initialization_script(&script);
             }
 
@@ -332,8 +347,6 @@ pub fn run() {
             commands::preferences::set_preference,
             commands::preferences::get_preferences_raw,
             commands::preferences::set_preferences_raw,
-            commands::cli::install_cli,
-            commands::cli::uninstall_cli,
             commands::cli::is_cli_installed,
             commands::crossref::resolve_all_decorations,
             commands::crossref::get_definitions,

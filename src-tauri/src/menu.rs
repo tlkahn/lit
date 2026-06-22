@@ -3,7 +3,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri::Wry;
 
 pub const MENU_ID_OPEN_WORKSPACE: &str = "open_workspace";
-pub const MENU_ID_INSTALL_CLI: &str = "install_cli";
 pub const MENU_ID_OPEN_PREFERENCES: &str = "open_preferences";
 pub const MENU_ID_OPEN_IN_EXTERNAL_EDITOR: &str = "open_in_external_editor";
 pub const MENU_ID_BUY_LICENSE: &str = "buy_license";
@@ -51,7 +50,6 @@ pub const EVENT_IMPORT_LKG: &str = "menu://import-lkg";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
     OpenWorkspace,
-    InstallCli,
     OpenPreferences,
     OpenInExternalEditor,
     ClosePane,
@@ -73,7 +71,6 @@ impl MenuAction {
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
             MENU_ID_OPEN_WORKSPACE => Some(Self::OpenWorkspace),
-            MENU_ID_INSTALL_CLI => Some(Self::InstallCli),
             MENU_ID_OPEN_PREFERENCES => Some(Self::OpenPreferences),
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR => Some(Self::OpenInExternalEditor),
             MENU_ID_CLOSE => Some(Self::ClosePane),
@@ -133,28 +130,6 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                         );
                     }
                 });
-            });
-        }
-        MenuAction::InstallCli => {
-            let handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                use tauri_plugin_dialog::DialogExt;
-                let result = crate::commands::cli::install_cli(handle.clone());
-                let dialog = handle.dialog();
-                match result {
-                    Ok(()) => {
-                        dialog
-                            .message("Command line tool installed at /usr/local/bin/lit")
-                            .title("Success")
-                            .show(|_| {});
-                    }
-                    Err(e) => {
-                        dialog
-                            .message(format!("Failed to install: {e}"))
-                            .title("Error")
-                            .show(|_| {});
-                    }
-                }
             });
         }
         MenuAction::OpenPreferences => {
@@ -280,7 +255,6 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
 
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let app_menu = Submenu::new(app, "Lit", true)?;
-    app_menu.append(&MenuItem::with_id(app, MENU_ID_INSTALL_CLI, "Install Command Line Tool\u{2026}", true, None::<&str>)?)?;
     #[cfg(not(debug_assertions))]
     {
         app_menu.append(&MenuItem::with_id(
@@ -386,7 +360,6 @@ mod tests {
     #[test]
     fn existing_menu_ids_are_defined() {
         assert_eq!(MENU_ID_OPEN_WORKSPACE, "open_workspace");
-        assert_eq!(MENU_ID_INSTALL_CLI, "install_cli");
         assert_eq!(MENU_ID_OPEN_PREFERENCES, "open_preferences");
         assert_eq!(MENU_ID_OPEN_IN_EXTERNAL_EDITOR, "open_in_external_editor");
     }
@@ -437,7 +410,6 @@ mod tests {
     fn all_menu_ids_are_unique() {
         let ids = [
             MENU_ID_OPEN_WORKSPACE,
-            MENU_ID_INSTALL_CLI,
             MENU_ID_OPEN_PREFERENCES,
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
             MENU_ID_CLOSE,
@@ -463,7 +435,6 @@ mod tests {
     #[test]
     fn from_id_maps_all_known_ids() {
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_WORKSPACE), Some(MenuAction::OpenWorkspace));
-        assert_eq!(MenuAction::from_id(MENU_ID_INSTALL_CLI), Some(MenuAction::InstallCli));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_PREFERENCES), Some(MenuAction::OpenPreferences));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_IN_EXTERNAL_EDITOR), Some(MenuAction::OpenInExternalEditor));
         assert_eq!(MenuAction::from_id(MENU_ID_CLOSE), Some(MenuAction::ClosePane));

@@ -179,12 +179,11 @@ fn ensure_placeholders() {
 /// `tauri_build::build()` doesn't fail in worktrees or fresh checkouts
 /// where gitignored artifacts haven't been fetched yet.
 // SYNC:begin:ensure_placeholders_in
-fn ensure_placeholders_in(base: &Path, triple: &str) {
+fn ensure_placeholders_in(base: &Path, _triple: &str) {
     let academic = base.join("resources").join("academic");
     let csl_dir = academic.join("csl");
 
     let placeholders = [
-        base.join("binaries").join(format!("lit-cli-{triple}")),
         base.join("libs").join("libpdfium.dylib"),
         academic.join("lit-reference.docx"),
         csl_dir.join("apa.csl"),

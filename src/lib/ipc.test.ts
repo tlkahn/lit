@@ -17,8 +17,6 @@ import {
   parseRawYaml,
   openWorkspaceWindow,
   getStartupContext,
-  installCli,
-  uninstallCli,
   isCliInstalled,
   getKeymaps,
   getDefaultKeymaps,
@@ -194,10 +192,6 @@ describe("ipc", () => {
           return "workspace-1";
         case "get_startup_context":
           return { workspace: "/my/vault", file: "notes.md", line: 10, col: 5 };
-        case "install_cli":
-          return null;
-        case "uninstall_cli":
-          return null;
         case "is_cli_installed":
           return true;
         case "get_keymaps":
@@ -1036,18 +1030,6 @@ describe("ipc", () => {
     await setPreferencesRaw('{"b":2}');
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("set_preferences_raw", { json: '{"b":2}' });
-  });
-
-  it("installCli invokes install_cli", async () => {
-    await installCli();
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("install_cli");
-  });
-
-  it("uninstallCli invokes uninstall_cli", async () => {
-    await uninstallCli();
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("uninstall_cli");
   });
 
   it("isCliInstalled returns boolean", async () => {
