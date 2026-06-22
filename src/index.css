@@ -3,6 +3,38 @@
 @import "./themes/variables.css";
 
 @font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/SourceSans3VF-Roman.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Sans 3";
+  src: url("./fonts/SourceSans3VF-Italic.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Junicode";
+  src: url("./fonts/JunicodeVF-Roman.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Junicode";
+  src: url("./fonts/JunicodeVF-Italic.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "Symbols Nerd Font Mono";
   src: url("./fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
   font-weight: normal;
@@ -19,6 +51,7 @@
 @theme {
   --default-font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
   --default-mono-font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace);
+  --font-serif: var(--font-serif-theme, "Junicode", ui-serif, Georgia, "Times New Roman", serif);
   --color-bg-primary: var(--background-primary);
   --color-bg-primary-alt: var(--background-primary-alt);
   --color-bg-secondary: var(--background-secondary);
