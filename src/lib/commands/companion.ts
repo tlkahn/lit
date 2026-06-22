@@ -71,13 +71,13 @@ export function initCompanionCommands(): void {
 
             let newId: string | null;
             switch (selection.kind) {
-              case "source-gone":
               case "already-open":
-              case "split-needed":
-                newId = store.splitPane(sourceId, "horizontal");
-                break;
               case "vacant":
                 newId = selection.paneId;
+                break;
+              case "source-gone":
+              case "split-needed":
+                newId = store.splitPane(sourceId, "horizontal");
                 break;
             }
             if (newId == null) {
