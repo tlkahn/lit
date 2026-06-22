@@ -1,11 +1,38 @@
 import { registerOnce } from "../commandRegistry";
 import { usePaneStore, findLeaf, collectLeaves } from "../../stores/panes";
+import type { PaneLeaf } from "../../stores/panes";
 import { usePanePdfLinkStore } from "../../stores/panePdfLink";
 import { useStatusMessageStore } from "../../stores/statusMessage";
 import { findCompanionFile } from "../ipc";
 import { getPaneView } from "../editorViewRef";
 import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
 import { getPdfCurrentPage } from "../pdfPaneRef";
+
+export type CompanionTarget =
+  | { kind: "already-open"; paneId: string }
+  | { kind: "vacant"; paneId: string }
+  | { kind: "split-needed" }
+  | { kind: "source-gone" };
+
+export function selectCompanionTarget(
+  leaves: PaneLeaf[],
+  sourceId: string,
+  companionPath: string,
+): CompanionTarget {
+  if (!leaves.some((l) => l.id === sourceId)) return { kind: "source-gone" };
+
+  const alreadyOpen = leaves.find(
+    (l) => l.id !== sourceId && l.pagePath === companionPath,
+  );
+  if (alreadyOpen) return { kind: "already-open", paneId: alreadyOpen.id };
+
+  const vacant = leaves.find(
+    (l) => l.id !== sourceId && l.pagePath == null,
+  );
+  if (vacant) return { kind: "vacant", paneId: vacant.id };
+
+  return { kind: "split-needed" };
+}
 
 export function initCompanionCommands(): void {
   registerOnce("companion", [
@@ -36,10 +63,23 @@ export function initCompanionCommands(): void {
               return;
             }
             const store = usePaneStore.getState();
-            const vacant = collectLeaves(store.root).find(
-              (l) => l.pagePath == null && l.id !== sourceId,
+            const selection = selectCompanionTarget(
+              collectLeaves(store.root),
+              sourceId,
+              companion,
             );
-            const newId = vacant?.id ?? store.splitPane(sourceId, "horizontal");
+
+            let newId: string | null;
+            switch (selection.kind) {
+              case "source-gone":
+              case "already-open":
+              case "split-needed":
+                newId = store.splitPane(sourceId, "horizontal");
+                break;
+              case "vacant":
+                newId = selection.paneId;
+                break;
+            }
             if (newId == null) {
               useStatusMessageStore
                 .getState()

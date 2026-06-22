@@ -98,7 +98,69 @@ vi.mock("../pageMarkers", () => ({
   pageForOffset: mockPageForOffset,
 }));
 
-import { initCompanionCommands } from "./companion";
+import { initCompanionCommands, selectCompanionTarget } from "./companion";
+import type { PaneLeaf } from "../../stores/panes";
+
+function leaf(id: string, pagePath: string | null = null): PaneLeaf {
+  return { type: "leaf", id, pagePath };
+}
+
+describe("selectCompanionTarget", () => {
+  it("returns source-gone when sourceId is not in leaves", () => {
+    const leaves = [leaf("other", "x.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "source-gone",
+    });
+  });
+
+  it("returns source-gone for empty leaves array", () => {
+    expect(selectCompanionTarget([], "src", "companion.pdf")).toEqual({
+      kind: "source-gone",
+    });
+  });
+
+  it("returns already-open when a non-source leaf has the companion path", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("other", "companion.pdf")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "already-open",
+      paneId: "other",
+    });
+  });
+
+  it("does not match source leaf itself for already-open", () => {
+    const leaves = [leaf("src", "companion.pdf")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "split-needed",
+    });
+  });
+
+  it("returns vacant when a non-source leaf has no page", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("empty")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "vacant",
+      paneId: "empty",
+    });
+  });
+
+  it("returns split-needed when all non-source leaves have pages", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("other", "other.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "split-needed",
+    });
+  });
+
+  it("prefers already-open over vacant when both exist", () => {
+    const leaves = [
+      leaf("src", "paper.md"),
+      leaf("open", "companion.pdf"),
+      leaf("empty"),
+    ];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "already-open",
+      paneId: "open",
+    });
+  });
+});
 
 function resetPaneState(pagePath: string | null) {
   mockPaneState.root = { type: "leaf", id: "src-pane", pagePath };
