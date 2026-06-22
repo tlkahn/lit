@@ -21,6 +21,7 @@ const handlers = () => ({
   onEnrich: vi.fn(),
   onOpenPdf: vi.fn(),
   onOcr: vi.fn(),
+  onOpenMarkdown: vi.fn(),
   onCopyCitation: vi.fn(),
   onDownloadPdf: vi.fn(),
   onLinkPdf: vi.fn(),
@@ -90,6 +91,54 @@ describe("BibEntryActions", () => {
       <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} />,
     );
     expect(screen.queryByTestId("fetch-details-btn")).not.toBeInTheDocument();
+  });
+
+  it("hides fetch-details button for partial materialization without page_id", () => {
+    const h = handlers();
+    const state: BibKeyState = { materialization: "partial", page_id: null };
+    render(
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} />,
+    );
+    expect(screen.queryByTestId("fetch-details-btn")).not.toBeInTheDocument();
+  });
+
+  it("shows open-markdown button when ocrCompanionCurrent is true", () => {
+    const h = handlers();
+    const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
+    render(
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={true} />,
+    );
+    const btn = screen.getByTestId("open-markdown-btn");
+    expect(btn).toBeInTheDocument();
+    expect(btn).toHaveAttribute("aria-label", "Open markdown");
+  });
+
+  it("hides open-markdown button when ocrCompanionCurrent is false", () => {
+    const h = handlers();
+    const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
+    render(
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={false} />,
+    );
+    expect(screen.queryByTestId("open-markdown-btn")).not.toBeInTheDocument();
+  });
+
+  it("hides open-markdown button when ocrCompanionCurrent is undefined", () => {
+    const h = handlers();
+    const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
+    render(
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} />,
+    );
+    expect(screen.queryByTestId("open-markdown-btn")).not.toBeInTheDocument();
+  });
+
+  it("calls onOpenMarkdown with entry key when clicked", () => {
+    const h = handlers();
+    const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
+    render(
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={true} />,
+    );
+    fireEvent.click(screen.getByTestId("open-markdown-btn"));
+    expect(h.onOpenMarkdown).toHaveBeenCalledWith("smith2024");
   });
 
   it("shows open-pdf and ocr buttons when entry has file", () => {

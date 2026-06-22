@@ -1331,7 +1331,7 @@ describe("ReferenceLibrary", () => {
       expect(btn).toHaveAttribute("aria-label", "Fetch details");
     });
 
-    it("shows 'Refresh metadata' button for partial materialization entries without page_id", async () => {
+    it("hides fetch-details button for partial materialization entries without page_id", async () => {
       const user = userEvent.setup();
       bibKeyStatesFixture = { sanderson2009: { materialization: "partial", page_id: null } };
       mockInvoke((cmd, args) => {
@@ -1347,9 +1347,7 @@ describe("ReferenceLibrary", () => {
 
       await user.click(screen.getByText("The Saiva Age"));
 
-      const btn = screen.getByTestId("fetch-details-btn");
-      expect(btn).toBeInTheDocument();
-      expect(btn).toHaveAttribute("aria-label", "Refresh metadata");
+      expect(screen.queryByTestId("fetch-details-btn")).not.toBeInTheDocument();
     });
 
     it("hides button when page_id is set (materialized entry)", async () => {
@@ -2721,6 +2719,84 @@ describe("ReferenceLibrary", () => {
 
       // The companion check should NOT have been re-issued
       expect(companionCallCount).toBe(1);
+    });
+  });
+
+  describe("Open markdown button", () => {
+    const sandersonWithFile: BibEntry = {
+      ...sanderson,
+      file: "assets/pdf/sanderson2009.pdf",
+    };
+
+    it("shows open-markdown button when OCR companion is current", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      bibKeyStatesFixture = { sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "is_ocr_companion_current") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("open-markdown-btn")).toBeInTheDocument();
+      });
+    });
+
+    it("hides open-markdown button when OCR companion is not current", async () => {
+      const user = userEvent.setup();
+      fixture = [sandersonWithFile];
+      bibKeyStatesFixture = { sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "is_ocr_companion_current") return false;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("open-markdown-btn")).not.toBeInTheDocument();
+    });
+
+    it("clicking open-markdown navigates to the companion markdown file", async () => {
+      const user = userEvent.setup();
+      const selectPage = vi.fn();
+      useWorkspaceStore.setState({ selectPage });
+      fixture = [sandersonWithFile];
+      bibKeyStatesFixture = { sanderson2009: { materialization: "materialized", page_id: "notes/sanderson.md" } };
+      mockInvoke((cmd, args) => {
+        invokedCommands.push({ cmd, args });
+        if (cmd === "list_bib_entries") return fixture;
+        if (cmd === "get_citing_pages") return citingFixture;
+        if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+        if (cmd === "is_ocr_companion_current") return true;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      render(<ReferenceLibrary />);
+      await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+      await user.click(screen.getByText("The Saiva Age"));
+      await waitFor(() => {
+        expect(screen.getByTestId("open-markdown-btn")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("open-markdown-btn"));
+      expect(selectPage).toHaveBeenCalledWith("sanderson2009.md");
     });
   });
 
