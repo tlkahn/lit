@@ -421,7 +421,7 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("shows error and does not clobber when splitPane is a no-op (MAX_PANES)", async () => {
+  it("defensive: shows error when splitPane returns null (guards future regressions)", async () => {
     mockPaneState.splitPane.mockReturnValue(null);
     initCompanionCommands();
     executeCommand("companion.open");

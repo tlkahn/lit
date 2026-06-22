@@ -55,6 +55,12 @@ export function collectLeaves(root: PaneNode): PaneLeaf[] {
   return root.children.flatMap(collectLeaves);
 }
 
+export function cycleLeafId(leaves: PaneLeaf[], fromId: string, delta: 1 | -1): string | null {
+  const idx = leaves.findIndex((l) => l.id === fromId);
+  if (idx === -1) return null;
+  return leaves[(idx + delta + leaves.length) % leaves.length]!.id;
+}
+
 export function replaceLeaf(
   root: PaneNode,
   leafId: string,
@@ -279,18 +285,18 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const { root, focusedPaneId } = get();
     const leaves = collectLeaves(root);
     if (leaves.length <= 1) return;
-    const idx = leaves.findIndex((l) => l.id === focusedPaneId);
-    if (idx === -1) { set({ focusedPaneId: leaves[0]!.id }); return; }
-    set({ focusedPaneId: leaves[(idx + 1) % leaves.length]!.id });
+    const nextId = cycleLeafId(leaves, focusedPaneId, 1);
+    if (nextId == null) { set({ focusedPaneId: leaves[0]!.id }); return; }
+    set({ focusedPaneId: nextId });
   },
 
   focusPrev: () => {
     const { root, focusedPaneId } = get();
     const leaves = collectLeaves(root);
     if (leaves.length <= 1) return;
-    const idx = leaves.findIndex((l) => l.id === focusedPaneId);
-    if (idx === -1) { set({ focusedPaneId: leaves[leaves.length - 1]!.id }); return; }
-    set({ focusedPaneId: leaves[(idx - 1 + leaves.length) % leaves.length]!.id });
+    const prevId = cycleLeafId(leaves, focusedPaneId, -1);
+    if (prevId == null) { set({ focusedPaneId: leaves[leaves.length - 1]!.id }); return; }
+    set({ focusedPaneId: prevId });
   },
 }));
 
