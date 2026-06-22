@@ -79,7 +79,7 @@ pub(crate) const MAX_SLUG_LEN: usize = 80;
 /// Minimum slug length in bytes. When truncating at a word boundary would
 /// produce a slug shorter than this, we cut at the byte limit instead
 /// (mid-word) to avoid collision-prone stubs like "a" or "the".
-const MIN_SLUG_LEN: usize = 8;
+pub(crate) const MIN_SLUG_LEN: usize = 8;
 
 /// Truncate a kebab-case slug to at most `max` bytes, preferring to cut at a
 /// word boundary (hyphen) and never leaving a trailing hyphen or splitting a

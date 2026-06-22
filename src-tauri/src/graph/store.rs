@@ -1222,6 +1222,7 @@ impl Store {
             "SELECT id FROM nodes
              WHERE json_extract(frontmatter, '$.citekey') = ?1
                AND json_extract(frontmatter, '$.companion') IS NOT NULL
+             ORDER BY id ASC
              LIMIT 1"
         )?;
         let page_id: Option<String> = stmt
@@ -5443,6 +5444,33 @@ mod tests {
 
         let result = store.ocr_companion_for_citekey("nonexistent").unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn ocr_companion_for_citekey_deterministic_with_duplicate_citekeys() {
+        let store = Store::open_memory().unwrap();
+        // Insert in reverse-alphabetical order so that if SQLite scans by
+        // insertion/rowid order, it would return "beta-paper.md" first —
+        // exposing the missing ORDER BY.
+        let beta = make_node(
+            "beta-paper.md",
+            "Beta Paper",
+            &[],
+            json!({"citekey": "shared2024", "companion": "assets/pdf/beta.pdf"}),
+        );
+        store.upsert_node(&beta, 1).unwrap();
+
+        let alpha = make_node(
+            "alpha-paper.md",
+            "Alpha Paper",
+            &[],
+            json!({"citekey": "shared2024", "companion": "assets/pdf/alpha.pdf"}),
+        );
+        store.upsert_node(&alpha, 2).unwrap();
+
+        let result = store.ocr_companion_for_citekey("shared2024").unwrap();
+        // Must always return the lexicographically smallest id.
+        assert_eq!(result, Some("alpha-paper.md".to_string()));
     }
 
     #[test]

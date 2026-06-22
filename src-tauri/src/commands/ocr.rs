@@ -42,24 +42,35 @@ pub(crate) fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec
 /// slug of the document title, falling back to the citation key when the title
 /// is empty or yields no usable characters.
 fn ocr_slug(title: &str, key: &str) -> String {
-    use crate::workspace::normalize::{truncate_slug, MAX_SLUG_LEN};
+    use crate::workspace::normalize::{truncate_slug, MAX_SLUG_LEN, MIN_SLUG_LEN};
     match crate::workspace::normalize::kebab_case_title(title) {
         Some(t) => {
             let suffix_len = 1 + key.len(); // "-{key}"
-            let t = if suffix_len < MAX_SLUG_LEN {
-                truncate_slug(&t, MAX_SLUG_LEN - suffix_len)
+            let budget = MAX_SLUG_LEN.saturating_sub(suffix_len);
+            if budget >= MIN_SLUG_LEN {
+                let t = truncate_slug(&t, budget);
+                format!("{}-{}", t, key)
             } else {
-                t
-            };
-            format!("{}-{}", t, key)
+                // Key alone exhausts the byte budget; drop the title portion
+                truncate_slug(key, MAX_SLUG_LEN)
+            }
         }
-        None => key.to_string(),
+        None => truncate_slug(key, MAX_SLUG_LEN),
     }
 }
 
 /// Return the bare filename for OCR markdown output: `"{stem}.md"`.
 fn ocr_markdown_filename(stem: &str) -> String {
     format!("{stem}.md")
+}
+
+/// Core slug resolution given a `Store` reference: returns the graph-indexed
+/// companion filename (sans `.md`) when present, falling back to `ocr_slug`.
+fn resolve_slug_from_store(store: &crate::graph::store::Store, key: &str, title: &str) -> String {
+    if let Ok(Some(page_id)) = store.ocr_companion_for_citekey(key) {
+        return page_id.strip_suffix(".md").unwrap_or(&page_id).to_string();
+    }
+    ocr_slug(title, key)
 }
 
 /// Resolve the OCR slug for a bib entry, preferring the graph-indexed
@@ -73,9 +84,7 @@ fn resolve_ocr_slug(
 ) -> String {
     if let Some(gi) = crate::commands::page::lookup_graph_index(registry, root) {
         let store = gi.store();
-        if let Ok(Some(page_id)) = store.ocr_companion_for_citekey(key) {
-            return page_id.strip_suffix(".md").unwrap_or(&page_id).to_string();
-        }
+        return resolve_slug_from_store(&store, key, title);
     }
     ocr_slug(title, key)
 }
@@ -253,10 +262,7 @@ pub async fn ocr_pdf_to_markdown(
     // creating a duplicate under the new slug.
     let slug = {
         let store = gi.store();
-        match store.ocr_companion_for_citekey(&entry.key) {
-            Ok(Some(page_id)) => page_id.strip_suffix(".md").unwrap_or(&page_id).to_string(),
-            _ => ocr_slug(&entry.title, &entry.key),
-        }
+        resolve_slug_from_store(&store, &entry.key, &entry.title)
     };
 
     // Step 2: Get PDF path from entry.file field
@@ -1103,6 +1109,52 @@ mod tests {
         assert!(result.unwrap().is_some());
     }
 
+    // --- resolve_slug_from_store unit tests ---
+
+    #[test]
+    fn resolve_slug_from_store_returns_companion_sans_md() {
+        use crate::graph::indexer::GraphIndex;
+        use crate::graph::types::ParsedNode;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        {
+            let store = gi.store();
+            let node = ParsedNode {
+                id: "old-title-smith2024.md".into(),
+                title: "Old Title".into(),
+                tags: vec![],
+                frontmatter: serde_json::json!({
+                    "citekey": "smith2024",
+                    "companion": "assets/pdf/smith2024.pdf"
+                }),
+                first_paragraph: String::new(),
+            };
+            store.upsert_node(&node, 1).unwrap();
+        }
+
+        // With a companion in the graph, should return the page id sans .md
+        let store = gi.store();
+        let slug = resolve_slug_from_store(&store, "smith2024", "Completely New Title");
+        assert_eq!(slug, "old-title-smith2024");
+    }
+
+    #[test]
+    fn resolve_slug_from_store_falls_back_to_ocr_slug() {
+        use crate::graph::indexer::GraphIndex;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Empty graph - no companion indexed
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let store = gi.store();
+        let slug = resolve_slug_from_store(&store, "smith2024", "The Well-Posed Problem");
+        assert_eq!(slug, ocr_slug("The Well-Posed Problem", "smith2024"));
+    }
+
     // --- graph-first slug resolution survives title changes ---
     // A companion was created with the old title.  After the title changes the
     // graph still maps the citekey to the old filename.  Both inner fns should
@@ -1880,6 +1932,42 @@ mod tests {
             &search_paths,
         );
         assert_eq!(found, Some("assets/pdf/smith2024-trimmed.pdf".to_string()));
+    }
+
+    // --- ocr_slug overlong slug invariant tests ---
+
+    #[test]
+    fn ocr_slug_long_key_at_boundary() {
+        // suffix_len = 1 + 79 = 80 = MAX_SLUG_LEN; budget = 0 < MIN_SLUG_LEN
+        let key = "a".repeat(79);
+        let slug = ocr_slug("Some Valid Title", &key);
+        assert!(
+            slug.len() <= crate::workspace::normalize::MAX_SLUG_LEN,
+            "slug exceeds MAX_SLUG_LEN: {} bytes: {slug}",
+            slug.len()
+        );
+    }
+
+    #[test]
+    fn ocr_slug_very_long_key_beyond_boundary() {
+        let key = "b".repeat(100);
+        let slug = ocr_slug("Another Title Here", &key);
+        assert!(
+            slug.len() <= crate::workspace::normalize::MAX_SLUG_LEN,
+            "slug exceeds MAX_SLUG_LEN: {} bytes: {slug}",
+            slug.len()
+        );
+    }
+
+    #[test]
+    fn ocr_slug_empty_title_long_key_respects_limit() {
+        let key = "c".repeat(100);
+        let slug = ocr_slug("", &key);
+        assert!(
+            slug.len() <= crate::workspace::normalize::MAX_SLUG_LEN,
+            "slug exceeds MAX_SLUG_LEN: {} bytes: {slug}",
+            slug.len()
+        );
     }
 
     #[test]
