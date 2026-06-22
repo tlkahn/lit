@@ -720,7 +720,7 @@ mod tests {
         use crate::menu;
         let app_menu_ids = [
             menu::MENU_ID_OPEN_WORKSPACE,
-            menu::MENU_ID_INSTALL_CLI,
+
             menu::MENU_ID_OPEN_PREFERENCES,
             menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
             menu::MENU_ID_CLOSE,
@@ -801,7 +801,7 @@ mod tests {
         use crate::menu;
         let app_menu_ids = [
             menu::MENU_ID_OPEN_WORKSPACE,
-            menu::MENU_ID_INSTALL_CLI,
+
             menu::MENU_ID_OPEN_PREFERENCES,
             menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
             menu::MENU_ID_CLOSE,
@@ -984,7 +984,7 @@ mod tests {
         use crate::menu;
         let app_menu_ids = [
             menu::MENU_ID_OPEN_WORKSPACE,
-            menu::MENU_ID_INSTALL_CLI,
+
             menu::MENU_ID_OPEN_PREFERENCES,
             menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
             menu::MENU_ID_CLOSE,
@@ -1361,7 +1361,7 @@ mod tests {
         use crate::menu;
         let app_menu_ids = [
             menu::MENU_ID_OPEN_WORKSPACE,
-            menu::MENU_ID_INSTALL_CLI,
+
             menu::MENU_ID_OPEN_PREFERENCES,
             menu::MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
             menu::MENU_ID_CLOSE,

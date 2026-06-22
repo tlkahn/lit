@@ -103,14 +103,6 @@ export async function openWorkspaceWindow(path?: string): Promise<string> {
   return invoke<string>("open_workspace_window", { path: path ?? null });
 }
 
-export async function installCli(): Promise<void> {
-  return invoke<void>("install_cli");
-}
-
-export async function uninstallCli(): Promise<void> {
-  return invoke<void>("uninstall_cli");
-}
-
 export async function isCliInstalled(): Promise<boolean> {
   return invoke<boolean>("is_cli_installed");
 }

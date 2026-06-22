@@ -443,30 +443,6 @@ EOF
   [ -f "$TEST_TEMP_DIR/fetch_pdfium.called" ]
 }
 
-# ── Cycle 8: lit-cli pre-build ───────────────────────────────────────────────
-
-@test "release_prebuild_cli: calls cargo build with correct args" {
-  source_lib
-  mock_command cargo
-  REPO_ROOT="$TEST_TEMP_DIR"
-  mkdir -p "$TEST_TEMP_DIR/src-tauri/binaries"
-  mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release"
-  touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/lit-cli"
-  release_prebuild_cli
-  assert_mock_called_with "cargo build --release --bin lit-cli --target aarch64-apple-darwin"
-}
-
-@test "release_prebuild_cli: copies binary to binaries dir" {
-  source_lib
-  mock_command cargo
-  REPO_ROOT="$TEST_TEMP_DIR"
-  mkdir -p "$TEST_TEMP_DIR/src-tauri/binaries"
-  mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release"
-  echo "fake-binary" > "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/lit-cli"
-  release_prebuild_cli
-  [ -f "$TEST_TEMP_DIR/src-tauri/binaries/lit-cli-aarch64-apple-darwin" ]
-}
-
 # ── Cycle 9: Codesign pdfium ────────────────────────────────────────────────
 
 @test "release_codesign_pdfium: calls codesign with correct args" {
@@ -908,11 +884,9 @@ EOF
   # Create directory structure the script expects
   export REPO_ROOT="$TEST_TEMP_DIR"
   mkdir -p "$TEST_TEMP_DIR/scripts"
-  mkdir -p "$TEST_TEMP_DIR/src-tauri/binaries"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/libs"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
-  touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/lit-cli"
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Lit_0.1.0_aarch64.dmg"
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lit.app.tar.gz"
   echo "SIGDATA" > "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lit.app.tar.gz.sig"
@@ -936,7 +910,6 @@ TOML
   [[ "$output" == *"DRY RUN"* ]] || [[ "$output" == *"dry"* ]] || [[ "$output" == *"Dry"* ]]
   [[ "$output" == *"Syncing version"* ]]
   assert_mock_called_with "bun install --frozen-lockfile"
-  assert_mock_called_with "cargo build --release --bin lit-cli --target aarch64-apple-darwin"
   assert_mock_called_with "bun tauri build"
   [[ "$output" == *"Computing SHA-256"* ]]
   [[ "$output" == *"Would upload .sha256"* ]]

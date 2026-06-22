@@ -52,7 +52,6 @@ fi
 
 release_install_deps
 release_fetch_pdfium
-release_prebuild_cli
 release_codesign_pdfium
 release_tauri_build
 release_copy_dmg "$TAG"

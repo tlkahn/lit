@@ -358,7 +358,7 @@ pub fn create_workspace_window(
         .title("Lit")
         .inner_size(1024.0, 768.0);
 
-    if let Some(script) = crate::cli::cli_init_script(&path, &file, &line, &col) {
+    if let Some(script) = crate::cli_init_script(&path, &file, &line, &col) {
         builder = builder.initialization_script(&script);
     }
 
