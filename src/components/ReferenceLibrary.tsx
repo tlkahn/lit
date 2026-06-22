@@ -1092,7 +1092,7 @@ export function ReferenceLibrary() {
                       </span>
                     </button>
                     {isExpanded ? (
-                      <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 text-xs">
+                      <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 font-serif italic text-xs">
                         <div className="flex items-start gap-2">
                           <div
                             className={`font-semibold ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
@@ -1177,29 +1177,31 @@ export function ReferenceLibrary() {
                             ))}
                           </div>
                         ) : null}
-                        <BibEntryActions
-                          entry={entry}
-                          state={state}
-                          onOpenNote={(pageId) => {
-                            recordDeparture();
-                            selectPage(pageId);
-                          }}
-                          onCreateNote={materializeNote}
-                          onEnrich={handleEnrich}
-                          onOpenPdf={selectPage}
-                          onOcr={(e) => { if (workspacePath) setOcrEntry(e); }}
-                          onCopyCitation={copyCitation}
-                          onDownloadPdf={handleDownload}
-                          onLinkPdf={handleLinkPdf}
-                          materializingKey={materializingKey}
-                          enrichingKey={enrichingKey}
-                          enrichPhase={enrichPhase}
-                          downloadingKey={downloadingKey}
-                          downloadProgress={downloadProgress}
-                          linkingKey={linkingKey}
-                          ocrCompanionCurrent={ocrCompanionCurrentMap[entryId]}
-                        />
-                        <CitedBySection bibKey={entry.key} />
+                        <div className="not-italic">
+                          <BibEntryActions
+                            entry={entry}
+                            state={state}
+                            onOpenNote={(pageId) => {
+                              recordDeparture();
+                              selectPage(pageId);
+                            }}
+                            onCreateNote={materializeNote}
+                            onEnrich={handleEnrich}
+                            onOpenPdf={selectPage}
+                            onOcr={(e) => { if (workspacePath) setOcrEntry(e); }}
+                            onCopyCitation={copyCitation}
+                            onDownloadPdf={handleDownload}
+                            onLinkPdf={handleLinkPdf}
+                            materializingKey={materializingKey}
+                            enrichingKey={enrichingKey}
+                            enrichPhase={enrichPhase}
+                            downloadingKey={downloadingKey}
+                            downloadProgress={downloadProgress}
+                            linkingKey={linkingKey}
+                            ocrCompanionCurrent={ocrCompanionCurrentMap[entryId]}
+                          />
+                          <CitedBySection bibKey={entry.key} />
+                        </div>
                       </div>
                     ) : null}
                   </div>
