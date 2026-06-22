@@ -230,7 +230,7 @@ export function ReferenceLibrary() {
   const [downloadProgress, setDownloadProgress] = useState<{ bytes: number; total: number | null } | null>(null);
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
   const [ocrEntry, setOcrEntry] = useState<BibEntry | null>(null);
-  const [ocrCompanionCurrentMap, setOcrCompanionCurrentMap] = useState<Record<string, boolean>>({});
+  const [ocrCompanionCurrentMap, setOcrCompanionCurrentMap] = useState<Record<string, string | false>>({});
   const ocrCheckIdRef = useRef(0);
   const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
@@ -256,6 +256,7 @@ export function ReferenceLibrary() {
 
   const expandedFile = expandedEntry?.file;
   const expandedBibKey = expandedEntry?.key;
+  const expandedTitle = expandedEntry?.title ?? "";
 
   // Check if OCR companion markdown is current when an entry is expanded
   useEffect(() => {
@@ -263,10 +264,10 @@ export function ReferenceLibrary() {
       return () => { ocrCheckIdRef.current++; };
     }
     const id = ++ocrCheckIdRef.current;
-    isOcrCompanionCurrent(expandedBibKey, workspacePath, expandedFile).then(
+    isOcrCompanionCurrent(expandedBibKey, expandedTitle, workspacePath, expandedFile).then(
       (result) => {
         if (id !== ocrCheckIdRef.current) return;
-        setOcrCompanionCurrentMap((prev) => ({ ...prev, [expandedKey]: result }));
+        setOcrCompanionCurrentMap((prev) => ({ ...prev, [expandedKey]: result ?? false }));
       },
       () => {
         // On error, treat as not current (don't hide button)
@@ -275,7 +276,7 @@ export function ReferenceLibrary() {
       },
     );
     return () => { ocrCheckIdRef.current++; };
-  }, [expandedKey, expandedFile, expandedBibKey, workspacePath]);
+  }, [expandedKey, expandedFile, expandedBibKey, expandedTitle, workspacePath]);
 
   // --- Search tab state ---
   const [mode, setMode] = useState<"library" | "search">("library");
@@ -1188,7 +1189,7 @@ export function ReferenceLibrary() {
                             onCreateNote={materializeNote}
                             onEnrich={handleEnrich}
                             onOpenPdf={selectPage}
-                            onOpenMarkdown={(key) => { recordDeparture(); selectPage(`${key}.md`); }}
+                            onOpenMarkdown={(filename) => { recordDeparture(); selectPage(filename); }}
                             onOcr={(e) => { if (workspacePath) setOcrEntry(e); }}
                             onCopyCitation={copyCitation}
                             onDownloadPdf={handleDownload}
@@ -1232,7 +1233,7 @@ export function ReferenceLibrary() {
             const compositeKey = `${ocrEntry.bib_file ?? ""}:${key}`;
             setOcrEntry(null);
             show("OCR complete for @" + key);
-            setOcrCompanionCurrentMap((prev) => ({ ...prev, [compositeKey]: true }));
+            setOcrCompanionCurrentMap((prev) => ({ ...prev, [compositeKey]: path }));
             refreshPages();
             selectPage(path);
           }}

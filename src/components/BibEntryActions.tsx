@@ -24,7 +24,7 @@ interface BibEntryActionsProps {
   onEnrich: (entry: BibEntry) => void;
   onOpenPdf: (file: string) => void;
   onOcr: (entry: BibEntry) => void;
-  onOpenMarkdown: (key: string) => void;
+  onOpenMarkdown: (filename: string) => void;
   onCopyCitation: (key: string) => void;
   onDownloadPdf: (entry: BibEntry) => void;
   onLinkPdf: (entry: BibEntry) => void;
@@ -34,7 +34,7 @@ interface BibEntryActionsProps {
   downloadingKey: string | null;
   downloadProgress: { bytes: number; total: number | null } | null;
   linkingKey: string | null;
-  ocrCompanionCurrent?: boolean;
+  ocrCompanionCurrent?: string | false;
 }
 
 const TRIGGER_WIDTH = 28;
@@ -92,12 +92,12 @@ export function BibEntryActions(props: BibEntryActionsProps) {
       });
     }
 
-    if (ocrCompanionCurrent === true) {
+    if (typeof ocrCompanionCurrent === "string") {
       list.push({
         key: "open-markdown",
         icon: "󰈤",
         label: "Open markdown",
-        onClick: () => onOpenMarkdown(entry.key),
+        onClick: () => onOpenMarkdown(ocrCompanionCurrent),
         testId: "open-markdown-btn",
       });
     }

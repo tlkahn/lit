@@ -120,11 +120,11 @@ describe("BibEntryActions", () => {
     expect(btn).toHaveAttribute("aria-label", "Fetching…");
   });
 
-  it("shows open-markdown button when ocrCompanionCurrent is true", () => {
+  it("shows open-markdown button when ocrCompanionCurrent is a filename", () => {
     const h = handlers();
     const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
     render(
-      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={true} />,
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={"test-paper.md"} />,
     );
     const btn = screen.getByTestId("open-markdown-btn");
     expect(btn).toBeInTheDocument();
@@ -149,14 +149,14 @@ describe("BibEntryActions", () => {
     expect(screen.queryByTestId("open-markdown-btn")).not.toBeInTheDocument();
   });
 
-  it("calls onOpenMarkdown with entry key when clicked", () => {
+  it("calls onOpenMarkdown with the slug filename when clicked", () => {
     const h = handlers();
     const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
     render(
-      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={true} />,
+      <BibEntryActions entry={baseEntry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={"test-paper.md"} />,
     );
     fireEvent.click(screen.getByTestId("open-markdown-btn"));
-    expect(h.onOpenMarkdown).toHaveBeenCalledWith("smith2024");
+    expect(h.onOpenMarkdown).toHaveBeenCalledWith("test-paper.md");
   });
 
   it("shows open-pdf and ocr buttons when entry has file", () => {
@@ -170,12 +170,12 @@ describe("BibEntryActions", () => {
     expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
   });
 
-  it("hides ocr button when ocrCompanionCurrent is true", () => {
+  it("hides ocr button when ocrCompanionCurrent is a filename", () => {
     const h = handlers();
     const entry = { ...baseEntry, file: "papers/smith.pdf" };
     const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
     render(
-      <BibEntryActions entry={entry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={true} />,
+      <BibEntryActions entry={entry} state={state} {...h} {...defaultLoading} ocrCompanionCurrent={"test-paper.md"} />,
     );
     expect(screen.getByTestId("open-pdf-btn")).toBeInTheDocument();
     expect(screen.queryByTestId("ocr-btn")).not.toBeInTheDocument();

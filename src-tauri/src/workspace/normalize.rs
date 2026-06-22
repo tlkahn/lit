@@ -47,6 +47,64 @@ pub fn normalize_to_nfc(s: &str) -> String {
     s.nfc().collect()
 }
 
+/// Derive a human-readable kebab-case slug from a document title, suitable for
+/// use as a filename stem. NFC-normalizes, lowercases, replaces forbidden and
+/// non-alphanumeric characters with hyphen separators, and collapses/trims
+/// hyphens. Returns `None` when the title yields no usable characters (empty,
+/// whitespace-only, or pure punctuation) so callers can fall back to the key.
+pub fn kebab_case_title(title: &str) -> Option<String> {
+    let normalized = normalize_to_nfc(title).to_lowercase();
+    let mut slug = String::with_capacity(normalized.len());
+    for ch in normalized.chars() {
+        if ch.is_alphanumeric() {
+            slug.push(ch);
+        } else {
+            // Any separator/punctuation/forbidden char becomes a boundary.
+            if !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+    }
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_slug(trimmed, MAX_SLUG_LEN))
+}
+
+/// Maximum slug length in bytes. Keeps filenames well under filesystem limits
+/// while staying readable.
+pub(crate) const MAX_SLUG_LEN: usize = 80;
+
+/// Minimum slug length in bytes. When truncating at a word boundary would
+/// produce a slug shorter than this, we cut at the byte limit instead
+/// (mid-word) to avoid collision-prone stubs like "a" or "the".
+pub(crate) const MIN_SLUG_LEN: usize = 8;
+
+/// Truncate a kebab-case slug to at most `max` bytes, preferring to cut at a
+/// word boundary (hyphen) and never leaving a trailing hyphen or splitting a
+/// multi-byte character. When the word-boundary cut would produce a slug
+/// shorter than `MIN_SLUG_LEN`, falls back to the full byte-bounded head.
+pub(crate) fn truncate_slug(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    // Floor to a char boundary so slicing is safe for multi-byte chars.
+    let mut boundary = max;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let head = &s[..boundary];
+    // Cut at the last word boundary at or before the limit, but only if the
+    // resulting slug would still be at least MIN_SLUG_LEN bytes. Otherwise
+    // keep the whole head (cutting mid-word is better than a 1-char stub).
+    let cut = match head.rfind('-') {
+        Some(pos) if pos >= MIN_SLUG_LEN => pos,
+        _ => boundary,
+    };
+    head[..cut].trim_end_matches('-').to_string()
+}
+
 pub fn validate_page_name(name: &str) -> Result<(), WorkspaceError> {
     if name.is_empty() {
         return Err(WorkspaceError::InvalidPageName(
@@ -194,6 +252,134 @@ mod tests {
             matches!(result, Err(WorkspaceError::InvalidPath(_))),
             "Expected InvalidPath, got {result:?}"
         );
+    }
+
+    #[test]
+    fn kebab_case_title_basic() {
+        assert_eq!(
+            kebab_case_title("The Well-Posed Problem"),
+            Some("the-well-posed-problem".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_strips_punctuation() {
+        assert_eq!(
+            kebab_case_title("What is AI? A Survey (2024)"),
+            Some("what-is-ai-a-survey-2024".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_empty_is_none() {
+        assert_eq!(kebab_case_title(""), None);
+    }
+
+    #[test]
+    fn kebab_case_title_whitespace_only_is_none() {
+        assert_eq!(kebab_case_title("   "), None);
+    }
+
+    #[test]
+    fn kebab_case_title_pure_punctuation_is_none() {
+        assert_eq!(kebab_case_title("??!!"), None);
+    }
+
+    #[test]
+    fn kebab_case_title_truncates_at_word_boundary() {
+        // 90-char title; should truncate at a hyphen at or before position 80.
+        let title = "the quick brown fox jumps over the lazy dog and then runs across the wide open green field again";
+        let slug = kebab_case_title(title).unwrap();
+        assert!(slug.len() <= 80, "slug too long: {} chars", slug.len());
+        assert!(!slug.ends_with('-'), "slug should not end with hyphen: {slug}");
+        // Truncation happens at a word boundary, so the slug is a prefix of the
+        // full kebab string ending on a complete word.
+        assert!(
+            "the-quick-brown-fox-jumps-over-the-lazy-dog-and-then-runs-across-the-wide-open-green-field-again".starts_with(&slug),
+            "slug should be a word-boundary prefix: {slug}"
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_collapses_hyphens() {
+        assert_eq!(kebab_case_title("foo---bar"), Some("foo-bar".to_string()));
+    }
+
+    #[test]
+    fn kebab_case_title_cjk() {
+        assert_eq!(
+            kebab_case_title("深度学习综述"),
+            Some("深度学习综述".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_accented() {
+        assert_eq!(
+            kebab_case_title("Café Résumé"),
+            Some("café-résumé".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_trims_leading_trailing_hyphens() {
+        assert_eq!(
+            kebab_case_title("-leading-and-trailing-"),
+            Some("leading-and-trailing".to_string())
+        );
+    }
+
+    #[test]
+    fn truncate_slug_early_hyphen_then_long_word() {
+        // Slug "a-" followed by 100 'b's = 102 bytes, well over 80.
+        // rfind('-') would find the hyphen at position 1, producing "a" (1 char).
+        // With the minimum-length guard, the result should be the full 80-byte
+        // char-boundary head instead.
+        let slug = format!("a-{}", "b".repeat(100));
+        assert_eq!(slug.len(), 102);
+        let result = truncate_slug(&slug, 80);
+        assert!(
+            result.len() >= 8,
+            "slug should be at least 8 bytes, got {} ({result:?})",
+            result.len()
+        );
+        // Should be the full 80-byte head since the only hyphen is too early.
+        assert_eq!(result.len(), 80);
+    }
+
+    #[test]
+    fn truncate_slug_no_hyphen_long_word() {
+        // A slug with no hyphens at all should truncate to exactly `max` bytes.
+        let slug = "x".repeat(100);
+        let result = truncate_slug(&slug, 80);
+        assert_eq!(result, "x".repeat(80));
+    }
+
+    #[test]
+    fn truncate_slug_hyphen_near_boundary_still_cuts_at_word() {
+        // "abcdefgh-ijklmnop-" + 70 'q's = 88 bytes.
+        // head at 80 bytes: "abcdefgh-ijklmnop-" + 62 'q's.
+        // rfind('-') finds hyphen at position 17, which is >= 8, so word-boundary
+        // cut should still be used.
+        let slug = format!("abcdefgh-ijklmnop-{}", "q".repeat(70));
+        assert_eq!(slug.len(), 88);
+        let result = truncate_slug(&slug, 80);
+        assert_eq!(result, "abcdefgh-ijklmnop");
+    }
+
+    #[test]
+    fn kebab_case_title_early_hyphen_long_word() {
+        // Title "A Verylongword..." produces slug "a-verylongword..." with an
+        // early hyphen. The slug should not collapse to just "a".
+        let long_word = "x".repeat(100);
+        let title = format!("A {long_word}");
+        let slug = kebab_case_title(&title).unwrap();
+        assert!(
+            slug.len() >= 8,
+            "slug should be at least 8 bytes, got {} ({slug:?})",
+            slug.len()
+        );
+        assert!(slug.len() <= MAX_SLUG_LEN);
     }
 
     #[test]

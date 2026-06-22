@@ -213,6 +213,7 @@ pub fn persist_companion_frontmatter(
     root: &Path,
     md_relative: &str,
     pdf_relative: &str,
+    citekey: Option<&str>,
     registry: &WriteHashRegistry,
 ) -> Result<(), WorkspaceError> {
     let full_path = root.join(md_relative);
@@ -222,7 +223,12 @@ pub fn persist_companion_frontmatter(
     let raw = fs::read_to_string(&full_path)?;
     let parsed = parse_frontmatter(&raw);
 
-    if parsed.map.get("companion").and_then(|v| v.as_str()) == Some(pdf_relative) {
+    let companion_ok = parsed.map.get("companion").and_then(|v| v.as_str()) == Some(pdf_relative);
+    let citekey_ok = match citekey {
+        Some(ck) => parsed.map.get("citekey").and_then(|v| v.as_str()) == Some(ck),
+        None => true,
+    };
+    if companion_ok && citekey_ok {
         registry.record(&full_path, &raw);
         return Ok(());
     }
@@ -232,6 +238,12 @@ pub fn persist_companion_frontmatter(
         "companion".to_string(),
         serde_yaml::Value::String(pdf_relative.to_string()),
     );
+    if let Some(ck) = citekey {
+        fm.insert(
+            "citekey".to_string(),
+            serde_yaml::Value::String(ck.to_string()),
+        );
+    }
     write_page(root, md_relative, parsed.body, &fm, registry)
 }
 
@@ -594,7 +606,35 @@ mod tests {
         let content = "---\ncompanion: foo.pdf\n---\n# Body\n";
         fs::write(dir.path().join("note.md"), content).unwrap();
 
-        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", &registry).unwrap();
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, &registry).unwrap();
+
+        let full_path = dir.path().join("note.md");
+        assert!(registry.check(&full_path, content));
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_writes_citekey() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "# Body\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", Some("smith2024"), &registry).unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        let parsed = parse_frontmatter(&content);
+        assert_eq!(parsed.map.get("companion").unwrap().as_str().unwrap(), "foo.pdf");
+        assert_eq!(parsed.map.get("citekey").unwrap().as_str().unwrap(), "smith2024");
+        assert!(parsed.body.contains("# Body"));
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_early_return_with_citekey() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\ncompanion: foo.pdf\ncitekey: smith2024\n---\n# Body\n";
+        fs::write(dir.path().join("note.md"), content).unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", Some("smith2024"), &registry).unwrap();
 
         let full_path = dir.path().join("note.md");
         assert!(registry.check(&full_path, content));

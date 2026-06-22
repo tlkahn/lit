@@ -210,6 +210,7 @@ describe("OcrDialog", () => {
     // Verify argument shapes
     expect(invokedCommands[0]!.args).toEqual({
       key: "smith2020",
+      title: "Deep Learning Survey",
       workspacePath: "/workspace",
     });
     expect(invokedCommands[1]!.args).toEqual({
@@ -349,7 +350,7 @@ describe("OcrDialog", () => {
   it("error from check_ocr_target_exists is displayed", async () => {
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args });
-      if (cmd === "check_ocr_target_exists") throw new Error("Graph index not ready");
+      if (cmd === "check_ocr_target_exists") throw new Error("Invalid key");
       if (cmd === "ocr_pdf_to_markdown") return "ocr/smith2020.md";
       throw new Error(`Unknown: ${cmd}`);
     });
@@ -359,7 +360,7 @@ describe("OcrDialog", () => {
     await user.click(screen.getByTestId("ocr-start-btn"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("ocr-error")).toHaveTextContent("Graph index not ready");
+      expect(screen.getByTestId("ocr-error")).toHaveTextContent("Invalid key");
     });
 
     // ocr_pdf_to_markdown should NOT have been invoked

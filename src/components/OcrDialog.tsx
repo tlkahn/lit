@@ -74,7 +74,7 @@ export function OcrDialog({ entry, workspacePath, onClose, onComplete }: OcrDial
 
     try {
       if (!overwrite) {
-        const exists = await checkOcrTargetExists(entry.key, workspacePath);
+        const exists = await checkOcrTargetExists(entry.key, entry.title, workspacePath);
         if (exists) {
           setProcessing(false);
           setOverwriteConfirm(true);

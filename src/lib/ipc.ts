@@ -542,17 +542,19 @@ export async function ocrPdfToMarkdown(
 
 export async function checkOcrTargetExists(
   key: string,
+  title: string,
   workspacePath: string,
 ): Promise<boolean> {
-  return invoke<boolean>("check_ocr_target_exists", { key, workspacePath });
+  return invoke<boolean>("check_ocr_target_exists", { key, title, workspacePath });
 }
 
 export async function isOcrCompanionCurrent(
   key: string,
+  title: string,
   workspacePath: string,
   pdfRelative: string,
-): Promise<boolean> {
-  return invoke<boolean>("is_ocr_companion_current", { key, workspacePath, pdfRelative });
+): Promise<string | null> {
+  return invoke<string | null>("is_ocr_companion_current", { key, title, workspacePath, pdfRelative });
 }
 
 // PDF recognition
