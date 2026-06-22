@@ -932,11 +932,6 @@ describe("PreferencesStore", () => {
     expect(state.academicCrossrefPath).toBe("");
   });
 
-  it("defaults academicPdfEngine to empty string", () => {
-    const state = usePreferencesStore.getState();
-    expect(state.academicPdfEngine).toBe("");
-  });
-
   it("defaults academicDefaultCsl to empty string", () => {
     const state = usePreferencesStore.getState();
     expect(state.academicDefaultCsl).toBe("");
@@ -1159,24 +1154,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().academicCrossrefPath).toBe("/usr/local/bin/pandoc-crossref");
   });
 
-  it("maps academic.pdfEngine from IPC", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_preferences") {
-        return {
-          "workbench.colorTheme": null,
-          "workbench.darkMode": "auto",
-          "workbench.sideBar.location": "left",
-          "academic.pdfEngine": "xelatex",
-        };
-      }
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-    mockListen();
-
-    await usePreferencesStore.getState().loadPreferences();
-    expect(usePreferencesStore.getState().academicPdfEngine).toBe("xelatex");
-  });
-
   it("maps academic.defaultCsl from IPC", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
@@ -1248,7 +1225,6 @@ describe("PreferencesStore", () => {
     const state = usePreferencesStore.getState();
     expect(state.academicPandocPath).toBe("");
     expect(state.academicCrossrefPath).toBe("");
-    expect(state.academicPdfEngine).toBe("");
     expect(state.academicDefaultCsl).toBe("");
     expect(state.academicDefaultTemplate).toBe("");
     expect(state.academicDefaultReferenceDoc).toBe("");
@@ -1275,12 +1251,10 @@ describe("PreferencesStore", () => {
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "academic.pandocPath": "/opt/pandoc",
-      "academic.pdfEngine": "lualatex",
     });
 
     const state = usePreferencesStore.getState();
     expect(state.academicPandocPath).toBe("/opt/pandoc");
-    expect(state.academicPdfEngine).toBe("lualatex");
   });
 
   it("defaults bottomPanelPosition to 'bottom'", () => {

@@ -51,11 +51,6 @@ export function AcademicExportSettings() {
               </>
             )}
           </div>
-          {info.pdf_engines.length > 0 && (
-            <div data-testid="academic-pdf-engines" className="text-text-muted">
-              PDF engines: {info.pdf_engines.join(", ")}
-            </div>
-          )}
         </div>
       )}
       {status === "error" && (

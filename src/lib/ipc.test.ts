@@ -655,14 +655,12 @@ describe("ipc", () => {
             pandoc_version: "pandoc 3.1.9",
             crossref_path: "/usr/local/bin/pandoc-crossref",
             crossref_version: "pandoc-crossref 0.3.17.0",
-            pdf_engines: ["xelatex", "pdflatex"],
           };
         case "export_document":
           return {
             output_path: "/tmp/output.tex",
             success: true,
             stderr: "",
-            latex_errors: [],
           };
         case "auto_unlock_secret_store":
           return true;
@@ -2130,11 +2128,6 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("detect_pandoc");
   });
 
-  it("detectPandoc returns pdf_engines", async () => {
-    const info = await detectPandoc();
-    expect(info.pdf_engines).toEqual(["xelatex", "pdflatex"]);
-  });
-
   it("exportDocument calls export_document with snake_case request", async () => {
     const result = await exportDocument({
       relativePath: "notes/paper.md",
@@ -2153,40 +2146,28 @@ describe("ipc", () => {
         csl: undefined,
         template: undefined,
         reference_doc: undefined,
-        pdf_engine: undefined,
       },
     });
-  });
-
-  it("exportDocument returns latex_errors", async () => {
-    const result = await exportDocument({
-      relativePath: "notes/paper.md",
-      outputPath: "/tmp/output.pdf",
-      format: "pdf",
-    });
-    expect(result.latex_errors).toEqual([]);
   });
 
   it("exportDocument passes optional override fields", async () => {
     await exportDocument({
       relativePath: "paper.md",
-      outputPath: "/out.pdf",
-      format: "pdf",
+      outputPath: "/out.tex",
+      format: "latex",
       csl: "ieee",
       template: "/t.tex",
       referenceDoc: "/r.docx",
-      pdfEngine: "lualatex",
     });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_document", {
       request: {
         relative_path: "paper.md",
-        output_path: "/out.pdf",
-        format: "pdf",
+        output_path: "/out.tex",
+        format: "latex",
         csl: "ieee",
         template: "/t.tex",
         reference_doc: "/r.docx",
-        pdf_engine: "lualatex",
       },
     });
   });

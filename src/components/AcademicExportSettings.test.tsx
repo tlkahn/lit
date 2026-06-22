@@ -15,7 +15,6 @@ beforeEach(() => {
         pandoc_version: "3.1.9",
         crossref_path: "/usr/local/bin/pandoc-crossref",
         crossref_version: "0.3.17.0",
-        pdf_engines: ["xelatex", "lualatex", "pdflatex"],
       };
     }
     return undefined;
@@ -109,7 +108,6 @@ describe("AcademicExportSettings", () => {
           pandoc_version: "3.1.9",
           crossref_path: null,
           crossref_version: null,
-          pdf_engines: [],
         };
       }
       return undefined;
@@ -122,19 +120,6 @@ describe("AcademicExportSettings", () => {
     const status = container.querySelector("[data-testid='academic-crossref-status']");
     expect(status).toBeTruthy();
     expect(status!.textContent).toContain("Not found");
-  });
-
-  it("shows pdf engines list after detect", async () => {
-    const { container } = render(<AcademicExportSettings />);
-    const btn = container.querySelector("[data-testid='academic-detect-btn']")!;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-    const engines = container.querySelector("[data-testid='academic-pdf-engines']");
-    expect(engines).toBeTruthy();
-    expect(engines!.textContent).toContain("xelatex");
-    expect(engines!.textContent).toContain("lualatex");
-    expect(engines!.textContent).toContain("pdflatex");
   });
 
   it("shows actual error detail message on detect failure", async () => {

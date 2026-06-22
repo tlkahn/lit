@@ -21,7 +21,6 @@ beforeEach(() => {
         output_path: "/tmp/output.tex",
         success: true,
         stderr: "",
-        latex_errors: [],
       };
     }
     return undefined;
@@ -29,7 +28,6 @@ beforeEach(() => {
   usePreferencesStore.setState({
     academicPandocPath: "",
     academicCrossrefPath: "",
-    academicPdfEngine: "",
     academicDefaultCsl: "",
     academicDefaultTemplate: "",
     academicDefaultReferenceDoc: "",
@@ -57,11 +55,11 @@ describe("AcademicExportDialog", () => {
 
   it("shows format selector defaulting to initialFormat", () => {
     const { container } = render(
-      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="pdf" />,
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="html" />,
     );
     const select = container.querySelector("[data-testid='academic-export-format']") as HTMLSelectElement;
     expect(select).toBeTruthy();
-    expect(select.value).toBe("pdf");
+    expect(select.value).toBe("html");
   });
 
   it("defaults to latex when no initialFormat", () => {
@@ -105,14 +103,6 @@ describe("AcademicExportDialog", () => {
     expect(input).toBeTruthy();
   });
 
-  it("shows template field for pdf format", () => {
-    const { container } = render(
-      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="pdf" />,
-    );
-    const input = container.querySelector("[data-testid='academic-export-template']");
-    expect(input).toBeTruthy();
-  });
-
   it("hides template field for docx format", () => {
     const { container } = render(
       <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="docx" />,
@@ -143,22 +133,6 @@ describe("AcademicExportDialog", () => {
     );
     const input = container.querySelector("[data-testid='academic-export-reference-doc']");
     expect(input).toBeNull();
-  });
-
-  it("shows PDF engine dropdown for pdf only", () => {
-    const { container } = render(
-      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="pdf" />,
-    );
-    const select = container.querySelector("[data-testid='academic-export-pdf-engine']");
-    expect(select).toBeTruthy();
-  });
-
-  it("hides PDF engine dropdown for latex", () => {
-    const { container } = render(
-      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="latex" />,
-    );
-    const select = container.querySelector("[data-testid='academic-export-pdf-engine']");
-    expect(select).toBeNull();
   });
 
   it("export button disabled when no output path", () => {
@@ -196,10 +170,8 @@ describe("AcademicExportDialog", () => {
       <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="latex" />,
     );
     const formatSelect = container.querySelector("[data-testid='academic-export-format']") as HTMLSelectElement;
-    fireEvent.change(formatSelect, { target: { value: "pdf" } });
-    expect(formatSelect.value).toBe("pdf");
-    // PDF engine should now be visible
-    expect(container.querySelector("[data-testid='academic-export-pdf-engine']")).toBeTruthy();
+    fireEvent.change(formatSelect, { target: { value: "html" } });
+    expect(formatSelect.value).toBe("html");
   });
 
   it("shows success message after export", async () => {
@@ -234,7 +206,6 @@ describe("AcademicExportDialog", () => {
           output_path: "/tmp/output.tex",
           success: false,
           stderr: "pandoc: command not found",
-          latex_errors: [{ message: "Missing package", line: 10, error_type: "error" }],
         };
       }
       return undefined;
@@ -268,19 +239,18 @@ describe("AcademicExportDialog", () => {
         return {
           output_path: "/tmp/output.pdf",
           success: false,
-          stderr: "pandoc is required for PDF export\n\nTo install pandoc:\n  - macOS: brew install pandoc",
-          latex_errors: [],
+          stderr: "pandoc is required for export\n\nTo install pandoc:\n  - macOS: brew install pandoc",
         };
       }
       return undefined;
     });
 
     const { container } = render(
-      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="pdf" />,
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="latex" />,
     );
 
     const { save } = await import("@tauri-apps/plugin-dialog");
-    (save as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/tmp/output.pdf");
+    (save as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/tmp/output.tex");
 
     const browseBtn = container.querySelector("[data-testid='academic-export-browse-btn']")!;
     await act(async () => {

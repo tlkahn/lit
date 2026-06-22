@@ -15,7 +15,6 @@ pub struct PandocInfo {
     pub pandoc_version: String,
     pub crossref_path: Option<String>,
     pub crossref_version: Option<String>,
-    pub pdf_engines: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -26,7 +25,6 @@ pub struct ExportRequest {
     pub csl: Option<String>,
     pub template: Option<String>,
     pub reference_doc: Option<String>,
-    pub pdf_engine: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,7 +38,6 @@ pub struct ExportResult {
     pub output_path: String,
     pub success: bool,
     pub stderr: String,
-    pub latex_errors: Vec<LatexError>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -48,7 +45,6 @@ pub struct ExportFrontmatter {
     pub csl: Option<String>,
     pub template: Option<String>,
     pub reference_doc: Option<String>,
-    pub pdf_engine: Option<String>,
     pub cjk_mainfont: Option<String>,
     pub indic_font: Option<String>,
     pub indic_fonts: HashMap<String, String>,
@@ -538,7 +534,6 @@ pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
         csl: get_str("csl"),
         template: get_str("template"),
         reference_doc: get_str("reference-doc"),
-        pdf_engine: get_str("pdf-engine"),
         cjk_mainfont: get_str("CJKmainfont"),
         indic_font: get_str("indic-font"),
         indic_fonts,
@@ -608,67 +603,6 @@ pub fn resolve_binary(
         }
     }
     find_in_path(fallback_name)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LatexError {
-    pub message: String,
-    pub line: Option<u32>,
-    pub error_type: String,
-}
-
-/// Parse LaTeX/TeX error messages from pandoc stderr output.
-pub fn parse_latex_errors(stderr: &str) -> Vec<LatexError> {
-    let lines: Vec<&str> = stderr.lines().collect();
-    let mut errors = Vec::new();
-
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        if let Some(rest) = line.strip_prefix("! LaTeX Error: ") {
-            let message = rest.trim_end_matches('.').trim().to_string();
-            let error_type = if rest.contains("not found") {
-                "missing_package"
-            } else {
-                "generic"
-            };
-            // Look ahead for l.<number> pattern
-            let line_number = find_line_number(&lines, i + 1);
-            errors.push(LatexError {
-                message: format!("{}.", message),
-                line: line_number,
-                error_type: error_type.to_string(),
-            });
-        } else if let Some(rest) = line.strip_prefix("! ") {
-            // Bare TeX error (not "LaTeX Error")
-            let message = rest.trim_end_matches('.').trim().to_string();
-            let line_number = find_line_number(&lines, i + 1);
-            errors.push(LatexError {
-                message: format!("{}.", message),
-                line: line_number,
-                error_type: "syntax".to_string(),
-            });
-        }
-        i += 1;
-    }
-
-    errors
-}
-
-/// Look for `l.<number>` pattern in subsequent lines starting from `start`.
-fn find_line_number(lines: &[&str], start: usize) -> Option<u32> {
-    // Search up to 5 lines ahead for a line number
-    for j in start..std::cmp::min(start + 5, lines.len()) {
-        let trimmed = lines[j].trim();
-        if let Some(rest) = trimmed.strip_prefix("l.") {
-            // Extract the number portion
-            let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(n) = num_str.parse::<u32>() {
-                return Some(n);
-            }
-        }
-    }
-    None
 }
 
 /// Resolve a CSL name to a path in the bundled resource directory.
@@ -796,9 +730,9 @@ pub fn resolve_reference_doc(
 }
 
 /// Resolve the bundled LaTeX preamble (extra packages like dsfont, stmaryrd).
-/// Only applies to PDF and LaTeX output formats.
+/// Only applies to LaTeX output format.
 pub fn resolve_preamble(format: &str, resource_dir: Option<&Path>) -> Option<PathBuf> {
-    if format == "pdf" || format == "latex" {
+    if format == "latex" {
         resource_dir
             .map(|d| d.join("academic/preamble.tex"))
             .filter(|p| p.is_file())
@@ -808,9 +742,9 @@ pub fn resolve_preamble(format: &str, resource_dir: Option<&Path>) -> Option<Pat
 }
 
 /// Resolve the bundled Lua filter that escapes bare `&` in Math, RawInline, and RawBlock nodes.
-/// Only applies to PDF and LaTeX output formats.
+/// Only applies to LaTeX output format.
 pub fn resolve_ampersand_filter(format: &str, resource_dir: Option<&Path>) -> Option<PathBuf> {
-    if format == "pdf" || format == "latex" {
+    if format == "latex" {
         resource_dir
             .map(|d| d.join("academic/escape-ampersand.lua"))
             .filter(|p| p.is_file())
@@ -919,7 +853,6 @@ pub fn build_pandoc_args(
     format: &str,
     resource_path: &Path,
     crossref_path: Option<&Path>,
-    pdf_engine: Option<&Path>,
     reference_doc: Option<&Path>,
     csl: Option<&Path>,
     template: Option<&Path>,
@@ -928,11 +861,8 @@ pub fn build_pandoc_args(
 
     args.push(input_path.to_string_lossy().to_string());
 
-    // For PDF, pandoc infers format from .pdf extension; don't pass -t
-    if format != "pdf" {
-        args.push("-t".to_string());
-        args.push(format.to_string());
-    }
+    args.push("-t".to_string());
+    args.push(format.to_string());
 
     args.push("-o".to_string());
     args.push(output_path.to_string_lossy().to_string());
@@ -959,10 +889,6 @@ pub fn build_pandoc_args(
         args.push(format!("--csl={}", csl_path.to_string_lossy()));
     }
 
-    if let Some(engine) = pdf_engine {
-        args.push(format!("--pdf-engine={}", engine.to_string_lossy()));
-    }
-
     if let Some(ref_doc) = reference_doc {
         args.push(format!("--reference-doc={}", ref_doc.to_string_lossy()));
     }
@@ -970,7 +896,7 @@ pub fn build_pandoc_args(
     if let Some(tmpl) = template {
         args.push(format!("--template={}", tmpl.to_string_lossy()));
     }
-    if format == "pdf" || format == "latex" {
+    if format == "latex" {
         for var in [
             "geometry:margin=1in",
             "fontsize=12pt",
@@ -1002,19 +928,11 @@ pub fn detect_pandoc(
         .as_ref()
         .and_then(|p| get_version(p).ok());
 
-    let mut pdf_engines = Vec::new();
-    for engine_name in &["xelatex", "lualatex", "pdflatex"] {
-        if find_in_path(engine_name).is_some() {
-            pdf_engines.push(engine_name.to_string());
-        }
-    }
-
     Ok(PandocInfo {
         pandoc_path: pandoc_path.to_string_lossy().to_string(),
         pandoc_version,
         crossref_path: crossref_path.map(|p| p.to_string_lossy().to_string()),
         crossref_version,
-        pdf_engines,
     })
 }
 
@@ -1035,7 +953,7 @@ pub async fn export_document(
     let output_path = PathBuf::from(&request.output_path);
     let format = request.format.clone();
     match format.as_str() {
-        "latex" | "pdf" | "html" | "docx" => {}
+        "latex" | "html" | "docx" => {}
         _ => return Err(format!("unsupported format: {format}")),
     }
     let resource_path = input_path.parent().unwrap_or(&workspace_root).to_path_buf();
@@ -1046,22 +964,6 @@ pub async fn export_document(
 
     // Extract frontmatter overrides from the document
     let frontmatter = extract_export_frontmatter(&input_path);
-
-    // Resolve pdf_engine: request -> frontmatter -> preference -> PATH lookup
-    let pdf_engine = if format == "pdf" {
-        if let Some(ref engine) = request.pdf_engine.as_ref().or(frontmatter.pdf_engine.as_ref()) {
-            let p = PathBuf::from(engine);
-            if p.is_file() {
-                Some(p)
-            } else {
-                find_in_path(engine)
-            }
-        } else {
-            resolve_binary("academic.pdfEngine", "xelatex", &prefs)
-        }
-    } else {
-        None
-    };
 
     let resource_dir = app_handle.path().resource_dir().ok();
 
@@ -1093,17 +995,17 @@ pub async fn export_document(
     );
 
     // Read content once for CJK + Indic detection
-    let content = if format == "pdf" || format == "latex" {
+    let content = if format == "latex" {
         std::fs::read_to_string(&input_path).unwrap_or_default()
     } else {
         String::new()
     };
 
-    // Resolve CJK font for PDF/LaTeX: frontmatter → preference → auto-detect
+    // Resolve CJK font for LaTeX: frontmatter → preference → auto-detect
     let cjk_font = resolve_cjk_font(frontmatter.cjk_mainfont.as_deref(), &prefs, &content);
 
-    // Resolve Indic fonts for PDF/LaTeX
-    let (indic_preamble_file, indic_lua_filter) = if format == "pdf" || format == "latex" {
+    // Resolve Indic fonts for LaTeX
+    let (indic_preamble_file, indic_lua_filter) = if format == "latex" {
         let detected = detect_indic_scripts(&content);
         if !detected.is_empty() {
             let fonts = resolve_indic_fonts(
@@ -1112,18 +1014,14 @@ pub async fn export_document(
                 &frontmatter.indic_fonts,
                 &prefs,
             );
-            let preamble = match build_indic_preamble(&fonts, pdf_engine.as_deref()) {
+            let preamble = match build_indic_preamble(&fonts, None) {
                 Ok(f) => Some(f),
                 Err(e) => {
                     tracing::warn!("failed to create Indic preamble: {e}");
                     None
                 }
             };
-            let engine_name = pdf_engine
-                .as_deref()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("xelatex");
+            let engine_name = "xelatex";
             let lua_filter = if engine_name.contains("xelatex") || engine_name.contains("lualatex") {
                 match build_indic_lua_filter(&fonts) {
                     Ok(f) => Some(f),
@@ -1143,7 +1041,7 @@ pub async fn export_document(
         (None, None)
     };
 
-    // Resolve bundled preamble for PDF/LaTeX (extra packages like dsfont)
+    // Resolve bundled preamble for LaTeX (extra packages like dsfont)
     let preamble = resolve_preamble(&format, resource_dir.as_deref());
 
     // Resolve bundled Lua filter for escaping bare & in Math/RawInline nodes
@@ -1164,7 +1062,6 @@ pub async fn export_document(
             &format,
             &resource_path,
             crossref_path.as_deref(),
-            pdf_engine.as_deref(),
             reference_doc.as_deref(),
             csl.as_deref(),
             template.as_deref(),
@@ -1252,12 +1149,6 @@ pub async fn export_document(
 
         tracing::debug!(stderr_len = stderr_bytes.len(), success, "pandoc finished");
 
-        let latex_errors = if format == "pdf" {
-            parse_latex_errors(&stderr)
-        } else {
-            Vec::new()
-        };
-
         let _ = win.emit("lit:academic-export-progress", AcademicExportProgress {
             stage: "done".to_string(),
             format: fmt_for_event,
@@ -1267,7 +1158,6 @@ pub async fn export_document(
             output_path: request.output_path.clone(),
             success,
             stderr,
-            latex_errors,
         })
     })
     .await
@@ -1295,7 +1185,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"latex".to_string()));
@@ -1314,7 +1203,6 @@ mod tests {
             "latex",
             Path::new("/notes"),
             Some(Path::new("/usr/local/bin/pandoc-crossref")),
-            None,
             None,
             None,
             None,
@@ -1367,116 +1255,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_pandoc_args_pdf_format() {
-        let args = build_pandoc_args(
-            Path::new("/input.md"),
-            Path::new("/output.pdf"),
-            "pdf",
-            Path::new("/workspace/notes"),
-            None,
-            Some(Path::new("/usr/bin/xelatex")),
-            None,
-            None,
-            None,
-        );
-        assert!(!args.contains(&"-t".to_string()));
-        assert!(args.contains(&"--pdf-engine=/usr/bin/xelatex".to_string()));
-        assert!(args.contains(&"-o".to_string()));
-        assert!(args.contains(&"--standalone".to_string()));
-    }
-
-    #[test]
-    fn test_build_pandoc_args_pdf_without_engine() {
-        let args = build_pandoc_args(
-            Path::new("/input.md"),
-            Path::new("/output.pdf"),
-            "pdf",
-            Path::new("/notes"),
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
-        assert!(!args.iter().any(|a| a.starts_with("--pdf-engine")));
-        assert!(!args.contains(&"-t".to_string()));
-    }
-
-    #[test]
-    fn test_pandoc_info_serializes_pdf_engines() {
-        let info = PandocInfo {
-            pandoc_path: "/usr/bin/pandoc".to_string(),
-            pandoc_version: "3.1.9".to_string(),
-            crossref_path: None,
-            crossref_version: None,
-            pdf_engines: vec!["xelatex".to_string()],
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        assert!(json.contains("pdf_engines"));
-        assert!(json.contains("xelatex"));
-    }
-
-    #[test]
-    fn test_parse_latex_errors_empty_stderr() {
-        let errors = parse_latex_errors("");
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn test_parse_latex_errors_no_errors() {
-        let errors = parse_latex_errors("This is normal output\n");
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn test_parse_latex_errors_generic_error() {
-        let stderr = "! LaTeX Error: Something went wrong.\n\nl.42 \\begin{document}\n";
-        let errors = parse_latex_errors(stderr);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Something went wrong.");
-        assert_eq!(errors[0].line, Some(42));
-        assert_eq!(errors[0].error_type, "generic");
-    }
-
-    #[test]
-    fn test_parse_latex_errors_missing_package() {
-        let stderr = "! LaTeX Error: File `fancyhdr.sty' not found.\n\nl.5 \\usepackage{fancyhdr}\n";
-        let errors = parse_latex_errors(stderr);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].error_type, "missing_package");
-        assert_eq!(errors[0].line, Some(5));
-    }
-
-    #[test]
-    fn test_parse_latex_errors_syntax_error() {
-        let stderr = "! Undefined control sequence.\nl.10 \\badcommand\n";
-        let errors = parse_latex_errors(stderr);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Undefined control sequence.");
-        assert_eq!(errors[0].line, Some(10));
-        assert_eq!(errors[0].error_type, "syntax");
-    }
-
-    #[test]
-    fn test_parse_latex_errors_no_line_number() {
-        let stderr = "! LaTeX Error: Some error without line info.\n\n";
-        let errors = parse_latex_errors(stderr);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].line, None);
-    }
-
-    #[test]
-    fn test_parse_latex_errors_multiple_errors() {
-        let stderr = "! LaTeX Error: First error.\n\nl.10 ...\n! Undefined control sequence.\nl.20 ...\n";
-        let errors = parse_latex_errors(stderr);
-        assert_eq!(errors.len(), 2);
-    }
-
-    #[test]
     fn test_build_pandoc_args_html_includes_mathjax() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.html"), "html",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/notes"), None, None, None, None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"html".to_string()));
@@ -1488,7 +1270,7 @@ mod tests {
     fn test_build_pandoc_args_docx_skips_standalone() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/notes"), None, None, None, None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"docx".to_string()));
@@ -1499,7 +1281,7 @@ mod tests {
     fn test_build_pandoc_args_docx_with_reference_doc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, Some(Path::new("/resources/ref.docx")),
+            Path::new("/notes"), None, Some(Path::new("/resources/ref.docx")),
             None, None,
         );
         assert!(args.contains(&"--reference-doc=/resources/ref.docx".to_string()));
@@ -1509,7 +1291,7 @@ mod tests {
     fn test_build_pandoc_args_docx_without_reference_doc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/notes"), None, None, None, None,
         );
         assert!(!args.iter().any(|a| a.starts_with("--reference-doc")));
     }
@@ -1518,17 +1300,7 @@ mod tests {
     fn test_build_pandoc_args_latex_no_mathjax() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None, None,
-        );
-        assert!(!args.contains(&"--mathjax".to_string()));
-    }
-
-    #[test]
-    fn test_build_pandoc_args_pdf_no_mathjax() {
-        let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.pdf"), "pdf",
-            Path::new("/notes"), None, Some(Path::new("/usr/bin/xelatex")), None,
-            None, None,
+            Path::new("/notes"), None, None, None, None,
         );
         assert!(!args.contains(&"--mathjax".to_string()));
     }
@@ -1571,7 +1343,7 @@ mod tests {
     fn test_build_pandoc_args_with_csl() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, Some(Path::new("/styles/ieee.csl")), None,
+            Path::new("/notes"), None, None, Some(Path::new("/styles/ieee.csl")), None,
         );
         assert!(args.contains(&"--citeproc".to_string()));
         assert!(args.contains(&"--csl=/styles/ieee.csl".to_string()));
@@ -1581,7 +1353,7 @@ mod tests {
     fn test_build_pandoc_args_with_template() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None, Some(Path::new("/templates/my.tex")),
+            Path::new("/notes"), None, None, None, Some(Path::new("/templates/my.tex")),
         );
         assert!(args.contains(&"--template=/templates/my.tex".to_string()));
     }
@@ -1590,7 +1362,7 @@ mod tests {
     fn test_build_pandoc_args_with_csl_and_template() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None,
+            Path::new("/notes"), None, None,
             Some(Path::new("/s/apa.csl")), Some(Path::new("/t/my.tex")),
         );
         assert!(args.contains(&"--citeproc".to_string()));
@@ -1602,7 +1374,7 @@ mod tests {
     fn test_build_pandoc_args_without_csl_no_citeproc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/notes"), None, None, None, None,
         );
         assert!(!args.contains(&"--citeproc".to_string()));
     }
@@ -1613,7 +1385,7 @@ mod tests {
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
             Path::new("/notes"),
             Some(Path::new("/usr/local/bin/pandoc-crossref")),
-            None, None,
+            None,
             Some(Path::new("/s/apa.csl")), None,
         );
         let crossref_pos = args.iter().position(|a| a.contains("pandoc-crossref")).unwrap();
@@ -1755,12 +1527,11 @@ mod tests {
         let dir = std::env::temp_dir().join("test_fm_all");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("note.md");
-        std::fs::write(&file, "---\ncsl: ieee\ntemplate: /my/t.tex\nreference-doc: /r.docx\npdf-engine: lualatex\nCJKmainfont: Noto Serif CJK SC\n---\nBody\n").unwrap();
+        std::fs::write(&file, "---\ncsl: ieee\ntemplate: /my/t.tex\nreference-doc: /r.docx\nCJKmainfont: Noto Serif CJK SC\n---\nBody\n").unwrap();
         let fm = extract_export_frontmatter(&file);
         assert_eq!(fm.csl.as_deref(), Some("ieee"));
         assert_eq!(fm.template.as_deref(), Some("/my/t.tex"));
         assert_eq!(fm.reference_doc.as_deref(), Some("/r.docx"));
-        assert_eq!(fm.pdf_engine.as_deref(), Some("lualatex"));
         assert_eq!(fm.cjk_mainfont.as_deref(), Some("Noto Serif CJK SC"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -1801,17 +1572,15 @@ mod tests {
         assert!(req.csl.is_none());
         assert!(req.template.is_none());
         assert!(req.reference_doc.is_none());
-        assert!(req.pdf_engine.is_none());
     }
 
     #[test]
     fn test_export_request_deserializes_with_optional_fields() {
-        let json = r#"{"relative_path":"a.md","output_path":"/out.pdf","format":"pdf","csl":"apa","template":"/t.tex","reference_doc":"/r.docx","pdf_engine":"lualatex"}"#;
+        let json = r#"{"relative_path":"a.md","output_path":"/out.tex","format":"latex","csl":"apa","template":"/t.tex","reference_doc":"/r.docx"}"#;
         let req: ExportRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.csl.as_deref(), Some("apa"));
         assert_eq!(req.template.as_deref(), Some("/t.tex"));
         assert_eq!(req.reference_doc.as_deref(), Some("/r.docx"));
-        assert_eq!(req.pdf_engine.as_deref(), Some("lualatex"));
     }
 
     #[test]
@@ -1939,10 +1708,10 @@ mod tests {
 
     #[test]
     fn test_build_pandoc_args_default_style_variables() {
-        for fmt in &["pdf", "latex"] {
+        for fmt in &["latex"] {
             let args = build_pandoc_args(
                 Path::new("/input.md"), Path::new("/output"), fmt,
-                Path::new("/notes"), None, None, None, None, None,
+                Path::new("/notes"), None, None, None, None,
             );
             assert!(args.contains(&"--variable=geometry:margin=1in".to_string()), "{fmt}: missing geometry");
             assert!(args.contains(&"--variable=fontsize=12pt".to_string()), "{fmt}: missing fontsize");
@@ -1957,8 +1726,8 @@ mod tests {
     #[test]
     fn test_build_pandoc_args_custom_template_still_has_variables() {
         let args = build_pandoc_args(
-            Path::new("/input.md"), Path::new("/output.pdf"), "pdf",
-            Path::new("/notes"), None, None, None, None, Some(Path::new("/t/custom.tex")),
+            Path::new("/input.md"), Path::new("/output.tex"), "latex",
+            Path::new("/notes"), None, None, None, Some(Path::new("/t/custom.tex")),
         );
         assert!(args.contains(&"--template=/t/custom.tex".to_string()));
         assert!(args.contains(&"--variable=geometry:margin=1in".to_string()));
@@ -1968,7 +1737,7 @@ mod tests {
     fn test_build_pandoc_args_html_no_variables() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.html"), "html",
-            Path::new("/notes"), None, None, None, None, None,
+            Path::new("/notes"), None, None, None, None,
         );
         assert!(!args.iter().any(|a| a.starts_with("--variable=")));
     }
@@ -2434,9 +2203,6 @@ mod tests {
         let preamble_path = preamble_dir.join("preamble.tex");
         std::fs::write(&preamble_path, "% test preamble\n").unwrap();
 
-        let result = resolve_preamble("pdf", Some(tmp.path()));
-        assert_eq!(result, Some(preamble_path.clone()));
-
         let result_latex = resolve_preamble("latex", Some(tmp.path()));
         assert_eq!(result_latex, Some(preamble_path));
     }
@@ -2445,10 +2211,10 @@ mod tests {
     fn test_preamble_not_resolved_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
 
-        let result = resolve_preamble("pdf", Some(tmp.path()));
+        let result = resolve_preamble("latex", Some(tmp.path()));
         assert_eq!(result, None);
 
-        let result_none = resolve_preamble("pdf", None);
+        let result_none = resolve_preamble("latex", None);
         assert_eq!(result_none, None);
     }
 
@@ -2499,23 +2265,12 @@ mod tests {
     #[test]
     fn test_ampersand_filter_not_resolved_when_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(resolve_ampersand_filter("pdf", Some(tmp.path())), None);
+        assert_eq!(resolve_ampersand_filter("latex", Some(tmp.path())), None);
     }
 
     #[test]
     fn test_ampersand_filter_not_resolved_without_resource_dir() {
-        assert_eq!(resolve_ampersand_filter("pdf", None), None);
-    }
-
-    #[test]
-    fn test_ampersand_filter_resolved_for_pdf() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("academic");
-        std::fs::create_dir_all(&dir).unwrap();
-        let lua_path = dir.join("escape-ampersand.lua");
-        std::fs::write(&lua_path, "-- filter\n").unwrap();
-
-        assert_eq!(resolve_ampersand_filter("pdf", Some(tmp.path())), Some(lua_path));
+        assert_eq!(resolve_ampersand_filter("latex", None), None);
     }
 
     #[test]
