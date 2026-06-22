@@ -216,7 +216,7 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("reuses the already-open pane instead of splitting", async () => {
+  it("reuses pane already showing the companion file", async () => {
     mockPaneState.root = {
       type: "split",
       id: "root",
@@ -232,8 +232,15 @@ describe("initCompanionCommands", () => {
 
     await vi.waitFor(() => {
       expect(mockPaneState.splitPane).not.toHaveBeenCalled();
-      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("companion-pane", "paper.pdf");
+      expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("companion-pane");
       expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
+      expect(mockStatusState.show).toHaveBeenCalledWith(
+        expect.stringContaining("paper.pdf"),
+        "success",
+      );
+      expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
+      expect(mockLinkState.setPendingEditorSync).not.toHaveBeenCalled();
     });
   });
 
@@ -254,8 +261,15 @@ describe("initCompanionCommands", () => {
 
     await vi.waitFor(() => {
       expect(mockPaneState.splitPane).not.toHaveBeenCalled();
-      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("companion-pane", "paper.pdf");
+      expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("companion-pane");
       expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
+      expect(mockStatusState.show).toHaveBeenCalledWith(
+        expect.stringContaining("paper.pdf"),
+        "success",
+      );
+      expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
+      expect(mockLinkState.setPendingEditorSync).not.toHaveBeenCalled();
     });
   });
 

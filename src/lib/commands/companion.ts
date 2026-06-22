@@ -73,9 +73,13 @@ export function initCompanionCommands(): void {
                 useStatusMessageStore.getState().show("Source pane was closed", "error");
                 return;
               case "open+vacant":
-              case "open-only":
-                newId = selection.openId;
-                break;
+              case "open-only": {
+                const existingId = selection.openId;
+                store.focusPane(existingId);
+                usePanePdfLinkStore.getState().linkPanes(sourceId, existingId);
+                useStatusMessageStore.getState().show(`Linked ${pagePath} ↔ ${companion}`, "success");
+                return;
+              }
               case "vacant-only":
                 newId = selection.vacantId;
                 break;
