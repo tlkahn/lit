@@ -1509,7 +1509,6 @@ export interface PandocInfo {
   pandoc_version: string;
   crossref_path: string | null;
   crossref_version: string | null;
-  pdf_engines: string[];
 }
 
 export interface ExportRequest {
@@ -1519,20 +1518,12 @@ export interface ExportRequest {
   csl?: string;
   template?: string;
   referenceDoc?: string;
-  pdfEngine?: string;
-}
-
-export interface LatexError {
-  message: string;
-  line: number | null;
-  error_type: string;
 }
 
 export interface ExportDocumentResult {
   output_path: string;
   success: boolean;
   stderr: string;
-  latex_errors: LatexError[];
 }
 
 export async function detectPandoc(): Promise<PandocInfo> {
@@ -1548,7 +1539,6 @@ export async function exportDocument(request: ExportRequest): Promise<ExportDocu
       csl: request.csl,
       template: request.template,
       reference_doc: request.referenceDoc,
-      pdf_engine: request.pdfEngine,
     },
   });
 }

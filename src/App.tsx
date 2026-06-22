@@ -155,7 +155,7 @@ function App() {
   const licensedTo = useLicenseStore((s) => s.licensedTo);
 
   const [academicExportOpen, setAcademicExportOpen] = useState(false);
-  const [academicExportFormat, setAcademicExportFormat] = useState<"latex" | "pdf" | "html" | "docx">("latex");
+  const [academicExportFormat, setAcademicExportFormat] = useState<"latex" | "html" | "docx">("latex");
 
   const [mergePreviewOpen, setMergePreviewOpen] = useState(false);
   const [mergePreviewDocs, setMergePreviewDocs] = useState<PageContent[]>([]);
@@ -203,13 +203,6 @@ function App() {
       });
       if (cancelled) { unExportLatex(); return; }
       unlisteners.push(unExportLatex);
-
-      const unExportPdf = await win.listen("menu://export-pdf", () => {
-        setAcademicExportFormat("pdf");
-        setAcademicExportOpen(true);
-      });
-      if (cancelled) { unExportPdf(); return; }
-      unlisteners.push(unExportPdf);
 
       const unExportHtml = await win.listen("menu://export-html", () => {
         setAcademicExportFormat("html");
@@ -464,7 +457,7 @@ function App() {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ format: "latex" | "pdf" | "html" | "docx" }>).detail;
+      const detail = (e as CustomEvent<{ format: "latex" | "html" | "docx" }>).detail;
       setAcademicExportFormat(detail?.format ?? "latex");
       setAcademicExportOpen(true);
     };

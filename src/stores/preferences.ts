@@ -47,7 +47,6 @@ export interface PreferencesState {
   bottomPanelPosition: BottomPanelPosition;
   academicPandocPath: string;
   academicCrossrefPath: string;
-  academicPdfEngine: string;
   academicDefaultCsl: string;
   academicDefaultTemplate: string;
   academicDefaultReferenceDoc: string;
@@ -209,7 +208,6 @@ function mapPreferences(prefs: Preferences) {
     llmPromptQ: (prefs["llm.prompts.q"] as string) ?? "Answer the following question about the provided context.",
     academicPandocPath: (prefs["academic.pandocPath"] as string) ?? "",
     academicCrossrefPath: (prefs["academic.crossrefFilterPath"] as string) ?? "",
-    academicPdfEngine: (prefs["academic.pdfEngine"] as string) ?? "",
     academicDefaultCsl: (prefs["academic.defaultCsl"] as string) ?? "",
     academicDefaultTemplate: (prefs["academic.defaultTemplate"] as string) ?? "",
     academicDefaultReferenceDoc: (prefs["academic.defaultReferenceDoc"] as string) ?? "",
@@ -316,7 +314,6 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   llmPromptQ: "Answer the following question about the provided context.",
   academicPandocPath: "",
   academicCrossrefPath: "",
-  academicPdfEngine: "",
   academicDefaultCsl: "",
   academicDefaultTemplate: "",
   academicDefaultReferenceDoc: "",

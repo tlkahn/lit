@@ -28,11 +28,6 @@ describe("initAcademicExportCommands", () => {
     expect(hasCommand("academic.exportLatex")).toBe(true);
   });
 
-  it("registers academic.exportPdf command", () => {
-    initAcademicExportCommands();
-    expect(hasCommand("academic.exportPdf")).toBe(true);
-  });
-
   it("registers academic.exportHtml command", () => {
     initAcademicExportCommands();
     expect(hasCommand("academic.exportHtml")).toBe(true);
@@ -48,7 +43,7 @@ describe("initAcademicExportCommands", () => {
     initAcademicExportCommands();
     const commands = getAllCommands();
     const exportCmds = commands.filter((c) => c.id.startsWith("academic."));
-    expect(exportCmds).toHaveLength(4);
+    expect(exportCmds).toHaveLength(3);
   });
 
   it("hidden when no page selected", () => {
@@ -85,27 +80,6 @@ describe("initAcademicExportCommands", () => {
     mockWorkspaceState.currentPagePath = "hello.md";
     const visible = getVisibleCommands("pandoc");
     expect(visible.find((c) => c.id === "academic.exportLatex")).toBeDefined();
-  });
-
-  it("pdf command hidden when no page", () => {
-    initAcademicExportCommands();
-    mockWorkspaceState.currentPagePath = null;
-    const visible = getVisibleCommands();
-    expect(visible.find((c) => c.id === "academic.exportPdf")).toBeUndefined();
-  });
-
-  it("pdf command visible when page selected", () => {
-    initAcademicExportCommands();
-    mockWorkspaceState.currentPagePath = "hello.md";
-    const visible = getVisibleCommands();
-    expect(visible.find((c) => c.id === "academic.exportPdf")).toBeDefined();
-  });
-
-  it("searchable by keyword 'pdf'", () => {
-    initAcademicExportCommands();
-    mockWorkspaceState.currentPagePath = "hello.md";
-    const visible = getVisibleCommands("pdf");
-    expect(visible.find((c) => c.id === "academic.exportPdf")).toBeDefined();
   });
 
   it("html command hidden when no page", () => {
@@ -176,19 +150,6 @@ describe("initAcademicExportCommands", () => {
     );
     expect(event).toBeDefined();
     expect((event![0] as CustomEvent).detail).toEqual({ format: "latex" });
-    dispatchSpy.mockRestore();
-  });
-
-  it("pdf action dispatches lit:open-academic-export with format pdf", () => {
-    initAcademicExportCommands();
-    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
-    const cmd = getAllCommands().find((c) => c.id === "academic.exportPdf")!;
-    cmd.action();
-    const event = dispatchSpy.mock.calls.find(
-      (call) => (call[0] as CustomEvent).type === "lit:open-academic-export",
-    );
-    expect(event).toBeDefined();
-    expect((event![0] as CustomEvent).detail).toEqual({ format: "pdf" });
     dispatchSpy.mockRestore();
   });
 

@@ -33,7 +33,6 @@ const defaults = {
   llmPromptQ: "Answer the following question about the provided context.",
   academicPandocPath: "",
   academicCrossrefPath: "",
-  academicPdfEngine: "",
   academicDefaultCsl: "",
   academicDefaultTemplate: "",
   academicDefaultReferenceDoc: "",
@@ -950,7 +949,7 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 28 control data-testid values exist", () => {
+  it("all 27 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
@@ -976,7 +975,6 @@ describe("SettingsModal", () => {
       "settings-neighborsDepth",
       "settings-academicPandocPath",
       "settings-academicCrossrefPath",
-      "settings-academicPdfEngine",
       "settings-academicDefaultCsl",
       "settings-academicDefaultTemplate",
       "settings-academicDefaultReferenceDoc",
@@ -1070,7 +1068,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 28 controls", () => {
+  it("empty search shows all 27 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -1100,7 +1098,6 @@ describe("SettingsModal", () => {
       "settings-neighborsDepth",
       "settings-academicPandocPath",
       "settings-academicCrossrefPath",
-      "settings-academicPdfEngine",
       "settings-academicDefaultCsl",
       "settings-academicDefaultTemplate",
       "settings-academicDefaultReferenceDoc",
@@ -1210,7 +1207,6 @@ describe("SettingsModal", () => {
       "settings-neighborsDepth",
       "settings-academicPandocPath",
       "settings-academicCrossrefPath",
-      "settings-academicPdfEngine",
       "settings-academicDefaultCsl",
       "settings-academicDefaultTemplate",
       "settings-academicDefaultReferenceDoc",
@@ -1898,22 +1894,6 @@ describe("SettingsModal", () => {
       expect(input!.tagName).toBe("INPUT");
     });
 
-    it("renders PDF Engine dropdown", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-academicPdfEngine']");
-      expect(select).toBeTruthy();
-      expect(select!.tagName).toBe("SELECT");
-    });
-
-    it("PDF Engine dropdown has xelatex, lualatex, pdflatex options", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-academicPdfEngine']")!;
-      const opts = Array.from(select.querySelectorAll("option")).map((o) => o.value);
-      expect(opts).toContain("xelatex");
-      expect(opts).toContain("lualatex");
-      expect(opts).toContain("pdflatex");
-    });
-
     it("renders Default CSL Style dropdown", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
       const select = container.querySelector("[data-testid='settings-academicDefaultCsl']");
@@ -1942,19 +1922,6 @@ describe("SettingsModal", () => {
       const input = container.querySelector("[data-testid='settings-academicDefaultReferenceDoc']");
       expect(input).toBeTruthy();
       expect(input!.tagName).toBe("INPUT");
-    });
-
-    it("changing PDF Engine calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-academicPdfEngine']")!;
-      fireEvent.change(select, { target: { value: "xelatex" } });
-      expect(usePreferencesStore.getState().academicPdfEngine).toBe("xelatex");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "academic.pdfEngine", value: "xelatex" },
-        });
-      });
     });
 
     it("Pandoc Path commits on blur", async () => {

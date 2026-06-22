@@ -11,7 +11,6 @@ pub const MENU_ID_ENTER_LICENSE_KEY: &str = "enter_license_key";
 pub const MENU_ID_LICENSE_INFO: &str = "license_info";
 pub const MENU_ID_EXPORT_MARKDOWN: &str = "export_markdown";
 pub const MENU_ID_EXPORT_LATEX: &str = "export_latex";
-pub const MENU_ID_EXPORT_PDF: &str = "export_pdf";
 pub const MENU_ID_EXPORT_HTML: &str = "export_html";
 pub const MENU_ID_EXPORT_DOCX: &str = "export_docx";
 pub const MENU_ID_EXPORT_LKG: &str = "export_lkg";
@@ -42,7 +41,6 @@ pub const EVENT_BUY_LICENSE: &str = "menu://buy-license";
 pub const EVENT_ENTER_LICENSE_KEY: &str = "menu://enter-license-key";
 pub const EVENT_LICENSE_INFO: &str = "menu://license-info";
 pub const EVENT_EXPORT_LATEX: &str = "menu://export-latex";
-pub const EVENT_EXPORT_PDF: &str = "menu://export-pdf";
 pub const EVENT_EXPORT_HTML: &str = "menu://export-html";
 pub const EVENT_EXPORT_DOCX: &str = "menu://export-docx";
 pub const EVENT_EXPORT_LKG: &str = "menu://export-lkg";
@@ -59,7 +57,6 @@ pub(crate) enum MenuAction {
     EnterLicenseKey,
     ExportMarkdown,
     ExportLatex,
-    ExportPdf,
     ExportHtml,
     ExportDocx,
     ExportLkg,
@@ -82,7 +79,6 @@ impl MenuAction {
             MENU_ID_LICENSE_INFO => Some(Self::LicenseInfo),
             MENU_ID_EXPORT_MARKDOWN => Some(Self::ExportMarkdown),
             MENU_ID_EXPORT_LATEX => Some(Self::ExportLatex),
-            MENU_ID_EXPORT_PDF => Some(Self::ExportPdf),
             MENU_ID_EXPORT_HTML => Some(Self::ExportHtml),
             MENU_ID_EXPORT_DOCX => Some(Self::ExportDocx),
             MENU_ID_EXPORT_LKG => Some(Self::ExportLkg),
@@ -228,11 +224,6 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                 let _ = window.emit_to(window.label(), EVENT_EXPORT_LATEX, ());
             }
         }
-        MenuAction::ExportPdf => {
-            if let Some(window) = find_focused_window(app) {
-                let _ = window.emit_to(window.label(), EVENT_EXPORT_PDF, ());
-            }
-        }
         MenuAction::ExportHtml => {
             if let Some(window) = find_focused_window(app) {
                 let _ = window.emit_to(window.label(), EVENT_EXPORT_HTML, ());
@@ -313,7 +304,6 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &MenuItem::with_id(app, MENU_ID_EXPORT_MARKDOWN, "Export as Markdown Archive\u{2026}", true, Some("cmdOrCtrl+shift+s"))?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_LATEX, "Export to LaTeX\u{2026}", true, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_ID_EXPORT_PDF, "Export to PDF\u{2026}", true, None::<&str>)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_HTML, "Export to HTML\u{2026}", true, None::<&str>)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_DOCX, "Export to DOCX\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
@@ -394,7 +384,6 @@ mod tests {
     #[test]
     fn academic_export_menu_ids_are_defined() {
         assert_eq!(MENU_ID_EXPORT_LATEX, "export_latex");
-        assert_eq!(MENU_ID_EXPORT_PDF, "export_pdf");
         assert_eq!(MENU_ID_EXPORT_HTML, "export_html");
         assert_eq!(MENU_ID_EXPORT_DOCX, "export_docx");
     }
@@ -402,7 +391,6 @@ mod tests {
     #[test]
     fn academic_export_event_constants_defined() {
         assert_eq!(EVENT_EXPORT_LATEX, "menu://export-latex");
-        assert_eq!(EVENT_EXPORT_PDF, "menu://export-pdf");
         assert_eq!(EVENT_EXPORT_HTML, "menu://export-html");
         assert_eq!(EVENT_EXPORT_DOCX, "menu://export-docx");
     }
@@ -410,7 +398,6 @@ mod tests {
     #[test]
     fn academic_export_from_id() {
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_LATEX), Some(MenuAction::ExportLatex));
-        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_PDF), Some(MenuAction::ExportPdf));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_HTML), Some(MenuAction::ExportHtml));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_DOCX), Some(MenuAction::ExportDocx));
     }
@@ -443,7 +430,6 @@ mod tests {
             MENU_ID_CLOSE,
             MENU_ID_EXPORT_MARKDOWN,
             MENU_ID_EXPORT_LATEX,
-            MENU_ID_EXPORT_PDF,
             MENU_ID_EXPORT_HTML,
             MENU_ID_EXPORT_DOCX,
             MENU_ID_EXPORT_LKG,
@@ -469,7 +455,6 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_CLOSE), Some(MenuAction::ClosePane));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_MARKDOWN), Some(MenuAction::ExportMarkdown));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_LATEX), Some(MenuAction::ExportLatex));
-        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_PDF), Some(MenuAction::ExportPdf));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_HTML), Some(MenuAction::ExportHtml));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_DOCX), Some(MenuAction::ExportDocx));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_LKG), Some(MenuAction::ExportLkg));

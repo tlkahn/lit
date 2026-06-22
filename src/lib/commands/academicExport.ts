@@ -19,16 +19,6 @@ export function initAcademicExportCommands(): void {
       },
     },
     {
-      id: "academic.exportPdf",
-      label: "Export to PDF",
-      keywords: ["export", "pdf", "pandoc", "academic", "latex"],
-      icon: "\u{1F4C4}",
-      when: hasPage,
-      action: () => {
-        window.dispatchEvent(new CustomEvent("lit:open-academic-export", { detail: { format: "pdf" } }));
-      },
-    },
-    {
       id: "academic.exportHtml",
       label: "Export to HTML",
       keywords: ["export", "html", "pandoc", "academic", "web"],

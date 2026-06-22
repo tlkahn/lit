@@ -337,19 +337,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Academic Export",
-    label: "PDF Engine",
-    storeField: "academicPdfEngine",
-    jsonKey: "academic.pdfEngine",
-    controlType: "dropdown",
-    testId: "settings-academicPdfEngine",
-    options: [
-      { value: "xelatex", label: "XeLaTeX" },
-      { value: "lualatex", label: "LuaLaTeX" },
-      { value: "pdflatex", label: "pdfLaTeX" },
-    ],
-  },
-  {
-    category: "Academic Export",
     label: "Default CSL Style",
     storeField: "academicDefaultCsl",
     jsonKey: "academic.defaultCsl",

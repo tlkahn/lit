@@ -3,9 +3,9 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { usePreferencesStore } from "../stores/preferences";
 import { exportDocument } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
-import type { ExportDocumentResult, LatexError } from "../lib/ipc";
+import type { ExportDocumentResult } from "../lib/ipc";
 
-type ExportFormat = "latex" | "pdf" | "html" | "docx";
+type ExportFormat = "latex" | "html" | "docx";
 
 interface AcademicExportDialogProps {
   open: boolean;
@@ -15,14 +15,12 @@ interface AcademicExportDialogProps {
 
 const FORMAT_LABELS: Record<ExportFormat, string> = {
   latex: "LaTeX",
-  pdf: "PDF",
   html: "HTML",
   docx: "DOCX",
 };
 
 const FORMAT_EXTENSIONS: Record<ExportFormat, string> = {
   latex: "tex",
-  pdf: "pdf",
   html: "html",
   docx: "docx",
 };
@@ -41,20 +39,12 @@ const CSL_OPTIONS = [
   { value: "springer-basic-author-date", label: "Springer (Author-Date)" },
 ];
 
-const PDF_ENGINE_OPTIONS = [
-  { value: "", label: "(Default)" },
-  { value: "xelatex", label: "XeLaTeX" },
-  { value: "lualatex", label: "LuaLaTeX" },
-  { value: "pdflatex", label: "pdfLaTeX" },
-];
-
 export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>(initialFormat ?? "latex");
   const [outputPath, setOutputPath] = useState("");
   const [csl, setCsl] = useState("");
   const [template, setTemplate] = useState("");
   const [referenceDoc, setReferenceDoc] = useState("");
-  const [pdfEngine, setPdfEngine] = useState("");
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<ExportDocumentResult | null>(null);
 
@@ -70,7 +60,6 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
       setCsl(prefs.academicDefaultCsl || "");
       setTemplate(prefs.academicDefaultTemplate || "");
       setReferenceDoc(prefs.academicDefaultReferenceDoc || "");
-      setPdfEngine(prefs.academicPdfEngine || "");
       setResult(null);
       setExporting(false);
     }
@@ -117,9 +106,8 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
         outputPath,
         format,
         csl: csl || undefined,
-        template: (format === "latex" || format === "pdf") && template ? template : undefined,
+        template: format === "latex" && template ? template : undefined,
         referenceDoc: format === "docx" && referenceDoc ? referenceDoc : undefined,
-        pdfEngine: format === "pdf" && pdfEngine ? pdfEngine : undefined,
       });
       setResult(exportResult);
     } catch (e) {
@@ -127,7 +115,6 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
         output_path: outputPath,
         success: false,
         stderr: e instanceof Error ? e.message : String(e),
-        latex_errors: [],
       });
     } finally {
       setExporting(false);
@@ -218,7 +205,7 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
           </div>
 
           {/* Template override (latex/pdf only) */}
-          {(format === "latex" || format === "pdf") && (
+          {format === "latex" && (
             <div>
               <label className="block text-sm text-text-muted mb-1">Template Path</label>
               <input
@@ -247,23 +234,6 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
             </div>
           )}
 
-          {/* PDF engine (pdf only) */}
-          {format === "pdf" && (
-            <div>
-              <label className="block text-sm text-text-muted mb-1">PDF Engine</label>
-              <select
-                data-testid="academic-export-pdf-engine"
-                className="w-full rounded border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-normal"
-                value={pdfEngine}
-                onChange={(e) => setPdfEngine(e.target.value)}
-              >
-                {PDF_ENGINE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {/* Result display */}
           {result && result.success && (
             <div data-testid="academic-export-success" className="rounded border border-border bg-bg-secondary p-3 text-sm text-text-success">
@@ -274,16 +244,6 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
           {result && !result.success && (
             <div data-testid="academic-export-error" className="rounded border border-border bg-bg-secondary p-3 text-sm text-text-error space-y-1">
               <div className="whitespace-pre-line">{result.stderr}</div>
-              {result.latex_errors.length > 0 && (
-                <ul className="list-disc pl-4">
-                  {result.latex_errors.map((err: LatexError, i: number) => (
-                    <li key={i}>
-                      {err.message}
-                      {err.line != null && ` (line ${err.line})`}
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
           )}
         </div>
