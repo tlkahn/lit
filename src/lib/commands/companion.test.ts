@@ -98,7 +98,70 @@ vi.mock("../pageMarkers", () => ({
   pageForOffset: mockPageForOffset,
 }));
 
-import { initCompanionCommands } from "./companion";
+import { initCompanionCommands, selectCompanionTarget } from "./companion";
+import type { PaneLeaf } from "../../stores/panes";
+
+function leaf(id: string, pagePath: string | null = null): PaneLeaf {
+  return { type: "leaf", id, pagePath };
+}
+
+describe("selectCompanionTarget", () => {
+  it("returns source-gone when sourceId is not in leaves", () => {
+    const leaves = [leaf("other", "x.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "source-gone",
+    });
+  });
+
+  it("returns source-gone for empty leaves array", () => {
+    expect(selectCompanionTarget([], "src", "companion.pdf")).toEqual({
+      kind: "source-gone",
+    });
+  });
+
+  it("returns open+vacant when companion is open and a vacant pane exists", () => {
+    const leaves = [
+      leaf("src", "paper.md"),
+      leaf("open", "companion.pdf"),
+      leaf("empty"),
+    ];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "open+vacant",
+      openId: "open",
+      vacantId: "empty",
+    });
+  });
+
+  it("returns open-only when companion is open but no vacant pane exists", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("other", "companion.pdf")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "open-only",
+      openId: "other",
+    });
+  });
+
+  it("does not match source leaf itself for open", () => {
+    const leaves = [leaf("src", "companion.pdf")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "must-split",
+    });
+  });
+
+  it("returns vacant-only when a non-source leaf has no page", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("empty")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "vacant-only",
+      vacantId: "empty",
+    });
+  });
+
+  it("returns must-split when all non-source leaves have pages", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("other", "other.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "must-split",
+    });
+  });
+});
 
 function resetPaneState(pagePath: string | null) {
   mockPaneState.root = { type: "leaf", id: "src-pane", pagePath };
@@ -150,6 +213,49 @@ describe("initCompanionCommands", () => {
       expect(mockPaneState.setPanePage).toHaveBeenCalledWith("vacant-pane", "paper.pdf");
       expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "vacant-pane");
       expect(mockPaneState.focusPane).toHaveBeenCalledWith("vacant-pane");
+    });
+  });
+
+  it("reuses the already-open pane instead of splitting", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "companion-pane", pagePath: "paper.pdf" },
+      ],
+      sizes: [0.5, 0.5],
+    };
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("companion-pane", "paper.pdf");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
+    });
+  });
+
+  it("prefers already-open pane over vacant pane", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "companion-pane", pagePath: "paper.pdf" },
+        { type: "leaf", id: "vacant-pane", pagePath: null },
+      ],
+      sizes: [0.33, 0.34, 0.33],
+    };
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("companion-pane", "paper.pdf");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
     });
   });
 
@@ -235,6 +341,16 @@ describe("initCompanionCommands", () => {
 
   it("shows error and does not clobber when splitPane is a no-op (MAX_PANES)", async () => {
     mockPaneState.splitPane.mockReturnValue(null);
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "other-pane", pagePath: "other.md" },
+      ],
+      sizes: [0.5, 0.5],
+    };
     initCompanionCommands();
     executeCommand("companion.open");
 
@@ -249,18 +365,27 @@ describe("initCompanionCommands", () => {
   });
 
   it("shows error when source pane was closed during async lookup", async () => {
-    mockPaneState.splitPane.mockReturnValue(null);
+    mockFindCompanionFile.mockImplementation(() => {
+      // Simulate the source pane being closed while findCompanionFile is in flight.
+      mockPaneState.root = {
+        type: "leaf",
+        id: "other-pane",
+        pagePath: "other.md",
+      };
+      return Promise.resolve("paper.pdf");
+    });
     initCompanionCommands();
     executeCommand("companion.open");
 
     await vi.waitFor(() => {
-      expect(mockPaneState.splitPane).toHaveBeenCalledWith("src-pane", "horizontal");
       expect(mockStatusState.show).toHaveBeenCalledWith(
-        expect.stringContaining("source pane closed"),
+        "Source pane was closed",
         "error",
       );
     });
+    expect(mockPaneState.splitPane).not.toHaveBeenCalled();
     expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
+    expect(mockLinkState.linkPanes).not.toHaveBeenCalled();
   });
 
   it("registers companion.toggleSync", () => {
