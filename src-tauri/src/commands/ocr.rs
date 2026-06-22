@@ -46,9 +46,10 @@ fn ocr_slug(entry: &crate::bib::types::BibEntry) -> String {
         .unwrap_or_else(|| entry.key.clone())
 }
 
-/// Look up the bib entry for `key` in the graph index and derive its OCR slug.
-/// Used by the lightweight OCR query commands that only need the slug (not the
-/// full entry).
+/// Look up the OCR companion slug for `key`.  First tries a graph query for a
+/// page that has both `citekey` and `companion` frontmatter (stable across title
+/// changes).  Falls back to recomputing the slug from the bib entry's current
+/// title for backward compatibility with pre-migration OCR files.
 fn lookup_ocr_slug(
     registry: &crate::commands::graph::GraphRegistry,
     root: &PathBuf,
@@ -57,30 +58,35 @@ fn lookup_ocr_slug(
     let gi = crate::commands::page::lookup_graph_index(registry, root)
         .ok_or_else(|| "Graph index not ready".to_string())?;
     let store = gi.store();
+
+    if let Ok(Some(page_id)) = store.ocr_companion_for_citekey(key) {
+        return Ok(page_id.trim_end_matches(".md").to_string());
+    }
+
     let entry = crate::bib::db::get_bib_item(&store.conn, key)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Entry '{}' not found", key))?;
     Ok(ocr_slug(&entry))
 }
 
-/// Return the bare filename for OCR markdown output: `"{key}.md"`.
-fn ocr_markdown_filename(key: &str) -> String {
-    format!("{key}.md")
+/// Return the bare filename for OCR markdown output: `"{stem}.md"`.
+fn ocr_markdown_filename(stem: &str) -> String {
+    format!("{stem}.md")
 }
 
 /// Compute the workspace-relative path for the OCR markdown output.
-fn ocr_markdown_path(root: &std::path::Path, key: &str) -> PathBuf {
-    root.join(ocr_markdown_filename(key))
+fn ocr_markdown_path(root: &std::path::Path, stem: &str) -> PathBuf {
+    root.join(ocr_markdown_filename(stem))
 }
 
 /// Compute the directory where OCR-extracted images are saved.
-fn ocr_image_dir(root: &std::path::Path, key: &str) -> PathBuf {
-    root.join("assets").join("images").join(key)
+fn ocr_image_dir(root: &std::path::Path, stem: &str) -> PathBuf {
+    root.join("assets").join("images").join(stem)
 }
 
 /// Compute the markdown-relative image stem used inside image references.
-fn ocr_image_stem(key: &str) -> String {
-    format!("assets/images/{key}")
+fn ocr_image_stem(stem: &str) -> String {
+    format!("assets/images/{stem}")
 }
 
 /// Write OCR markdown output, respecting the overwrite flag.
@@ -374,12 +380,13 @@ pub async fn ocr_pdf_to_markdown(
         let root_clone = root.clone();
         let md_rel = md_relative.clone();
         let pdf_rel = trimmed_pdf_relative.as_deref().unwrap_or(relative_pdf).to_string();
+        let key_for_fm = key.clone();
         let flock = file_lock.inner().clone();
         let full_path = root.join(&md_rel);
         tokio::task::spawn_blocking(move || {
             flock.with_lock(&full_path, || {
                 if let Err(e) = crate::workspace::ops::persist_companion_frontmatter(
-                    &root_clone, &md_rel, &pdf_rel, &reg,
+                    &root_clone, &md_rel, &pdf_rel, Some(&key_for_fm), &reg,
                 ) {
                     eprintln!("[ocr] failed to persist companion frontmatter: {e}");
                 }
@@ -1291,6 +1298,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024.pdf",
+            None,
             &registry,
         )
         .unwrap();
@@ -1324,6 +1332,7 @@ mod tests {
                 root,
                 "smith2024.md",
                 "assets/pdf/smith2024.pdf",
+                None,
                 &registry,
             )
             .unwrap();
@@ -1516,6 +1525,7 @@ mod tests {
             root,
             "the-well-posed-problem.md",
             "assets/pdf/the-well-posed-problem-trimmed.pdf",
+            None,
             &registry,
         )
         .unwrap();
@@ -1548,6 +1558,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024.pdf",
+            None,
             &registry,
         )
         .unwrap();
@@ -1588,6 +1599,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024-trimmed.pdf",
+            None,
             &registry,
         )
         .unwrap();
@@ -1625,6 +1637,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024-trimmed.pdf",
+            None,
             &registry,
         )
         .unwrap();
@@ -1635,6 +1648,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024.pdf",
+            None,
             &registry,
         )
         .unwrap();

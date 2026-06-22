@@ -1214,6 +1214,22 @@ impl Store {
         Ok(page_id)
     }
 
+    /// Returns the page id that declares the given citekey AND has a
+    /// `companion` field in its frontmatter (i.e. an OCR companion page).
+    /// Returns `None` if no such page exists.
+    pub fn ocr_companion_for_citekey(&self, citekey: &str) -> Result<Option<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM nodes
+             WHERE json_extract(frontmatter, '$.citekey') = ?1
+               AND json_extract(frontmatter, '$.companion') IS NOT NULL
+             LIMIT 1"
+        )?;
+        let page_id: Option<String> = stmt
+            .query_row([citekey], |row| row.get(0))
+            .optional()?;
+        Ok(page_id)
+    }
+
     /// Returns page ids that cite the given raw key via citation edges.
     pub fn sources_citing(&self, raw_key: &str) -> Result<Vec<String>, GraphError> {
         let mut stmt = self.conn.prepare(
@@ -5386,6 +5402,46 @@ mod tests {
         store.upsert_node(&node, 1).unwrap();
 
         let result = store.page_for_citekey("nonexistent").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn ocr_companion_for_citekey_found_when_both_fields() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node(
+            "attention-is-all-you-need.md",
+            "Attention Is All You Need",
+            &[],
+            json!({"citekey": "vaswani2017", "companion": "assets/pdf/vaswani2017.pdf"}),
+        );
+        store.upsert_node(&node, 1).unwrap();
+
+        let result = store.ocr_companion_for_citekey("vaswani2017").unwrap();
+        assert_eq!(result, Some("attention-is-all-you-need.md".to_string()));
+    }
+
+    #[test]
+    fn ocr_companion_for_citekey_not_found_when_only_citekey() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node(
+            "paper.md",
+            "Paper",
+            &[],
+            json!({"citekey": "smith2024"}),
+        );
+        store.upsert_node(&node, 1).unwrap();
+
+        let result = store.ocr_companion_for_citekey("smith2024").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn ocr_companion_for_citekey_not_found_for_absent_key() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let result = store.ocr_companion_for_citekey("nonexistent").unwrap();
         assert_eq!(result, None);
     }
 
