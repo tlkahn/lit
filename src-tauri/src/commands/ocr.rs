@@ -42,8 +42,10 @@ pub(crate) fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec
 /// slug of the document title, falling back to the citation key when the title
 /// is empty or yields no usable characters.
 fn ocr_slug(entry: &crate::bib::types::BibEntry) -> String {
-    crate::workspace::normalize::kebab_case_title(&entry.title)
-        .unwrap_or_else(|| entry.key.clone())
+    match crate::workspace::normalize::kebab_case_title(&entry.title) {
+        Some(title) => format!("{}-{}", title, entry.key),
+        None => entry.key.clone(),
+    }
 }
 
 /// Look up the OCR companion slug for `key`.  First tries a graph query for a
@@ -497,7 +499,7 @@ mod tests {
     #[test]
     fn ocr_slug_uses_title() {
         let entry = entry_with("smith2024", "The Well-Posed Problem");
-        assert_eq!(ocr_slug(&entry), "the-well-posed-problem");
+        assert_eq!(ocr_slug(&entry), "the-well-posed-problem-smith2024");
     }
 
     #[test]
