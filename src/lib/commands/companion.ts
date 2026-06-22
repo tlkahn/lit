@@ -9,10 +9,11 @@ import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
 import { getPdfCurrentPage } from "../pdfPaneRef";
 
 export type CompanionTarget =
-  | { kind: "already-open"; paneId: string }
-  | { kind: "vacant"; paneId: string }
-  | { kind: "split-needed" }
-  | { kind: "source-gone" };
+  | { kind: "source-gone" }
+  | { kind: "open+vacant"; openId: string; vacantId: string }
+  | { kind: "open-only"; openId: string }
+  | { kind: "vacant-only"; vacantId: string }
+  | { kind: "must-split" };
 
 export function selectCompanionTarget(
   leaves: PaneLeaf[],
@@ -21,17 +22,14 @@ export function selectCompanionTarget(
 ): CompanionTarget {
   if (!leaves.some((l) => l.id === sourceId)) return { kind: "source-gone" };
 
-  const alreadyOpen = leaves.find(
-    (l) => l.id !== sourceId && l.pagePath === companionPath,
-  );
-  if (alreadyOpen) return { kind: "already-open", paneId: alreadyOpen.id };
+  const others = leaves.filter((l) => l.id !== sourceId);
+  const alreadyOpen = others.find((l) => l.pagePath === companionPath);
+  const vacant = others.find((l) => l.pagePath == null);
 
-  const vacant = leaves.find(
-    (l) => l.id !== sourceId && l.pagePath == null,
-  );
-  if (vacant) return { kind: "vacant", paneId: vacant.id };
-
-  return { kind: "split-needed" };
+  if (alreadyOpen && vacant) return { kind: "open+vacant", openId: alreadyOpen.id, vacantId: vacant.id };
+  if (alreadyOpen) return { kind: "open-only", openId: alreadyOpen.id };
+  if (vacant) return { kind: "vacant-only", vacantId: vacant.id };
+  return { kind: "must-split" };
 }
 
 export function initCompanionCommands(): void {
@@ -71,19 +69,28 @@ export function initCompanionCommands(): void {
 
             let newId: string | null;
             switch (selection.kind) {
-              case "already-open":
-              case "vacant":
-                newId = selection.paneId;
-                break;
               case "source-gone":
-              case "split-needed":
+                useStatusMessageStore.getState().show("Source pane was closed", "error");
+                return;
+              case "open+vacant":
+              case "open-only":
+                newId = selection.openId;
+                break;
+              case "vacant-only":
+                newId = selection.vacantId;
+                break;
+              case "must-split":
                 newId = store.splitPane(sourceId, "horizontal");
                 break;
+              default: {
+                const _exhaustive: never = selection;
+                throw new Error(`unhandled companion target: ${String(_exhaustive)}`);
+              }
             }
             if (newId == null) {
               useStatusMessageStore
                 .getState()
-                .show("Cannot split: maximum panes reached or source pane closed", "error");
+                .show("Cannot split: maximum panes reached", "error");
               return;
             }
             store.focusPane(newId);
