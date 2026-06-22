@@ -950,9 +950,45 @@ mod tests {
         assert!(err.contains("forbidden character"), "got: {err}");
     }
 
-    // Traversal rejection on the citation key is covered by
-    // `validate_key_rejects_path_traversal`; the slug derived from a title can
-    // never contain path separators (see `kebab_case_title`).
+    // --- command-level traversal rejection (integration) ---
+
+    #[tokio::test]
+    async fn check_ocr_target_exists_rejects_key_traversal() {
+        let err = check_ocr_target_exists(
+            "../etc/passwd".into(),
+            "Some Title".into(),
+            "/tmp/fake".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Invalid citation key"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn is_ocr_companion_current_rejects_key_traversal() {
+        let err = is_ocr_companion_current(
+            "../etc/passwd".into(),
+            "Some Title".into(),
+            "/tmp/fake".into(),
+            "assets/pdf/test.pdf".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("Invalid citation key"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn is_ocr_companion_current_rejects_pdf_traversal() {
+        let err = is_ocr_companion_current(
+            "smith2024".into(),
+            "Some Title".into(),
+            "/tmp/fake".into(),
+            "../../etc/shadow".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("traversal"), "got: {err}");
+    }
 
     // --- write_ocr_markdown tests ---
 
@@ -1417,9 +1453,9 @@ mod tests {
         assert!(!is_companion_current(root, "smith2024", "nonexistent.pdf"));
     }
 
-    // `is_ocr_companion_current` validates the key via `validate_key` and the
-    // PDF path via `validate_relative_path` before any graph lookup; both
-    // validators are exercised directly below and in the validate_key tests.
+    // Command-level traversal rejection for `is_ocr_companion_current` and
+    // `check_ocr_target_exists` is covered by the integration tests above
+    // (search for "command-level traversal rejection").
 
     // --- validate_relative_path tests ---
 
