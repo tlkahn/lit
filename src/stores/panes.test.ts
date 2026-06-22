@@ -9,6 +9,7 @@ import {
   findSplitByPath,
   replaceSplitSizes,
   clearPagePath,
+  rotateChildren,
   getPanePosition,
   createInitialState,
   usePaneStore,
@@ -456,6 +457,73 @@ describe("clearPagePath", () => {
   });
 });
 
+describe("rotateChildren", () => {
+  it("returns leaf unchanged", () => {
+    const leaf: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    expect(rotateChildren(leaf)).toBe(leaf);
+  });
+
+  it("swaps 2-child split ([A,B] → [B,A])", () => {
+    const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "a.md" };
+    const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "b.md" };
+    const root: PaneSplit = {
+      type: "split", id: "s1", direction: "horizontal",
+      children: [a, b], sizes: [30, 70],
+    };
+    const result = rotateChildren(root) as PaneSplit;
+    expect(result.children).toEqual([b, a]);
+    expect(result.sizes).toEqual([70, 30]);
+  });
+
+  it("rotates 3-child split ([A,B,C] → [B,C,A])", () => {
+    const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+    const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
+    const root: PaneSplit = {
+      type: "split", id: "s1", direction: "horizontal",
+      children: [a, b, c], sizes: [20, 30, 50],
+    };
+    const result = rotateChildren(root) as PaneSplit;
+    expect(result.children).toEqual([b, c, a]);
+    expect(result.sizes).toEqual([30, 50, 20]);
+  });
+
+  it("does not recurse into nested sub-splits", () => {
+    const inner: PaneSplit = {
+      type: "split", id: "s2", direction: "vertical",
+      children: [
+        { type: "leaf", id: "b", pagePath: null },
+        { type: "leaf", id: "c", pagePath: null },
+      ],
+      sizes: [40, 60],
+    };
+    const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    const root: PaneSplit = {
+      type: "split", id: "s1", direction: "horizontal",
+      children: [a, inner], sizes: [50, 50],
+    };
+    const result = rotateChildren(root) as PaneSplit;
+    expect(result.children[0]).toBe(inner);
+    expect(result.children[1]).toBe(a);
+    expect((result.children[0] as PaneSplit).children.map((c) => (c as PaneLeaf).id)).toEqual(["b", "c"]);
+  });
+
+  it("N rotations on N children restores original", () => {
+    const a: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    const b: PaneLeaf = { type: "leaf", id: "b", pagePath: null };
+    const c: PaneLeaf = { type: "leaf", id: "c", pagePath: null };
+    const root: PaneSplit = {
+      type: "split", id: "s1", direction: "horizontal",
+      children: [a, b, c], sizes: [20, 30, 50],
+    };
+    let current: PaneNode = root;
+    for (let i = 0; i < 3; i++) current = rotateChildren(current);
+    const result = current as PaneSplit;
+    expect(result.children.map((c) => (c as PaneLeaf).id)).toEqual(["a", "b", "c"]);
+    expect(result.sizes).toEqual([20, 30, 50]);
+  });
+});
+
 describe("getPanePosition", () => {
   it("returns null for a single leaf root", () => {
     const leaf: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
@@ -820,6 +888,58 @@ describe("Section B: Store", () => {
       const newRoot = usePaneStore.getState().root as PaneSplit;
       expect((newRoot.children[0] as PaneLeaf).pagePath).toBeNull();
       expect((newRoot.children[1] as PaneLeaf).pagePath).toBe("keep.md");
+    });
+  });
+
+  describe("swapLayout", () => {
+    it("no-op for single pane", () => {
+      const root: PaneLeaf = { type: "leaf", id: "solo", pagePath: null };
+      usePaneStore.setState({ root, focusedPaneId: "solo" });
+      usePaneStore.getState().swapLayout();
+      expect(usePaneStore.getState().root).toBe(root);
+    });
+
+    it("swaps 2-pane layout", () => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: "a.md" };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: "b.md" };
+      const root: PaneSplit = {
+        type: "split", id: "s1", direction: "horizontal",
+        children: [left, right], sizes: [30, 70],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+      usePaneStore.getState().swapLayout();
+      const newRoot = usePaneStore.getState().root as PaneSplit;
+      expect((newRoot.children[0] as PaneLeaf).id).toBe("right");
+      expect((newRoot.children[1] as PaneLeaf).id).toBe("left");
+      expect(newRoot.sizes).toEqual([70, 30]);
+    });
+
+    it("preserves focusedPaneId", () => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: null };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: null };
+      const root: PaneSplit = {
+        type: "split", id: "s1", direction: "horizontal",
+        children: [left, right], sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+      usePaneStore.getState().swapLayout();
+      expect(usePaneStore.getState().focusedPaneId).toBe("left");
+    });
+
+    it("double-swap restores original order", () => {
+      const left: PaneLeaf = { type: "leaf", id: "left", pagePath: "a.md" };
+      const right: PaneLeaf = { type: "leaf", id: "right", pagePath: "b.md" };
+      const root: PaneSplit = {
+        type: "split", id: "s1", direction: "horizontal",
+        children: [left, right], sizes: [30, 70],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+      usePaneStore.getState().swapLayout();
+      usePaneStore.getState().swapLayout();
+      const newRoot = usePaneStore.getState().root as PaneSplit;
+      expect((newRoot.children[0] as PaneLeaf).id).toBe("left");
+      expect((newRoot.children[1] as PaneLeaf).id).toBe("right");
+      expect(newRoot.sizes).toEqual([30, 70]);
     });
   });
 });

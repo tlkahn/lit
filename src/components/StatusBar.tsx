@@ -186,6 +186,22 @@ function TabButton({
   );
 }
 
+function SwapPanesButton() {
+  const isSplit = usePaneStore((s) => s.root.type === "split");
+  if (!isSplit) return null;
+  return (
+    <button
+      data-testid="swap-panes-button"
+      aria-label="Swap pane layout"
+      title="Swap pane layout (⌘⇧X)"
+      onClick={() => usePaneStore.getState().swapLayout()}
+      className="flex items-center px-1 text-text-muted hover:text-text-normal"
+    >
+      <span className="nerd-font" aria-hidden="true">{''}</span>
+    </button>
+  );
+}
+
 export function StatusBar() {
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
@@ -250,6 +266,7 @@ export function StatusBar() {
       <div className="flex items-center">
         {newPageButton}
         <BufferStack />
+        <SwapPanesButton />
       </div>
       <div className="flex items-center">
         {statusMessage && (
