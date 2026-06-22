@@ -41,43 +41,20 @@ pub(crate) fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec
 /// Derive the filename stem for OCR artifacts from a bib entry: a kebab-case
 /// slug of the document title, falling back to the citation key when the title
 /// is empty or yields no usable characters.
-fn ocr_slug(entry: &crate::bib::types::BibEntry) -> String {
+fn ocr_slug(title: &str, key: &str) -> String {
     use crate::workspace::normalize::{truncate_slug, MAX_SLUG_LEN};
-    match crate::workspace::normalize::kebab_case_title(&entry.title) {
-        Some(title) => {
-            let suffix_len = 1 + entry.key.len(); // "-{key}"
-            let title = if suffix_len < MAX_SLUG_LEN {
-                truncate_slug(&title, MAX_SLUG_LEN - suffix_len)
+    match crate::workspace::normalize::kebab_case_title(title) {
+        Some(t) => {
+            let suffix_len = 1 + key.len(); // "-{key}"
+            let t = if suffix_len < MAX_SLUG_LEN {
+                truncate_slug(&t, MAX_SLUG_LEN - suffix_len)
             } else {
-                title
+                t
             };
-            format!("{}-{}", title, entry.key)
+            format!("{}-{}", t, key)
         }
-        None => entry.key.clone(),
+        None => key.to_string(),
     }
-}
-
-/// Look up the OCR companion slug for `key`.  First tries a graph query for a
-/// page that has both `citekey` and `companion` frontmatter (stable across title
-/// changes).  Falls back to recomputing the slug from the bib entry's current
-/// title for backward compatibility with pre-migration OCR files.
-fn lookup_ocr_slug(
-    registry: &crate::commands::graph::GraphRegistry,
-    root: &PathBuf,
-    key: &str,
-) -> Result<String, String> {
-    let gi = crate::commands::page::lookup_graph_index(registry, root)
-        .ok_or_else(|| "Graph index not ready".to_string())?;
-    let store = gi.store();
-
-    if let Ok(Some(page_id)) = store.ocr_companion_for_citekey(key) {
-        return Ok(page_id.trim_end_matches(".md").to_string());
-    }
-
-    let entry = crate::bib::db::get_bib_item(&store.conn, key)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Entry '{}' not found", key))?;
-    Ok(ocr_slug(&entry))
 }
 
 /// Return the bare filename for OCR markdown output: `"{stem}.md"`.
@@ -253,7 +230,7 @@ pub async fn ocr_pdf_to_markdown(
 
     // Name all OCR artifacts after a human-readable, title-derived slug rather
     // than the opaque bib key (falls back to the key for empty titles).
-    let slug = ocr_slug(&entry);
+    let slug = ocr_slug(&entry.title, &entry.key);
 
     // Step 2: Get PDF path from entry.file field
     emit_progress(&window, &key, "resolve_pdf", "Resolving PDF path");
@@ -431,14 +408,14 @@ fn is_companion_current(root: &std::path::Path, slug: &str, pdf_relative: &str) 
 #[tauri::command]
 pub async fn is_ocr_companion_current(
     key: String,
+    title: String,
     workspace_path: String,
     pdf_relative: String,
-    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
 ) -> Result<Option<String>, String> {
     validate_key(&key)?;
     validate_relative_path(&pdf_relative)?;
     let root = PathBuf::from(&workspace_path);
-    let slug = lookup_ocr_slug(&graph_state, &root, &key)?;
+    let slug = ocr_slug(&title, &key);
     let filename = ocr_markdown_filename(&slug);
     tokio::task::spawn_blocking(move || {
         if is_companion_current(&root, &slug, &pdf_relative) {
@@ -460,62 +437,28 @@ fn check_ocr_target_inner(root: &std::path::Path, slug: &str) -> bool {
 #[tauri::command]
 pub async fn check_ocr_target_exists(
     key: String,
+    title: String,
     workspace_path: String,
-    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
 ) -> Result<bool, String> {
     validate_key(&key)?;
     let root = PathBuf::from(&workspace_path);
-    let slug = lookup_ocr_slug(&graph_state, &root, &key)?;
+    let slug = ocr_slug(&title, &key);
     Ok(check_ocr_target_inner(&root, &slug))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bib::types::BibEntry;
-
-    /// Minimal BibEntry for tests, parameterized by the fields ocr_slug reads.
-    fn entry_with(key: &str, title: &str) -> BibEntry {
-        BibEntry {
-            key: key.to_string(),
-            entry_type: "article".to_string(),
-            title: title.to_string(),
-            authors: vec![],
-            year: "2024".to_string(),
-            line_number: 0,
-            bib_file: None,
-            abstract_text: None,
-            doi: None,
-            isbn: None,
-            arxiv_id: None,
-            url: None,
-            journal: None,
-            publisher: None,
-            issn: None,
-            volume: None,
-            number: None,
-            pages: None,
-            file: None,
-            oclc: None,
-            work_type: None,
-            series: None,
-            lccn: None,
-            editors: vec![],
-            tags: vec![],
-        }
-    }
 
     #[test]
     fn ocr_slug_uses_title() {
-        let entry = entry_with("smith2024", "The Well-Posed Problem");
-        assert_eq!(ocr_slug(&entry), "the-well-posed-problem-smith2024");
+        assert_eq!(ocr_slug("The Well-Posed Problem", "smith2024"), "the-well-posed-problem-smith2024");
     }
 
     #[test]
     fn ocr_slug_truncates_title_to_fit_key_within_limit() {
         let long_title = "the quick brown fox jumps over the lazy dog and then runs across the wide open green field again";
-        let entry = entry_with("smith2024", long_title);
-        let slug = ocr_slug(&entry);
+        let slug = ocr_slug(long_title, "smith2024");
         assert!(
             slug.len() <= crate::workspace::normalize::MAX_SLUG_LEN,
             "slug too long: {} bytes: {slug}",
@@ -526,8 +469,7 @@ mod tests {
 
     #[test]
     fn ocr_slug_falls_back_to_key_when_title_empty() {
-        let entry = entry_with("smith2024", "");
-        assert_eq!(ocr_slug(&entry), "smith2024");
+        assert_eq!(ocr_slug("", "smith2024"), "smith2024");
     }
 
     #[test]

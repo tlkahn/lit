@@ -256,6 +256,7 @@ export function ReferenceLibrary() {
 
   const expandedFile = expandedEntry?.file;
   const expandedBibKey = expandedEntry?.key;
+  const expandedTitle = expandedEntry?.title ?? "";
 
   // Check if OCR companion markdown is current when an entry is expanded
   useEffect(() => {
@@ -263,7 +264,7 @@ export function ReferenceLibrary() {
       return () => { ocrCheckIdRef.current++; };
     }
     const id = ++ocrCheckIdRef.current;
-    isOcrCompanionCurrent(expandedBibKey, workspacePath, expandedFile).then(
+    isOcrCompanionCurrent(expandedBibKey, expandedTitle, workspacePath, expandedFile).then(
       (result) => {
         if (id !== ocrCheckIdRef.current) return;
         setOcrCompanionCurrentMap((prev) => ({ ...prev, [expandedKey]: result ?? false }));
@@ -275,7 +276,7 @@ export function ReferenceLibrary() {
       },
     );
     return () => { ocrCheckIdRef.current++; };
-  }, [expandedKey, expandedFile, expandedBibKey, workspacePath]);
+  }, [expandedKey, expandedFile, expandedBibKey, expandedTitle, workspacePath]);
 
   // --- Search tab state ---
   const [mode, setMode] = useState<"library" | "search">("library");

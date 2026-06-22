@@ -2295,21 +2295,23 @@ describe("ipc", () => {
   });
 
   it("checkOcrTargetExists calls check_ocr_target_exists", async () => {
-    const result = await checkOcrTargetExists("smith2020", "/workspace");
+    const result = await checkOcrTargetExists("smith2020", "A Test Paper", "/workspace");
     expect(result).toBe(false);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("check_ocr_target_exists", {
       key: "smith2020",
+      title: "A Test Paper",
       workspacePath: "/workspace",
     });
   });
 
   it("isOcrCompanionCurrent calls is_ocr_companion_current", async () => {
-    const result = await isOcrCompanionCurrent("smith2020", "/workspace", "assets/pdf/smith2020.pdf");
+    const result = await isOcrCompanionCurrent("smith2020", "A Test Paper", "/workspace", "assets/pdf/smith2020.pdf");
     expect(result).toBe("test-paper.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("is_ocr_companion_current", {
       key: "smith2020",
+      title: "A Test Paper",
       workspacePath: "/workspace",
       pdfRelative: "assets/pdf/smith2020.pdf",
     });
