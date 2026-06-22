@@ -92,6 +92,10 @@
   animation: card-focus-ring 1.5s ease-out forwards;
 }
 
+[data-pane-id] {
+  outline: none;
+}
+
 html, body, #root {
   height: 100%;
   overflow: hidden;
