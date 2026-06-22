@@ -125,6 +125,15 @@ export function ensureCommandsRegistered() {
     },
   });
   registerCommand({
+    id: "app.toggleFrontmatter",
+    label: "Toggle Frontmatter",
+    keywords: ["frontmatter", "yaml", "metadata", "info"],
+    when: () => useWorkspaceStore.getState().currentPagePath != null,
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-frontmatter"));
+    },
+  });
+  registerCommand({
     id: "app.showLocalGraph",
     label: "Show Local Graph",
     keywords: ["graph", "local", "neighborhood"],

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath, getAncestorPaths } from "./pathUtils";
+import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath, getAncestorPaths, basename } from "./pathUtils";
 
 describe("resolveRelativePath", () => {
   it("resolves simple relative path", () => {
@@ -155,6 +155,40 @@ describe("getAncestorPaths", () => {
 
   it("handles path that is just a slash", () => {
     expect(getAncestorPaths("/")).toEqual([]);
+  });
+});
+
+describe("basename", () => {
+  it("returns filename from nested path", () => {
+    expect(basename("sub/dir/hello.md")).toBe("hello.md");
+  });
+
+  it("returns the input for bare filename", () => {
+    expect(basename("hello.md")).toBe("hello.md");
+  });
+
+  it("returns empty string for trailing slash", () => {
+    expect(basename("sub/dir/")).toBe("");
+  });
+
+  it("returns empty string for single slash", () => {
+    expect(basename("/")).toBe("");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(basename("")).toBe("");
+  });
+
+  it("returns filename from single-level path", () => {
+    expect(basename("dir/file.txt")).toBe("file.txt");
+  });
+
+  it("returns filename from absolute path", () => {
+    expect(basename("/Users/x/notes/readme.md")).toBe("readme.md");
+  });
+
+  it("handles dotfiles", () => {
+    expect(basename("dir/.gitignore")).toBe(".gitignore");
   });
 });
 

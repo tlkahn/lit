@@ -1,21 +1,18 @@
 import { useMemo } from "react";
-import { usePaneStore, findLeaf } from "../stores/panes";
-import { usePaneHistoryStore } from "../stores/paneHistory";
 import { usePaneField, type PaneContentEntry } from "../lib/paneContentRegistry";
-import { useLeafFileType } from "../hooks/useLeafFileType";
+import type { LeafFileType } from "../hooks/useLeafFileType";
+import { basename } from "../lib/pathUtils";
+import { HistoryNavButtons } from "./HistoryNavButtons";
+
+interface PaneHeaderProps {
+  paneId: string;
+  pagePath: string | null;
+  fileType: LeafFileType | null;
+}
 
 const titleSel = (e: PaneContentEntry | null) => e?.title ?? "";
 
-function basename(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i >= 0 ? path.slice(i + 1) : path;
-}
-
-export function PaneHeader({ paneId }: { paneId: string }) {
-  const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
-  const fileType = useLeafFileType(paneId);
-  const canGoBack = usePaneHistoryStore((s) => s.canGoBack(paneId));
-  const canGoForward = usePaneHistoryStore((s) => s.canGoForward(paneId));
+export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
   const mdTitle = usePaneField(paneId, titleSel);
 
   const displayName = useMemo(() => {
@@ -31,21 +28,7 @@ export function PaneHeader({ paneId }: { paneId: string }) {
       data-testid="pane-header"
       className="flex items-center gap-1.5 px-3 py-1.5 text-sm"
     >
-      {([
-        { dir: "back", can: canGoBack, onClick: () => usePaneHistoryStore.getState().goBack(paneId), label: "Go back", glyph: "‹" },
-        { dir: "forward", can: canGoForward, onClick: () => usePaneHistoryStore.getState().goForward(paneId), label: "Go forward", glyph: "›" },
-      ] as const).map((btn) => (
-        <button
-          key={btn.dir}
-          disabled={!btn.can}
-          onClick={btn.onClick}
-          className="text-text-faint hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed px-0.5"
-          aria-label={btn.label}
-          data-testid={`pane-history-${btn.dir}`}
-        >
-          {btn.glyph}
-        </button>
-      ))}
+      <HistoryNavButtons paneId={paneId} testIdPrefix="pane-history-" />
       <span className="truncate text-text-muted" data-testid="pane-header-title">
         {displayName}
       </span>

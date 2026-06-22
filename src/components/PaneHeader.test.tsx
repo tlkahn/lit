@@ -57,7 +57,9 @@ describe("PaneHeader", () => {
       root: { type: "leaf", id: "p1", pagePath: null },
       focusedPaneId: "p1",
     });
-    const { container } = render(<PaneHeader paneId="p1" />);
+    const { container } = render(
+      <PaneHeader paneId="p1" pagePath={null} fileType={null} />,
+    );
     expect(container.innerHTML).toBe("");
   });
 
@@ -67,7 +69,7 @@ describe("PaneHeader", () => {
       root: { type: "leaf", id: "p1", pagePath: "note.md" },
       focusedPaneId: "p1",
     });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />);
     expect(screen.getByTestId("pane-header")).toBeInTheDocument();
     expect(screen.getByTestId("pane-history-back")).toBeInTheDocument();
     expect(screen.getByTestId("pane-history-forward")).toBeInTheDocument();
@@ -79,7 +81,7 @@ describe("PaneHeader", () => {
       root: { type: "leaf", id: "p1", pagePath: "note.md" },
       focusedPaneId: "p1",
     });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />);
     expect(screen.getByTestId("pane-history-back")).toBeDisabled();
     expect(screen.getByTestId("pane-history-forward")).toBeDisabled();
   });
@@ -95,7 +97,7 @@ describe("PaneHeader", () => {
     usePaneHistoryStore.setState({
       stacks: new Map([["p1", { entries: ["a.md", "b.md"], index: 1 }]]),
     });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="b.md" fileType="markdown" />);
     expect(screen.getByTestId("pane-history-back")).not.toBeDisabled();
     expect(screen.getByTestId("pane-history-forward")).toBeDisabled();
   });
@@ -114,7 +116,7 @@ describe("PaneHeader", () => {
     });
     const originalGoBack = usePaneHistoryStore.getState().goBack;
     usePaneHistoryStore.setState({ goBack: goBackSpy });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="b.md" fileType="markdown" />);
 
     await userEvent.click(screen.getByTestId("pane-history-back"));
     expect(goBackSpy).toHaveBeenCalledWith("p1");
@@ -136,7 +138,7 @@ describe("PaneHeader", () => {
     });
     const originalGoForward = usePaneHistoryStore.getState().goForward;
     usePaneHistoryStore.setState({ goForward: goForwardSpy });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="a.md" fileType="markdown" />);
 
     await userEvent.click(screen.getByTestId("pane-history-forward"));
     expect(goForwardSpy).toHaveBeenCalledWith("p1");
@@ -155,7 +157,7 @@ describe("PaneHeader", () => {
       body: "",
       frontmatter: {},
     });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />);
     expect(screen.getByTestId("pane-header-title").textContent).toBe("My Note");
   });
 
@@ -165,7 +167,9 @@ describe("PaneHeader", () => {
       root: { type: "leaf", id: "p1", pagePath: "papers/doc.pdf" },
       focusedPaneId: "p1",
     });
-    render(<PaneHeader paneId="p1" />);
+    render(
+      <PaneHeader paneId="p1" pagePath="papers/doc.pdf" fileType="pdf" />,
+    );
     expect(screen.getByTestId("pane-header-title").textContent).toBe("doc.pdf");
   });
 
@@ -175,8 +179,26 @@ describe("PaneHeader", () => {
       root: { type: "leaf", id: "p1", pagePath: "src/main.rs" },
       focusedPaneId: "p1",
     });
-    render(<PaneHeader paneId="p1" />);
+    render(<PaneHeader paneId="p1" pagePath="src/main.rs" fileType="code" />);
     expect(screen.getByTestId("pane-header-title").textContent).toBe("main.rs");
+  });
+
+  it("uses fileType and pagePath from props, not internal store lookups", () => {
+    // Store has NO leaf for p1 and no pages, but we pass props directly.
+    // If PaneHeader tried to read from the store, pagePath would be null and
+    // it would render nothing. This proves it uses the prop values.
+    usePaneStore.setState({
+      root: { type: "leaf", id: "other", pagePath: null },
+      focusedPaneId: "other",
+    });
+    useWorkspaceStore.setState({ pages: [] });
+    render(
+      <PaneHeader paneId="p1" pagePath="prop-note.md" fileType="markdown" />,
+    );
+    expect(screen.getByTestId("pane-header")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-header-title").textContent).toBe(
+      "prop-note.md",
+    );
   });
 
   it("falls back to basename when markdown pane has no registered title", () => {
@@ -185,7 +207,9 @@ describe("PaneHeader", () => {
       root: { type: "leaf", id: "p1", pagePath: "note.md" },
       focusedPaneId: "p1",
     });
-    render(<PaneHeader paneId="p1" />);
+    render(
+      <PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />,
+    );
     expect(screen.getByTestId("pane-header-title").textContent).toBe("note.md");
   });
 });

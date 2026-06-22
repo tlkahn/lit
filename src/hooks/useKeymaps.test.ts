@@ -1135,6 +1135,20 @@ describe("useKeymaps", () => {
     }
   });
 
+  it("app.toggleFrontmatter is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.toggleFrontmatter")).toBe(true);
+  });
+
+  it("executing app.toggleFrontmatter dispatches lit:toggle-frontmatter", async () => {
+    await loadHook();
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-frontmatter", listener);
+    executeCommand("app.toggleFrontmatter");
+    window.removeEventListener("lit:toggle-frontmatter", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it("pane.historyBack is registered after ensureCommandsRegistered", async () => {
     await loadHook();
     expect(hasCommand("pane.historyBack")).toBe(true);

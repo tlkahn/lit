@@ -133,6 +133,33 @@ describe("PaneContainer leaf routing", () => {
   });
 });
 
+describe("PaneLeafRenderer passes props to PaneHeader", () => {
+  it("passes pagePath and fileType to PaneHeader in multi-pane mode", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("doc.pdf", "pdf")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "doc.pdf" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    render(<PaneContainer />);
+    const headers = screen.getAllByTestId("pane-header-title");
+    expect(headers).toHaveLength(2);
+    // Markdown pane shows basename (no registered title)
+    expect(headers[0]!.textContent).toBe("note.md");
+    // PDF pane shows basename
+    expect(headers[1]!.textContent).toBe("doc.pdf");
+  });
+});
+
 describe("PaneContainer", () => {
   it("single-leaf root renders one EditorPane", () => {
     const { getByTestId, queryByTestId } = render(<PaneContainer />);

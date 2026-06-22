@@ -1,12 +1,13 @@
 import type React from "react";
 import { lazy, Suspense } from "react";
-import { usePaneStore } from "../stores/panes";
+import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
+import { useWorkspaceStore } from "../stores/workspace";
 import { EditorPane } from "./EditorPane";
 import { PdfViewerPane } from "./PdfViewerPane";
 import { PaneDivider } from "./PaneDivider";
 import { MIN_PANE_PX, DIVIDER_PX } from "../lib/paneConstants";
-import { useLeafFileType } from "../hooks/useLeafFileType";
+import { getFileType } from "../hooks/useLeafFileType";
 import { PaneHeader } from "./PaneHeader";
 
 // CodeEditorPane is lazy-loaded so its (Phase 3) CodeMirror grammar stack is
@@ -17,13 +18,18 @@ const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
 function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const isMultiPane = usePaneStore((s) => s.root.type === "split");
 
-  // useLeafFileType resolves a `.pdf` leaf to "pdf" and a known code-extension
-  // leaf to "code" by extension even before the pages list loads, so a restored
-  // PDF or code pane routes straight here without ever flashing EditorPane
-  // (which would run readPage — corrupting a code file via frontmatter, or
-  // reading a binary PDF). A null fileType means an empty pane (no pagePath) —
-  // EditorPane shows "No page selected".
-  const fileType = useLeafFileType(paneId);
+  // Derive pagePath from the pane store and fileType from the workspace pages
+  // list in a single place. getFileType resolves a `.pdf` leaf to "pdf" and a
+  // known code-extension leaf to "code" by extension even before the pages list
+  // loads, so a restored PDF or code pane routes straight here without ever
+  // flashing EditorPane. A null fileType means an empty pane (no pagePath).
+  // Both values are passed as props to PaneHeader, eliminating duplicate
+  // findLeaf traversals and store subscriptions.
+  const pagePath = usePaneStore(
+    (s) => findLeaf(s.root, paneId)?.pagePath ?? null,
+  );
+  const pages = useWorkspaceStore((s) => s.pages);
+  const fileType = getFileType(pagePath, pages);
 
   let content: React.ReactNode;
   if (fileType === "pdf") {
@@ -42,7 +48,7 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
 
   return (
     <>
-      <PaneHeader paneId={paneId} />
+      <PaneHeader paneId={paneId} pagePath={pagePath} fileType={fileType} />
       {content}
     </>
   );

@@ -18,10 +18,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { bibFileLinkExtension } from "../editor/bibFileLink";
-
-function basename(path: string): string {
-  return path.split("/").pop() ?? path;
-}
+import { basename } from "../lib/pathUtils";
 
 function CodeEditorPaneInner({ paneId }: { paneId: string }) {
   const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
