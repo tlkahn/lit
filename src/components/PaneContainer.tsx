@@ -7,6 +7,7 @@ import { PdfViewerPane } from "./PdfViewerPane";
 import { PaneDivider } from "./PaneDivider";
 import { MIN_PANE_PX, DIVIDER_PX } from "../lib/paneConstants";
 import { useLeafFileType } from "../hooks/useLeafFileType";
+import { PaneHeader } from "./PaneHeader";
 
 // CodeEditorPane is lazy-loaded so its (Phase 3) CodeMirror grammar stack is
 // only pulled in when a code file is actually opened. It is a default export,
@@ -14,6 +15,8 @@ import { useLeafFileType } from "../hooks/useLeafFileType";
 const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
 
 function PaneLeafRenderer({ paneId }: { paneId: string }) {
+  const isMultiPane = usePaneStore((s) => s.root.type === "split");
+
   // useLeafFileType resolves a `.pdf` leaf to "pdf" and a known code-extension
   // leaf to "code" by extension even before the pages list loads, so a restored
   // PDF or code pane routes straight here without ever flashing EditorPane
@@ -21,17 +24,28 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   // reading a binary PDF). A null fileType means an empty pane (no pagePath) —
   // EditorPane shows "No page selected".
   const fileType = useLeafFileType(paneId);
+
+  let content: React.ReactNode;
   if (fileType === "pdf") {
-    return <PdfViewerPane paneId={paneId} />;
-  }
-  if (fileType === "code") {
-    return (
+    content = <PdfViewerPane paneId={paneId} />;
+  } else if (fileType === "code") {
+    content = (
       <Suspense fallback={null}>
         <CodeEditorPane paneId={paneId} />
       </Suspense>
     );
+  } else {
+    content = <EditorPane paneId={paneId} />;
   }
-  return <EditorPane paneId={paneId} />;
+
+  if (!isMultiPane) return content;
+
+  return (
+    <>
+      <PaneHeader paneId={paneId} />
+      {content}
+    </>
+  );
 }
 
 function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {

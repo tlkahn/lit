@@ -1224,6 +1224,41 @@ describe("ContentArea menu://close-pane", () => {
   });
 });
 
+describe("ContentArea global title bar in multi-pane mode", () => {
+  it("hides global title bar when in multi-pane mode", async () => {
+    useWorkspaceStore.setState({
+      pages: [samplePage.meta, otherPage.meta],
+      currentPagePath: "Hello.md",
+    });
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "pane-1", pagePath: "Hello.md" },
+          { type: "leaf", id: "pane-2", pagePath: "Other.md" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "pane-1",
+    });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getAllByTestId("pane-header").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+  });
+
+  it("shows global title bar in single-pane mode", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+    });
+  });
+});
+
 describe("ContentArea multi-pane close (#132)", () => {
   it("does not show empty-state when closing a pane shifts focus to null-pagePath sibling", async () => {
     useWorkspaceStore.setState({
@@ -1248,7 +1283,7 @@ describe("ContentArea multi-pane close (#132)", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+      expect(screen.getAllByTestId("pane-header").length).toBeGreaterThan(0);
     });
 
     act(() => {
@@ -1282,7 +1317,7 @@ describe("ContentArea multi-pane close (#132)", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+      expect(screen.getAllByTestId("pane-header").length).toBeGreaterThan(0);
     });
 
     act(() => {
