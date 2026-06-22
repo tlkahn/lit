@@ -551,8 +551,8 @@ export async function isOcrCompanionCurrent(
   key: string,
   workspacePath: string,
   pdfRelative: string,
-): Promise<boolean> {
-  return invoke<boolean>("is_ocr_companion_current", { key, workspacePath, pdfRelative });
+): Promise<string | null> {
+  return invoke<string | null>("is_ocr_companion_current", { key, workspacePath, pdfRelative });
 }
 
 // PDF recognition

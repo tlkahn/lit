@@ -2375,7 +2375,7 @@ describe("ReferenceLibrary", () => {
         }
         if (cmd === "is_ocr_companion_current") {
           if (handlers?.isOcrCompanionCurrent) return handlers.isOcrCompanionCurrent(cmd, args as unknown);
-          return false;
+          return null;
         }
         if (cmd === "ocr_pdf_to_markdown") {
           if (handlers?.ocrPdfToMarkdown) return handlers.ocrPdfToMarkdown(cmd, args as unknown);
@@ -2492,7 +2492,7 @@ describe("ReferenceLibrary", () => {
       const user = userEvent.setup();
       fixture = [sandersonWithFile];
       setupMockWithOcr(fixture, {
-        isOcrCompanionCurrent: () => true,
+        isOcrCompanionCurrent: () => "the-saiva-age.md",
       });
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
@@ -2535,13 +2535,13 @@ describe("ReferenceLibrary", () => {
       fixture = [entryA, entryB];
       // isOcrCompanionCurrent returns true for entry A's file, but defers
       // entry B's response so the stale map value from A is read during render
-      let resolveBCheck: ((v: boolean) => void) | null = null;
+      let resolveBCheck: ((v: string | null) => void) | null = null;
       setupMockWithOcr(fixture, {
         isOcrCompanionCurrent: (_cmd, args) => {
           const a = args as { pdfRelative: string };
-          if (a.pdfRelative === "assets/pdf/sanderson2009.pdf") return true;
+          if (a.pdfRelative === "assets/pdf/sanderson2009.pdf") return "the-saiva-age.md";
           // For entry B, return a promise that we control
-          return new Promise<boolean>((resolve) => { resolveBCheck = resolve; });
+          return new Promise<string | null>((resolve) => { resolveBCheck = resolve; });
         },
       });
       render(<ReferenceLibrary />);
@@ -2573,7 +2573,7 @@ describe("ReferenceLibrary", () => {
       expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
 
       // Now resolve B's check as false
-      await act(async () => { resolveBCheck!(false); });
+      await act(async () => { resolveBCheck!(null); });
       // Button should still be visible
       expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
     });
@@ -2581,7 +2581,7 @@ describe("ReferenceLibrary", () => {
     it("re-shows OCR button after PDF re-link invalidates companion check", async () => {
       const user = userEvent.setup();
       fixture = [sandersonWithFile];
-      let companionCurrentResult = true;
+      let companionCurrentResult: string | null = "the-saiva-age.md";
       setupMockWithOcr(fixture, {
         isOcrCompanionCurrent: () => companionCurrentResult,
       });
@@ -2597,7 +2597,7 @@ describe("ReferenceLibrary", () => {
 
       // Now simulate re-link: after link succeeds the map entry is deleted
       // so prop becomes undefined -> button reappears
-      companionCurrentResult = false;
+      companionCurrentResult = null;
       await user.click(screen.getByTestId("link-pdf-btn"));
 
       await waitFor(() => {
@@ -2612,7 +2612,7 @@ describe("ReferenceLibrary", () => {
       setupMockWithOcr(fixture, {
         isOcrCompanionCurrent: () => {
           callCount++;
-          if (callCount === 1) return true;
+          if (callCount === 1) return "the-saiva-age.md";
           throw new Error("file not found");
         },
       });
@@ -2638,16 +2638,16 @@ describe("ReferenceLibrary", () => {
     it("discards in-flight companion check result after entry collapse", async () => {
       const user = userEvent.setup();
       fixture = [sandersonWithFile];
-      let resolveFirst: ((v: boolean) => void) | null = null;
-      let resolveSecond: ((v: boolean) => void) | null = null;
+      let resolveFirst: ((v: string | null) => void) | null = null;
+      let resolveSecond: ((v: string | null) => void) | null = null;
       let callCount = 0;
       setupMockWithOcr(fixture, {
         isOcrCompanionCurrent: () => {
           callCount++;
           if (callCount === 1) {
-            return new Promise<boolean>((resolve) => { resolveFirst = resolve; });
+            return new Promise<string | null>((resolve) => { resolveFirst = resolve; });
           }
-          return new Promise<boolean>((resolve) => { resolveSecond = resolve; });
+          return new Promise<string | null>((resolve) => { resolveSecond = resolve; });
         },
       });
       render(<ReferenceLibrary />);
@@ -2661,7 +2661,7 @@ describe("ReferenceLibrary", () => {
       await user.click(screen.getByTestId("reference-entry-title"));
 
       // The first IPC resolves with true AFTER collapse — should be discarded
-      await act(async () => { resolveFirst!(true); });
+      await act(async () => { resolveFirst!("the-saiva-age.md"); });
 
       // Re-expand the entry — triggers a fresh check
       await user.click(screen.getByTestId("reference-entry-title"));
@@ -2674,7 +2674,7 @@ describe("ReferenceLibrary", () => {
       expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
 
       // Resolve the second (fresh) IPC with false — button remains visible
-      await act(async () => { resolveSecond!(false); });
+      await act(async () => { resolveSecond!(null); });
       expect(screen.getByTestId("ocr-btn")).toBeInTheDocument();
     });
 
@@ -2690,7 +2690,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
         if (cmd === "is_ocr_companion_current") {
           companionCallCount++;
-          return false;
+          return null;
         }
         throw new Error(`Unknown command: ${cmd}`);
       });
@@ -2737,7 +2737,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "is_ocr_companion_current") return true;
+        if (cmd === "is_ocr_companion_current") return "the-saiva-age.md";
         throw new Error(`Unknown command: ${cmd}`);
       });
       render(<ReferenceLibrary />);
@@ -2759,7 +2759,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "is_ocr_companion_current") return false;
+        if (cmd === "is_ocr_companion_current") return null;
         throw new Error(`Unknown command: ${cmd}`);
       });
       render(<ReferenceLibrary />);
@@ -2784,7 +2784,7 @@ describe("ReferenceLibrary", () => {
         if (cmd === "list_bib_entries") return fixture;
         if (cmd === "get_citing_pages") return citingFixture;
         if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
-        if (cmd === "is_ocr_companion_current") return true;
+        if (cmd === "is_ocr_companion_current") return "the-saiva-age.md";
         throw new Error(`Unknown command: ${cmd}`);
       });
       render(<ReferenceLibrary />);
@@ -2796,7 +2796,7 @@ describe("ReferenceLibrary", () => {
       });
 
       await user.click(screen.getByTestId("open-markdown-btn"));
-      expect(selectPage).toHaveBeenCalledWith("sanderson2009.md");
+      expect(selectPage).toHaveBeenCalledWith("the-saiva-age.md");
     });
   });
 

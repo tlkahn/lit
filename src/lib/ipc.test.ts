@@ -761,7 +761,7 @@ describe("ipc", () => {
         case "check_ocr_target_exists":
           return false;
         case "is_ocr_companion_current":
-          return true;
+          return "test-paper.md";
         case "recognize_pdf": {
           return {
             kind: "resolved",
@@ -2306,7 +2306,7 @@ describe("ipc", () => {
 
   it("isOcrCompanionCurrent calls is_ocr_companion_current", async () => {
     const result = await isOcrCompanionCurrent("smith2020", "/workspace", "assets/pdf/smith2020.pdf");
-    expect(result).toBe(true);
+    expect(result).toBe("test-paper.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("is_ocr_companion_current", {
       key: "smith2020",

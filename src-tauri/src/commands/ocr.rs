@@ -416,14 +416,21 @@ pub async fn is_ocr_companion_current(
     workspace_path: String,
     pdf_relative: String,
     graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     validate_key(&key)?;
     validate_relative_path(&pdf_relative)?;
     let root = PathBuf::from(&workspace_path);
     let slug = lookup_ocr_slug(&graph_state, &root, &key)?;
-    tokio::task::spawn_blocking(move || is_companion_current(&root, &slug, &pdf_relative))
-        .await
-        .map_err(|e| format!("Join error: {e}"))
+    let filename = ocr_markdown_filename(&slug);
+    tokio::task::spawn_blocking(move || {
+        if is_companion_current(&root, &slug, &pdf_relative) {
+            Some(filename)
+        } else {
+            None
+        }
+    })
+    .await
+    .map_err(|e| format!("Join error: {e}"))
 }
 
 /// Return whether the OCR target markdown file (`{slug}.md`) already exists at
