@@ -1188,6 +1188,7 @@ export function ReferenceLibrary() {
                             onCreateNote={materializeNote}
                             onEnrich={handleEnrich}
                             onOpenPdf={selectPage}
+                            onOpenMarkdown={(key) => { recordDeparture(); selectPage(`${key}.md`); }}
                             onOcr={(e) => { if (workspacePath) setOcrEntry(e); }}
                             onCopyCitation={copyCitation}
                             onDownloadPdf={handleDownload}

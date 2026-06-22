@@ -24,6 +24,7 @@ interface BibEntryActionsProps {
   onEnrich: (entry: BibEntry) => void;
   onOpenPdf: (file: string) => void;
   onOcr: (entry: BibEntry) => void;
+  onOpenMarkdown: (key: string) => void;
   onCopyCitation: (key: string) => void;
   onDownloadPdf: (entry: BibEntry) => void;
   onLinkPdf: (entry: BibEntry) => void;
@@ -45,7 +46,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
   const {
     entry, state,
     onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOcr,
-    onCopyCitation, onDownloadPdf, onLinkPdf,
+    onOpenMarkdown, onCopyCitation, onDownloadPdf, onLinkPdf,
     materializingKey, enrichingKey, enrichPhase,
     downloadingKey, downloadProgress, linkingKey,
     ocrCompanionCurrent,
@@ -76,20 +77,28 @@ export function BibEntryActions(props: BibEntryActionsProps) {
       });
     }
 
-    if (!state?.page_id) {
+    if (!state?.page_id && (state?.materialization !== "partial" || enrichingKey === entry.key)) {
       const enrichLabel = enrichingKey === entry.key
         ? (enrichPhase === "fetch" ? "Fetching…" : "Searching providers…")
-        : state?.materialization === "partial"
-          ? "Refresh metadata"
-          : "Fetch details";
+        : "Fetch details";
       list.push({
         key: "enrich",
-        icon: state?.materialization === "partial" ? "󰑐" : "󰇚",
+        icon: "󰇚",
         label: enrichLabel,
         onClick: () => onEnrich(entry),
         disabled: enrichingKey === entry.key,
         testId: "fetch-details-btn",
         spinner: enrichingKey === entry.key,
+      });
+    }
+
+    if (ocrCompanionCurrent === true) {
+      list.push({
+        key: "open-markdown",
+        icon: "󰈤",
+        label: "Open markdown",
+        onClick: () => onOpenMarkdown(entry.key),
+        testId: "open-markdown-btn",
       });
     }
 
@@ -161,7 +170,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
   }, [
     entry, state,
     onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOcr,
-    onCopyCitation, onDownloadPdf, onLinkPdf,
+    onOpenMarkdown, onCopyCitation, onDownloadPdf, onLinkPdf,
     materializingKey, enrichingKey, enrichPhase,
     downloadingKey, downloadProgress, linkingKey,
     ocrCompanionCurrent,
