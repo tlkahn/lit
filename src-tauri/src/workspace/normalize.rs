@@ -47,6 +47,54 @@ pub fn normalize_to_nfc(s: &str) -> String {
     s.nfc().collect()
 }
 
+/// Derive a human-readable kebab-case slug from a document title, suitable for
+/// use as a filename stem. NFC-normalizes, lowercases, replaces forbidden and
+/// non-alphanumeric characters with hyphen separators, and collapses/trims
+/// hyphens. Returns `None` when the title yields no usable characters (empty,
+/// whitespace-only, or pure punctuation) so callers can fall back to the key.
+pub fn kebab_case_title(title: &str) -> Option<String> {
+    let normalized = normalize_to_nfc(title).to_lowercase();
+    let mut slug = String::with_capacity(normalized.len());
+    for ch in normalized.chars() {
+        if ch.is_alphanumeric() {
+            slug.push(ch);
+        } else {
+            // Any separator/punctuation/forbidden char becomes a boundary.
+            if !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+    }
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_slug(trimmed, MAX_SLUG_LEN))
+}
+
+/// Maximum slug length in bytes. Keeps filenames well under filesystem limits
+/// while staying readable.
+const MAX_SLUG_LEN: usize = 80;
+
+/// Truncate a kebab-case slug to at most `max` bytes, preferring to cut at a
+/// word boundary (hyphen) and never leaving a trailing hyphen or splitting a
+/// multi-byte character.
+fn truncate_slug(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    // Floor to a char boundary so slicing is safe for multi-byte chars.
+    let mut boundary = max;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let head = &s[..boundary];
+    // Cut at the last word boundary at or before the limit; if there is none,
+    // keep the whole head (a single long word).
+    let cut = head.rfind('-').unwrap_or(boundary);
+    head[..cut].trim_end_matches('-').to_string()
+}
+
 pub fn validate_page_name(name: &str) -> Result<(), WorkspaceError> {
     if name.is_empty() {
         return Err(WorkspaceError::InvalidPageName(
@@ -193,6 +241,81 @@ mod tests {
         assert!(
             matches!(result, Err(WorkspaceError::InvalidPath(_))),
             "Expected InvalidPath, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_basic() {
+        assert_eq!(
+            kebab_case_title("The Well-Posed Problem"),
+            Some("the-well-posed-problem".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_strips_punctuation() {
+        assert_eq!(
+            kebab_case_title("What is AI? A Survey (2024)"),
+            Some("what-is-ai-a-survey-2024".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_empty_is_none() {
+        assert_eq!(kebab_case_title(""), None);
+    }
+
+    #[test]
+    fn kebab_case_title_whitespace_only_is_none() {
+        assert_eq!(kebab_case_title("   "), None);
+    }
+
+    #[test]
+    fn kebab_case_title_pure_punctuation_is_none() {
+        assert_eq!(kebab_case_title("??!!"), None);
+    }
+
+    #[test]
+    fn kebab_case_title_truncates_at_word_boundary() {
+        // 90-char title; should truncate at a hyphen at or before position 80.
+        let title = "the quick brown fox jumps over the lazy dog and then runs across the wide open green field again";
+        let slug = kebab_case_title(title).unwrap();
+        assert!(slug.len() <= 80, "slug too long: {} chars", slug.len());
+        assert!(!slug.ends_with('-'), "slug should not end with hyphen: {slug}");
+        // Truncation happens at a word boundary, so the slug is a prefix of the
+        // full kebab string ending on a complete word.
+        assert!(
+            "the-quick-brown-fox-jumps-over-the-lazy-dog-and-then-runs-across-the-wide-open-green-field-again".starts_with(&slug),
+            "slug should be a word-boundary prefix: {slug}"
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_collapses_hyphens() {
+        assert_eq!(kebab_case_title("foo---bar"), Some("foo-bar".to_string()));
+    }
+
+    #[test]
+    fn kebab_case_title_cjk() {
+        assert_eq!(
+            kebab_case_title("深度学习综述"),
+            Some("深度学习综述".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_accented() {
+        assert_eq!(
+            kebab_case_title("Café Résumé"),
+            Some("café-résumé".to_string())
+        );
+    }
+
+    #[test]
+    fn kebab_case_title_trims_leading_trailing_hyphens() {
+        assert_eq!(
+            kebab_case_title("-leading-and-trailing-"),
+            Some("leading-and-trailing".to_string())
         );
     }
 
