@@ -62,6 +62,24 @@ fn ocr_markdown_filename(stem: &str) -> String {
     format!("{stem}.md")
 }
 
+/// Resolve the OCR slug for a bib entry, preferring the graph-indexed
+/// companion filename (survives title changes) and falling back to
+/// `ocr_slug(title, key)` when the graph is unavailable or has no match.
+fn resolve_ocr_slug(
+    registry: &crate::commands::graph::GraphRegistry,
+    root: &PathBuf,
+    key: &str,
+    title: &str,
+) -> String {
+    if let Some(gi) = crate::commands::page::lookup_graph_index(registry, root) {
+        let store = gi.store();
+        if let Ok(Some(page_id)) = store.ocr_companion_for_citekey(key) {
+            return page_id.strip_suffix(".md").unwrap_or(&page_id).to_string();
+        }
+    }
+    ocr_slug(title, key)
+}
+
 /// Compute the workspace-relative path for the OCR markdown output.
 fn ocr_markdown_path(root: &std::path::Path, stem: &str) -> PathBuf {
     root.join(ocr_markdown_filename(stem))
@@ -230,7 +248,16 @@ pub async fn ocr_pdf_to_markdown(
 
     // Name all OCR artifacts after a human-readable, title-derived slug rather
     // than the opaque bib key (falls back to the key for empty titles).
-    let slug = ocr_slug(&entry.title, &entry.key);
+    // Graph-first: reuse the existing companion filename if one was indexed,
+    // so re-OCR after a title change overwrites the original file instead of
+    // creating a duplicate under the new slug.
+    let slug = {
+        let store = gi.store();
+        match store.ocr_companion_for_citekey(&entry.key) {
+            Ok(Some(page_id)) => page_id.strip_suffix(".md").unwrap_or(&page_id).to_string(),
+            _ => ocr_slug(&entry.title, &entry.key),
+        }
+    };
 
     // Step 2: Get PDF path from entry.file field
     emit_progress(&window, &key, "resolve_pdf", "Resolving PDF path");
@@ -405,27 +432,45 @@ fn is_companion_current(root: &std::path::Path, slug: &str, pdf_relative: &str) 
     md_mtime >= pdf_mtime
 }
 
+/// Inner logic for `is_ocr_companion_current`.  Accepts the graph registry
+/// as an `Option` so unit tests can pass `None` (simulating graph-not-ready).
+/// Validation runs first, before any graph or filesystem access.
+fn is_ocr_companion_current_inner(
+    key: &str,
+    title: &str,
+    workspace_path: &str,
+    pdf_relative: &str,
+    registry: Option<&crate::commands::graph::GraphRegistry>,
+) -> Result<Option<String>, String> {
+    validate_key(key)?;
+    validate_relative_path(pdf_relative)?;
+    let root = PathBuf::from(workspace_path);
+    let slug = match registry {
+        Some(reg) => resolve_ocr_slug(reg, &root, key, title),
+        None => ocr_slug(title, key),
+    };
+    let filename = ocr_markdown_filename(&slug);
+    if is_companion_current(&root, &slug, pdf_relative) {
+        Ok(Some(filename))
+    } else {
+        Ok(None)
+    }
+}
+
 #[tauri::command]
 pub async fn is_ocr_companion_current(
     key: String,
     title: String,
     workspace_path: String,
     pdf_relative: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
 ) -> Result<Option<String>, String> {
-    validate_key(&key)?;
-    validate_relative_path(&pdf_relative)?;
-    let root = PathBuf::from(&workspace_path);
-    let slug = ocr_slug(&title, &key);
-    let filename = ocr_markdown_filename(&slug);
+    let gs = graph_state.inner().clone();
     tokio::task::spawn_blocking(move || {
-        if is_companion_current(&root, &slug, &pdf_relative) {
-            Some(filename)
-        } else {
-            None
-        }
+        is_ocr_companion_current_inner(&key, &title, &workspace_path, &pdf_relative, Some(&*gs))
     })
     .await
-    .map_err(|e| format!("Join error: {e}"))
+    .map_err(|e| format!("Join error: {e}"))?
 }
 
 /// Return whether the OCR target markdown file (`{slug}.md`) already exists at
@@ -434,16 +479,37 @@ fn check_ocr_target_inner(root: &std::path::Path, slug: &str) -> bool {
     ocr_markdown_path(root, slug).exists()
 }
 
+/// Inner logic for `check_ocr_target_exists`.  Accepts the graph registry as
+/// an `Option` so unit tests can pass `None` (simulating graph-not-ready).
+/// Validation runs first, before any graph or filesystem access.
+fn check_ocr_target_exists_inner(
+    key: &str,
+    title: &str,
+    workspace_path: &str,
+    registry: Option<&crate::commands::graph::GraphRegistry>,
+) -> Result<bool, String> {
+    validate_key(key)?;
+    let root = PathBuf::from(workspace_path);
+    let slug = match registry {
+        Some(reg) => resolve_ocr_slug(reg, &root, key, title),
+        None => ocr_slug(title, key),
+    };
+    Ok(check_ocr_target_inner(&root, &slug))
+}
+
 #[tauri::command]
 pub async fn check_ocr_target_exists(
     key: String,
     title: String,
     workspace_path: String,
+    graph_state: tauri::State<'_, Arc<crate::commands::graph::GraphRegistry>>,
 ) -> Result<bool, String> {
-    validate_key(&key)?;
-    let root = PathBuf::from(&workspace_path);
-    let slug = ocr_slug(&title, &key);
-    Ok(check_ocr_target_inner(&root, &slug))
+    let gs = graph_state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        check_ocr_target_exists_inner(&key, &title, &workspace_path, Some(&*gs))
+    })
+    .await
+    .map_err(|e| format!("Join error: {e}"))?
 }
 
 #[cfg(test)]
@@ -950,44 +1016,238 @@ mod tests {
         assert!(err.contains("forbidden character"), "got: {err}");
     }
 
-    // --- command-level traversal rejection (integration) ---
+    // --- command-level traversal rejection (via inner fns) ---
+    // Retargeted from the old async #[tauri::command] fns to the sync inner fns
+    // so the tests don't need tauri::State (which is only injectable by the
+    // Tauri runtime).  Passing `None` for the graph registry confirms validation
+    // runs before any graph/fs access.
 
-    #[tokio::test]
-    async fn check_ocr_target_exists_rejects_key_traversal() {
-        let err = check_ocr_target_exists(
-            "../etc/passwd".into(),
-            "Some Title".into(),
-            "/tmp/fake".into(),
+    #[test]
+    fn check_ocr_target_exists_rejects_key_traversal() {
+        let err = check_ocr_target_exists_inner(
+            "../etc/passwd",
+            "Some Title",
+            "/tmp/fake",
+            None,
         )
-        .await
         .unwrap_err();
         assert!(err.contains("Invalid citation key"), "got: {err}");
     }
 
-    #[tokio::test]
-    async fn is_ocr_companion_current_rejects_key_traversal() {
-        let err = is_ocr_companion_current(
-            "../etc/passwd".into(),
-            "Some Title".into(),
-            "/tmp/fake".into(),
-            "assets/pdf/test.pdf".into(),
+    #[test]
+    fn is_ocr_companion_current_rejects_key_traversal() {
+        let err = is_ocr_companion_current_inner(
+            "../etc/passwd",
+            "Some Title",
+            "/tmp/fake",
+            "assets/pdf/test.pdf",
+            None,
         )
-        .await
         .unwrap_err();
         assert!(err.contains("Invalid citation key"), "got: {err}");
     }
 
-    #[tokio::test]
-    async fn is_ocr_companion_current_rejects_pdf_traversal() {
-        let err = is_ocr_companion_current(
-            "smith2024".into(),
-            "Some Title".into(),
-            "/tmp/fake".into(),
-            "../../etc/shadow".into(),
+    #[test]
+    fn is_ocr_companion_current_rejects_pdf_traversal() {
+        let err = is_ocr_companion_current_inner(
+            "smith2024",
+            "Some Title",
+            "/tmp/fake",
+            "../../etc/shadow",
+            None,
         )
-        .await
         .unwrap_err();
         assert!(err.contains("traversal"), "got: {err}");
+    }
+
+    // --- graph-not-ready graceful fallback ---
+    // Prove that the inner fns return Ok (never Err) when the graph registry
+    // is None, falling back to the ocr_slug(title,key) derivation.
+
+    #[test]
+    fn check_ocr_target_exists_inner_graph_not_ready_falls_back_to_slug() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let slug = ocr_slug("Some Title", "smith2024");
+        std::fs::write(dir.path().join(format!("{slug}.md")), b"# OCR").unwrap();
+        let result = check_ocr_target_exists_inner(
+            "smith2024",
+            "Some Title",
+            dir.path().to_str().unwrap(),
+            None,
+        );
+        assert_eq!(result, Ok(true));
+    }
+
+    #[test]
+    fn is_ocr_companion_current_inner_graph_not_ready_falls_back_to_slug() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let slug = ocr_slug("Some Title", "smith2024");
+        let md_path = dir.path().join(format!("{slug}.md"));
+        let pdf_path = dir.path().join("assets/pdf/test.pdf");
+        std::fs::create_dir_all(pdf_path.parent().unwrap()).unwrap();
+        std::fs::write(&md_path, b"# OCR").unwrap();
+        std::fs::write(&pdf_path, b"PDF").unwrap();
+        // Set md newer than pdf so companion is "current"
+        use filetime::FileTime;
+        let old = FileTime::from_unix_time(1_000_000, 0);
+        let new = FileTime::from_unix_time(2_000_000, 0);
+        filetime::set_file_mtime(&pdf_path, old).unwrap();
+        filetime::set_file_mtime(&md_path, new).unwrap();
+        let result = is_ocr_companion_current_inner(
+            "smith2024",
+            "Some Title",
+            dir.path().to_str().unwrap(),
+            "assets/pdf/test.pdf",
+            None,
+        );
+        assert!(result.unwrap().is_some());
+    }
+
+    // --- graph-first slug resolution survives title changes ---
+    // A companion was created with the old title.  After the title changes the
+    // graph still maps the citekey to the old filename.  Both inner fns should
+    // find the file via the graph rather than deriving a new (wrong) slug from
+    // the changed title.
+
+    #[test]
+    fn resolve_ocr_slug_prefers_graph_companion_over_title() {
+        use crate::commands::graph::GraphRegistry;
+        use crate::graph::indexer::GraphIndex;
+        use crate::graph::types::ParsedNode;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Build an empty graph index (creates .lit/graph.db)
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        {
+            let store = gi.store();
+            let node = ParsedNode {
+                id: "old-title-smith2024.md".into(),
+                title: "Old Title".into(),
+                tags: vec![],
+                frontmatter: serde_json::json!({
+                    "citekey": "smith2024",
+                    "companion": "assets/pdf/smith2024.pdf"
+                }),
+                first_paragraph: String::new(),
+            };
+            store.upsert_node(&node, 1).unwrap();
+        }
+
+        // Register the index in a GraphRegistry
+        let registry = GraphRegistry::new();
+        registry
+            .indices
+            .lock()
+            .unwrap()
+            .insert(root.clone(), Arc::new(gi));
+
+        // resolve_ocr_slug with a DIFFERENT title should return the graph slug
+        let slug = resolve_ocr_slug(&registry, &root, "smith2024", "Completely New Title");
+        assert_eq!(slug, "old-title-smith2024");
+    }
+
+    #[test]
+    fn check_ocr_target_exists_inner_finds_file_via_graph_after_title_change() {
+        use crate::commands::graph::GraphRegistry;
+        use crate::graph::indexer::GraphIndex;
+        use crate::graph::types::ParsedNode;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Create the OCR markdown file with the OLD slug
+        std::fs::write(root.join("old-title-smith2024.md"), b"# OCR output").unwrap();
+
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        {
+            let store = gi.store();
+            let node = ParsedNode {
+                id: "old-title-smith2024.md".into(),
+                title: "Old Title".into(),
+                tags: vec![],
+                frontmatter: serde_json::json!({
+                    "citekey": "smith2024",
+                    "companion": "assets/pdf/smith2024.pdf"
+                }),
+                first_paragraph: String::new(),
+            };
+            store.upsert_node(&node, 1).unwrap();
+        }
+
+        let registry = GraphRegistry::new();
+        registry
+            .indices
+            .lock()
+            .unwrap()
+            .insert(root.clone(), Arc::new(gi));
+
+        // The CURRENT title is different, but the graph lookup finds the old file
+        let result = check_ocr_target_exists_inner(
+            "smith2024",
+            "Completely New Title",
+            root.to_str().unwrap(),
+            Some(&registry),
+        );
+        assert_eq!(result, Ok(true));
+    }
+
+    #[test]
+    fn is_ocr_companion_current_inner_finds_file_via_graph_after_title_change() {
+        use crate::commands::graph::GraphRegistry;
+        use crate::graph::indexer::GraphIndex;
+        use crate::graph::types::ParsedNode;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+
+        // Create OCR markdown + PDF with old slug
+        std::fs::write(root.join("old-title-smith2024.md"), b"# OCR output").unwrap();
+        let pdf_dir = root.join("assets/pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        std::fs::write(pdf_dir.join("smith2024.pdf"), b"PDF").unwrap();
+
+        use filetime::FileTime;
+        let old = FileTime::from_unix_time(1_000_000, 0);
+        let new = FileTime::from_unix_time(2_000_000, 0);
+        filetime::set_file_mtime(pdf_dir.join("smith2024.pdf"), old).unwrap();
+        filetime::set_file_mtime(root.join("old-title-smith2024.md"), new).unwrap();
+
+        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        {
+            let store = gi.store();
+            let node = ParsedNode {
+                id: "old-title-smith2024.md".into(),
+                title: "Old Title".into(),
+                tags: vec![],
+                frontmatter: serde_json::json!({
+                    "citekey": "smith2024",
+                    "companion": "assets/pdf/smith2024.pdf"
+                }),
+                first_paragraph: String::new(),
+            };
+            store.upsert_node(&node, 1).unwrap();
+        }
+
+        let registry = GraphRegistry::new();
+        registry
+            .indices
+            .lock()
+            .unwrap()
+            .insert(root.clone(), Arc::new(gi));
+
+        let result = is_ocr_companion_current_inner(
+            "smith2024",
+            "Completely New Title",
+            root.to_str().unwrap(),
+            "assets/pdf/smith2024.pdf",
+            Some(&registry),
+        );
+        assert_eq!(
+            result.unwrap(),
+            Some("old-title-smith2024.md".to_string())
+        );
     }
 
     // --- write_ocr_markdown tests ---
