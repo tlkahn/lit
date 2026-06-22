@@ -155,10 +155,42 @@ describe("selectCompanionTarget", () => {
     });
   });
 
-  it("returns must-split when all non-source leaves have pages", () => {
+  it("returns reuse targeting next non-source leaf when all others have pages", () => {
     const leaves = [leaf("src", "paper.md"), leaf("other", "other.md")];
     expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "reuse",
+      paneId: "other",
+    });
+  });
+
+  it("returns must-split when source is the only leaf", () => {
+    const leaves = [leaf("src", "paper.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
       kind: "must-split",
+    });
+  });
+
+  it("wraps around to first pane when source is last", () => {
+    const leaves = [leaf("a", "a.md"), leaf("b", "b.md"), leaf("src", "paper.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "reuse",
+      paneId: "a",
+    });
+  });
+
+  it("picks immediately-next leaf after source", () => {
+    const leaves = [leaf("src", "paper.md"), leaf("b", "b.md"), leaf("c", "c.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "reuse",
+      paneId: "b",
+    });
+  });
+
+  it("picks next leaf when source is in middle", () => {
+    const leaves = [leaf("a", "a.md"), leaf("src", "paper.md"), leaf("c", "c.md")];
+    expect(selectCompanionTarget(leaves, "src", "companion.pdf")).toEqual({
+      kind: "reuse",
+      paneId: "c",
     });
   });
 });
@@ -273,7 +305,7 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("splits when no vacant pane exists (all panes have pages)", async () => {
+  it("reuses next non-source pane when no vacant pane exists", async () => {
     mockPaneState.root = {
       type: "split",
       id: "root",
@@ -288,7 +320,43 @@ describe("initCompanionCommands", () => {
     executeCommand("companion.open");
 
     await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("other-pane", "paper.pdf");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "other-pane");
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("other-pane");
+    });
+  });
+
+  it("splits when source is the only pane", async () => {
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
       expect(mockPaneState.splitPane).toHaveBeenCalledWith("src-pane", "horizontal");
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("new-pane", "paper.pdf");
+    });
+  });
+
+  it("wraps around: reuses first leaf when source is last in order", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "first-pane", pagePath: "other.md" },
+        { type: "leaf", id: "middle-pane", pagePath: "another.md" },
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+      ],
+      sizes: [0.33, 0.34, 0.33],
+    };
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).toHaveBeenCalledWith("first-pane", "paper.pdf");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "first-pane");
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("first-pane");
     });
   });
 
@@ -353,18 +421,8 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("shows error and does not clobber when splitPane is a no-op (MAX_PANES)", async () => {
+  it("defensive: shows error when splitPane returns null (guards future regressions)", async () => {
     mockPaneState.splitPane.mockReturnValue(null);
-    mockPaneState.root = {
-      type: "split",
-      id: "root",
-      direction: "horizontal",
-      children: [
-        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
-        { type: "leaf", id: "other-pane", pagePath: "other.md" },
-      ],
-      sizes: [0.5, 0.5],
-    };
     initCompanionCommands();
     executeCommand("companion.open");
 

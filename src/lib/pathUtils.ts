@@ -14,6 +14,11 @@ export function getFileDir(pagePath: string | null): string | null {
   return lastSlash >= 0 ? pagePath.substring(0, lastSlash) : "";
 }
 
+export function basename(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i >= 0 ? path.slice(i + 1) : path;
+}
+
 /**
  * Detect paths that should NOT be resolved relative to a base directory.
  * Covers Unix absolute (/...), home-relative (~/...), and Windows drive letters (C:\...).

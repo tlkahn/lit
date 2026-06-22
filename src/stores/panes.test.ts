@@ -3,6 +3,7 @@ import {
   generatePaneId,
   findLeaf,
   collectLeaves,
+  cycleLeafId,
   replaceLeaf,
   removeLeaf,
   findSplitByPath,
@@ -101,6 +102,40 @@ describe("collectLeaves", () => {
       sizes: [50, 50],
     };
     expect(collectLeaves(root).map((l) => l.id)).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("cycleLeafId", () => {
+  const leaves: PaneLeaf[] = [
+    { type: "leaf", id: "a", pagePath: null },
+    { type: "leaf", id: "b", pagePath: null },
+    { type: "leaf", id: "c", pagePath: null },
+  ];
+
+  it("returns next leaf id with delta +1", () => {
+    expect(cycleLeafId(leaves, "a", 1)).toBe("b");
+  });
+
+  it("wraps forward from last to first", () => {
+    expect(cycleLeafId(leaves, "c", 1)).toBe("a");
+  });
+
+  it("returns previous leaf id with delta -1", () => {
+    expect(cycleLeafId(leaves, "c", -1)).toBe("b");
+  });
+
+  it("wraps backward from first to last", () => {
+    expect(cycleLeafId(leaves, "a", -1)).toBe("c");
+  });
+
+  it("returns null when fromId is not in the list", () => {
+    expect(cycleLeafId(leaves, "missing", 1)).toBeNull();
+  });
+
+  it("returns same id for single-element list", () => {
+    const single: PaneLeaf[] = [{ type: "leaf", id: "only", pagePath: null }];
+    expect(cycleLeafId(single, "only", 1)).toBe("only");
+    expect(cycleLeafId(single, "only", -1)).toBe("only");
   });
 });
 

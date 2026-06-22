@@ -1,6 +1,7 @@
 import { languages } from "@codemirror/language-data";
 import { LanguageDescription, LanguageSupport } from "@codemirror/language";
 import { bibtex } from "./bibtex";
+import { basename } from "../lib/pathUtils";
 
 const bibtexDescription = LanguageDescription.of({
   name: "BibTeX",
@@ -11,10 +12,6 @@ const bibtexDescription = LanguageDescription.of({
 // BibTeX must come first so matchFilename prefers our custom descriptor over
 // any future language-data collision on the `.bib` extension.
 const allLanguages: LanguageDescription[] = [bibtexDescription, ...languages];
-
-function basename(path: string): string {
-  return path.split("/").pop() ?? path;
-}
 
 export function resolveLanguage(filename: string): LanguageDescription | null {
   return LanguageDescription.matchFilename(allLanguages, basename(filename));

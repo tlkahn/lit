@@ -9,6 +9,7 @@ import {
   _clear,
 } from "../lib/commandRegistry";
 import { usePreferencesStore } from "../stores/preferences";
+import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
 import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
@@ -1133,6 +1134,44 @@ describe("useKeymaps", () => {
     } finally {
       platform.isMac = originalIsMac;
     }
+  });
+
+  it("app.toggleFrontmatter is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.toggleFrontmatter")).toBe(true);
+  });
+
+  it("executing app.toggleFrontmatter dispatches lit:toggle-frontmatter", async () => {
+    await loadHook();
+    const listener = vi.fn();
+    window.addEventListener("lit:toggle-frontmatter", listener);
+    executeCommand("app.toggleFrontmatter");
+    window.removeEventListener("lit:toggle-frontmatter", listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("app.toggleFrontmatter is visible in command palette in single-pane mode with active page", async () => {
+    await loadHook();
+    useWorkspaceStore.setState({ currentPagePath: "test.md" });
+    usePaneStore.setState(createInitialState());
+    const ids = getVisibleCommands("frontmatter").map((c) => c.id);
+    expect(ids).toContain("app.toggleFrontmatter");
+  });
+
+  it("app.toggleFrontmatter is NOT visible in command palette in multi-pane mode", async () => {
+    await loadHook();
+    useWorkspaceStore.setState({ currentPagePath: "test.md" });
+    usePaneStore.setState(makeTwoLeafState());
+    const ids = getVisibleCommands("frontmatter").map((c) => c.id);
+    expect(ids).not.toContain("app.toggleFrontmatter");
+  });
+
+  it("app.toggleFrontmatter is NOT visible in command palette when no page is open", async () => {
+    await loadHook();
+    useWorkspaceStore.setState({ currentPagePath: null });
+    usePaneStore.setState(createInitialState());
+    const ids = getVisibleCommands("frontmatter").map((c) => c.id);
+    expect(ids).not.toContain("app.toggleFrontmatter");
   });
 
   it("pane.historyBack is registered after ensureCommandsRegistered", async () => {

@@ -1224,6 +1224,41 @@ describe("ContentArea menu://close-pane", () => {
   });
 });
 
+describe("ContentArea global title bar in multi-pane mode", () => {
+  it("hides global title bar when in multi-pane mode", async () => {
+    useWorkspaceStore.setState({
+      pages: [samplePage.meta, otherPage.meta],
+      currentPagePath: "Hello.md",
+    });
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "pane-1", pagePath: "Hello.md" },
+          { type: "leaf", id: "pane-2", pagePath: "Other.md" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "pane-1",
+    });
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
+    });
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+  });
+
+  it("shows global title bar in single-pane mode", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+    });
+  });
+});
+
 describe("ContentArea multi-pane close (#132)", () => {
   it("does not show empty-state when closing a pane shifts focus to null-pagePath sibling", async () => {
     useWorkspaceStore.setState({
@@ -1248,7 +1283,7 @@ describe("ContentArea multi-pane close (#132)", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+      expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
     });
 
     act(() => {
@@ -1282,7 +1317,7 @@ describe("ContentArea multi-pane close (#132)", () => {
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("page-title")).toBeInTheDocument();
+      expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
     });
 
     act(() => {
@@ -1457,5 +1492,100 @@ describe("ContentArea code file rendering", () => {
 
     expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
     expect(renamePageSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("ContentArea multi-pane guard side-effects (#730)", () => {
+  function setupMultiPane() {
+    useWorkspaceStore.setState({
+      pages: [samplePage.meta, otherPage.meta],
+      currentPagePath: "Hello.md",
+    });
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "pane-1", pagePath: "Hello.md" },
+          { type: "leaf", id: "pane-2", pagePath: "Other.md" },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "pane-1",
+    });
+  }
+
+  it("viewMode resets to 'editor' when entering multi-pane from non-editor view", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("editor")).toBeInTheDocument();
+    });
+
+    // Switch to mindmap
+    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
+    await userEvent.click(mindmapBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
+    });
+
+    // Enter multi-pane mode
+    act(() => {
+      setupMultiPane();
+    });
+
+    // viewMode should reset — mindmap gone, editor panes visible
+    await waitFor(() => {
+      expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
+  });
+
+  it("pendingTitleFocus flag is NOT cleared when title input is unmounted (multi-pane)", async () => {
+    setupMultiPane();
+    useWorkspaceStore.setState({ pendingTitleFocus: true });
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
+    });
+
+    // Title input is inside the guard, so it's not rendered in multi-pane mode
+    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
+    // The flag should NOT have been consumed
+    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(true);
+  });
+
+  it("lit:toggle-frontmatter event toggles frontmatter visibility", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Show frontmatter")).toBeInTheDocument();
+    });
+
+    // Frontmatter should be hidden initially
+    expect(screen.queryByTestId("frontmatter")).not.toBeInTheDocument();
+
+    // Dispatch toggle event
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-frontmatter"));
+    });
+
+    // Frontmatter should now be visible
+    await waitFor(() => {
+      expect(screen.getByTestId("frontmatter")).toBeInTheDocument();
+    });
+
+    // Dispatch toggle again to hide
+    act(() => {
+      window.dispatchEvent(new CustomEvent("lit:toggle-frontmatter"));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("frontmatter")).not.toBeInTheDocument();
+    });
   });
 });

@@ -19,6 +19,7 @@
   { "key": "Mod-2", "command": "app.showMindmapView" },
   { "key": "Mod-3", "command": "app.showGraphView" },
   { "key": "Mod-4", "command": "app.showCardboxView" },
+  { "key": "Mod-Shift-i", "command": "app.toggleFrontmatter" },
   { "key": "Ctrl-g", "command": "editor.selectNextOccurrence", "when": "editorFocus" },
   { "key": "Mod-w", "command": "pane.close" },
   { "key": "Mod-d", "command": "pane.splitRight" },

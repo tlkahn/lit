@@ -16,8 +16,8 @@ import { buildHeadingTree, applyRename, applyMove, insertChild, insertSibling, i
 import { YamlHighlighter } from "./YamlHighlighter";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
-import { usePaneHistoryStore } from "../stores/paneHistory";
 import { useLeafFileType } from "../hooks/useLeafFileType";
+import { HistoryNavButtons } from "./HistoryNavButtons";
 import { useAppKeybindings } from "../hooks/useAppKeybindings";
 import { CardboxErrorBoundary } from "./CardboxErrorBoundary";
 
@@ -70,8 +70,6 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   );
   const body = usePaneField(focusedPaneId, bodySel);
 
-  const canGoBack = usePaneHistoryStore((s) => s.canGoBack(focusedPaneId));
-  const canGoForward = usePaneHistoryStore((s) => s.canGoForward(focusedPaneId));
   const hasCompanion = useWorkspaceStore((s) => s.pages.find((p) => p.relative_path === currentPanePage)?.has_companion ?? false);
 
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
@@ -175,9 +173,11 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   useEffect(() => {
     if (pendingTitleFocus && title) {
-      titleInputRef.current?.focus();
-      titleInputRef.current?.select();
-      clearPendingTitleFocus();
+      if (titleInputRef.current) {
+        titleInputRef.current.focus();
+        titleInputRef.current.select();
+        clearPendingTitleFocus();
+      }
     }
   }, [pendingTitleFocus, title, clearPendingTitleFocus]);
 
@@ -285,6 +285,13 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }, [graphViewEnabled, viewMode]);
 
   useEffect(() => {
+    if (isMultiPane) {
+      setViewMode("editor");
+      setShowFrontmatter(false);
+    }
+  }, [isMultiPane]);
+
+  useEffect(() => {
     if (viewMode !== "editor") return;
     const view = getCurrentEditorView();
     if (!view) return;
@@ -330,11 +337,16 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
         useGraphViewState.getState().setMode(detail.mode);
       }
     };
+    const toggleFrontmatterHandler = () => {
+      setShowFrontmatter((prev) => !prev);
+    };
     window.addEventListener("lit:set-view-mode", setModeHandler);
     window.addEventListener("lit:toggle-graph-view", toggleGraphHandler);
+    window.addEventListener("lit:toggle-frontmatter", toggleFrontmatterHandler);
     return () => {
       window.removeEventListener("lit:set-view-mode", setModeHandler);
       window.removeEventListener("lit:toggle-graph-view", toggleGraphHandler);
+      window.removeEventListener("lit:toggle-frontmatter", toggleFrontmatterHandler);
     };
   }, []);
 
@@ -379,23 +391,9 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
-      {currentPanePage && focusedFileType === "markdown" && (<div className="px-6 py-3">
+      {currentPanePage && focusedFileType === "markdown" && !isMultiPane && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
-          {([
-            { dir: "back", can: canGoBack, onClick: () => usePaneHistoryStore.getState().goBack(focusedPaneId), label: "Go back", glyph: "‹" },
-            { dir: "forward", can: canGoForward, onClick: () => usePaneHistoryStore.getState().goForward(focusedPaneId), label: "Go forward", glyph: "›" },
-          ] as const).map((btn) => (
-            <button
-              key={btn.dir}
-              disabled={!btn.can}
-              onClick={btn.onClick}
-              className="text-text-faint hover:text-text-normal disabled:opacity-30 disabled:cursor-not-allowed px-0.5"
-              aria-label={btn.label}
-              data-testid={`history-${btn.dir}`}
-            >
-              {btn.glyph}
-            </button>
-          ))}
+          <HistoryNavButtons paneId={focusedPaneId} testIdPrefix="history-" />
           <input
             ref={titleInputRef}
             className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-text-normal outline-none"

@@ -1,0 +1,37 @@
+import { useMemo } from "react";
+import { usePaneField, type PaneContentEntry } from "../lib/paneContentRegistry";
+import type { LeafFileType } from "../hooks/useLeafFileType";
+import { basename } from "../lib/pathUtils";
+import { HistoryNavButtons } from "./HistoryNavButtons";
+
+interface PaneHeaderProps {
+  paneId: string;
+  pagePath: string | null;
+  fileType: LeafFileType | null;
+}
+
+const titleSel = (e: PaneContentEntry | null) => e?.title ?? "";
+
+export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
+  const mdTitle = usePaneField(paneId, titleSel);
+
+  const displayName = useMemo(() => {
+    if (!pagePath) return "";
+    if (fileType === "markdown") return mdTitle || basename(pagePath);
+    return basename(pagePath);
+  }, [pagePath, fileType, mdTitle]);
+
+  if (!pagePath) return null;
+
+  return (
+    <div
+      data-testid="pane-header"
+      className="flex items-center gap-1.5 px-3 py-1.5 text-sm"
+    >
+      <HistoryNavButtons paneId={paneId} testIdPrefix="pane-history-" />
+      <span className="truncate text-text-muted" data-testid="pane-header-title">
+        {displayName}
+      </span>
+    </div>
+  );
+}

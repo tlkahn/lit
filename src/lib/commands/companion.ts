@@ -1,5 +1,5 @@
 import { registerOnce } from "../commandRegistry";
-import { usePaneStore, findLeaf, collectLeaves } from "../../stores/panes";
+import { usePaneStore, findLeaf, collectLeaves, cycleLeafId } from "../../stores/panes";
 import type { PaneLeaf } from "../../stores/panes";
 import { usePanePdfLinkStore } from "../../stores/panePdfLink";
 import { useStatusMessageStore } from "../../stores/statusMessage";
@@ -13,6 +13,7 @@ export type CompanionTarget =
   | { kind: "open+vacant"; openId: string; vacantId: string }
   | { kind: "open-only"; openId: string }
   | { kind: "vacant-only"; vacantId: string }
+  | { kind: "reuse"; paneId: string }
   | { kind: "must-split" };
 
 export function selectCompanionTarget(
@@ -29,6 +30,9 @@ export function selectCompanionTarget(
   if (alreadyOpen && vacant) return { kind: "open+vacant", openId: alreadyOpen.id, vacantId: vacant.id };
   if (alreadyOpen) return { kind: "open-only", openId: alreadyOpen.id };
   if (vacant) return { kind: "vacant-only", vacantId: vacant.id };
+  if (others.length > 0) {
+    return { kind: "reuse", paneId: cycleLeafId(leaves, sourceId, 1)! };
+  }
   return { kind: "must-split" };
 }
 
@@ -83,6 +87,9 @@ export function initCompanionCommands(): void {
               case "vacant-only":
                 newId = selection.vacantId;
                 break;
+              case "reuse":
+                newId = selection.paneId;
+                break;
               case "must-split":
                 newId = store.splitPane(sourceId, "horizontal");
                 break;
@@ -91,6 +98,7 @@ export function initCompanionCommands(): void {
                 throw new Error(`unhandled companion target: ${String(_exhaustive)}`);
               }
             }
+            // Defensive: must-split only fires with 1 pane, so splitPane (1→2) never returns null.
             if (newId == null) {
               useStatusMessageStore
                 .getState()
