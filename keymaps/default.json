@@ -30,6 +30,7 @@
   { "key": "Mod-]", "command": "pane.historyForward" },
   { "key": "Mod-Shift-]", "command": "pane.focusContentNext" },
   { "key": "Mod-Shift-[", "command": "pane.focusContentPrev" },
+  { "key": "Mod-Shift-x", "command": "pane.swapLayout" },
   { "key": "Mod-\\", "command": "workbench.toggleSideBar" },
   { "key": "Mod-Shift-k", "command": "app.openKeyboardShortcuts" },
   { "key": "Mod-Shift-l", "command": "app.askQuestion" },

@@ -235,6 +235,15 @@ export function ensureCommandsRegistered() {
     },
   });
   registerCommand({
+    id: "pane.swapLayout",
+    label: "Swap Pane Layout",
+    keywords: ["swap", "pane", "rotate", "flip", "layout"],
+    when: () => usePaneStore.getState().root.type === "split",
+    action: () => {
+      usePaneStore.getState().swapLayout();
+    },
+  });
+  registerCommand({
     id: "app.insertAnnotation",
     label: "Insert Annotation",
     keywords: ["annotation", "annotate", "note"],

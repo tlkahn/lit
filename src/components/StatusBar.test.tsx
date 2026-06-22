@@ -899,6 +899,55 @@ describe("StatusBar", () => {
     });
   });
 
+  describe("SwapPanesButton", () => {
+    it("hidden with single pane", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: null },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.queryByTestId("swap-panes-button")).toBeNull();
+    });
+
+    it("visible with 2+ panes", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split", id: "s1", direction: "horizontal",
+          children: [
+            { type: "leaf", id: "p1", pagePath: "a.md" },
+            { type: "leaf", id: "p2", pagePath: "b.md" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      expect(screen.getByTestId("swap-panes-button")).toBeInTheDocument();
+    });
+
+    it("click triggers swap (children reversed)", async () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: {
+          type: "split", id: "s1", direction: "horizontal",
+          children: [
+            { type: "leaf", id: "p1", pagePath: "a.md" },
+            { type: "leaf", id: "p2", pagePath: "b.md" },
+          ],
+          sizes: [50, 50],
+        },
+        focusedPaneId: "p1",
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByTestId("swap-panes-button"));
+      const root = usePaneStore.getState().root as { type: "split"; children: Array<{ type: "leaf"; id: string }> };
+      expect(root.children[0]!.id).toBe("p2");
+      expect(root.children[1]!.id).toBe("p1");
+    });
+  });
+
   describe("Status message display", () => {
     it("shows status message when store has a message", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });

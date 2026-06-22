@@ -31,6 +31,7 @@ export interface PaneStore {
   setPanePage(paneId: string, pagePath: string | null): void;
   resize(splitPath: number[], sizes: number[]): void;
   clearPageFromPanes(pagePath: string): void;
+  swapLayout(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +149,14 @@ export function replaceSplitSizes(
   return { ...root, children: newChildren };
 }
 
+export function rotateChildren(node: PaneNode): PaneNode {
+  if (node.type === "leaf") return node;
+  if (node.children.length <= 1) return node;
+  const children = [...node.children.slice(1), node.children[0]!];
+  const sizes = [...node.sizes.slice(1), node.sizes[0]!];
+  return { ...node, children, sizes };
+}
+
 export function clearPagePath(root: PaneNode, pagePath: string): PaneNode {
   if (root.type === "leaf") return root.pagePath === pagePath ? { ...root, pagePath: null } : root;
   let changed = false;
@@ -237,6 +246,12 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const { root } = get();
     const newRoot = clearPagePath(root, pagePath);
     if (newRoot !== root) set({ root: newRoot });
+  },
+
+  swapLayout: () => {
+    const { root } = get();
+    if (root.type === "leaf") return;
+    set({ root: rotateChildren(root) });
   },
 
   splitPane: (paneId, direction) => {
