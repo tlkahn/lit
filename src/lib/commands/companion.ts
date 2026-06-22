@@ -13,6 +13,7 @@ export type CompanionTarget =
   | { kind: "open+vacant"; openId: string; vacantId: string }
   | { kind: "open-only"; openId: string }
   | { kind: "vacant-only"; vacantId: string }
+  | { kind: "reuse"; paneId: string }
   | { kind: "must-split" };
 
 export function selectCompanionTarget(
@@ -29,6 +30,11 @@ export function selectCompanionTarget(
   if (alreadyOpen && vacant) return { kind: "open+vacant", openId: alreadyOpen.id, vacantId: vacant.id };
   if (alreadyOpen) return { kind: "open-only", openId: alreadyOpen.id };
   if (vacant) return { kind: "vacant-only", vacantId: vacant.id };
+  if (others.length > 0) {
+    const idx = leaves.findIndex((l) => l.id === sourceId);
+    const nextLeaf = leaves[(idx + 1) % leaves.length]!;
+    return { kind: "reuse", paneId: nextLeaf.id };
+  }
   return { kind: "must-split" };
 }
 
@@ -82,6 +88,9 @@ export function initCompanionCommands(): void {
               }
               case "vacant-only":
                 newId = selection.vacantId;
+                break;
+              case "reuse":
+                newId = selection.paneId;
                 break;
               case "must-split":
                 newId = store.splitPane(sourceId, "horizontal");
