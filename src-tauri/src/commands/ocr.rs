@@ -42,8 +42,17 @@ pub(crate) fn updated_companion_search_paths(raw_paths: &[String]) -> Option<Vec
 /// slug of the document title, falling back to the citation key when the title
 /// is empty or yields no usable characters.
 fn ocr_slug(entry: &crate::bib::types::BibEntry) -> String {
+    use crate::workspace::normalize::{truncate_slug, MAX_SLUG_LEN};
     match crate::workspace::normalize::kebab_case_title(&entry.title) {
-        Some(title) => format!("{}-{}", title, entry.key),
+        Some(title) => {
+            let suffix_len = 1 + entry.key.len(); // "-{key}"
+            let title = if suffix_len < MAX_SLUG_LEN {
+                truncate_slug(&title, MAX_SLUG_LEN - suffix_len)
+            } else {
+                title
+            };
+            format!("{}-{}", title, entry.key)
+        }
         None => entry.key.clone(),
     }
 }
@@ -500,6 +509,19 @@ mod tests {
     fn ocr_slug_uses_title() {
         let entry = entry_with("smith2024", "The Well-Posed Problem");
         assert_eq!(ocr_slug(&entry), "the-well-posed-problem-smith2024");
+    }
+
+    #[test]
+    fn ocr_slug_truncates_title_to_fit_key_within_limit() {
+        let long_title = "the quick brown fox jumps over the lazy dog and then runs across the wide open green field again";
+        let entry = entry_with("smith2024", long_title);
+        let slug = ocr_slug(&entry);
+        assert!(
+            slug.len() <= crate::workspace::normalize::MAX_SLUG_LEN,
+            "slug too long: {} bytes: {slug}",
+            slug.len()
+        );
+        assert!(slug.ends_with("-smith2024"));
     }
 
     #[test]

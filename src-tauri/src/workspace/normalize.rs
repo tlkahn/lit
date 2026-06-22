@@ -74,12 +74,12 @@ pub fn kebab_case_title(title: &str) -> Option<String> {
 
 /// Maximum slug length in bytes. Keeps filenames well under filesystem limits
 /// while staying readable.
-const MAX_SLUG_LEN: usize = 80;
+pub(crate) const MAX_SLUG_LEN: usize = 80;
 
 /// Truncate a kebab-case slug to at most `max` bytes, preferring to cut at a
 /// word boundary (hyphen) and never leaving a trailing hyphen or splitting a
 /// multi-byte character.
-fn truncate_slug(s: &str, max: usize) -> String {
+pub(crate) fn truncate_slug(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
