@@ -77,7 +77,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
       });
     }
 
-    if (!state?.page_id && state?.materialization !== "partial") {
+    if (!state?.page_id && (state?.materialization !== "partial" || enrichingKey === entry.key)) {
       const enrichLabel = enrichingKey === entry.key
         ? (enrichPhase === "fetch" ? "Fetching…" : "Searching providers…")
         : "Fetch details";

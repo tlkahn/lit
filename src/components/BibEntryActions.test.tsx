@@ -102,6 +102,24 @@ describe("BibEntryActions", () => {
     expect(screen.queryByTestId("fetch-details-btn")).not.toBeInTheDocument();
   });
 
+  it("keeps fetch-details button visible during enrichment even when materialization flips to partial", () => {
+    const h = handlers();
+    const state: BibKeyState = { materialization: "partial", page_id: null };
+    render(
+      <BibEntryActions
+        entry={baseEntry}
+        state={state}
+        {...h}
+        {...defaultLoading}
+        enrichingKey="smith2024"
+      />,
+    );
+    const btn = screen.getByTestId("fetch-details-btn");
+    expect(btn).toBeInTheDocument();
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute("aria-label", "Fetching…");
+  });
+
   it("shows open-markdown button when ocrCompanionCurrent is true", () => {
     const h = handlers();
     const state: BibKeyState = { materialization: "materialized", page_id: "notes/smith.md" };
