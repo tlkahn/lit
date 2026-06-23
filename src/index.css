@@ -104,6 +104,24 @@ html, body, #root {
   font-family: var(--font-interface-theme, ui-sans-serif, system-ui, sans-serif);
 }
 
+#root {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#root input,
+#root textarea,
+#root select,
+#root [contenteditable],
+#root .cm-editor,
+#root .textLayer,
+#root .prose,
+#root pre,
+#root code {
+  user-select: auto;
+  -webkit-user-select: auto;
+}
+
 select {
   appearance: none;
   background-color: var(--background-secondary);
@@ -216,10 +234,6 @@ select:disabled {
   height: auto;
 }
 
-[data-testid="cardbox-card"] {
-  user-select: none;
-  -webkit-user-select: none;
-}
 [data-testid="cardbox-card"] .prose > :first-child { margin-top: 0; }
 [data-testid="cardbox-card"] .prose > :last-child { margin-bottom: 0; }
 
@@ -245,8 +259,6 @@ select:disabled {
   align-items: center;
   gap: 0.5rem;
   padding: 8px 12px;
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .group-collapse-chevron {
