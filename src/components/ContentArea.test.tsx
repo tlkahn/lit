@@ -1364,6 +1364,7 @@ describe("parseYamlErrorLocation", () => {
 
 describe("ContentArea export network wiring", () => {
   it("MindmapView receives onExportNetwork callback", async () => {
+    const contextMenuCalls: Array<Record<string, unknown>> = [];
     mockInvoke((cmd, args) => {
       if (cmd === "read_page") {
         const rp = (args as Record<string, unknown>)?.relativePath;
@@ -1378,12 +1379,17 @@ describe("ContentArea export network wiring", () => {
       if (cmd === "get_pagerank") return {};
       if (cmd === "get_graph_positions") return {};
       if (cmd === "acknowledge_file_hash") return null;
+      if (cmd === "show_mindmap_context_menu") {
+        contextMenuCalls.push(args as Record<string, unknown>);
+        return null;
+      }
       throw new Error(`Unknown command: ${cmd}`);
     });
 
     setPage("Multi.md");
+    const exportSpy = vi.fn();
     const user = userEvent.setup();
-    render(<ContentArea />);
+    render(<ContentArea onExportNetwork={exportSpy} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("editor")).toBeInTheDocument();
@@ -1395,17 +1401,13 @@ describe("ContentArea export network wiring", () => {
       expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
     });
 
-    const { container } = render(<ContentArea />);
-    await user.click(screen.getAllByRole("button", { name: /mindmap/i })[0]!);
-    await waitFor(() => {
-      expect(screen.getAllByTestId("mindmap-view").length).toBeGreaterThan(0);
-    });
-
-    const nodeGroups = container.querySelectorAll("[data-mindmap-node]");
+    const nodeGroups = screen.getByTestId("mindmap-view").querySelectorAll("[data-mindmap-node]");
     if (nodeGroups.length > 0) {
       fireEvent.contextMenu(nodeGroups[0]!);
-      const exportBtn = container.querySelector("[data-mindmap-context-export]");
-      expect(exportBtn).toBeTruthy();
+      await waitFor(() => {
+        expect(contextMenuCalls.length).toBeGreaterThan(0);
+      });
+      expect(contextMenuCalls[0]!.hasExport).toBe(true);
     }
   });
 
@@ -1516,31 +1518,16 @@ describe("ContentArea multi-pane guard side-effects (#730)", () => {
     });
   }
 
-  it("viewMode resets to 'editor' when entering multi-pane from non-editor view", async () => {
-    setPage("Hello.md");
+  it("per-pane viewMode: entering multi-pane does NOT reset other panes' viewMode", async () => {
+    setupMultiPane();
     render(<ContentArea />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
+      expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
     });
 
-    // Switch to mindmap
-    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
-    await userEvent.click(mindmapBtn);
-    await waitFor(() => {
-      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
-    });
-
-    // Enter multi-pane mode
-    act(() => {
-      setupMultiPane();
-    });
-
-    // viewMode should reset — mindmap gone, editor panes visible
-    await waitFor(() => {
-      expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
-    });
-    expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
+    // Both panes default to editor mode (no viewMode set)
+    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
   });
 
   it("pendingTitleFocus flag is NOT cleared when title input is unmounted (multi-pane)", async () => {

@@ -817,6 +817,62 @@ describe("Section B: Store", () => {
     });
   });
 
+  describe("setPaneViewMode", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "note.md" },
+        focusedPaneId: "test-root",
+      });
+    });
+
+    it("sets viewMode on target leaf", () => {
+      usePaneStore.getState().setPaneViewMode("test-root", "mindmap");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.viewMode).toBe("mindmap");
+    });
+
+    it("setting viewMode to 'editor' removes the viewMode property", () => {
+      usePaneStore.getState().setPaneViewMode("test-root", "mindmap");
+      usePaneStore.getState().setPaneViewMode("test-root", "editor");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.viewMode).toBeUndefined();
+    });
+
+    it("no-op when viewMode already matches (root same ref)", () => {
+      usePaneStore.getState().setPaneViewMode("test-root", "graph");
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPaneViewMode("test-root", "graph");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+
+    it("no-op when setting editor on leaf without viewMode (root same ref)", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPaneViewMode("test-root", "editor");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+
+    it("no-op for missing pane (root same ref)", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPaneViewMode("missing", "mindmap");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+  });
+
+  describe("setPanePage resets viewMode", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "note.md", viewMode: "mindmap" },
+        focusedPaneId: "test-root",
+      });
+    });
+
+    it("setPanePage clears viewMode on navigation", () => {
+      usePaneStore.getState().setPanePage("test-root", "other.md");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.viewMode).toBeUndefined();
+    });
+  });
+
   describe("resize", () => {
     const makeNestedTree = () => {
       const inner: PaneSplit = {

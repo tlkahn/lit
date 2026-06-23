@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ViewState } from "../types";
+import type { ViewMode } from "../lib/ipc";
 import { saveLayout } from "../lib/paneLayout";
 import { usePanePdfLinkStore, serializeLinks } from "./panePdfLink";
 import { usePaneHistoryStore, serializeHistory } from "./paneHistory";
@@ -8,7 +9,7 @@ import { usePaneHistoryStore, serializeHistory } from "./paneHistory";
 // Types
 // ---------------------------------------------------------------------------
 
-export type PaneLeaf = { type: "leaf"; id: string; pagePath: string | null };
+export type PaneLeaf = { type: "leaf"; id: string; pagePath: string | null; viewMode?: ViewMode };
 export type PaneSplit = {
   type: "split";
   id: string;
@@ -29,6 +30,7 @@ export interface PaneStore {
   focusNext(): void;
   focusPrev(): void;
   setPanePage(paneId: string, pagePath: string | null): void;
+  setPaneViewMode(paneId: string, mode: ViewMode): void;
   resize(splitPath: number[], sizes: number[]): void;
   clearPageFromPanes(pagePath: string): void;
   swapLayout(): void;
@@ -231,6 +233,19 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const leaf = findLeaf(root, paneId);
     if (!leaf || leaf.pagePath === pagePath) return;
     const newRoot = replaceLeaf(root, paneId, { type: "leaf", id: paneId, pagePath });
+    set({ root: newRoot });
+  },
+
+  setPaneViewMode: (paneId, mode) => {
+    const { root } = get();
+    const leaf = findLeaf(root, paneId);
+    if (!leaf) return;
+    const current = leaf.viewMode ?? "editor";
+    if (current === mode) return;
+    const updated: PaneLeaf = mode === "editor"
+      ? { type: "leaf", id: paneId, pagePath: leaf.pagePath }
+      : { type: "leaf", id: paneId, pagePath: leaf.pagePath, viewMode: mode };
+    const newRoot = replaceLeaf(root, paneId, updated);
     set({ root: newRoot });
   },
 

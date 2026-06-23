@@ -1,5 +1,5 @@
+import { createContext, useContext, lazy, Suspense } from "react";
 import type React from "react";
-import { lazy, Suspense } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -9,24 +9,23 @@ import { PaneDivider } from "./PaneDivider";
 import { MIN_PANE_PX, DIVIDER_PX } from "../lib/paneConstants";
 import { getFileType } from "../hooks/useLeafFileType";
 import { PaneHeader } from "./PaneHeader";
+import { MindmapPaneView } from "./MindmapPaneView";
+import { GraphPaneView } from "./GraphPaneView";
+import { CardboxPaneView } from "./CardboxPaneView";
 
-// CodeEditorPane is lazy-loaded so its (Phase 3) CodeMirror grammar stack is
-// only pulled in when a code file is actually opened. It is a default export,
-// which React.lazy requires; EditorPane/PdfViewerPane stay eager named imports.
 const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
+
+const ExportNetworkContext = createContext<((nodeId: string) => void) | undefined>(undefined);
 
 function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const isMultiPane = usePaneStore((s) => s.root.type === "split");
+  const onExportNetwork = useContext(ExportNetworkContext);
 
-  // Derive pagePath from the pane store and fileType from the workspace pages
-  // list in a single place. getFileType resolves a `.pdf` leaf to "pdf" and a
-  // known code-extension leaf to "code" by extension even before the pages list
-  // loads, so a restored PDF or code pane routes straight here without ever
-  // flashing EditorPane. A null fileType means an empty pane (no pagePath).
-  // Both values are passed as props to PaneHeader, eliminating duplicate
-  // findLeaf traversals and store subscriptions.
   const pagePath = usePaneStore(
     (s) => findLeaf(s.root, paneId)?.pagePath ?? null,
+  );
+  const viewMode = usePaneStore(
+    (s) => findLeaf(s.root, paneId)?.viewMode ?? "editor",
   );
   const pages = useWorkspaceStore((s) => s.pages);
   const fileType = getFileType(pagePath, pages);
@@ -39,6 +38,17 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
       <Suspense fallback={null}>
         <CodeEditorPane paneId={paneId} />
       </Suspense>
+    );
+  } else if (fileType === "markdown" && viewMode !== "editor" && pagePath) {
+    content = (
+      <>
+        <div style={{ display: "none" }}>
+          <EditorPane paneId={paneId} />
+        </div>
+        {viewMode === "mindmap" && <MindmapPaneView paneId={paneId} pagePath={pagePath} onExportNetwork={onExportNetwork} />}
+        {viewMode === "graph" && <GraphPaneView paneId={paneId} pagePath={pagePath} onExportNetwork={onExportNetwork} />}
+        {viewMode === "cardbox" && <CardboxPaneView />}
+      </>
     );
   } else {
     content = <EditorPane paneId={paneId} />;
@@ -104,11 +114,13 @@ function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
   );
 }
 
-export function PaneContainer({ style }: { style?: React.CSSProperties }) {
+export function PaneContainer({ style, onExportNetwork }: { style?: React.CSSProperties; onExportNetwork?: (nodeId: string) => void }) {
   const root = usePaneStore((s) => s.root);
   return (
-    <div style={style} className="flex flex-1 min-h-0">
-      <PaneNodeRenderer node={root} path={[]} />
-    </div>
+    <ExportNetworkContext.Provider value={onExportNetwork}>
+      <div style={style} className="flex flex-1 min-h-0">
+        <PaneNodeRenderer node={root} path={[]} />
+      </div>
+    </ExportNetworkContext.Provider>
   );
 }
