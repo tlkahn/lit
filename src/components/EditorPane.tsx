@@ -33,6 +33,7 @@ interface EditorPaneProps {
 
 function EditorPaneInner({ paneId }: EditorPaneProps) {
   const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
+  const viewMode = usePaneStore((s) => findLeaf(s.root, paneId)?.viewMode ?? "editor");
   const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const selectPage = useWorkspaceStore((s) => s.selectPage);
@@ -119,6 +120,8 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   useEffect(() => {
     const handler = (e: Event) => {
       if (usePaneStore.getState().focusedPaneId !== paneId) return;
+      const leaf = findLeaf(usePaneStore.getState().root, paneId);
+      if (!leaf || (leaf.viewMode && leaf.viewMode !== "editor")) return;
       const view = getPaneView(paneId);
       if (!view) return;
       const detail = (e as CustomEvent<{ line: number; cursor?: boolean }>).detail;
@@ -137,6 +140,8 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   useEffect(() => {
     const handler = () => {
       if (usePaneStore.getState().focusedPaneId !== paneId) return;
+      const leaf = findLeaf(usePaneStore.getState().root, paneId);
+      if (!leaf || (leaf.viewMode && leaf.viewMode !== "editor")) return;
       getPaneView(paneId)?.focus();
     };
     window.addEventListener("lit:request-editor-focus", handler);
@@ -264,6 +269,32 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       globalJumpTracker.isNavigating = false;
     });
   }, [paneId]);
+
+  // Consume pendingJumpLine when viewMode transitions to "editor" on the same
+  // page (e.g. clicking "jump to heading" in mindmap view). In that scenario
+  // the doc prop does not change, so handleDocReplaced never fires and the
+  // pending jump would otherwise go stale. consumePendingJumpLine is atomic —
+  // if handleDocReplaced already consumed it, this is a harmless no-op.
+  // A ref tracks the previous viewMode so we only fire on an actual transition,
+  // not on initial mount when viewMode is already "editor".
+  const prevViewModeRef = useRef(viewMode);
+  useEffect(() => {
+    const prev = prevViewModeRef.current;
+    prevViewModeRef.current = viewMode;
+    if (viewMode !== "editor" || prev === "editor") return;
+    requestAnimationFrame(() => {
+      const pendingJumpLine = usePaneStore.getState().consumePendingJumpLine(paneId);
+      if (pendingJumpLine == null) return;
+      const view = getPaneView(paneId);
+      if (!view) return;
+      const lineNum = Math.min(pendingJumpLine, view.state.doc.lines);
+      const pos = view.state.doc.line(lineNum).from;
+      view.dispatch({
+        selection: EditorSelection.cursor(pos),
+        effects: EditorView.scrollIntoView(pos, { y: "start" }),
+      });
+    });
+  }, [viewMode, paneId]);
 
   const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
 

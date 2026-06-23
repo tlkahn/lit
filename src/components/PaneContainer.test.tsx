@@ -4,6 +4,11 @@ import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { PageMeta } from "../lib/ipc";
+import { getPaneView } from "../lib/editorViewRef";
+
+vi.mock("../lib/editorViewRef", () => ({
+  getPaneView: vi.fn(),
+}));
 
 vi.mock("./EditorPane", () => ({
   EditorPane: ({ paneId }: { paneId: string }) => (
@@ -40,13 +45,26 @@ function meta(
   };
 }
 
+const focusSpy = vi.fn();
+const mockGetPaneView = getPaneView as ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+    (cb as () => void)();
+    return 1;
+  });
+  mockGetPaneView.mockImplementation(() => ({ focus: focusSpy }));
   usePaneStore.setState({
     root: { type: "leaf", id: "solo", pagePath: null },
     focusedPaneId: "solo",
   });
   useWorkspaceStore.setState({ pages: [] });
-  return cleanup;
+  return () => {
+    cleanup();
+    focusSpy.mockClear();
+    mockGetPaneView.mockClear();
+    vi.restoreAllMocks();
+  };
 });
 
 describe("PaneContainer leaf routing", () => {
@@ -526,5 +544,86 @@ describe("PaneContainer", () => {
     const divider = getByTestId("pane-divider");
     expect(divider.getAttribute("role")).toBe("separator");
     expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+});
+
+describe("PaneLeafRenderer focus-on-mount guard", () => {
+  it("does not focus pane on initial mount in single-pane editor mode", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "solo", pagePath: null },
+      focusedPaneId: "solo",
+    });
+    render(<PaneContainer />);
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not focus non-focused pane on initial mount in multi-pane layout", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+    // On initial mount, no pane should have focus() called
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it("focuses pane when switching from non-editor to editor viewMode", () => {
+    useWorkspaceStore.setState({ pages: [{ title: "note.md", relative_path: "note.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown", has_companion: false }] });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md", viewMode: "mindmap" },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    // No focus on initial mount
+    expect(focusSpy).not.toHaveBeenCalled();
+
+    // Now switch pane-a from mindmap to editor
+    act(() => {
+      usePaneStore.getState().setPaneViewMode("pane-a", "editor");
+    });
+
+    // Focus should now be called for pane-a
+    expect(mockGetPaneView).toHaveBeenCalledWith("pane-a");
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not focus pane when switching to editor if it is not the focused pane", () => {
+    useWorkspaceStore.setState({ pages: [{ title: "a.md", relative_path: "a.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown", has_companion: false }, { title: "b.md", relative_path: "b.md", frontmatter: {}, created_at: null, modified_at: null, file_type: "markdown", has_companion: false }] });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "a.md", viewMode: "mindmap" },
+        { type: "leaf", id: "pane-b", pagePath: "b.md", viewMode: "mindmap" },
+      ],
+      sizes: [50, 50],
+    };
+    // pane-b is focused, not pane-a
+    usePaneStore.setState({ root, focusedPaneId: "pane-b" });
+    render(<PaneContainer />);
+
+    // Switch pane-a (not the focused pane) to editor
+    act(() => {
+      usePaneStore.getState().setPaneViewMode("pane-a", "editor");
+    });
+
+    // focus() should NOT be called since pane-a is not the focused pane
+    expect(focusSpy).not.toHaveBeenCalled();
   });
 });

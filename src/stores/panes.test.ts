@@ -15,12 +15,15 @@ import {
   usePaneStore,
   startLayoutSync,
   stopLayoutSync,
+  startGraphViewGuard,
+  stopGraphViewGuard,
   MAX_PANES,
 } from "./panes";
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
 import { loadLayout, validateLayout } from "../lib/paneLayout";
 import { useWorkspaceStore } from "./workspace";
 import { usePanePdfLinkStore, initPanePdfLinkCleanup, stopPanePdfLinkCleanup } from "./panePdfLink";
+import { usePreferencesStore } from "./preferences";
 
 // ---------------------------------------------------------------------------
 // Section A: Pure Tree Helpers (no store dependency)
@@ -1959,5 +1962,90 @@ describe("Section F: Layout Persistence", () => {
       const validated = validateLayout(stored.root, existingPages);
       expect((validated as PaneLeaf).pagePath).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section F: startGraphViewGuard — initial-state and live-transition tests
+// ---------------------------------------------------------------------------
+
+describe("startGraphViewGuard", () => {
+  afterEach(() => {
+    stopGraphViewGuard();
+  });
+
+  it("resets graph panes on startup when graphViewEnabled is false", () => {
+    // Set up a split with one graph pane and one normal pane
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Ensure graphViewEnabled is false (the default)
+    usePreferencesStore.setState({ graphViewEnabled: false });
+
+    // Start the guard — it should immediately reset graph panes
+    startGraphViewGuard();
+
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    // viewMode should be reset (setPaneViewMode("editor") removes the viewMode property)
+    expect(leaf!.viewMode).toBeUndefined();
+  });
+
+  it("does NOT reset graph panes when graphViewEnabled is true", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // graphViewEnabled is true — graph panes should stay
+    usePreferencesStore.setState({ graphViewEnabled: true });
+
+    startGraphViewGuard();
+
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    expect(leaf!.viewMode).toBe("graph");
+  });
+
+  it("resets graph panes on live transition from true to false", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Start with graphViewEnabled true
+    usePreferencesStore.setState({ graphViewEnabled: true });
+
+    startGraphViewGuard();
+
+    // Graph pane should still be graph
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+
+    // Now disable graph view — the guard should fire
+    usePreferencesStore.setState({ graphViewEnabled: false });
+
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    expect(leaf!.viewMode).toBeUndefined();
   });
 });

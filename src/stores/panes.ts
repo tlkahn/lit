@@ -420,6 +420,16 @@ export function startGraphViewGuard(): void {
     }
     prev = cur;
   });
+
+  // Initial-state check: if graphViewEnabled is already false at startup,
+  // reset any stale graph panes restored from a saved layout.
+  if (!usePreferencesStore.getState().graphViewEnabled) {
+    for (const leaf of collectLeaves(usePaneStore.getState().root)) {
+      if (leaf.viewMode === "graph") {
+        usePaneStore.getState().setPaneViewMode(leaf.id, "editor");
+      }
+    }
+  }
 }
 
 export function stopGraphViewGuard(): void {

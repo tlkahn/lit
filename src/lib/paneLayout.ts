@@ -63,7 +63,7 @@ export function validateLayout(root: PaneNode, existingPaths: Set<string>): Pane
   if (root.type === "leaf") {
     if (root.pagePath === null) return root;
     if (existingPaths.has(root.pagePath)) return root;
-    return { ...root, pagePath: null };
+    return { ...root, pagePath: null, viewMode: undefined };
   }
   let changed = false;
   const newChildren = root.children.map((child) => {

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, lazy, Suspense } from "react";
+import { createContext, useContext, useEffect, useRef, lazy, Suspense } from "react";
 import type React from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
@@ -28,16 +28,22 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const viewMode = usePaneStore(
     (s) => findLeaf(s.root, paneId)?.viewMode ?? "editor",
   );
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const pages = useWorkspaceStore((s) => s.pages);
   const fileType = getFileType(pagePath, pages);
 
+  const prevViewModeRef = useRef(viewMode);
   useEffect(() => {
+    const prev = prevViewModeRef.current;
+    prevViewModeRef.current = viewMode;
+    if (prev === viewMode) return;
+    if (focusedPaneId !== paneId) return;
     if (viewMode === "editor") {
       requestAnimationFrame(() => {
         getPaneView(paneId)?.focus();
       });
     }
-  }, [viewMode, paneId]);
+  }, [viewMode, paneId, focusedPaneId]);
 
   let content: React.ReactNode;
   if (fileType === "pdf") {
