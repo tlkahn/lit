@@ -855,17 +855,16 @@ pub fn delete_references_for(
 
 pub fn reference_counts(conn: &Connection) -> Result<HashMap<String, usize>, GraphError> {
     let mut stmt = conn.prepare(
-        "SELECT parent_key, COUNT(*) FROM bib_references GROUP BY parent_key",
+        "SELECT r.parent_key, COUNT(*) FROM bib_references r \
+         INNER JOIN bib_items i ON i.cite_key = r.child_key \
+         WHERE i.deleted_at IS NULL \
+         GROUP BY r.parent_key",
     )?;
-    let mut map = HashMap::new();
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
     })?;
-    for row in rows {
-        let (key, count) = row?;
-        map.insert(key, count);
-    }
-    Ok(map)
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn live_index(conn: &Connection) -> Result<HashMap<String, BibEntry>, GraphError> {
@@ -2799,5 +2798,43 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let counts = reference_counts(&store.conn).unwrap();
         assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_reference_counts_excludes_tombstoned_children() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent");
+        let alive = test_entry("alive_child");
+        let dead = test_entry("dead_child");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &alive, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &dead, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent", "alive_child", Some(0)).unwrap();
+        insert_bib_reference(&store.conn, "parent", "dead_child", Some(1)).unwrap();
+
+        // Manually set deleted_at to simulate a crash between UPDATE and
+        // DELETE inside tombstone_bib_item (which would normally also remove
+        // the reference edges).
+        store
+            .conn
+            .execute(
+                "UPDATE bib_items SET deleted_at = datetime('now') WHERE cite_key = 'dead_child'",
+                [],
+            )
+            .unwrap();
+
+        // get_references_for already filters out tombstoned children
+        let live_refs = get_references_for(&store.conn, "parent").unwrap();
+        assert_eq!(live_refs.len(), 1, "only alive_child should be live");
+
+        // reference_counts must agree with get_references_for
+        let counts = reference_counts(&store.conn).unwrap();
+        assert_eq!(
+            counts.get("parent"),
+            Some(&1),
+            "reference_counts must only count live children (got {:?})",
+            counts.get("parent")
+        );
     }
 }
