@@ -141,6 +141,37 @@ fn companion_from_frontmatter(root: &Path, relative_path: &str) -> Option<String
     }
 }
 
+/// Walk markdown files under `root` and return the relative path of one whose
+/// `companion:` frontmatter resolves to `pdf_relative_path`.
+fn reverse_companion_from_frontmatter(root: &Path, pdf_relative_path: &str) -> Option<String> {
+    use walkdir::WalkDir;
+    let target = root.join(pdf_relative_path).canonicalize().ok()?;
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !crate::util::is_hidden(e))
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let rel = match path.strip_prefix(root) {
+            Ok(r) => r.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"),
+            Err(_) => continue,
+        };
+        if let Some(companion) = companion_from_frontmatter(root, &rel) {
+            let companion_abs = root.join(&companion).canonicalize().ok();
+            if companion_abs.as_ref() == Some(&target) {
+                return Some(rel);
+            }
+        }
+    }
+    None
+}
+
 /// Given a workspace-relative path to a markdown or PDF file, return the
 /// path of its sibling with the swapped extension (md<->pdf) if that sibling
 /// exists on disk. Looks first in the same directory under `root`, then in
@@ -175,6 +206,13 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
         let abs = root.join(&cand);
         if abs.is_file() {
             return Some(canonicalize_within_root(root, &abs, &cand));
+        }
+    }
+    // For PDFs: scan markdown files to find one whose frontmatter `companion:`
+    // field points to this PDF (reverse lookup).
+    if ext == "pdf" {
+        if let Some(md_rel) = reverse_companion_from_frontmatter(root, relative_path) {
+            return Some(md_rel);
         }
     }
     None
@@ -1144,6 +1182,42 @@ mod tests {
         assert_eq!(
             find_companion("paper.md", root, &[]),
             Some("paper.pdf".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_reverse_frontmatter_pdf_to_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("the-entropy-of-hawking-radiation-ref61.md"),
+            "---\ncompanion: assets/pdf/ref61-1.pdf\n---\n# The entropy of Hawking radiation\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf-content").unwrap();
+        assert_eq!(
+            find_companion("assets/pdf/ref61-1.pdf", root, &[]),
+            Some("the-entropy-of-hawking-radiation-ref61.md".to_string())
+        );
+    }
+
+    #[test]
+    fn find_companion_reverse_frontmatter_prefers_same_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("notes.md"),
+            "---\ncompanion: assets/pdf/paper.pdf\n---\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/paper.pdf"), b"pdf").unwrap();
+        std::fs::write(root.join("assets/pdf/paper.md"), b"same-name").unwrap();
+        // Same-name sibling wins over reverse frontmatter lookup.
+        assert_eq!(
+            find_companion("assets/pdf/paper.pdf", root, &[]),
+            Some("assets/pdf/paper.md".to_string())
         );
     }
 }
