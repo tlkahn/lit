@@ -163,7 +163,7 @@ export function rotateChildren(node: PaneNode): PaneNode {
 }
 
 export function clearPagePath(root: PaneNode, pagePath: string): PaneNode {
-  if (root.type === "leaf") return root.pagePath === pagePath ? { ...root, pagePath: null } : root;
+  if (root.type === "leaf") return root.pagePath === pagePath ? { ...root, pagePath: null, viewMode: undefined } : root;
   let changed = false;
   const newChildren = root.children.map((child) => {
     const result = clearPagePath(child, pagePath);
@@ -314,7 +314,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     if (leaves.length === 1) {
       const leaf = leaves[0]!;
       if (leaf.id !== paneId || leaf.pagePath === null) return;
-      set({ root: { ...leaf, pagePath: null } });
+      set({ root: { ...leaf, pagePath: null, viewMode: undefined } });
       return;
     }
     const newRoot = removeLeaf(root, paneId);
