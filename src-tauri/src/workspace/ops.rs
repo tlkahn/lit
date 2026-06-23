@@ -236,7 +236,7 @@ pub fn persist_companion_frontmatter(
         Some(n) => {
             parsed.map.get("companion_page_offset").and_then(|v| v.as_i64()) == Some(n as i64)
         }
-        None => true,
+        None => !parsed.map.contains_key("companion_page_offset"),
     };
     if companion_ok && citekey_ok && offset_ok {
         registry.record(&full_path, &raw);
@@ -259,6 +259,8 @@ pub fn persist_companion_frontmatter(
             "companion_page_offset".to_string(),
             serde_yaml::Value::Number(serde_yaml::Number::from(n)),
         );
+    } else {
+        fm.swap_remove("companion_page_offset");
     }
     write_page(root, md_relative, parsed.body, &fm, registry)
 }
@@ -703,6 +705,24 @@ mod tests {
 
         let full_path = dir.path().join("note.md");
         assert!(registry.check(&full_path, content), "no rewrite when offset matches");
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_removes_stale_offset() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\ncompanion: foo.pdf\ncompanion_page_offset: 2\n---\n# Body\n";
+        fs::write(dir.path().join("note.md"), content).unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, Some(0), &registry)
+            .unwrap();
+
+        let rewritten = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        let parsed = parse_frontmatter(&rewritten);
+        assert!(
+            parsed.map.get("companion_page_offset").is_none(),
+            "stale companion_page_offset must be removed when offset is 0"
+        );
     }
 
     #[test]
