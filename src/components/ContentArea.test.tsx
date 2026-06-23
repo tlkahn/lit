@@ -402,14 +402,16 @@ describe("ContentArea mindmap toggle", () => {
 
     const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
     await user.click(mindmapBtn);
-    expect(screen.getByTestId("editor")).not.toBeVisible();
+    // jsdom doesn't process Tailwind CSS, so toBeVisible() can't detect
+    // the "hidden" class on the wrapper div. Assert via closest() instead.
+    expect(screen.getByTestId("editor").closest(".hidden")).not.toBeNull();
     await waitFor(() => {
       expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
     });
 
     const editorBtn = screen.getByRole("button", { name: /editor/i });
     await user.click(editorBtn);
-    expect(screen.getByTestId("editor")).toBeVisible();
+    expect(screen.getByTestId("editor").closest(".hidden")).toBeNull();
     expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
   });
 

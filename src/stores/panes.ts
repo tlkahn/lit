@@ -404,6 +404,7 @@ export function startLayoutSync(
 // ---------------------------------------------------------------------------
 
 let graphViewUnsub: (() => void) | null = null;
+let graphViewDeferredUnsub: (() => void) | null = null;
 
 export function startGraphViewGuard(): void {
   stopGraphViewGuard();
@@ -423,18 +424,40 @@ export function startGraphViewGuard(): void {
 
   // Initial-state check: if graphViewEnabled is already false at startup,
   // reset any stale graph panes restored from a saved layout.
-  if (!usePreferencesStore.getState().graphViewEnabled) {
-    for (const leaf of collectLeaves(usePaneStore.getState().root)) {
-      if (leaf.viewMode === "graph") {
-        usePaneStore.getState().setPaneViewMode(leaf.id, "editor");
+  // However, graphViewEnabled defaults to false before preferences load,
+  // so we must only act on the REAL (loaded) value to avoid clobbering
+  // legitimately-restored graph panes during the startup race.
+  function resetStaleGraphPanes(): void {
+    if (!usePreferencesStore.getState().graphViewEnabled) {
+      for (const leaf of collectLeaves(usePaneStore.getState().root)) {
+        if (leaf.viewMode === "graph") {
+          usePaneStore.getState().setPaneViewMode(leaf.id, "editor");
+        }
       }
     }
+  }
+
+  if (usePreferencesStore.getState().loaded) {
+    // Preferences already loaded — safe to check the real value now.
+    resetStaleGraphPanes();
+  } else {
+    // Preferences not yet loaded — defer until they are.
+    graphViewDeferredUnsub = usePreferencesStore.subscribe((state) => {
+      if (state.loaded) {
+        resetStaleGraphPanes();
+        // One-shot: unsubscribe immediately after firing.
+        graphViewDeferredUnsub?.();
+        graphViewDeferredUnsub = null;
+      }
+    });
   }
 }
 
 export function stopGraphViewGuard(): void {
   graphViewUnsub?.();
   graphViewUnsub = null;
+  graphViewDeferredUnsub?.();
+  graphViewDeferredUnsub = null;
 }
 
 export function stopLayoutSync(): void {
