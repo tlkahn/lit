@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { usePaneStore } from "../stores/panes";
@@ -103,6 +103,18 @@ beforeEach(() => {
 import { EditorPane } from "./EditorPane";
 
 describe("EditorPane", () => {
+  function fakeViewWithDoc(doc: string): EditorView {
+    return {
+      state: {
+        doc: Text.of(doc.split("\n")),
+        selection: { main: { head: 0 } },
+      },
+      dispatch: vi.fn(),
+      scrollDOM: { scrollTop: 0 },
+      focus: vi.fn(),
+    } as unknown as EditorView;
+  }
+
   it("renders empty state when pagePath is null", () => {
     render(<EditorPane paneId="pane-1" />);
     expect(screen.getByTestId("pane-empty-state")).toBeInTheDocument();
@@ -444,18 +456,6 @@ describe("EditorPane", () => {
     const bodyWithMarkers = "<!-- Page 1 -->\nintro\n<!-- Page 2 -->\nbody\n<!-- Page 3 -->\nend";
     const page2MarkerOffset = bodyWithMarkers.indexOf("<!-- Page 2 -->");
 
-    function fakeViewWithDoc(doc: string): EditorView {
-      return {
-        state: {
-          doc: Text.of(doc.split("\n")),
-          selection: { main: { head: 0 } },
-        },
-        dispatch: vi.fn(),
-        scrollDOM: { scrollTop: 0 },
-        focus: vi.fn(),
-      } as unknown as EditorView;
-    }
-
     it("scrolls to the page marker when pendingEditorSync is set", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
@@ -615,6 +615,58 @@ describe("EditorPane", () => {
       const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       // Line 2 in the body = "intro\n" -> line 2 starts at offset 16
       const expectedPos = Text.of(bodyWithMarkers.split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+    });
+  });
+
+  describe("pendingJumpLine", () => {
+    it("scrolls to the correct line when pendingJumpLine is set", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePaneStore.getState().setPendingJumpLine("pane-1", 2);
+
+      const body = "# Heading 1\n## Heading 2\nContent";
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+      expect(usePaneStore.getState().pendingJumpLines["pane-1"]).toBeUndefined();
+    });
+
+    it("pendingJumpLine takes priority over pendingCursorLine", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePaneStore.getState().setPendingJumpLine("pane-1", 3);
+      useWorkspaceStore.setState({ pendingCursorLine: 1 });
+
+      const body = "# Heading 1\n## Heading 2\nContent";
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(3).from;
       expect(tx.selection.head).toBe(expectedPos);
     });
   });
@@ -800,6 +852,304 @@ describe("EditorPane", () => {
       onSelectionChange(7, 2);
       expect(useCursorInfoStore.getState().line).toBe(7);
       expect(useCursorInfoStore.getState().col).toBe(2);
+    });
+  });
+
+  describe("guarded global listeners", () => {
+    it("scroll-to-line scrolls the focused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of("line one\nline two\nline three".split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+      expect(view.focus).toHaveBeenCalled();
+    });
+
+    it("scroll-to-line ignores unfocused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "other",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("scroll-to-line without cursor flag does not set selection", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1 } }),
+      );
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection).toBeUndefined();
+      expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("request-editor-focus focuses the focused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+
+      expect(view.focus).toHaveBeenCalled();
+    });
+
+    it("request-editor-focus ignores unfocused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "other",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+
+      expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("scroll-to-line ignores focused pane in mindmap mode", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+      expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("request-editor-focus ignores focused pane in mindmap mode", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+
+      expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("scroll-to-line still fires when viewMode is undefined (default editor)", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      expect(view.focus).toHaveBeenCalled();
+    });
+
+    it("cleans up listeners on unmount", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      const { unmount } = render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      unmount();
+
+      expect(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:scroll-to-line", { detail: { line: 0 } }),
+        );
+        window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+      }).not.toThrow();
+    });
+  });
+
+  describe("pendingJumpLine consumed on viewMode switch", () => {
+    it("consumes pendingJumpLine when viewMode switches to editor without doc change", async () => {
+      const body = "# Heading 1\n## Heading 2\nContent";
+
+      // Start with viewMode = mindmap so EditorPane is mounted but hidden
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+
+      // Set a pending jump line (simulates mindmap's onNodeJump)
+      usePaneStore.getState().setPendingJumpLine("pane-1", 2);
+
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+
+      // Wait for editor to mount
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+
+      // Do NOT call onDocReplaced — simulating same-page scenario (no doc change)
+
+      // Now switch viewMode to "editor" (simulating what setPaneViewMode does)
+      act(() => {
+        usePaneStore.getState().setPaneViewMode("pane-1", "editor");
+      });
+
+      // Advance past rAF
+      await vi.advanceTimersByTimeAsync(100);
+
+      // The pending jump line should have been consumed
+      expect(usePaneStore.getState().pendingJumpLines["pane-1"]).toBeUndefined();
+
+      // view.dispatch should have been called to scroll to line 2
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+    });
+
+    it("does not dispatch when viewMode switches to editor with no pending jump line", async () => {
+      // Start with viewMode = mindmap
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+
+      // No pending jump line set
+
+      const view = fakeViewWithDoc("# Heading\nContent");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+
+      // Switch to editor
+      act(() => {
+        usePaneStore.getState().setPaneViewMode("pane-1", "editor");
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      // No dispatch should have happened (no spurious scrolling)
+      expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("does not double-dispatch when handleDocReplaced fires first", async () => {
+      const body = "# Heading 1\n## Heading 2\nContent";
+
+      // Start with viewMode = mindmap
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+
+      usePaneStore.getState().setPendingJumpLine("pane-1", 2);
+
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+
+      // Simulate handleDocReplaced firing first (page navigation happened)
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      // handleDocReplaced consumed the pendingJumpLine
+      expect(usePaneStore.getState().pendingJumpLines["pane-1"]).toBeUndefined();
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+
+      // Now switch viewMode to editor as well
+      act(() => {
+        usePaneStore.getState().setPaneViewMode("pane-1", "editor");
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      // No additional dispatch — consumePendingJumpLine returns null
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
     });
   });
 });

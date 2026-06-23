@@ -15,12 +15,15 @@ import {
   usePaneStore,
   startLayoutSync,
   stopLayoutSync,
+  startGraphViewGuard,
+  stopGraphViewGuard,
   MAX_PANES,
 } from "./panes";
 import type { PaneLeaf, PaneSplit, PaneNode } from "./panes";
 import { loadLayout, validateLayout } from "../lib/paneLayout";
 import { useWorkspaceStore } from "./workspace";
 import { usePanePdfLinkStore, initPanePdfLinkCleanup, stopPanePdfLinkCleanup } from "./panePdfLink";
+import { usePreferencesStore } from "./preferences";
 
 // ---------------------------------------------------------------------------
 // Section A: Pure Tree Helpers (no store dependency)
@@ -814,6 +817,104 @@ describe("Section B: Store", () => {
       const before = usePaneStore.getState().root;
       usePaneStore.getState().setPanePage("test-root", "same.md");
       expect(usePaneStore.getState().root).toBe(before);
+    });
+  });
+
+  describe("setPaneViewMode", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "note.md" },
+        focusedPaneId: "test-root",
+      });
+    });
+
+    it("sets viewMode on target leaf", () => {
+      usePaneStore.getState().setPaneViewMode("test-root", "mindmap");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.viewMode).toBe("mindmap");
+    });
+
+    it("setting viewMode to 'editor' removes the viewMode property", () => {
+      usePaneStore.getState().setPaneViewMode("test-root", "mindmap");
+      usePaneStore.getState().setPaneViewMode("test-root", "editor");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.viewMode).toBeUndefined();
+    });
+
+    it("no-op when viewMode already matches (root same ref)", () => {
+      usePaneStore.getState().setPaneViewMode("test-root", "graph");
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPaneViewMode("test-root", "graph");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+
+    it("no-op when setting editor on leaf without viewMode (root same ref)", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPaneViewMode("test-root", "editor");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+
+    it("no-op for missing pane (root same ref)", () => {
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPaneViewMode("missing", "mindmap");
+      expect(usePaneStore.getState().root).toBe(before);
+    });
+  });
+
+  describe("pendingJumpLines", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "note.md" },
+        focusedPaneId: "test-root",
+        pendingJumpLines: {},
+      });
+    });
+
+    it("setPendingJumpLine stores line for paneId", () => {
+      usePaneStore.getState().setPendingJumpLine("test-root", 42);
+      expect(usePaneStore.getState().pendingJumpLines["test-root"]).toBe(42);
+    });
+
+    it("consumePendingJumpLine returns line and clears it", () => {
+      usePaneStore.getState().setPendingJumpLine("test-root", 10);
+      const line = usePaneStore.getState().consumePendingJumpLine("test-root");
+      expect(line).toBe(10);
+      expect(usePaneStore.getState().pendingJumpLines["test-root"]).toBeUndefined();
+    });
+
+    it("consumePendingJumpLine returns null when nothing pending", () => {
+      const line = usePaneStore.getState().consumePendingJumpLine("test-root");
+      expect(line).toBeNull();
+    });
+
+    it("consumePendingJumpLine returns null for wrong paneId", () => {
+      usePaneStore.getState().setPendingJumpLine("test-root", 5);
+      const line = usePaneStore.getState().consumePendingJumpLine("other-pane");
+      expect(line).toBeNull();
+      expect(usePaneStore.getState().pendingJumpLines["test-root"]).toBe(5);
+    });
+
+    it("multiple panes have independent pending jump lines", () => {
+      usePaneStore.getState().setPendingJumpLine("pane-a", 3);
+      usePaneStore.getState().setPendingJumpLine("pane-b", 7);
+      expect(usePaneStore.getState().consumePendingJumpLine("pane-a")).toBe(3);
+      expect(usePaneStore.getState().consumePendingJumpLine("pane-b")).toBe(7);
+      expect(usePaneStore.getState().pendingJumpLines).toEqual({});
+    });
+  });
+
+  describe("setPanePage preserves viewMode", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "note.md", viewMode: "mindmap" },
+        focusedPaneId: "test-root",
+      });
+    });
+
+    it("setPanePage keeps viewMode on navigation", () => {
+      usePaneStore.getState().setPanePage("test-root", "other.md");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+      expect(leaf!.viewMode).toBe("mindmap");
     });
   });
 
@@ -1861,5 +1962,239 @@ describe("Section F: Layout Persistence", () => {
       const validated = validateLayout(stored.root, existingPages);
       expect((validated as PaneLeaf).pagePath).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section F: startGraphViewGuard — initial-state and live-transition tests
+// ---------------------------------------------------------------------------
+
+describe("startGraphViewGuard", () => {
+  afterEach(() => {
+    stopGraphViewGuard();
+  });
+
+  it("resets graph panes on startup when graphViewEnabled is false", () => {
+    // Set up a split with one graph pane and one normal pane
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Ensure graphViewEnabled is false AND preferences are already loaded
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: true });
+
+    // Start the guard — it should immediately reset graph panes
+    startGraphViewGuard();
+
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    // viewMode should be reset (setPaneViewMode("editor") removes the viewMode property)
+    expect(leaf!.viewMode).toBeUndefined();
+  });
+
+  it("does NOT reset graph panes when graphViewEnabled is true", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // graphViewEnabled is true — graph panes should stay
+    usePreferencesStore.setState({ graphViewEnabled: true });
+
+    startGraphViewGuard();
+
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    expect(leaf!.viewMode).toBe("graph");
+  });
+
+  it("resets graph panes on live transition from true to false", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Start with graphViewEnabled true
+    usePreferencesStore.setState({ graphViewEnabled: true });
+
+    startGraphViewGuard();
+
+    // Graph pane should still be graph
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+
+    // Now disable graph view — the guard should fire
+    usePreferencesStore.setState({ graphViewEnabled: false });
+
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    expect(leaf!.viewMode).toBeUndefined();
+  });
+
+  it("defers reset when preferences are not yet loaded, then resets after loaded becomes true", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Simulate pre-load state: graphViewEnabled is the default false, loaded is false
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: false });
+
+    startGraphViewGuard();
+
+    // Guard should NOT reset yet — preferences not loaded, could be a race
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+
+    // Now simulate loadPreferences resolving with graphViewEnabled actually false
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: true });
+
+    // Now the deferred reset should have fired
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    expect(leaf!.viewMode).toBeUndefined();
+  });
+
+  it("defers reset when not loaded, preserves graph panes when loaded value is true", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Simulate pre-load state
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: false });
+
+    startGraphViewGuard();
+
+    // Guard should NOT reset yet
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+
+    // Now simulate loadPreferences resolving with graphViewEnabled actually TRUE
+    usePreferencesStore.setState({ graphViewEnabled: true, loaded: true });
+
+    // Graph panes should be preserved — user actually had graph view enabled
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+  });
+
+  it("immediate reset when already loaded with graphViewEnabled false", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Preferences already loaded, graphViewEnabled is false
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: true });
+
+    startGraphViewGuard();
+
+    // Should immediately reset
+    const leaf = findLeaf(usePaneStore.getState().root, "g1");
+    expect(leaf).toBeDefined();
+    expect(leaf!.viewMode).toBeUndefined();
+  });
+
+  it("stopGraphViewGuard cleans up deferred subscription", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Simulate pre-load state
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: false });
+
+    startGraphViewGuard();
+
+    // Guard deferred — graph pane still intact
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+
+    // Stop the guard before preferences load
+    stopGraphViewGuard();
+
+    // Now simulate preferences loading
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: true });
+
+    // The deferred callback was cleaned up — graph pane should NOT be reset
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBe("graph");
+  });
+
+  it("deferred subscription fires only once (one-shot)", () => {
+    const graphLeaf: PaneLeaf = { type: "leaf", id: "g1", pagePath: "graph-page.md", viewMode: "graph" };
+    const normalLeaf: PaneLeaf = { type: "leaf", id: "n1", pagePath: "normal.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [graphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "g1" });
+
+    // Simulate pre-load state
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: false });
+
+    startGraphViewGuard();
+
+    // Trigger loaded — deferred reset fires
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: true });
+    expect(findLeaf(usePaneStore.getState().root, "g1")!.viewMode).toBeUndefined();
+
+    // Re-add a graph pane manually
+    const newGraphLeaf: PaneLeaf = { type: "leaf", id: "g2", pagePath: "graph2.md", viewMode: "graph" };
+    const newRoot: PaneSplit = {
+      type: "split",
+      id: "s2",
+      direction: "horizontal",
+      children: [newGraphLeaf, normalLeaf],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root: newRoot, focusedPaneId: "g2" });
+
+    // Toggle loaded off and on again — the one-shot should NOT fire again
+    usePreferencesStore.setState({ loaded: false });
+    usePreferencesStore.setState({ graphViewEnabled: false, loaded: true });
+
+    // The new graph pane should NOT be reset by the one-shot (it already fired)
+    expect(findLeaf(usePaneStore.getState().root, "g2")!.viewMode).toBe("graph");
   });
 });

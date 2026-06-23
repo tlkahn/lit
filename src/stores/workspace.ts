@@ -8,6 +8,8 @@ import {
   createInitialState,
   startLayoutSync,
   stopLayoutSync,
+  startGraphViewGuard,
+  stopGraphViewGuard,
   collectLeaves,
 } from "./panes";
 import {
@@ -100,6 +102,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       addRecentWorkspace(path);
 
       stopLayoutSync();
+      stopGraphViewGuard();
       cleanupStaleLayouts();
       const stored = loadLayout(path);
       if (stored) {
@@ -130,6 +133,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         usePaneHistoryStore.setState({ stacks: new Map() });
       }
       startLayoutSync(path, () => get().paneViewStates);
+      startGraphViewGuard();
       initPanePdfLinkCleanup();
       initPaneHistoryTracking();
       setPageExistsCheck((path) => {

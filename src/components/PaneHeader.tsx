@@ -1,8 +1,10 @@
 import { useMemo } from "react";
 import { usePaneField, type PaneContentEntry } from "../lib/paneContentRegistry";
+import { usePaneStore, findLeaf } from "../stores/panes";
 import type { LeafFileType } from "../hooks/useLeafFileType";
 import { basename } from "../lib/pathUtils";
 import { HistoryNavButtons } from "./HistoryNavButtons";
+import { ViewModeToggle } from "./ViewModeToggle";
 
 interface PaneHeaderProps {
   paneId: string;
@@ -14,6 +16,8 @@ const titleSel = (e: PaneContentEntry | null) => e?.title ?? "";
 
 export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
   const mdTitle = usePaneField(paneId, titleSel);
+  const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
+  const viewMode = usePaneStore((s) => findLeaf(s.root, paneId)?.viewMode ?? "editor");
 
   const displayName = useMemo(() => {
     if (!pagePath) return "";
@@ -32,6 +36,11 @@ export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
       <span className="truncate text-text-muted" data-testid="pane-header-title">
         {displayName}
       </span>
+      {isFocused && fileType === "markdown" && (
+        <div className="ms-auto">
+          <ViewModeToggle paneId={paneId} currentMode={viewMode} />
+        </div>
+      )}
     </div>
   );
 }

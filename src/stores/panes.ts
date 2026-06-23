@@ -1,14 +1,16 @@
 import { create } from "zustand";
 import type { ViewState } from "../types";
+import type { ViewMode } from "../lib/ipc";
 import { saveLayout } from "../lib/paneLayout";
 import { usePanePdfLinkStore, serializeLinks } from "./panePdfLink";
 import { usePaneHistoryStore, serializeHistory } from "./paneHistory";
+import { usePreferencesStore } from "./preferences";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type PaneLeaf = { type: "leaf"; id: string; pagePath: string | null };
+export type PaneLeaf = { type: "leaf"; id: string; pagePath: string | null; viewMode?: ViewMode };
 export type PaneSplit = {
   type: "split";
   id: string;
@@ -23,15 +25,19 @@ export const MAX_PANES = 6;
 export interface PaneStore {
   root: PaneNode;
   focusedPaneId: string;
+  pendingJumpLines: Record<string, number>;
   splitPane(paneId: string, direction: "horizontal" | "vertical"): string | null;
   closePane(paneId: string): void;
   focusPane(paneId: string): void;
   focusNext(): void;
   focusPrev(): void;
   setPanePage(paneId: string, pagePath: string | null): void;
+  setPaneViewMode(paneId: string, mode: ViewMode): void;
   resize(splitPath: number[], sizes: number[]): void;
   clearPageFromPanes(pagePath: string): void;
   swapLayout(): void;
+  setPendingJumpLine(paneId: string, line: number): void;
+  consumePendingJumpLine(paneId: string): number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +164,7 @@ export function rotateChildren(node: PaneNode): PaneNode {
 }
 
 export function clearPagePath(root: PaneNode, pagePath: string): PaneNode {
-  if (root.type === "leaf") return root.pagePath === pagePath ? { ...root, pagePath: null } : root;
+  if (root.type === "leaf") return root.pagePath === pagePath ? { ...root, pagePath: null, viewMode: undefined } : root;
   let changed = false;
   const newChildren = root.children.map((child) => {
     const result = clearPagePath(child, pagePath);
@@ -220,6 +226,21 @@ export function createInitialState() {
 
 export const usePaneStore = create<PaneStore>((set, get) => ({
   ...createInitialState(),
+  pendingJumpLines: {},
+
+  setPendingJumpLine: (paneId, line) => {
+    set({ pendingJumpLines: { ...get().pendingJumpLines, [paneId]: line } });
+  },
+
+  consumePendingJumpLine: (paneId) => {
+    const { pendingJumpLines } = get();
+    const line = pendingJumpLines[paneId];
+    if (line == null) return null;
+    const next = { ...pendingJumpLines };
+    delete next[paneId];
+    set({ pendingJumpLines: next });
+    return line;
+  },
 
   focusPane: (paneId) => {
     const { root } = get();
@@ -230,7 +251,23 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const { root } = get();
     const leaf = findLeaf(root, paneId);
     if (!leaf || leaf.pagePath === pagePath) return;
-    const newRoot = replaceLeaf(root, paneId, { type: "leaf", id: paneId, pagePath });
+    const newLeaf: PaneLeaf = leaf.viewMode
+      ? { type: "leaf", id: paneId, pagePath, viewMode: leaf.viewMode }
+      : { type: "leaf", id: paneId, pagePath };
+    const newRoot = replaceLeaf(root, paneId, newLeaf);
+    set({ root: newRoot });
+  },
+
+  setPaneViewMode: (paneId, mode) => {
+    const { root } = get();
+    const leaf = findLeaf(root, paneId);
+    if (!leaf) return;
+    const current = leaf.viewMode ?? "editor";
+    if (current === mode) return;
+    const updated: PaneLeaf = mode === "editor"
+      ? { type: "leaf", id: paneId, pagePath: leaf.pagePath }
+      : { type: "leaf", id: paneId, pagePath: leaf.pagePath, viewMode: mode };
+    const newRoot = replaceLeaf(root, paneId, updated);
     set({ root: newRoot });
   },
 
@@ -278,7 +315,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     if (leaves.length === 1) {
       const leaf = leaves[0]!;
       if (leaf.id !== paneId || leaf.pagePath === null) return;
-      set({ root: { ...leaf, pagePath: null } });
+      set({ root: { ...leaf, pagePath: null, viewMode: undefined } });
       return;
     }
     const newRoot = removeLeaf(root, paneId);
@@ -360,6 +397,67 @@ export function startLayoutSync(
   });
   beforeUnloadHandler = flush;
   window.addEventListener("beforeunload", beforeUnloadHandler);
+}
+
+// ---------------------------------------------------------------------------
+// Section E: Cross-store subscription — reset graph views when disabled
+// ---------------------------------------------------------------------------
+
+let graphViewUnsub: (() => void) | null = null;
+let graphViewDeferredUnsub: (() => void) | null = null;
+
+export function startGraphViewGuard(): void {
+  stopGraphViewGuard();
+  let prev = usePreferencesStore.getState().graphViewEnabled;
+  graphViewUnsub = usePreferencesStore.subscribe((state) => {
+    const cur = state.graphViewEnabled;
+    if (prev && !cur) {
+      const { root } = usePaneStore.getState();
+      for (const leaf of collectLeaves(root)) {
+        if (leaf.viewMode === "graph") {
+          usePaneStore.getState().setPaneViewMode(leaf.id, "editor");
+        }
+      }
+    }
+    prev = cur;
+  });
+
+  // Initial-state check: if graphViewEnabled is already false at startup,
+  // reset any stale graph panes restored from a saved layout.
+  // However, graphViewEnabled defaults to false before preferences load,
+  // so we must only act on the REAL (loaded) value to avoid clobbering
+  // legitimately-restored graph panes during the startup race.
+  function resetStaleGraphPanes(): void {
+    if (!usePreferencesStore.getState().graphViewEnabled) {
+      for (const leaf of collectLeaves(usePaneStore.getState().root)) {
+        if (leaf.viewMode === "graph") {
+          usePaneStore.getState().setPaneViewMode(leaf.id, "editor");
+        }
+      }
+    }
+  }
+
+  if (usePreferencesStore.getState().loaded) {
+    // Preferences already loaded — safe to check the real value now.
+    resetStaleGraphPanes();
+  } else {
+    // Preferences not yet loaded — defer until they are.
+    graphViewDeferredUnsub = usePreferencesStore.subscribe((state) => {
+      if (state.loaded) {
+        resetStaleGraphPanes();
+        // One-shot: unsubscribe immediately after firing.
+        graphViewDeferredUnsub?.();
+        graphViewDeferredUnsub = null;
+      }
+    });
+  }
+}
+
+export function stopGraphViewGuard(): void {
+  graphViewUnsub?.();
+  graphViewUnsub = null;
+  graphViewDeferredUnsub?.();
+  graphViewDeferredUnsub = null;
 }
 
 export function stopLayoutSync(): void {

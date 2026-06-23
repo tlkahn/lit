@@ -235,6 +235,46 @@ describe("validateLayout", () => {
     expect((result.children[1] as PaneLeaf).pagePath).toBeNull();
   });
 
+  it("clears viewMode when pagePath is invalidated on a leaf", () => {
+    const root: PaneLeaf = { type: "leaf", id: "1", pagePath: "gone.md", viewMode: "mindmap" };
+    const result = validateLayout(root, existing) as PaneLeaf;
+    expect(result.pagePath).toBeNull();
+    expect(result.viewMode).toBeUndefined();
+  });
+
+  it("clears viewMode in nested split when pagePath is invalidated", () => {
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "1", pagePath: "a.md" },
+        { type: "leaf", id: "2", pagePath: "deleted.md", viewMode: "graph" },
+      ],
+      sizes: [50, 50],
+    };
+    const result = validateLayout(root, existing) as PaneSplit;
+    const invalidatedLeaf = result.children[1] as PaneLeaf;
+    expect(invalidatedLeaf.pagePath).toBeNull();
+    expect(invalidatedLeaf.viewMode).toBeUndefined();
+    // valid child keeps its reference
+    expect(result.children[0]).toBe(root.children[0]);
+  });
+
+  it("preserves viewMode when pagePath is valid", () => {
+    const root: PaneLeaf = { type: "leaf", id: "1", pagePath: "a.md", viewMode: "mindmap" };
+    const result = validateLayout(root, existing);
+    expect(result).toBe(root);
+    expect((result as PaneLeaf).viewMode).toBe("mindmap");
+  });
+
+  it("returns leaf as-is when pagePath is already null even with stale viewMode", () => {
+    const root: PaneLeaf = { type: "leaf", id: "1", pagePath: null, viewMode: "graph" as any };
+    const result = validateLayout(root, existing);
+    // early return path: pagePath is already null, node returned by reference
+    expect(result).toBe(root);
+  });
+
   it("deeply nested 3-level tree", () => {
     const root: PaneSplit = {
       type: "split",
