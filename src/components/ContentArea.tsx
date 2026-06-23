@@ -59,6 +59,9 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   const [editingTitle, setEditingTitle] = useState("");
   const [showFrontmatter, setShowFrontmatter] = useState(false);
+  useEffect(() => {
+    if (isMultiPane) setShowFrontmatter(false);
+  }, [isMultiPane]);
   const [editingYaml, setEditingYaml] = useState(false);
   const [yamlDraft, setYamlDraft] = useState("");
   const [yamlError, setYamlError] = useState<string | null>(null);
