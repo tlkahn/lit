@@ -17,6 +17,7 @@ describe("usePanePdfLinkStore", () => {
       currentPage: new Map(),
       pendingPdfSync: new Map(),
       pendingEditorSync: new Map(),
+      pageOffset: new Map(),
     });
   });
 
@@ -294,6 +295,48 @@ describe("usePanePdfLinkStore", () => {
       usePaneStore.setState({ root: a, focusedPaneId: "a" });
 
       expect(usePanePdfLinkStore.getState().pendingEditorSync.has("b")).toBe(false);
+    });
+
+    it("clears pageOffset when its pane leaves the tree", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().setPageOffset("b", 2);
+      usePanePdfLinkStore.getState().setPageOffset("a", 1);
+
+      initPanePdfLinkCleanup();
+
+      // Remove pane b from the tree
+      usePaneStore.setState({ root: a, focusedPaneId: "a" });
+
+      expect(usePanePdfLinkStore.getState().pageOffset.has("b")).toBe(false);
+      expect(usePanePdfLinkStore.getState().getPageOffset("a")).toBe(1);
+    });
+  });
+
+  describe("pageOffset", () => {
+    it("starts empty and getPageOffset defaults to 0", () => {
+      expect(usePanePdfLinkStore.getState().pageOffset.size).toBe(0);
+      expect(usePanePdfLinkStore.getState().getPageOffset("nope")).toBe(0);
+    });
+
+    it("setPageOffset stores and getPageOffset returns the value", () => {
+      usePanePdfLinkStore.getState().setPageOffset("pane-1", 3);
+      expect(usePanePdfLinkStore.getState().getPageOffset("pane-1")).toBe(3);
+    });
+
+    it("retains independent offsets for multiple panes", () => {
+      usePanePdfLinkStore.getState().setPageOffset("p1", 2);
+      usePanePdfLinkStore.getState().setPageOffset("p2", 5);
+      expect(usePanePdfLinkStore.getState().getPageOffset("p1")).toBe(2);
+      expect(usePanePdfLinkStore.getState().getPageOffset("p2")).toBe(5);
     });
   });
 });

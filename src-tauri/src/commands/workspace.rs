@@ -26,6 +26,17 @@ pub struct WorkspaceRegistry {
     pub workspaces: Mutex<HashMap<String, WorkspaceEntry>>,
 }
 
+/// A resolved companion file plus the page offset to apply when syncing scroll
+/// position between a markdown note and its companion PDF. `page_offset` is the
+/// number of leading PDF pages trimmed before OCR (0 when none): forward sync
+/// adds it (md page -> pdf page), reverse sync subtracts it (pdf page -> md page).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionInfo {
+    pub path: String,
+    pub page_offset: i32,
+}
+
 impl WorkspaceRegistry {
     pub fn find_window_for_workspace(&self, workspace_path: &Path) -> Option<String> {
         let target = workspace_path
@@ -145,6 +156,43 @@ fn companion_from_frontmatter(root: &Path, relative_path: &str) -> Option<String
     } else {
         None
     }
+}
+
+/// Read the first 4 KiB of a markdown file and return its `companion_page_offset`
+/// frontmatter value as an i32, defaulting to 0 when the file is missing,
+/// unreadable, or the key is absent. `md_path` may be workspace-relative or
+/// absolute; it is joined onto `root` (an absolute `md_path` wins, per
+/// `Path::join` semantics).
+fn read_page_offset(root: &Path, md_path: &str) -> i32 {
+    use std::io::Read;
+    let full_path = root.join(md_path);
+    let Ok(mut file) = std::fs::File::open(&full_path) else {
+        return 0;
+    };
+    let mut buf = [0u8; 4096];
+    let Ok(n) = file.read(&mut buf) else { return 0 };
+    let Ok(header) = std::str::from_utf8(&buf[..n]) else {
+        return 0;
+    };
+    let parsed = crate::workspace::frontmatter::parse_frontmatter(header);
+    parsed
+        .map
+        .get("companion_page_offset")
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32)
+        .unwrap_or(0)
+}
+
+/// Resolve the page offset for a companion pair. The offset always lives in the
+/// markdown note's frontmatter, so pick whichever of the source/companion paths
+/// is the `.md` file and read it. Returns 0 when neither side is markdown.
+fn companion_page_offset(root: &Path, source_rel: &str, companion_rel: &str) -> i32 {
+    let md = if source_rel.to_ascii_lowercase().ends_with(".md") {
+        source_rel
+    } else {
+        companion_rel
+    };
+    read_page_offset(root, md)
 }
 
 /// Find a companion by same-name sibling or search-path lookup only (no
@@ -437,7 +485,7 @@ pub fn find_companion_file(
     window: tauri::Window,
     state: State<WorkspaceRegistry>,
     app_handle: tauri::AppHandle,
-) -> Result<Option<String>, String> {
+) -> Result<Option<CompanionInfo>, String> {
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
     let is_pdf = relative_path.to_ascii_lowercase().ends_with(".pdf");
@@ -448,16 +496,23 @@ pub fn find_companion_file(
         let (root, reverse_map) =
             get_workspace_root_and_reverse_map(&state, window.label())?;
         if let Some(found) = find_companion(&relative_path, &root, &search_paths) {
-            return Ok(Some(found));
+            let page_offset = companion_page_offset(&root, &relative_path, &found);
+            return Ok(Some(CompanionInfo { path: found, page_offset }));
         }
         // Forward lookup missed — fall back to the reverse map.
-        Ok(reverse_companion_lookup(&root, &relative_path, &reverse_map))
+        Ok(reverse_companion_lookup(&root, &relative_path, &reverse_map).map(|found| {
+            let page_offset = companion_page_offset(&root, &relative_path, &found);
+            CompanionInfo { path: found, page_offset }
+        }))
     } else {
         // Non-PDF input (e.g. markdown): only the root is needed.
         // The reverse map is keyed by canonical PDF paths so it can never
         // match a non-PDF input — skip cloning it entirely.
         let root = get_workspace_root(&state, window.label())?;
-        Ok(find_companion(&relative_path, &root, &search_paths))
+        Ok(find_companion(&relative_path, &root, &search_paths).map(|found| {
+            let page_offset = companion_page_offset(&root, &relative_path, &found);
+            CompanionInfo { path: found, page_offset }
+        }))
     }
 }
 
@@ -897,6 +952,67 @@ mod tests {
         assert_eq!(
             find_companion("pdfs/paper.pdf", root, &["markdown".to_string()]),
             Some("markdown/paper.md".to_string())
+        );
+    }
+
+    // ---- read_page_offset / companion_page_offset ----
+
+    #[test]
+    fn read_page_offset_returns_value_from_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: a.pdf\ncompanion_page_offset: 3\n---\n# Body\n",
+        )
+        .unwrap();
+        assert_eq!(read_page_offset(root, "note.md"), 3);
+    }
+
+    #[test]
+    fn read_page_offset_defaults_to_zero_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("note.md"), "---\ncompanion: a.pdf\n---\n# Body\n").unwrap();
+        assert_eq!(read_page_offset(root, "note.md"), 0);
+    }
+
+    #[test]
+    fn read_page_offset_defaults_to_zero_for_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(read_page_offset(root, "nope.md"), 0);
+    }
+
+    #[test]
+    fn companion_page_offset_reads_md_source_for_md_to_pdf() {
+        // md -> pdf: the offset lives in the SOURCE markdown's frontmatter.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: assets/pdf/paper.pdf\ncompanion_page_offset: 2\n---\n",
+        )
+        .unwrap();
+        assert_eq!(
+            companion_page_offset(root, "note.md", "assets/pdf/paper.pdf"),
+            2
+        );
+    }
+
+    #[test]
+    fn companion_page_offset_reads_companion_md_for_pdf_to_md() {
+        // pdf -> md: the offset lives in the COMPANION markdown's frontmatter.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: assets/pdf/paper.pdf\ncompanion_page_offset: 4\n---\n",
+        )
+        .unwrap();
+        assert_eq!(
+            companion_page_offset(root, "assets/pdf/paper.pdf", "note.md"),
+            4
         );
     }
 

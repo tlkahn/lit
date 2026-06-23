@@ -301,7 +301,7 @@ describe("ipc", () => {
           return null;
         case "find_companion_file":
           return (args as Record<string, unknown>)?.relativePath === "paper.md"
-            ? "paper.pdf"
+            ? { path: "paper.pdf", pageOffset: 1 }
             : null;
         case "open_in_external_editor":
           return null;
@@ -1408,9 +1408,9 @@ describe("ipc", () => {
     expect(positions["page-2"]).toEqual({ x: 3.0, y: 4.0 });
   });
 
-  it("findCompanionFile resolves to companion path", async () => {
+  it("findCompanionFile resolves to companion info", async () => {
     const result = await findCompanionFile("paper.md");
-    expect(result).toBe("paper.pdf");
+    expect(result).toEqual({ path: "paper.pdf", pageOffset: 1 });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("find_companion_file", { relativePath: "paper.md" });
   });

@@ -101,8 +101,11 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         if (!linkedNow) return;
         const goFn = getPdfGoToPage(linkedNow);
         if (!goFn) return;
+        // Compensate for OCR first-page trimming: the editor's 0-indexed page
+        // markers map onto the original PDF's pages by adding the stored offset.
+        const offset = usePanePdfLinkStore.getState().getPageOffset(paneId);
         const token = markForwardSync(linkedNow);
-        goFn(pageIndex);
+        goFn(pageIndex + offset);
         setTimeout(() => clearForwardSync(linkedNow, token), FORWARD_SYNC_GUARD_MS);
       },
     });

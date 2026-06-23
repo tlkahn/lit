@@ -78,6 +78,7 @@ beforeEach(() => {
     lastSyncedPage: null,
     pendingPdfSync: new Map(),
     pendingEditorSync: new Map(),
+    pageOffset: new Map(),
   });
   pdfPaneRef._resetForTesting();
   resetEditorViewRef();
@@ -162,6 +163,23 @@ describe("PdfViewerPane", () => {
       expect(view.dispatch).toHaveBeenCalledTimes(1);
       const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(tx.selection.head).toBe(thirdMarkerOffset);
+    });
+
+    it("subtracts the linked editor's page offset before reverse sync", () => {
+      const doc = "<!-- Page 1 -->\nintro\n<!-- Page 2 -->\nbody\n<!-- Page 3 -->\nend";
+      const secondMarkerOffset = doc.indexOf("<!-- Page 2 -->");
+      const view = makeFakeEditorView(doc);
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.getState().linkPanes("p1", "ed1");
+      // OCR trimmed 1 leading page: pdf page 2 maps to md page marker index 1.
+      usePanePdfLinkStore.getState().setPageOffset("ed1", 1);
+
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      fireEvent.click(getByTestId("fire-page-change"));
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(secondMarkerOffset);
     });
 
     it("is a no-op when the PDF pane is not linked", () => {

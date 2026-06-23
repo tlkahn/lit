@@ -54,6 +54,16 @@ export interface PanePdfLinkStore {
   pendingEditorSync: Map<string, number>;
   setPendingEditorSync(paneId: string, pageIndex: number): void;
   consumePendingEditorSync(paneId: string): number | null;
+
+  /**
+   * Per-editor-pane companion page offset, keyed by editor paneId -> number of
+   * leading PDF pages trimmed before OCR. Forward sync (md -> pdf) adds it,
+   * reverse sync (pdf -> md) subtracts it. Cleaned up when the pane is removed.
+   */
+  pageOffset: Map<string, number>;
+  setPageOffset(paneId: string, offset: number): void;
+  /** Returns the stored offset for `paneId`, or 0 when none is recorded. */
+  getPageOffset(paneId: string): number;
 }
 
 export const usePanePdfLinkStore = create<PanePdfLinkStore>((set, get) => ({
@@ -84,6 +94,14 @@ export const usePanePdfLinkStore = create<PanePdfLinkStore>((set, get) => ({
 
   pendingPdfSync: new Map(),
   pendingEditorSync: new Map(),
+  pageOffset: new Map(),
+
+  setPageOffset: (paneId, offset) => {
+    const pageOffset = new Map(get().pageOffset);
+    pageOffset.set(paneId, offset);
+    set({ pageOffset });
+  },
+  getPageOffset: (paneId) => get().pageOffset.get(paneId) ?? 0,
 
   setPendingPdfSync: (paneId, pageIndex) => {
     const pendingPdfSync = new Map(get().pendingPdfSync);
@@ -222,9 +240,20 @@ export function initPanePdfLinkCleanup(): void {
         pendingEditorChanged = true;
       }
     }
+    // Drop page-offset entries for panes that no longer exist.
+    const { pageOffset } = usePanePdfLinkStore.getState();
+    let pageOffsetChanged = false;
+    const nextPageOffset = new Map(pageOffset);
+    for (const id of nextPageOffset.keys()) {
+      if (!live.has(id)) {
+        nextPageOffset.delete(id);
+        pageOffsetChanged = true;
+      }
+    }
     const patch: Record<string, unknown> = {};
     if (pendingPdfChanged) patch.pendingPdfSync = nextPendingPdfSync;
     if (pendingEditorChanged) patch.pendingEditorSync = nextPendingEditorSync;
+    if (pageOffsetChanged) patch.pageOffset = nextPageOffset;
     if (changed) { patch.currentPage = nextCurrentPage; patch.pageCount = nextPageCount; }
     if (Object.keys(patch).length > 0) usePanePdfLinkStore.setState(patch);
   });
