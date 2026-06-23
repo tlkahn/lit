@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { allowAssetScope } from "../lib/ipc";
 import { loadDocument, TextLayer, AnnotationLayer, setLayerDimensions } from "../lib/pdfjs";
+import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from "../lib/pdfjs";
 import { createPdfLinkService } from "../lib/pdfLinkService";
 import { SpinnerSvg } from "./SpinnerSvg";
@@ -307,6 +308,11 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         pageCountRef.current = doc.numPages;
         onPageCountRef.current?.(doc.numPages);
 
+        // When a pending PDF sync exists for this pane, goToPage will handle
+        // the first render + canvasReady. Rendering page 0 here would race
+        // with goToPage and potentially overwrite its target page.
+        if (usePanePdfLinkStore.getState().pendingPdfSync.has(paneId)) return;
+
         const page = await doc.getPage(1); // pdf.js uses 1-based page numbers
         if (cancelled) return;
 
@@ -367,6 +373,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
 
         setCurrentPage(index);
         currentPageRef.current = index;
+        setCanvasReady(true);
         onPageChange?.(index);
       } catch (err) {
         if (navSeqRef.current === mySeq) {

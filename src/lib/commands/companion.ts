@@ -6,7 +6,7 @@ import { useStatusMessageStore } from "../../stores/statusMessage";
 import { findCompanionFile } from "../ipc";
 import { getPaneView } from "../editorViewRef";
 import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
-import { getPdfCurrentPage } from "../pdfPaneRef";
+import { getPdfCurrentPage, getPdfGoToPage, markForwardSync, clearForwardSync } from "../pdfPaneRef";
 
 export type CompanionTarget =
   | { kind: "source-gone" }
@@ -81,6 +81,22 @@ export function initCompanionCommands(): void {
                 const existingId = selection.openId;
                 store.focusPane(existingId);
                 usePanePdfLinkStore.getState().linkPanes(sourceId, existingId);
+
+                if (!pagePath.toLowerCase().endsWith(".pdf")) {
+                  const view = getPaneView(sourceId);
+                  if (view) {
+                    const offset = view.state.selection.main.head;
+                    const markers = getCachedPageMarkers(view.state.doc);
+                    const pageIndex = pageForOffset(markers, offset);
+                    const goTo = getPdfGoToPage(existingId);
+                    if (goTo) {
+                      const token = markForwardSync(existingId);
+                      goTo(pageIndex);
+                      setTimeout(() => clearForwardSync(existingId, token), 500);
+                    }
+                  }
+                }
+
                 useStatusMessageStore.getState().show(`Linked ${pagePath} ↔ ${companion}`, "success");
                 return;
               }
