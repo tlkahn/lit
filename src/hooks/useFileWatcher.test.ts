@@ -180,6 +180,72 @@ describe("useFileWatcher", () => {
     expect(callback).not.toHaveBeenCalled();
   });
 
+  it("file-modified calls refreshPages for .md files (companion map rebuild)", () => {
+    mockListen();
+    const refreshPages = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      refreshPages,
+    });
+
+    renderHook(() => useFileWatcher());
+
+    emitMockEvent("workspace://file-modified", { path: "notes/companion.md" });
+
+    expect(refreshPages).toHaveBeenCalledOnce();
+  });
+
+  it("file-modified calls refreshPages for .MD files (case-insensitive)", () => {
+    mockListen();
+    const refreshPages = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      refreshPages,
+    });
+
+    renderHook(() => useFileWatcher());
+
+    emitMockEvent("workspace://file-modified", { path: "notes/README.MD" });
+
+    expect(refreshPages).toHaveBeenCalledOnce();
+  });
+
+  it("file-modified does not call refreshPages for non-.md files", () => {
+    mockListen();
+    const refreshPages = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      refreshPages,
+    });
+
+    renderHook(() => useFileWatcher());
+
+    emitMockEvent("workspace://file-modified", { path: "document.pdf" });
+
+    expect(refreshPages).not.toHaveBeenCalled();
+  });
+
+  it("file-modified on current .md page calls both refreshPages and callback", () => {
+    mockListen();
+    const refreshPages = vi.fn();
+    const callback = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "note.md",
+      refreshPages,
+    });
+
+    renderHook(() => useFileWatcher(callback));
+
+    emitMockEvent("workspace://file-modified", { path: "note.md" });
+
+    expect(refreshPages).toHaveBeenCalledOnce();
+    expect(callback).toHaveBeenCalledOnce();
+  });
+
   it("file-deleted does not deselect when store was updated between renders", async () => {
     mockListen();
     useWorkspaceStore.setState({

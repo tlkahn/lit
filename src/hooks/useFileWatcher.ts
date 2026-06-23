@@ -33,6 +33,9 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
         (event) => {
           if (cancelled) return;
           console.debug("[FileWatcher] file-modified:", event.payload.path);
+          if (event.payload.path.toLowerCase().endsWith(".md")) {
+            refreshPages();
+          }
           const currentPage = useWorkspaceStore.getState().currentPagePath;
           if (currentPage && event.payload.path === currentPage) {
             if (useModalLockStore.getState().locked) {
