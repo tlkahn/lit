@@ -83,10 +83,9 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
       const view = getPaneView(linked);
       if (!view) return;
       const markers = getCachedPageMarkers(view.state.doc);
-      // Compensate for OCR first-page trimming: the original PDF's page maps onto
-      // the editor's 0-indexed page markers by subtracting the stored offset.
-      const offset = usePanePdfLinkStore.getState().getPageOffset(linked);
-      dispatchReverseSync(pageIndex - offset, linked, markers);
+      // The page offset is subtracted inside dispatchReverseSync, so pass the raw
+      // PDF page index directly.
+      dispatchReverseSync(pageIndex, linked, markers);
     },
     [paneId],
   );

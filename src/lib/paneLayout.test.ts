@@ -110,6 +110,7 @@ describe("deserializeLayout", () => {
       paneViewStates: { a: { scrollTop: 0, cursor: 0 } },
       pdfLinks: [] as [string, string][],
       paneHistory: {} as Record<string, PaneHistoryStack>,
+      pageOffsets: {} as Record<string, number>,
       savedAt: 12345,
     };
     const result = deserializeLayout(JSON.stringify(stored));
@@ -630,5 +631,65 @@ describe("deserializeLayout paneHistory", () => {
     };
     const result = deserializeLayout(JSON.stringify(data));
     expect(result!.paneHistory).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cycle 11: pageOffsets persistence in layout
+// ---------------------------------------------------------------------------
+
+describe("serializeLayout pageOffsets", () => {
+  it("includes pageOffsets when passed", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "note.md" };
+    const pageOffsets: Record<string, number> = { editorPane: 2 };
+    const json = serializeLayout(root, "a", {}, [], {}, pageOffsets);
+    const parsed = JSON.parse(json);
+    expect(parsed.pageOffsets).toEqual({ editorPane: 2 });
+  });
+
+  it("defaults pageOffsets to {} when not passed", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: null };
+    const json = serializeLayout(root, "a", {});
+    const parsed = JSON.parse(json);
+    expect(parsed.pageOffsets).toEqual({});
+  });
+});
+
+describe("deserializeLayout pageOffsets", () => {
+  it("restores pageOffsets from stored data", () => {
+    const data = {
+      root: { type: "leaf", id: "a", pagePath: null },
+      focusedPaneId: "a",
+      paneViewStates: {},
+      pdfLinks: [],
+      paneHistory: {},
+      pageOffsets: { p1: 3 },
+      savedAt: 100,
+    };
+    const result = deserializeLayout(JSON.stringify(data));
+    expect(result!.pageOffsets).toEqual({ p1: 3 });
+  });
+
+  it("defaults pageOffsets to {} for legacy data without the field", () => {
+    const data = {
+      root: { type: "leaf", id: "a", pagePath: null },
+      focusedPaneId: "a",
+      paneViewStates: {},
+      pdfLinks: [],
+      savedAt: 100,
+    };
+    const result = deserializeLayout(JSON.stringify(data));
+    expect(result!.pageOffsets).toEqual({});
+  });
+});
+
+describe("saveLayout round-trips pageOffsets", () => {
+  it("persists and restores pageOffsets via save/load", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "note.md" };
+    const pageOffsets: Record<string, number> = { a: 5 };
+    saveLayout("/ws-offset", root, "a", {}, [], {}, pageOffsets);
+    const result = loadLayout("/ws-offset");
+    expect(result).not.toBeNull();
+    expect(result!.pageOffsets).toEqual({ a: 5 });
   });
 });

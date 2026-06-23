@@ -358,6 +358,7 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 
 let unsub: (() => void) | null = null;
 let pdfLinkUnsub: (() => void) | null = null;
+let pageOffsetUnsub: (() => void) | null = null;
 let historyUnsub: (() => void) | null = null;
 let beforeUnloadHandler: (() => void) | null = null;
 
@@ -370,7 +371,8 @@ export function startLayoutSync(
     const { root, focusedPaneId } = usePaneStore.getState();
     const pdfLinks = serializeLinks(usePanePdfLinkStore.getState().links);
     const paneHistory = serializeHistory(usePaneHistoryStore.getState().stacks);
-    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks, paneHistory);
+    const pageOffsets = Object.fromEntries(usePanePdfLinkStore.getState().pageOffset);
+    saveLayout(workspacePath, root, focusedPaneId, getPaneViewStates(), pdfLinks, paneHistory, pageOffsets);
   };
   unsub = usePaneStore.subscribe(flush);
   // Also persist link changes that don't touch the pane tree (e.g. a standalone
@@ -382,6 +384,17 @@ export function startLayoutSync(
   pdfLinkUnsub = usePanePdfLinkStore.subscribe((state) => {
     if (state.links !== prevLinks) {
       prevLinks = state.links;
+      flush();
+    }
+  });
+  // Persist when pageOffset changes (e.g. companion opened with a trimmed-OCR
+  // offset, or re-OCR with lead=0). Guard on the `pageOffset` reference so
+  // unrelated store updates don't spam localStorage — `pageOffset` is replaced
+  // by a new Map only on setPageOffset.
+  let prevPageOffset = usePanePdfLinkStore.getState().pageOffset;
+  pageOffsetUnsub = usePanePdfLinkStore.subscribe((state) => {
+    if (state.pageOffset !== prevPageOffset) {
+      prevPageOffset = state.pageOffset;
       flush();
     }
   });
@@ -465,6 +478,8 @@ export function stopLayoutSync(): void {
   unsub = null;
   pdfLinkUnsub?.();
   pdfLinkUnsub = null;
+  pageOffsetUnsub?.();
+  pageOffsetUnsub = null;
   historyUnsub?.();
   historyUnsub = null;
   if (beforeUnloadHandler) {

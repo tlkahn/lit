@@ -8,7 +8,7 @@ import { getPaneView } from "../editorViewRef";
 import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
 import { getPdfCurrentPage, getPdfGoToPage, markForwardSync, clearForwardSync } from "../pdfPaneRef";
 import { dispatchReverseSync } from "../reverseSync";
-import { FORWARD_SYNC_GUARD_MS } from "../forwardSync";
+import { FORWARD_SYNC_GUARD_MS, resolveForwardPage } from "../forwardSync";
 
 export type CompanionTarget =
   | { kind: "source-gone" }
@@ -113,7 +113,7 @@ export function initCompanionCommands(): void {
                     const goTo = getPdfGoToPage(existingId);
                     if (goTo) {
                       const token = markForwardSync(existingId);
-                      goTo(pageIndex + pageOffset);
+                      goTo(resolveForwardPage(sourceId, pageIndex));
                       setTimeout(() => clearForwardSync(existingId, token), FORWARD_SYNC_GUARD_MS);
                     }
                   }
@@ -122,7 +122,8 @@ export function initCompanionCommands(): void {
                   const view = getPaneView(existingId);
                   if (view) {
                     const markers = getCachedPageMarkers(view.state.doc);
-                    dispatchReverseSync(page - pageOffset, existingId, markers, { skipGuards: true, clampIndex: true });
+                    // dispatchReverseSync subtracts the page offset internally.
+                    dispatchReverseSync(page, existingId, markers, { skipGuards: true, clampIndex: true });
                   }
                 }
 
@@ -161,11 +162,13 @@ export function initCompanionCommands(): void {
             if (!sourceIsPdf) {
               const pageIndex = resolveEditorPageIndex(sourceId);
               if (pageIndex != null) {
-                linkStore.setPendingPdfSync(newId, pageIndex + pageOffset);
+                linkStore.setPendingPdfSync(newId, resolveForwardPage(sourceId, pageIndex));
               }
             } else {
+              // Store the raw PDF page. The consumer (EditorPane) passes it to
+              // dispatchReverseSync which subtracts the offset internally.
               const page = resolvePdfPage(sourceId);
-              linkStore.setPendingEditorSync(newId, page - pageOffset);
+              linkStore.setPendingEditorSync(newId, page);
             }
 
             useStatusMessageStore

@@ -33,6 +33,7 @@ describe("dispatchReverseSync", () => {
       links: new Map(),
       lastSyncedPage: null,
       syncEnabled: true,
+      pageOffset: new Map(),
     });
   });
 
@@ -42,6 +43,7 @@ describe("dispatchReverseSync", () => {
       links: new Map(),
       lastSyncedPage: null,
       syncEnabled: true,
+      pageOffset: new Map(),
     });
   });
 
@@ -215,6 +217,27 @@ describe("dispatchReverseSync", () => {
       expect(usePanePdfLinkStore.getState().lastSyncedPage?.page).toBe(2);
     });
 
+    it("clamps a negative pageIndex to the first marker (clampIndex)", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(-2, "ed1", markers, { clampIndex: true });
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      // markers[0].charOffset === 0 (the first marker).
+      expect(tx.selection.head).toBe(0);
+    });
+
+    it("records clamped index 0 via setLastSyncedPage for negative pageIndex (clampIndex)", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+
+      dispatchReverseSync(-2, "ed1", markers, { clampIndex: true });
+
+      expect(usePanePdfLinkStore.getState().lastSyncedPage?.page).toBe(0);
+    });
+
     it("is a no-op with clampIndex when markers is empty", () => {
       const view = makeFakeView();
       registerPaneView("ed1", view);
@@ -232,6 +255,68 @@ describe("dispatchReverseSync", () => {
       dispatchReverseSync(99, "ed1", markers);
 
       expect(view.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("page offset (centralized arithmetic)", () => {
+    it("subtracts the stored page offset from pageIndex before looking up markers", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.setState({
+        pageOffset: new Map([["ed1", 1]]),
+      });
+
+      // pageIndex 2, offset 1 => adjusted = 1 => markers[1].charOffset === 50
+      dispatchReverseSync(2, "ed1", markers);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(50);
+      // lastSyncedPage should record the adjusted index (1), not the raw PDF page (2)
+      expect(usePanePdfLinkStore.getState().lastSyncedPage?.page).toBe(1);
+    });
+
+    it("clamps after subtracting offset (clampIndex)", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.setState({
+        pageOffset: new Map([["ed1", 2]]),
+      });
+
+      // pageIndex 2, offset 2 => adjusted = 0, clamped to 0 => markers[0].charOffset === 0
+      dispatchReverseSync(2, "ed1", markers, { clampIndex: true });
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(0);
+    });
+
+    it("negative adjusted index is a no-op without clampIndex", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.setState({
+        pageOffset: new Map([["ed1", 5]]),
+      });
+
+      // pageIndex 2, offset 5 => adjusted = -3 => markers[-3] is undefined => no-op
+      dispatchReverseSync(2, "ed1", markers);
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("negative adjusted index clamps to 0 with clampIndex", () => {
+      const view = makeFakeView();
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.setState({
+        pageOffset: new Map([["ed1", 5]]),
+      });
+
+      // pageIndex 2, offset 5 => adjusted = -3, clamped to 0 => markers[0].charOffset === 0
+      dispatchReverseSync(2, "ed1", markers, { clampIndex: true });
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection.head).toBe(0);
     });
   });
 

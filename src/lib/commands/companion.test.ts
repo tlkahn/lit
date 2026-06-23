@@ -47,7 +47,18 @@ const mockLinkState = vi.hoisted(() => ({
   setPendingPdfSync: vi.fn(),
   setPendingEditorSync: vi.fn(),
   setPageOffset: vi.fn(),
-  getPageOffset: vi.fn(() => 0),
+  // Mirror the real store: report the most recently set offset for a pane.
+  // Backed by setPageOffset's recorded calls so it auto-resets with
+  // vi.clearAllMocks() between tests (companion.ts always calls setPageOffset
+  // before resolveForwardPage reads the offset).
+  getPageOffset: vi.fn((paneId: string) => {
+    const calls = mockLinkState.setPageOffset.mock.calls as Array<[string, number]>;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const call = calls[i];
+      if (call && call[0] === paneId) return call[1];
+    }
+    return 0;
+  }),
   currentPage: new Map<string, number>(),
 }));
 
@@ -116,6 +127,10 @@ vi.mock("../reverseSync", () => ({
 // --- forwardSync mock ------------------------------------------------------
 vi.mock("../forwardSync", () => ({
   FORWARD_SYNC_GUARD_MS: 2000,
+  // The sync layer now owns the offset arithmetic; mirror the real helper so
+  // companion.ts's direct (non-dispatch) forward paths apply it.
+  resolveForwardPage: (paneId: string, raw: number) =>
+    raw + mockLinkState.getPageOffset(paneId),
 }));
 
 import { initCompanionCommands, selectCompanionTarget, resolveEditorPageIndex, resolvePdfPage } from "./companion";
@@ -791,8 +806,9 @@ describe("initCompanionCommands", () => {
       await vi.waitFor(() => {
         expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
       });
-      // pdfPage 3 - offset 2 = 1
-      expect(mockLinkState.setPendingEditorSync).toHaveBeenCalledWith("new-pane", 1);
+      // Raw pdfPage 3 is stored; the consumer (EditorPane) subtracts the offset
+      // via dispatchReverseSync, so the call site no longer pre-subtracts.
+      expect(mockLinkState.setPendingEditorSync).toHaveBeenCalledWith("new-pane", 3);
       // Offset is keyed by the EDITOR pane (the new markdown pane).
       expect(mockLinkState.setPageOffset).toHaveBeenCalledWith("new-pane", 2);
     });
@@ -851,7 +867,7 @@ describe("initCompanionCommands", () => {
 
       await vi.waitFor(() => {
         expect(mockDispatchReverseSync).toHaveBeenCalledWith(
-          1, // 3 - 2
+          3, // raw PDF page; dispatchReverseSync subtracts the offset internally
           "companion-pane",
           fakeMarkers,
           { skipGuards: true, clampIndex: true },

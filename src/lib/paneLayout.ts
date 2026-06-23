@@ -14,6 +14,8 @@ export interface StoredLayout {
   pdfLinks: [string, string][];
   /** Per-pane navigation history stacks, keyed by pane ID. */
   paneHistory: Record<string, PaneHistoryStack>;
+  /** Per-editor-pane companion page offsets, keyed by pane ID. */
+  pageOffsets?: Record<string, number>;
   savedAt: number;
 }
 
@@ -27,6 +29,7 @@ export function serializeLayout(
   paneViewStates: Record<string, ViewState>,
   pdfLinks: [string, string][] = [],
   paneHistory: Record<string, PaneHistoryStack> = {},
+  pageOffsets: Record<string, number> = {},
 ): string {
   const stored: StoredLayout = {
     root,
@@ -34,6 +37,7 @@ export function serializeLayout(
     paneViewStates,
     pdfLinks,
     paneHistory,
+    pageOffsets,
     savedAt: Date.now(),
   };
   return JSON.stringify(stored);
@@ -52,6 +56,7 @@ export function deserializeLayout(raw: string | null): StoredLayout | null {
       paneViewStates: parsed.paneViewStates ?? {},
       pdfLinks: parsed.pdfLinks ?? [],
       paneHistory: parsed.paneHistory ?? {},
+      pageOffsets: parsed.pageOffsets ?? {},
       savedAt: parsed.savedAt ?? 0,
     };
   } catch {
@@ -99,10 +104,11 @@ export function saveLayout(
   paneViewStates: Record<string, ViewState>,
   pdfLinks: [string, string][] = [],
   paneHistory: Record<string, PaneHistoryStack> = {},
+  pageOffsets: Record<string, number> = {},
 ): void {
   localStorage.setItem(
     layoutStorageKey(workspacePath),
-    serializeLayout(root, focusedPaneId, paneViewStates, pdfLinks, paneHistory),
+    serializeLayout(root, focusedPaneId, paneViewStates, pdfLinks, paneHistory, pageOffsets),
   );
 }
 

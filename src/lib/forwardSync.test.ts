@@ -23,6 +23,7 @@ describe("dispatchForwardSync", () => {
       links: new Map(),
       lastSyncedPage: null,
       syncEnabled: true,
+      pageOffset: new Map(),
     });
   });
 
@@ -32,6 +33,7 @@ describe("dispatchForwardSync", () => {
       links: new Map(),
       lastSyncedPage: null,
       syncEnabled: true,
+      pageOffset: new Map(),
     });
     vi.useRealTimers();
   });
@@ -40,7 +42,7 @@ describe("dispatchForwardSync", () => {
     it("does not call goToPage when syncEnabled is false", () => {
       const goToPage = vi.fn();
       usePanePdfLinkStore.setState({ syncEnabled: false });
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       expect(goToPage).not.toHaveBeenCalled();
     });
@@ -48,7 +50,7 @@ describe("dispatchForwardSync", () => {
     it("calls goToPage when syncEnabled is true (regression)", () => {
       const goToPage = vi.fn();
       usePanePdfLinkStore.setState({ syncEnabled: true });
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       expect(goToPage).toHaveBeenCalledTimes(1);
     });
@@ -56,7 +58,7 @@ describe("dispatchForwardSync", () => {
     it("honors a toggle that happens mid-debounce (checked at fire time)", () => {
       const goToPage = vi.fn();
       usePanePdfLinkStore.setState({ syncEnabled: true });
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       // Disable during the debounce window, before the trailing-edge fire.
       usePanePdfLinkStore.setState({ syncEnabled: false });
       vi.advanceTimersByTime(DEBOUNCE_MS);
@@ -66,7 +68,7 @@ describe("dispatchForwardSync", () => {
 
   it("does not call goToPage synchronously, then calls once after DEBOUNCE_MS", () => {
     const goToPage = vi.fn();
-    dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+    dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
     expect(goToPage).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(DEBOUNCE_MS);
@@ -76,9 +78,9 @@ describe("dispatchForwardSync", () => {
 
   it("debounces rapid calls, firing once with the LAST offset", () => {
     const goToPage = vi.fn();
-    dispatchForwardSync({ read: () => ({ offset: 0, markers }), goToPage });
-    dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
-    dispatchForwardSync({ read: () => ({ offset: 200, markers }), goToPage });
+    dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 0, markers }), goToPage });
+    dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
+    dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 200, markers }), goToPage });
 
     vi.advanceTimersByTime(DEBOUNCE_MS);
     expect(goToPage).toHaveBeenCalledTimes(1);
@@ -87,7 +89,7 @@ describe("dispatchForwardSync", () => {
 
   it("does not fire before the full debounce window elapses", () => {
     const goToPage = vi.fn();
-    dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+    dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
 
     vi.advanceTimersByTime(DEBOUNCE_MS - 1);
     expect(goToPage).not.toHaveBeenCalled();
@@ -102,7 +104,7 @@ describe("dispatchForwardSync", () => {
       // Simulate a document edit during the debounce window that moves the
       // cursor offset WITHOUT firing a new onSelectionChange/dispatchForwardSync.
       let current: { offset: number; markers: PageMarker[] } = { offset: 0, markers };
-      dispatchForwardSync({ read: () => current, goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => current, goToPage });
       // Mutate after scheduling, before the trailing-edge fire.
       current = { offset: 200, markers };
       vi.advanceTimersByTime(DEBOUNCE_MS);
@@ -113,7 +115,7 @@ describe("dispatchForwardSync", () => {
 
     it("does not call goToPage when read() returns null (view gone at fire time)", () => {
       const goToPage = vi.fn();
-      dispatchForwardSync({ read: () => null, goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => null, goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       expect(goToPage).not.toHaveBeenCalled();
     });
@@ -124,19 +126,19 @@ describe("dispatchForwardSync", () => {
     try {
       const goToPage = vi.fn();
       // Path 1: normal fire
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       // Path 2: syncEnabled=false
       usePanePdfLinkStore.setState({ syncEnabled: false });
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       // Path 3: read() returns null
       usePanePdfLinkStore.setState({ syncEnabled: true });
-      dispatchForwardSync({ read: () => null, goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => null, goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       // Path 4: echo guard suppression
       usePanePdfLinkStore.getState().setLastSyncedPage(1);
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
 
       expect(spy).not.toHaveBeenCalled();
@@ -173,7 +175,7 @@ describe("dispatchForwardSync", () => {
       // Reverse sync just scrolled the editor to page index 1.
       usePanePdfLinkStore.getState().setLastSyncedPage(1);
       // The echo selection change resolves to the same page index 1.
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       expect(goToPage).not.toHaveBeenCalled();
     });
@@ -182,7 +184,7 @@ describe("dispatchForwardSync", () => {
       const goToPage = vi.fn();
       usePanePdfLinkStore.getState().setLastSyncedPage(0);
       // offset 60 resolves to page index 1, not the synced 0.
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       expect(goToPage).toHaveBeenCalledTimes(1);
       expect(goToPage).toHaveBeenCalledWith(1);
@@ -193,7 +195,38 @@ describe("dispatchForwardSync", () => {
       usePanePdfLinkStore.getState().setLastSyncedPage(1);
       // Advance past the echo window before the cursor settles.
       vi.advanceTimersByTime(ECHO_GUARD_MS + 1);
-      dispatchForwardSync({ read: () => ({ offset: 60, markers }), goToPage });
+      dispatchForwardSync({ editorPaneId: "ed1", read: () => ({ offset: 60, markers }), goToPage });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      expect(goToPage).toHaveBeenCalledTimes(1);
+      expect(goToPage).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("page offset (centralized arithmetic)", () => {
+    it("applies the stored page offset to the resolved page before calling goToPage", () => {
+      const goToPage = vi.fn();
+      usePanePdfLinkStore.setState({
+        pageOffset: new Map([["ed1", 3]]),
+      });
+      dispatchForwardSync({
+        editorPaneId: "ed1",
+        read: () => ({ offset: 60, markers }),
+        goToPage,
+      });
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      expect(goToPage).toHaveBeenCalledTimes(1);
+      // offset 60 resolves to marker index 1, plus pageOffset 3 => 4
+      expect(goToPage).toHaveBeenCalledWith(4);
+    });
+
+    it("defaults to offset 0 when no pageOffset is stored", () => {
+      const goToPage = vi.fn();
+      // No pageOffset stored for "ed1"
+      dispatchForwardSync({
+        editorPaneId: "ed1",
+        read: () => ({ offset: 60, markers }),
+        goToPage,
+      });
       vi.advanceTimersByTime(DEBOUNCE_MS);
       expect(goToPage).toHaveBeenCalledTimes(1);
       expect(goToPage).toHaveBeenCalledWith(1);
