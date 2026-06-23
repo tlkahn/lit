@@ -73,7 +73,7 @@ interface PdfViewerProps {
   registerGetCurrentPage?: (fn: () => number) => void;
 }
 
-export function PdfViewer({ filePath, paneId, initialPage, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
@@ -88,7 +88,7 @@ export function PdfViewer({ filePath, paneId, initialPage, onPageChange, onPageC
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
   const navSeqRef = useRef(0);
-  const initialPageRef = useRef(initialPage ?? 0);
+  const initialPageRef = useRef(initialPage);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<RenderTask | null>(null);
   const zoomLevelRef = useRef(DEFAULT_ZOOM);
@@ -273,7 +273,7 @@ export function PdfViewer({ filePath, paneId, initialPage, onPageChange, onPageC
 
   useEffect(() => {
     filePathRef.current = filePath;
-    initialPageRef.current = initialPage ?? 0;
+    initialPageRef.current = initialPage;
     setPdfDoc(null);
     setPageCount(0);
     setCurrentPage(0);
