@@ -4,7 +4,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { getCitingPages, type BacklinkEntry, type BibEntry } from "../lib/ipc";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
-import { doiHref } from "../lib/urlUtils";
+import { doiHref, isHttpUrl } from "../lib/urlUtils";
 import { distinctPublisher } from "../lib/bibUtils";
 import { EntryTypeBadge } from "./EntryTypeBadge";
 import { BibEntryActions, type BibEntryActionProps } from "./BibEntryActions";
@@ -18,7 +18,7 @@ export interface BibEntryRowProps {
 }
 
 function urlHref(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : "#";
+  return isHttpUrl(url) ? url : "#";
 }
 
 function CitedBySection({ bibKey }: { bibKey: string }) {
@@ -34,7 +34,7 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
   bibKeyRef.current = bibKey;
 
   const fetchCitingPages = useCallback(async () => {
-    const capturedKey = bibKeyRef.current;
+    const capturedKey = bibKey;
     try {
       const result = await getCitingPages(capturedKey);
       if (bibKeyRef.current !== capturedKey) return;
@@ -43,7 +43,7 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
       if (bibKeyRef.current !== capturedKey) return;
       setCiting([]);
     }
-  }, []);
+  }, [bibKey]);
 
   useEffect(() => {
     if (graphReady) fetchCitingPages();
@@ -136,6 +136,16 @@ export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
 
   const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
   const tags = entry.tags ?? [];
+  const publisher = distinctPublisher(entry);
+  const modTitleClass = modHeld && entry.bib_file
+    ? "cursor-pointer underline text-interactive-accent"
+    : "text-text-normal";
+  const handleModClick = (stopPropagation: boolean) => (e: React.MouseEvent) => {
+    if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
+      if (stopPropagation) e.stopPropagation();
+      onNavigateToBibFile(entry);
+    }
+  };
 
   return (
     <>
@@ -145,13 +155,8 @@ export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
       >
         <span
           data-testid="reference-entry-title"
-          className={`w-full truncate text-xs ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
-          onClick={(e) => {
-            if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
-              e.stopPropagation();
-              onNavigateToBibFile(entry);
-            }
-          }}
+          className={`w-full truncate text-xs ${modTitleClass}`}
+          onClick={handleModClick(true)}
         >
           {entry.title}
         </span>
@@ -167,12 +172,9 @@ export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
         <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 font-serif italic text-xs">
           <div className="flex items-start gap-2">
             <div
-              className={`font-semibold ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
-              onClick={(e) => {
-                if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
-                  onNavigateToBibFile(entry);
-                }
-              }}
+              data-testid="expanded-entry-title"
+              className={`font-semibold ${modTitleClass}`}
+              onClick={handleModClick(false)}
             >
               {entry.title}
             </div>
@@ -194,8 +196,8 @@ export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
           {entry.journal ? (
             <div className="text-text-muted">{entry.journal}</div>
           ) : null}
-          {distinctPublisher(entry) ? (
-            <div data-testid="entry-publisher" className="text-text-muted">{distinctPublisher(entry)}</div>
+          {publisher ? (
+            <div data-testid="entry-publisher" className="text-text-muted">{publisher}</div>
           ) : null}
           {entry.isbn ? (
             <div data-testid="entry-isbn" className="text-text-muted">

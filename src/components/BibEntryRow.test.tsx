@@ -5,7 +5,7 @@ import { BibEntryRow } from "./BibEntryRow";
 import type { BibEntryRowProps } from "./BibEntryRow";
 import type { BibEntryActionProps } from "./BibEntryActions";
 import { useWorkspaceStore } from "../stores/workspace";
-import { mockInvoke, mockListen, resetListenMock } from "../test/tauri-mock";
+import { mockInvoke, mockListen, resetListenMock, emitMockEvent } from "../test/tauri-mock";
 import type { BibEntry, BibKeyState } from "../lib/ipc";
 
 const baseEntry: BibEntry = {
@@ -198,6 +198,46 @@ describe("BibEntryRow — expanded panel", () => {
     renderRow({ isExpanded: false });
     expect(screen.queryByTestId("entry-isbn")).not.toBeInTheDocument();
   });
+
+  it("Cmd/Ctrl+click on expanded title calls onNavigateToBibFile", () => {
+    const props = renderRow({ isExpanded: true });
+    fireEvent.click(screen.getByTestId("expanded-entry-title"), { metaKey: true });
+    expect(props.onNavigateToBibFile).toHaveBeenCalledWith(baseEntry);
+  });
+
+  it("expanded title has accent/underline class when modHeld and bib_file present", () => {
+    renderRow({ isExpanded: true, modHeld: true });
+    const title = screen.getByTestId("expanded-entry-title");
+    expect(title.className).toContain("underline");
+    expect(title.className).toContain("text-interactive-accent");
+  });
+
+  it("expanded title has normal class when modHeld is false", () => {
+    renderRow({ isExpanded: true, modHeld: false });
+    const title = screen.getByTestId("expanded-entry-title");
+    expect(title.className).not.toContain("underline");
+    expect(title.className).toContain("text-text-normal");
+  });
+
+  it("renders non-HTTP url with href '#' (ftp)", () => {
+    renderRow({
+      isExpanded: true,
+      entry: { ...baseEntry, url: "ftp://example.com" },
+    });
+    expect(
+      screen.getByRole("link", { name: "ftp://example.com" }),
+    ).toHaveAttribute("href", "#");
+  });
+
+  it("renders malformed HTTP url with href '#'", () => {
+    renderRow({
+      isExpanded: true,
+      entry: { ...baseEntry, url: "https://" },
+    });
+    expect(
+      screen.getByRole("link", { name: "https://" }),
+    ).toHaveAttribute("href", "#");
+  });
 });
 
 describe("BibEntryRow — BibEntryActions wiring", () => {
@@ -218,6 +258,32 @@ describe("BibEntryRow — BibEntryActions wiring", () => {
     expect(props.actionProps.onCreateNote).toHaveBeenCalledWith("sanderson2009");
   });
 });
+
+function makeProps(overrides: {
+  entry?: BibEntry;
+  isExpanded?: boolean;
+  modHeld?: boolean;
+  onToggleExpand?: (entryId: string) => void;
+  onNavigateToBibFile?: (entry: BibEntry) => void;
+  actionProps?: Partial<BibEntryActionProps>;
+} = {}): BibEntryRowProps {
+  const entry = overrides.entry ?? baseEntry;
+  const ah = actionHandlers();
+  return {
+    isExpanded: overrides.isExpanded ?? false,
+    modHeld: overrides.modHeld ?? false,
+    onToggleExpand: overrides.onToggleExpand ?? vi.fn(),
+    onNavigateToBibFile: overrides.onNavigateToBibFile ?? vi.fn(),
+    actionProps: {
+      entry,
+      state: undefined,
+      ocrCompanionCurrent: undefined,
+      ...defaultActionLoading,
+      ...ah,
+      ...overrides.actionProps,
+    },
+  };
+}
 
 describe("BibEntryRow — CitedBySection", () => {
   it("renders 'Cited by (N)' when graph is ready and citations exist", async () => {
@@ -247,5 +313,66 @@ describe("BibEntryRow — CitedBySection", () => {
     useWorkspaceStore.setState({ graphReady: false });
     renderRow({ isExpanded: true });
     expect(screen.queryByText(/Cited by|Not cited/)).not.toBeInTheDocument();
+  });
+
+  it("re-fetches citing pages when bibKey changes", async () => {
+    const invokedCalls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    mockInvoke((cmd, args) => {
+      invokedCalls.push({ cmd, args });
+      if (cmd === "get_citing_pages") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    useWorkspaceStore.setState({ graphReady: true });
+
+    const props1 = makeProps({ isExpanded: true });
+    const { rerender } = render(<BibEntryRow {...props1} />);
+    await screen.findByText("Not cited");
+
+    // Verify initial fetch was with the original key
+    expect(invokedCalls.some(
+      (c) => c.cmd === "get_citing_pages" && (c.args as Record<string, unknown>)?.bibKey === "sanderson2009",
+    )).toBe(true);
+
+    // Clear and re-render with a different bibKey
+    invokedCalls.length = 0;
+    const otherEntry: BibEntry = { ...baseEntry, key: "otherKey2024", title: "Other Paper" };
+    const props2 = makeProps({ entry: otherEntry, isExpanded: true });
+    rerender(<BibEntryRow {...props2} />);
+
+    await screen.findByText("Not cited");
+    expect(invokedCalls.some(
+      (c) => c.cmd === "get_citing_pages" && (c.args as Record<string, unknown>)?.bibKey === "otherKey2024",
+    )).toBe(true);
+  });
+
+  it("graph-updated event after bibKey change fetches with new key", async () => {
+    const invokedCalls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+    mockInvoke((cmd, args) => {
+      invokedCalls.push({ cmd, args });
+      if (cmd === "get_citing_pages") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    useWorkspaceStore.setState({ graphReady: true });
+
+    const props1 = makeProps({ isExpanded: true });
+    const { rerender } = render(<BibEntryRow {...props1} />);
+    await screen.findByText("Not cited");
+
+    // Re-render with a different bibKey
+    const otherEntry: BibEntry = { ...baseEntry, key: "otherKey2024", title: "Other Paper" };
+    const props2 = makeProps({ entry: otherEntry, isExpanded: true });
+    rerender(<BibEntryRow {...props2} />);
+    await screen.findByText("Not cited");
+
+    // Clear call history and emit graph-updated
+    invokedCalls.length = 0;
+    emitMockEvent("lit:graph-updated", {});
+
+    // Wait for the async fetch triggered by the event
+    await vi.waitFor(() => {
+      expect(invokedCalls.some(
+        (c) => c.cmd === "get_citing_pages" && (c.args as Record<string, unknown>)?.bibKey === "otherKey2024",
+      )).toBe(true);
+    });
   });
 });
