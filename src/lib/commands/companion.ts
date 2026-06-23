@@ -6,7 +6,9 @@ import { useStatusMessageStore } from "../../stores/statusMessage";
 import { findCompanionFile } from "../ipc";
 import { getPaneView } from "../editorViewRef";
 import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
-import { getPdfCurrentPage } from "../pdfPaneRef";
+import { getPdfCurrentPage, getPdfGoToPage, markForwardSync, clearForwardSync } from "../pdfPaneRef";
+import { dispatchReverseSync } from "../reverseSync";
+import { FORWARD_SYNC_GUARD_MS } from "../forwardSync";
 
 export type CompanionTarget =
   | { kind: "source-gone" }
@@ -34,6 +36,20 @@ export function selectCompanionTarget(
     return { kind: "reuse", paneId: cycleLeafId(leaves, sourceId, 1)! };
   }
   return { kind: "must-split" };
+}
+
+export function resolveEditorPageIndex(paneId: string): number | null {
+  const view = getPaneView(paneId);
+  if (!view) return null;
+  const offset = view.state.selection.main.head;
+  const markers = getCachedPageMarkers(view.state.doc);
+  return pageForOffset(markers, offset);
+}
+
+export function resolvePdfPage(paneId: string): number {
+  return getPdfCurrentPage(paneId)
+    ?? usePanePdfLinkStore.getState().currentPage.get(paneId)
+    ?? 0;
 }
 
 export function initCompanionCommands(): void {
@@ -81,6 +97,26 @@ export function initCompanionCommands(): void {
                 const existingId = selection.openId;
                 store.focusPane(existingId);
                 usePanePdfLinkStore.getState().linkPanes(sourceId, existingId);
+
+                if (!pagePath.toLowerCase().endsWith(".pdf")) {
+                  const pageIndex = resolveEditorPageIndex(sourceId);
+                  if (pageIndex != null) {
+                    const goTo = getPdfGoToPage(existingId);
+                    if (goTo) {
+                      const token = markForwardSync(existingId);
+                      goTo(pageIndex);
+                      setTimeout(() => clearForwardSync(existingId, token), FORWARD_SYNC_GUARD_MS);
+                    }
+                  }
+                } else {
+                  const page = resolvePdfPage(sourceId);
+                  const view = getPaneView(existingId);
+                  if (view) {
+                    const markers = getCachedPageMarkers(view.state.doc);
+                    dispatchReverseSync(page, existingId, markers, { skipGuards: true, clampIndex: true });
+                  }
+                }
+
                 useStatusMessageStore.getState().show(`Linked ${pagePath} ↔ ${companion}`, "success");
                 return;
               }
@@ -111,15 +147,12 @@ export function initCompanionCommands(): void {
             linkStore.linkPanes(sourceId, newId);
 
             if (!pagePath.toLowerCase().endsWith(".pdf")) {
-              const view = getPaneView(sourceId);
-              if (view) {
-                const offset = view.state.selection.main.head;
-                const markers = getCachedPageMarkers(view.state.doc);
-                const pageIndex = pageForOffset(markers, offset);
+              const pageIndex = resolveEditorPageIndex(sourceId);
+              if (pageIndex != null) {
                 linkStore.setPendingPdfSync(newId, pageIndex);
               }
             } else {
-              const page = getPdfCurrentPage(sourceId) ?? linkStore.currentPage.get(sourceId) ?? 0;
+              const page = resolvePdfPage(sourceId);
               linkStore.setPendingEditorSync(newId, page);
             }
 

@@ -84,9 +84,15 @@ vi.mock("../editorViewRef", () => ({
 
 // --- pdfPaneRef mock -------------------------------------------------------
 const mockGetPdfCurrentPage = vi.hoisted(() => vi.fn());
+const mockGetPdfGoToPage = vi.hoisted(() => vi.fn());
+const mockMarkForwardSync = vi.hoisted(() => vi.fn());
+const mockClearForwardSync = vi.hoisted(() => vi.fn());
 
 vi.mock("../pdfPaneRef", () => ({
   getPdfCurrentPage: mockGetPdfCurrentPage,
+  getPdfGoToPage: mockGetPdfGoToPage,
+  markForwardSync: mockMarkForwardSync,
+  clearForwardSync: mockClearForwardSync,
 }));
 
 // --- pageMarkers mock ------------------------------------------------------
@@ -98,7 +104,19 @@ vi.mock("../pageMarkers", () => ({
   pageForOffset: mockPageForOffset,
 }));
 
-import { initCompanionCommands, selectCompanionTarget } from "./companion";
+// --- reverseSync mock ------------------------------------------------------
+const mockDispatchReverseSync = vi.hoisted(() => vi.fn());
+
+vi.mock("../reverseSync", () => ({
+  dispatchReverseSync: mockDispatchReverseSync,
+}));
+
+// --- forwardSync mock ------------------------------------------------------
+vi.mock("../forwardSync", () => ({
+  FORWARD_SYNC_GUARD_MS: 2000,
+}));
+
+import { initCompanionCommands, selectCompanionTarget, resolveEditorPageIndex, resolvePdfPage } from "./companion";
 import type { PaneLeaf } from "../../stores/panes";
 
 function leaf(id: string, pagePath: string | null = null): PaneLeaf {
@@ -195,6 +213,73 @@ describe("selectCompanionTarget", () => {
   });
 });
 
+describe("resolveEditorPageIndex", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns page index when editor view exists", () => {
+    const fakeView = {
+      state: { doc: {}, selection: { main: { head: 42 } } },
+    };
+    mockGetPaneView.mockReturnValue(fakeView);
+    const fakeMarkers = [{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }];
+    mockGetCachedPageMarkers.mockReturnValue(fakeMarkers);
+    mockPageForOffset.mockReturnValue(1);
+
+    expect(resolveEditorPageIndex("pane-a")).toBe(1);
+    expect(mockGetPaneView).toHaveBeenCalledWith("pane-a");
+    expect(mockGetCachedPageMarkers).toHaveBeenCalledWith(fakeView.state.doc);
+    expect(mockPageForOffset).toHaveBeenCalledWith(fakeMarkers, 42);
+  });
+
+  it("returns null when editor view is not available", () => {
+    mockGetPaneView.mockReturnValue(null);
+
+    expect(resolveEditorPageIndex("pane-a")).toBeNull();
+    expect(mockGetCachedPageMarkers).not.toHaveBeenCalled();
+    expect(mockPageForOffset).not.toHaveBeenCalled();
+  });
+
+  it("returns 0 when cursor is before all markers", () => {
+    const fakeView = {
+      state: { doc: {}, selection: { main: { head: 0 } } },
+    };
+    mockGetPaneView.mockReturnValue(fakeView);
+    mockGetCachedPageMarkers.mockReturnValue([{ page: 1, charOffset: 10 }]);
+    mockPageForOffset.mockReturnValue(0);
+
+    expect(resolveEditorPageIndex("pane-a")).toBe(0);
+  });
+});
+
+describe("resolvePdfPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLinkState.currentPage.clear();
+  });
+
+  it("returns value from getPdfCurrentPage when available", () => {
+    mockGetPdfCurrentPage.mockReturnValue(7);
+
+    expect(resolvePdfPage("pane-a")).toBe(7);
+    expect(mockGetPdfCurrentPage).toHaveBeenCalledWith("pane-a");
+  });
+
+  it("falls back to store currentPage when getPdfCurrentPage returns null", () => {
+    mockGetPdfCurrentPage.mockReturnValue(null);
+    mockLinkState.currentPage.set("pane-a", 5);
+
+    expect(resolvePdfPage("pane-a")).toBe(5);
+  });
+
+  it("returns 0 when both sources return null/undefined", () => {
+    mockGetPdfCurrentPage.mockReturnValue(null);
+
+    expect(resolvePdfPage("pane-a")).toBe(0);
+  });
+});
+
 function resetPaneState(pagePath: string | null) {
   mockPaneState.root = { type: "leaf", id: "src-pane", pagePath };
   mockPaneState.focusedPaneId = "src-pane";
@@ -248,7 +333,7 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("reuses pane already showing the companion file", async () => {
+  it("reuses pane already showing the companion file and navigates PDF to cursor page", async () => {
     mockPaneState.root = {
       type: "split",
       id: "root",
@@ -259,6 +344,49 @@ describe("initCompanionCommands", () => {
       ],
       sizes: [0.5, 0.5],
     };
+    const fakeView = {
+      state: { doc: {}, selection: { main: { head: 42 } } },
+    };
+    mockGetPaneView.mockReturnValue(fakeView);
+    const fakeMarkers = [{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }];
+    mockGetCachedPageMarkers.mockReturnValue(fakeMarkers);
+    mockPageForOffset.mockReturnValue(1);
+    const mockGoTo = vi.fn();
+    mockGetPdfGoToPage.mockReturnValue(mockGoTo);
+    mockMarkForwardSync.mockReturnValue(42);
+
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
+      expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
+      expect(mockPaneState.focusPane).toHaveBeenCalledWith("companion-pane");
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
+      expect(mockStatusState.show).toHaveBeenCalledWith(
+        expect.stringContaining("paper.pdf"),
+        "success",
+      );
+      expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
+      expect(mockLinkState.setPendingEditorSync).not.toHaveBeenCalled();
+      expect(mockGoTo).toHaveBeenCalledWith(1);
+      expect(mockMarkForwardSync).toHaveBeenCalledWith("companion-pane");
+    });
+  });
+
+  it("prefers already-open pane over vacant pane", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "companion-pane", pagePath: "paper.pdf" },
+        { type: "leaf", id: "vacant-pane", pagePath: null },
+      ],
+      sizes: [0.33, 0.34, 0.33],
+    };
+    mockGetPaneView.mockReturnValue(null);
     initCompanionCommands();
     executeCommand("companion.open");
 
@@ -276,7 +404,40 @@ describe("initCompanionCommands", () => {
     });
   });
 
-  it("prefers already-open pane over vacant pane", async () => {
+  it("dispatches reverse sync for already-open markdown (PDF→md)", async () => {
+    resetPaneState("paper.pdf");
+    mockFindCompanionFile.mockResolvedValue("paper.md");
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.pdf" },
+        { type: "leaf", id: "companion-pane", pagePath: "paper.md" },
+      ],
+      sizes: [0.5, 0.5],
+    };
+    mockGetPdfCurrentPage.mockReturnValue(3);
+    const fakeView = { state: { doc: {} } };
+    mockGetPaneView.mockReturnValue(fakeView);
+    const fakeMarkers = [{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }, { page: 3, charOffset: 60 }, { page: 4, charOffset: 90 }];
+    mockGetCachedPageMarkers.mockReturnValue(fakeMarkers);
+
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
+      expect(mockDispatchReverseSync).toHaveBeenCalledWith(
+        3,
+        "companion-pane",
+        fakeMarkers,
+        { skipGuards: true, clampIndex: true },
+      );
+    });
+  });
+
+  it("no-ops gracefully when editor view is null in already-open md→PDF path", async () => {
     mockPaneState.root = {
       type: "split",
       id: "root",
@@ -284,25 +445,48 @@ describe("initCompanionCommands", () => {
       children: [
         { type: "leaf", id: "src-pane", pagePath: "paper.md" },
         { type: "leaf", id: "companion-pane", pagePath: "paper.pdf" },
-        { type: "leaf", id: "vacant-pane", pagePath: null },
       ],
-      sizes: [0.33, 0.34, 0.33],
+      sizes: [0.5, 0.5],
     };
+    mockGetPaneView.mockReturnValue(null);
+    mockGetPdfGoToPage.mockReturnValue(vi.fn());
+
     initCompanionCommands();
     executeCommand("companion.open");
 
     await vi.waitFor(() => {
-      expect(mockPaneState.splitPane).not.toHaveBeenCalled();
-      expect(mockPaneState.setPanePage).not.toHaveBeenCalled();
-      expect(mockPaneState.focusPane).toHaveBeenCalledWith("companion-pane");
       expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
-      expect(mockStatusState.show).toHaveBeenCalledWith(
-        expect.stringContaining("paper.pdf"),
-        "success",
-      );
-      expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
-      expect(mockLinkState.setPendingEditorSync).not.toHaveBeenCalled();
     });
+    expect(mockGetPdfGoToPage).not.toHaveBeenCalled();
+    expect(mockMarkForwardSync).not.toHaveBeenCalled();
+  });
+
+  it("no-ops gracefully when goToPage is not registered in already-open md→PDF path", async () => {
+    mockPaneState.root = {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+        { type: "leaf", id: "companion-pane", pagePath: "paper.pdf" },
+      ],
+      sizes: [0.5, 0.5],
+    };
+    const fakeView = {
+      state: { doc: {}, selection: { main: { head: 10 } } },
+    };
+    mockGetPaneView.mockReturnValue(fakeView);
+    mockGetCachedPageMarkers.mockReturnValue([{ page: 1, charOffset: 0 }]);
+    mockPageForOffset.mockReturnValue(0);
+    mockGetPdfGoToPage.mockReturnValue(null);
+
+    initCompanionCommands();
+    executeCommand("companion.open");
+
+    await vi.waitFor(() => {
+      expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "companion-pane");
+    });
+    expect(mockMarkForwardSync).not.toHaveBeenCalled();
   });
 
   it("reuses next non-source pane when no vacant pane exists", async () => {
