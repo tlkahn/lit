@@ -2,227 +2,288 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useRefNavStackStore } from "./refNavStack";
 
 function resetStore() {
-  useRefNavStackStore.setState({ stack: [] });
+  useRefNavStackStore.setState({ stacks: new Map() });
 }
 
 describe("refNavStack store", () => {
   beforeEach(resetStore);
 
   describe("initial state", () => {
-    it("has an empty stack", () => {
-      expect(useRefNavStackStore.getState().stack).toEqual([]);
+    it("has an empty stacks map", () => {
+      expect(useRefNavStackStore.getState().stacks).toEqual(new Map());
     });
 
-    it("current() returns null", () => {
-      expect(useRefNavStackStore.getState().current()).toBeNull();
+    it("current() returns null for unknown pane", () => {
+      expect(useRefNavStackStore.getState().current("pane1")).toBeNull();
     });
 
-    it("depth() returns 0", () => {
-      expect(useRefNavStackStore.getState().depth()).toBe(0);
+    it("depth() returns 0 for unknown pane", () => {
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(0);
     });
   });
 
   describe("push", () => {
-    it("pushes onto empty stack", () => {
-      useRefNavStackStore.getState().push("a", "Note A");
-      const { stack } = useRefNavStackStore.getState();
-      expect(stack).toEqual([{ key: "a", title: "Note A" }]);
+    it("pushes onto empty pane stack", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "Note A");
+      const entries = useRefNavStackStore.getState().stacks.get("pane1");
+      expect(entries).toEqual([{ key: "a", title: "Note A" }]);
     });
 
-    it("pushes multiple entries", () => {
-      const s = useRefNavStackStore.getState();
-      s.push("a", "Note A");
-      useRefNavStackStore.getState().push("b", "Note B");
-      const { stack } = useRefNavStackStore.getState();
-      expect(stack).toEqual([
+    it("pushes multiple entries to same pane", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "Note A");
+      useRefNavStackStore.getState().push("pane1", "b", "Note B");
+      const entries = useRefNavStackStore.getState().stacks.get("pane1");
+      expect(entries).toEqual([
         { key: "a", title: "Note A" },
         { key: "b", title: "Note B" },
       ]);
     });
 
-    it("no-ops when key is already on stack (cycle guard)", () => {
-      const s = useRefNavStackStore.getState();
-      s.push("a", "Note A");
-      useRefNavStackStore.getState().push("b", "Note B");
-      useRefNavStackStore.getState().push("a", "Note A again");
-      expect(useRefNavStackStore.getState().stack).toEqual([
+    it("no-ops when key is already on pane stack (cycle guard)", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "Note A");
+      useRefNavStackStore.getState().push("pane1", "b", "Note B");
+      useRefNavStackStore.getState().push("pane1", "a", "Note A again");
+      expect(useRefNavStackStore.getState().stacks.get("pane1")).toEqual([
         { key: "a", title: "Note A" },
         { key: "b", title: "Note B" },
       ]);
     });
 
     it("preserves reference identity on cycle-guard no-op", () => {
-      useRefNavStackStore.getState().push("a", "Note A");
-      const stackBefore = useRefNavStackStore.getState().stack;
-      useRefNavStackStore.getState().push("a", "Different Title");
-      const stackAfter = useRefNavStackStore.getState().stack;
-      expect(stackAfter).toBe(stackBefore);
+      useRefNavStackStore.getState().push("pane1", "a", "Note A");
+      const stacksBefore = useRefNavStackStore.getState().stacks;
+      useRefNavStackStore.getState().push("pane1", "a", "Different Title");
+      const stacksAfter = useRefNavStackStore.getState().stacks;
+      expect(stacksAfter).toBe(stacksBefore);
     });
   });
 
   describe("pop", () => {
-    it("returns top entry", () => {
-      useRefNavStackStore.getState().push("a", "Note A");
-      useRefNavStackStore.getState().push("b", "Note B");
-      const popped = useRefNavStackStore.getState().pop();
+    it("returns top entry for pane", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "Note A");
+      useRefNavStackStore.getState().push("pane1", "b", "Note B");
+      const popped = useRefNavStackStore.getState().pop("pane1");
       expect(popped).toEqual({ key: "b", title: "Note B" });
     });
 
-    it("returns null on empty stack", () => {
-      expect(useRefNavStackStore.getState().pop()).toBeNull();
+    it("returns null on empty pane stack", () => {
+      expect(useRefNavStackStore.getState().pop("pane1")).toBeNull();
     });
 
     it("drains in LIFO order", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      useRefNavStackStore.getState().push("c", "C");
-      expect(useRefNavStackStore.getState().pop()).toEqual({ key: "c", title: "C" });
-      expect(useRefNavStackStore.getState().pop()).toEqual({ key: "b", title: "B" });
-      expect(useRefNavStackStore.getState().pop()).toEqual({ key: "a", title: "A" });
-      expect(useRefNavStackStore.getState().pop()).toBeNull();
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().push("pane1", "c", "C");
+      expect(useRefNavStackStore.getState().pop("pane1")).toEqual({ key: "c", title: "C" });
+      expect(useRefNavStackStore.getState().pop("pane1")).toEqual({ key: "b", title: "B" });
+      expect(useRefNavStackStore.getState().pop("pane1")).toEqual({ key: "a", title: "A" });
+      expect(useRefNavStackStore.getState().pop("pane1")).toBeNull();
     });
 
     it("preserves reference identity on empty pop", () => {
-      const stackBefore = useRefNavStackStore.getState().stack;
-      useRefNavStackStore.getState().pop();
-      const stackAfter = useRefNavStackStore.getState().stack;
-      expect(stackAfter).toBe(stackBefore);
+      const stacksBefore = useRefNavStackStore.getState().stacks;
+      useRefNavStackStore.getState().pop("pane1");
+      const stacksAfter = useRefNavStackStore.getState().stacks;
+      expect(stacksAfter).toBe(stacksBefore);
     });
 
     it("popped entry includes correct key and title", () => {
-      useRefNavStackStore.getState().push("x", "Title X");
-      const entry = useRefNavStackStore.getState().pop();
+      useRefNavStackStore.getState().push("pane1", "x", "Title X");
+      const entry = useRefNavStackStore.getState().pop("pane1");
       expect(entry!.key).toBe("x");
       expect(entry!.title).toBe("Title X");
     });
   });
 
   describe("reset", () => {
-    it("clears the stack", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      useRefNavStackStore.getState().reset();
-      expect(useRefNavStackStore.getState().stack).toEqual([]);
+    it("clears the pane stack", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().stacks.get("pane1")).toBeUndefined();
     });
 
     it("preserves reference identity on empty reset", () => {
-      const stackBefore = useRefNavStackStore.getState().stack;
-      useRefNavStackStore.getState().reset();
-      const stackAfter = useRefNavStackStore.getState().stack;
-      expect(stackAfter).toBe(stackBefore);
+      const stacksBefore = useRefNavStackStore.getState().stacks;
+      useRefNavStackStore.getState().reset("pane1");
+      const stacksAfter = useRefNavStackStore.getState().stacks;
+      expect(stacksAfter).toBe(stacksBefore);
     });
 
     it("current and depth correct after reset", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().reset();
-      expect(useRefNavStackStore.getState().current()).toBeNull();
-      expect(useRefNavStackStore.getState().depth()).toBe(0);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().current("pane1")).toBeNull();
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(0);
     });
   });
 
   describe("current", () => {
     it("returns top entry after push", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      expect(useRefNavStackStore.getState().current()).toEqual({ key: "b", title: "B" });
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      expect(useRefNavStackStore.getState().current("pane1")).toEqual({ key: "b", title: "B" });
     });
 
     it("returns new top after pop", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      useRefNavStackStore.getState().pop();
-      expect(useRefNavStackStore.getState().current()).toEqual({ key: "a", title: "A" });
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().pop("pane1");
+      expect(useRefNavStackStore.getState().current("pane1")).toEqual({ key: "a", title: "A" });
     });
 
     it("returns null after reset", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().reset();
-      expect(useRefNavStackStore.getState().current()).toBeNull();
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().current("pane1")).toBeNull();
     });
   });
 
   describe("depth", () => {
     it("counts entries correctly", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      expect(useRefNavStackStore.getState().depth()).toBe(1);
-      useRefNavStackStore.getState().push("b", "B");
-      expect(useRefNavStackStore.getState().depth()).toBe(2);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(1);
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(2);
     });
 
     it("decrements on pop", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      useRefNavStackStore.getState().pop();
-      expect(useRefNavStackStore.getState().depth()).toBe(1);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().pop("pane1");
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(1);
     });
   });
 
   describe("isOnStack", () => {
-    it("returns false on empty stack", () => {
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(false);
+    it("returns false on empty pane stack", () => {
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(false);
     });
 
     it("returns true for pushed key", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(true);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(true);
     });
 
     it("returns true for deep entry", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      useRefNavStackStore.getState().push("c", "C");
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(true);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().push("pane1", "c", "C");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(true);
     });
 
     it("returns false after pop removes the key", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().pop();
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(false);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().pop("pane1");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(false);
     });
 
     it("returns false after reset", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().reset();
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(false);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(false);
     });
   });
 
   describe("cycle guard", () => {
     it("push A, push B, push A = no-op", () => {
-      const s = useRefNavStackStore.getState();
-      s.push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      useRefNavStackStore.getState().push("a", "A");
-      expect(useRefNavStackStore.getState().depth()).toBe(2);
-      expect(useRefNavStackStore.getState().current()).toEqual({ key: "b", title: "B" });
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(2);
+      expect(useRefNavStackStore.getState().current("pane1")).toEqual({ key: "b", title: "B" });
     });
 
     it("after pop removes A, push A succeeds", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      useRefNavStackStore.getState().push("b", "B");
-      // pop B
-      useRefNavStackStore.getState().pop();
-      // pop A
-      useRefNavStackStore.getState().pop();
-      // now A is not on stack, push should succeed
-      useRefNavStackStore.getState().push("a", "New A");
-      expect(useRefNavStackStore.getState().stack).toEqual([{ key: "a", title: "New A" }]);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().pop("pane1");
+      useRefNavStackStore.getState().pop("pane1");
+      useRefNavStackStore.getState().push("pane1", "a", "New A");
+      expect(useRefNavStackStore.getState().stacks.get("pane1")).toEqual([{ key: "a", title: "New A" }]);
     });
 
     it("isOnStack reflects state through push/pop/reset", () => {
-      useRefNavStackStore.getState().push("a", "A");
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(true);
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(true);
 
-      useRefNavStackStore.getState().push("b", "B");
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(true);
-      expect(useRefNavStackStore.getState().isOnStack("b")).toBe(true);
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(true);
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "b")).toBe(true);
 
-      useRefNavStackStore.getState().pop(); // removes B
-      expect(useRefNavStackStore.getState().isOnStack("b")).toBe(false);
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(true);
+      useRefNavStackStore.getState().pop("pane1");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "b")).toBe(false);
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(true);
 
-      useRefNavStackStore.getState().reset();
-      expect(useRefNavStackStore.getState().isOnStack("a")).toBe(false);
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(false);
+    });
+  });
+
+  describe("cross-pane isolation", () => {
+    it("push to different panes independently", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane2", "x", "X");
+      expect(useRefNavStackStore.getState().stacks.get("pane1")).toEqual([{ key: "a", title: "A" }]);
+      expect(useRefNavStackStore.getState().stacks.get("pane2")).toEqual([{ key: "x", title: "X" }]);
+    });
+
+    it("pop from one pane does not affect the other", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane2", "x", "X");
+      const popped = useRefNavStackStore.getState().pop("pane1");
+      expect(popped).toEqual({ key: "a", title: "A" });
+      expect(useRefNavStackStore.getState().depth("pane2")).toBe(1);
+      expect(useRefNavStackStore.getState().current("pane2")).toEqual({ key: "x", title: "X" });
+    });
+
+    it("depth is scoped to the pane", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().push("pane2", "x", "X");
+      expect(useRefNavStackStore.getState().depth("pane1")).toBe(2);
+      expect(useRefNavStackStore.getState().depth("pane2")).toBe(1);
+    });
+
+    it("reset one pane does not clear the other", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane2", "x", "X");
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().stacks.get("pane1")).toBeUndefined();
+      expect(useRefNavStackStore.getState().stacks.get("pane2")).toEqual([{ key: "x", title: "X" }]);
+    });
+
+    it("isOnStack is scoped to the pane", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane2", "b", "B");
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "a")).toBe(true);
+      expect(useRefNavStackStore.getState().isOnStack("pane1", "b")).toBe(false);
+      expect(useRefNavStackStore.getState().isOnStack("pane2", "b")).toBe(true);
+      expect(useRefNavStackStore.getState().isOnStack("pane2", "a")).toBe(false);
+    });
+  });
+
+  describe("removePaneStack", () => {
+    it("removes the pane entry from stacks", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().removePaneStack("pane1");
+      expect(useRefNavStackStore.getState().stacks.has("pane1")).toBe(false);
+    });
+
+    it("does not affect other panes", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane2", "x", "X");
+      useRefNavStackStore.getState().removePaneStack("pane1");
+      expect(useRefNavStackStore.getState().stacks.has("pane1")).toBe(false);
+      expect(useRefNavStackStore.getState().stacks.get("pane2")).toEqual([{ key: "x", title: "X" }]);
+    });
+
+    it("preserves reference identity when pane does not exist", () => {
+      const stacksBefore = useRefNavStackStore.getState().stacks;
+      useRefNavStackStore.getState().removePaneStack("nonexistent");
+      const stacksAfter = useRefNavStackStore.getState().stacks;
+      expect(stacksAfter).toBe(stacksBefore);
     });
   });
 });

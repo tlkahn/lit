@@ -6,46 +6,65 @@ export interface RefNavEntry {
 }
 
 export interface RefNavStackStore {
-  stack: RefNavEntry[];
-  push(key: string, title: string): void;
-  pop(): RefNavEntry | null;
-  reset(): void;
-  current(): RefNavEntry | null;
-  depth(): number;
-  isOnStack(key: string): boolean;
+  stacks: Map<string, RefNavEntry[]>;
+  push(paneId: string, key: string, title: string): void;
+  pop(paneId: string): RefNavEntry | null;
+  reset(paneId: string): void;
+  current(paneId: string): RefNavEntry | null;
+  depth(paneId: string): number;
+  isOnStack(paneId: string, key: string): boolean;
+  removePaneStack(paneId: string): void;
 }
 
-const EMPTY: RefNavEntry[] = [];
-
 export const useRefNavStackStore = create<RefNavStackStore>((set, get) => ({
-  stack: EMPTY,
+  stacks: new Map(),
 
-  push: (key, title) => {
-    const { stack } = get();
-    if (stack.some((e) => e.key === key)) return;
-    set({ stack: [...stack, { key, title }] });
+  push: (paneId, key, title) => {
+    const { stacks } = get();
+    const arr = stacks.get(paneId) ?? [];
+    if (arr.some((e) => e.key === key)) return;
+    const next = new Map(stacks);
+    next.set(paneId, [...arr, { key, title }]);
+    set({ stacks: next });
   },
 
-  pop: () => {
-    const { stack } = get();
-    if (stack.length === 0) return null;
-    const top = stack[stack.length - 1]!;
-    set({ stack: stack.slice(0, -1) });
+  pop: (paneId) => {
+    const { stacks } = get();
+    const arr = stacks.get(paneId);
+    if (!arr || arr.length === 0) return null;
+    const top = arr[arr.length - 1]!;
+    const next = new Map(stacks);
+    next.set(paneId, arr.slice(0, -1));
+    set({ stacks: next });
     return top;
   },
 
-  reset: () => {
-    const { stack } = get();
-    if (stack.length === 0) return;
-    set({ stack: EMPTY });
+  reset: (paneId) => {
+    const { stacks } = get();
+    if (!stacks.has(paneId)) return;
+    const next = new Map(stacks);
+    next.delete(paneId);
+    set({ stacks: next });
   },
 
-  current: () => {
-    const { stack } = get();
-    return stack.length > 0 ? stack[stack.length - 1]! : null;
+  current: (paneId) => {
+    const arr = get().stacks.get(paneId);
+    return arr && arr.length > 0 ? arr[arr.length - 1]! : null;
   },
 
-  depth: () => get().stack.length,
+  depth: (paneId) => {
+    return get().stacks.get(paneId)?.length ?? 0;
+  },
 
-  isOnStack: (key) => get().stack.some((e) => e.key === key),
+  isOnStack: (paneId, key) => {
+    return get().stacks.get(paneId)?.some((e) => e.key === key) ?? false;
+  },
+
+  removePaneStack: (paneId) => {
+    const { stacks } = get();
+    if (!stacks.has(paneId)) return;
+    const next = new Map(stacks);
+    next.delete(paneId);
+    set({ stacks: next });
+  },
 }));
