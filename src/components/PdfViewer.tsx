@@ -366,6 +366,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         }
 
         setCurrentPage(index);
+        setCanvasReady(true);
         currentPageRef.current = index;
         onPageChange?.(index);
       } catch (err) {
