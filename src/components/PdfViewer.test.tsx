@@ -454,7 +454,7 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
@@ -2468,6 +2468,61 @@ describe("PdfViewer", () => {
       expect(scrollContainer.scrollTop).toBe(200);
 
       fireEvent.keyUp(window, { key: " " });
+    });
+  });
+
+  it("goToPage sets canvasReady when the init render has not yet completed", async () => {
+    type PageObj = Awaited<ReturnType<typeof mockGetPage>>;
+    let resolveInitGetPage!: (v: PageObj) => void;
+    const deferredGetPage = new Promise<PageObj>((r) => {
+      resolveInitGetPage = r;
+    });
+
+    let getPageCallCount = 0;
+    mockGetPage.mockImplementation(() => {
+      getPageCallCount++;
+      if (getPageCallCount === 1) return deferredGetPage;
+      return Promise.resolve({
+        getViewport: mockGetViewport,
+        render: mockRender,
+        getTextContent: mockGetTextContent,
+        getAnnotations: mockGetAnnotations,
+        cleanup: mockPageCleanup,
+      });
+    });
+
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        registerGoToPage={(fn) => {
+          goToPage = fn;
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(goToPage).not.toBeNull();
+    });
+    expect(screen.getByTestId("pdf-loading")).toBeInTheDocument();
+
+    await act(async () => {
+      goToPage!(1);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveInitGetPage({
+        getViewport: mockGetViewport,
+        render: mockRender,
+        getTextContent: mockGetTextContent,
+        getAnnotations: mockGetAnnotations,
+        cleanup: mockPageCleanup,
+      });
     });
   });
 });
