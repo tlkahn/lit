@@ -14,6 +14,7 @@ import { globalJumpTracker } from "../editor/jumpTracker";
 import { useGraphViewState } from "../stores/graphViewState";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 import { HistoryNavButtons } from "./HistoryNavButtons";
+import { ViewModeToggle } from "./ViewModeToggle";
 import { useAppKeybindings } from "../hooks/useAppKeybindings";
 
 const EMPTY_FM: Record<string, unknown> = {};
@@ -342,41 +343,8 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
             </button>
           )}
-          <div className="ms-auto flex gap-1">
-            <button
-              onClick={() => setPaneViewMode(focusedPaneId, "editor")}
-              aria-label="Editor"
-              title="Editor (⌘1)"
-              className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "editor" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
-            >
-              Editor
-            </button>
-            <button
-              onClick={() => setPaneViewMode(focusedPaneId, "mindmap")}
-              aria-label="Mindmap"
-              title="Mindmap (⌘2)"
-              className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "mindmap" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
-            >
-              Mindmap
-            </button>
-            {graphViewEnabled && (
-              <button
-                onClick={() => setPaneViewMode(focusedPaneId, "graph")}
-                aria-label="Graph"
-                title="Graph (⌘3)"
-                className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "graph" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
-              >
-                Graph
-              </button>
-            )}
-            <button
-              onClick={() => setPaneViewMode(focusedPaneId, "cardbox")}
-              aria-label="Cardbox"
-              title="Cardbox (⌘4)"
-              className={`rounded-md px-2 py-0.5 text-xs ${viewMode === "cardbox" ? "bg-bg-hover text-text-normal font-medium" : "text-text-faint hover:text-text-muted"}`}
-            >
-              Cardbox
-            </button>
+          <div className="ms-auto">
+            <ViewModeToggle paneId={focusedPaneId} currentMode={viewMode} variant="default" showShortcuts />
           </div>
         </div>
         {showFrontmatter && (
