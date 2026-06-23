@@ -10,6 +10,15 @@ import { FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
 import { PdfViewer } from "./PdfViewer";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 
+function consumePendingSyncOnMount(paneId: string): number {
+  const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
+  if (pending !== null && pending !== 0) {
+    const token = markForwardSync(paneId);
+    setTimeout(() => clearForwardSync(paneId, token), FORWARD_SYNC_GUARD_MS);
+  }
+  return pending ?? 0;
+}
+
 interface PdfViewerPaneProps {
   paneId: string;
 }
@@ -24,20 +33,14 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     setFocusedPane(paneId);
   }, [paneId]);
 
+  const initialPageRef = useRef<number | undefined>(undefined);
+  if (initialPageRef.current === undefined) {
+    initialPageRef.current = consumePendingSyncOnMount(paneId);
+  }
+
   const handleRegisterGoToPage = useCallback(
-    (fn: (pageIndex: number) => void, ready: boolean) => {
+    (fn: (pageIndex: number) => void) => {
       registerPdfGoToPage(paneId, fn);
-      // Only consume the pending sync once the PDF is ready (pdfInfo set).
-      if (!ready) return;
-      const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
-      // Skip page 0: PDF viewers start there by default, so navigating is a
-      // no-op. The editor side has no such guard because its cursor may not be
-      // at the first marker.
-      if (pending !== null && pending !== 0) {
-        const token = markForwardSync(paneId);
-        fn(pending);
-        setTimeout(() => clearForwardSync(paneId, token), FORWARD_SYNC_GUARD_MS);
-      }
     },
     [paneId],
   );
@@ -135,6 +138,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
       <PdfViewer
         filePath={absolutePath}
         paneId={paneId}
+        initialPage={initialPageRef.current}
         registerGoToPage={handleRegisterGoToPage}
         registerGetCurrentPage={handleRegisterGetCurrentPage}
         onPageChange={handlePageChange}
