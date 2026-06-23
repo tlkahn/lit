@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BibEntryRow } from "./BibEntryRow";
 import type { BibEntryRowProps } from "./BibEntryRow";
+import type { BibEntryActionProps } from "./BibEntryActions";
 import { useWorkspaceStore } from "../stores/workspace";
 import { mockInvoke, mockListen, resetListenMock } from "../test/tauri-mock";
 import type { BibEntry, BibKeyState } from "../lib/ipc";
@@ -35,10 +36,8 @@ const sparseEntry: BibEntry = {
   bib_file: "/workspace/refs.bib",
 };
 
-const handlers = (): Pick<
-  BibEntryRowProps,
-  | "onToggleExpand"
-  | "onNavigateToBibFile"
+const actionHandlers = (): Pick<
+  BibEntryActionProps,
   | "onOpenNote"
   | "onCreateNote"
   | "onEnrich"
@@ -49,8 +48,6 @@ const handlers = (): Pick<
   | "onDownloadPdf"
   | "onLinkPdf"
 > => ({
-  onToggleExpand: vi.fn(),
-  onNavigateToBibFile: vi.fn(),
   onOpenNote: vi.fn(),
   onCreateNote: vi.fn(),
   onEnrich: vi.fn(),
@@ -62,26 +59,39 @@ const handlers = (): Pick<
   onLinkPdf: vi.fn(),
 });
 
-const defaultLoading = {
-  materializingKey: null,
-  enrichingKey: null,
+const defaultActionLoading = {
+  isMaterializing: false,
+  isEnriching: false,
   enrichPhase: "fetch" as const,
-  downloadingKey: null,
+  isDownloading: false,
   downloadProgress: null,
-  linkingKey: null,
+  isLinking: false,
 };
 
-function renderRow(overrides: Partial<BibEntryRowProps> = {}) {
-  const h = handlers();
+function renderRow(overrides: {
+  entry?: BibEntry;
+  isExpanded?: boolean;
+  modHeld?: boolean;
+  onToggleExpand?: (...args: unknown[]) => void;
+  onNavigateToBibFile?: (entry: BibEntry) => void;
+  actionProps?: Partial<BibEntryActionProps>;
+} = {}) {
+  const entry = overrides.entry ?? baseEntry;
+  const ah = actionHandlers();
   const props: BibEntryRowProps = {
-    entry: baseEntry,
-    state: undefined,
-    isExpanded: false,
-    modHeld: false,
-    ocrCompanionCurrent: undefined,
-    ...h,
-    ...defaultLoading,
-    ...overrides,
+    entry,
+    isExpanded: overrides.isExpanded ?? false,
+    modHeld: overrides.modHeld ?? false,
+    onToggleExpand: (overrides.onToggleExpand ?? vi.fn()) as (entryId: string) => void,
+    onNavigateToBibFile: overrides.onNavigateToBibFile ?? vi.fn(),
+    actionProps: {
+      entry,
+      state: undefined,
+      ocrCompanionCurrent: undefined,
+      ...defaultActionLoading,
+      ...ah,
+      ...overrides.actionProps,
+    },
   };
   render(<BibEntryRow {...props} />);
   return props;
@@ -195,18 +205,18 @@ describe("BibEntryRow — BibEntryActions wiring", () => {
   it("renders BibEntryActions and wires onCopyCitation", async () => {
     const user = userEvent.setup();
     const state: BibKeyState = { materialization: "shadow", page_id: null };
-    const props = renderRow({ isExpanded: true, state });
+    const props = renderRow({ isExpanded: true, actionProps: { state } });
     const copyBtn = screen.getByRole("button", { name: "Copy citation" });
     await user.click(copyBtn);
-    expect(props.onCopyCitation).toHaveBeenCalledWith("sanderson2009");
+    expect(props.actionProps.onCopyCitation).toHaveBeenCalledWith("sanderson2009");
   });
 
   it("wires onCreateNote through the create-note button", async () => {
     const user = userEvent.setup();
     const state: BibKeyState = { materialization: "shadow", page_id: null };
-    const props = renderRow({ isExpanded: true, state });
+    const props = renderRow({ isExpanded: true, actionProps: { state } });
     await user.click(screen.getByTestId("create-note-btn"));
-    expect(props.onCreateNote).toHaveBeenCalledWith("sanderson2009");
+    expect(props.actionProps.onCreateNote).toHaveBeenCalledWith("sanderson2009");
   });
 });
 

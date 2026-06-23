@@ -1,41 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
-import { getCitingPages, type BacklinkEntry, type BibEntry, type BibKeyState } from "../lib/ipc";
+import { getCitingPages, type BacklinkEntry, type BibEntry } from "../lib/ipc";
 import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { doiHref } from "../lib/urlUtils";
 import { distinctPublisher } from "../lib/bibUtils";
 import { EntryTypeBadge } from "./EntryTypeBadge";
-import { BibEntryActions } from "./BibEntryActions";
+import { BibEntryActions, type BibEntryActionProps } from "./BibEntryActions";
 
 export interface BibEntryRowProps {
   entry: BibEntry;
-  state: BibKeyState | undefined;
   isExpanded: boolean;
   modHeld: boolean;
-  ocrCompanionCurrent: string | false | undefined;
-
-  // Callbacks
-  onToggleExpand: () => void;
+  onToggleExpand: (entryId: string) => void;
   onNavigateToBibFile: (entry: BibEntry) => void;
-  onOpenNote: (pageId: string) => void;
-  onCreateNote: (key: string) => void;
-  onEnrich: (entry: BibEntry) => void;
-  onOpenPdf: (file: string) => void;
-  onOpenMarkdown: (filename: string) => void;
-  onOcr: (entry: BibEntry) => void;
-  onCopyCitation: (key: string) => void;
-  onDownloadPdf: (entry: BibEntry) => void;
-  onLinkPdf: (entry: BibEntry) => void;
-
-  // BibEntryActions loading states
-  materializingKey: string | null;
-  enrichingKey: string | null;
-  enrichPhase: "fetch" | "search";
-  downloadingKey: string | null;
-  downloadProgress: { bytes: number; total: number | null } | null;
-  linkingKey: string | null;
+  actionProps: BibEntryActionProps;
 }
 
 function urlHref(url: string): string {
@@ -136,22 +116,48 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
  * `data-indicator`, and the reveal flash. Callbacks are pre-wired by the parent
  * (e.g. note/markdown opens already include `recordDeparture()`).
  */
-export function BibEntryRow(props: BibEntryRowProps) {
+function areEqual(prev: BibEntryRowProps, next: BibEntryRowProps): boolean {
+  if (prev.entry !== next.entry) return false;
+  if (prev.isExpanded !== next.isExpanded) return false;
+  if (prev.modHeld !== next.modHeld) return false;
+  if (prev.onToggleExpand !== next.onToggleExpand) return false;
+  if (prev.onNavigateToBibFile !== next.onNavigateToBibFile) return false;
+  const pa = prev.actionProps;
+  const na = next.actionProps;
+  return pa.entry === na.entry
+    && pa.state === na.state
+    && pa.ocrCompanionCurrent === na.ocrCompanionCurrent
+    && pa.isMaterializing === na.isMaterializing
+    && pa.isEnriching === na.isEnriching
+    && pa.enrichPhase === na.enrichPhase
+    && pa.isDownloading === na.isDownloading
+    && pa.downloadProgress === na.downloadProgress
+    && pa.isLinking === na.isLinking
+    && pa.onOpenNote === na.onOpenNote
+    && pa.onCreateNote === na.onCreateNote
+    && pa.onEnrich === na.onEnrich
+    && pa.onOpenPdf === na.onOpenPdf
+    && pa.onOpenMarkdown === na.onOpenMarkdown
+    && pa.onOcr === na.onOcr
+    && pa.onCopyCitation === na.onCopyCitation
+    && pa.onDownloadPdf === na.onDownloadPdf
+    && pa.onLinkPdf === na.onLinkPdf;
+}
+
+export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
   const {
-    entry, state, isExpanded, modHeld, ocrCompanionCurrent,
+    entry, isExpanded, modHeld,
     onToggleExpand, onNavigateToBibFile,
-    onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOpenMarkdown, onOcr,
-    onCopyCitation, onDownloadPdf, onLinkPdf,
-    materializingKey, enrichingKey, enrichPhase,
-    downloadingKey, downloadProgress, linkingKey,
+    actionProps,
   } = props;
 
+  const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
   const tags = entry.tags ?? [];
 
   return (
     <>
       <button
-        onClick={() => onToggleExpand()}
+        onClick={() => onToggleExpand(entryId)}
         className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-start hover:bg-bg-hover"
       >
         <span
@@ -261,30 +267,11 @@ export function BibEntryRow(props: BibEntryRowProps) {
             </div>
           ) : null}
           <div className="not-italic">
-            <BibEntryActions
-              entry={entry}
-              state={state}
-              onOpenNote={onOpenNote}
-              onCreateNote={onCreateNote}
-              onEnrich={onEnrich}
-              onOpenPdf={onOpenPdf}
-              onOpenMarkdown={onOpenMarkdown}
-              onOcr={onOcr}
-              onCopyCitation={onCopyCitation}
-              onDownloadPdf={onDownloadPdf}
-              onLinkPdf={onLinkPdf}
-              materializingKey={materializingKey}
-              enrichingKey={enrichingKey}
-              enrichPhase={enrichPhase}
-              downloadingKey={downloadingKey}
-              downloadProgress={downloadProgress}
-              linkingKey={linkingKey}
-              ocrCompanionCurrent={ocrCompanionCurrent}
-            />
+            <BibEntryActions {...actionProps} />
             <CitedBySection bibKey={entry.key} />
           </div>
         </div>
       ) : null}
     </>
   );
-}
+}, areEqual);

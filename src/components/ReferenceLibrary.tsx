@@ -429,6 +429,13 @@ export function ReferenceLibrary() {
     [show],
   );
 
+  const materializingKeyRef = useRef(materializingKey);
+  materializingKeyRef.current = materializingKey;
+  const downloadingKeyRef = useRef(downloadingKey);
+  downloadingKeyRef.current = downloadingKey;
+  const linkingKeyRef = useRef(linkingKey);
+  linkingKeyRef.current = linkingKey;
+
   const doMaterialize = useMaterializeCitation({
     recordDeparture,
     navigate: selectPage,
@@ -438,7 +445,7 @@ export function ReferenceLibrary() {
 
   const materializeNote = useCallback(
     async (bibKey: string) => {
-      if (materializingKey !== null) return;
+      if (materializingKeyRef.current !== null) return;
       setMaterializingKey(bibKey);
       try {
         await doMaterialize(bibKey);
@@ -446,7 +453,7 @@ export function ReferenceLibrary() {
         setMaterializingKey(null);
       }
     },
-    [materializingKey, doMaterialize],
+    [doMaterialize],
   );
 
   /** Shared enrichment flow: spinner, phase timer, classify result, toast. */
@@ -507,7 +514,7 @@ export function ReferenceLibrary() {
 
   const handleDownload = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || downloadingKey || linkingKey) return;
+      if (!workspacePath || downloadingKeyRef.current || linkingKeyRef.current) return;
       setDownloadingKey(entry.key);
       setDownloadProgress(null);
       try {
@@ -526,12 +533,12 @@ export function ReferenceLibrary() {
         setDownloadProgress(null);
       }
     },
-    [workspacePath, downloadingKey, linkingKey, show],
+    [workspacePath, show],
   );
 
   const handleLinkPdf = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || linkingKey || downloadingKey) return;
+      if (!workspacePath || linkingKeyRef.current || downloadingKeyRef.current) return;
       setLinkingKey(entry.key);
       try {
         const { ask, open: openDialog } = await import("@tauri-apps/plugin-dialog");
@@ -565,7 +572,30 @@ export function ReferenceLibrary() {
         setLinkingKey(null);
       }
     },
-    [workspacePath, linkingKey, downloadingKey, show],
+    [workspacePath, show],
+  );
+
+  const handleOpenNote = useCallback(
+    (pageId: string) => {
+      recordDeparture();
+      selectPage(pageId);
+    },
+    [recordDeparture, selectPage],
+  );
+
+  const handleOpenMarkdown = useCallback(
+    (filename: string) => {
+      recordDeparture();
+      selectPage(filename);
+    },
+    [recordDeparture, selectPage],
+  );
+
+  const handleOcr = useCallback(
+    (e: BibEntry) => {
+      if (workspacePath) setOcrEntry(e);
+    },
+    [workspacePath],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -974,27 +1004,30 @@ export function ReferenceLibrary() {
                   >
                     <BibEntryRow
                       entry={entry}
-                      state={state}
                       isExpanded={isExpanded}
                       modHeld={modHeld}
-                      ocrCompanionCurrent={ocrCompanionCurrentMap[entryId]}
-                      onToggleExpand={() => toggleExpand(entryId)}
+                      onToggleExpand={toggleExpand}
                       onNavigateToBibFile={navigateToBibFile}
-                      onOpenNote={(pageId) => { recordDeparture(); selectPage(pageId); }}
-                      onCreateNote={materializeNote}
-                      onEnrich={handleEnrich}
-                      onOpenPdf={selectPage}
-                      onOpenMarkdown={(filename) => { recordDeparture(); selectPage(filename); }}
-                      onOcr={(e) => { if (workspacePath) setOcrEntry(e); }}
-                      onCopyCitation={copyCitation}
-                      onDownloadPdf={handleDownload}
-                      onLinkPdf={handleLinkPdf}
-                      materializingKey={materializingKey}
-                      enrichingKey={enrichingKey}
-                      enrichPhase={enrichPhase}
-                      downloadingKey={downloadingKey}
-                      downloadProgress={downloadProgress}
-                      linkingKey={linkingKey}
+                      actionProps={{
+                        entry,
+                        state,
+                        ocrCompanionCurrent: ocrCompanionCurrentMap[entryId],
+                        isMaterializing: materializingKey === entry.key,
+                        isEnriching: enrichingKey === entry.key,
+                        enrichPhase: enrichingKey === entry.key ? enrichPhase : "fetch",
+                        isDownloading: downloadingKey === entry.key,
+                        downloadProgress: downloadingKey === entry.key ? downloadProgress : null,
+                        isLinking: linkingKey === entry.key,
+                        onOpenNote: handleOpenNote,
+                        onCreateNote: materializeNote,
+                        onEnrich: handleEnrich,
+                        onOpenPdf: selectPage,
+                        onOpenMarkdown: handleOpenMarkdown,
+                        onOcr: handleOcr,
+                        onCopyCitation: copyCitation,
+                        onDownloadPdf: handleDownload,
+                        onLinkPdf: handleLinkPdf,
+                      }}
                     />
                   </div>
                 );

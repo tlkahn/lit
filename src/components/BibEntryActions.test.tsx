@@ -28,12 +28,13 @@ const handlers = () => ({
 });
 
 const defaultLoading = {
-  materializingKey: null,
-  enrichingKey: null,
+  isMaterializing: false,
+  isEnriching: false,
   enrichPhase: "fetch" as const,
-  downloadingKey: null,
+  isDownloading: false,
   downloadProgress: null,
-  linkingKey: null,
+  isLinking: false,
+  ocrCompanionCurrent: undefined as string | false | undefined,
 };
 
 describe("BibEntryActions", () => {
@@ -67,7 +68,7 @@ describe("BibEntryActions", () => {
         state={state}
         {...h}
         {...defaultLoading}
-        materializingKey="smith2024"
+        isMaterializing={true}
       />,
     );
     const btn = screen.getByTestId("create-note-btn");
@@ -111,7 +112,7 @@ describe("BibEntryActions", () => {
         state={state}
         {...h}
         {...defaultLoading}
-        enrichingKey="smith2024"
+        isEnriching={true}
       />,
     );
     const btn = screen.getByTestId("fetch-details-btn");
@@ -281,7 +282,7 @@ describe("BibEntryActions", () => {
     expect(screen.getByTestId("link-pdf-btn")).toHaveAttribute("aria-label", "Re-link PDF");
   });
 
-  it("shows Linking… label when linkingKey matches", () => {
+  it("shows Linking… label when isLinking is true", () => {
     const h = handlers();
     render(
       <BibEntryActions
@@ -289,7 +290,7 @@ describe("BibEntryActions", () => {
         state={undefined}
         {...h}
         {...defaultLoading}
-        linkingKey="smith2024"
+        isLinking={true}
       />,
     );
     expect(screen.getByTestId("link-pdf-btn")).toHaveAttribute("aria-label", "Linking…");
@@ -460,7 +461,7 @@ describe("BibEntryActions", () => {
         state={state}
         {...h}
         {...defaultLoading}
-        downloadingKey="smith2024"
+        isDownloading={true}
         downloadProgress={{ bytes: 50, total: 100 }}
       />,
     );
@@ -491,7 +492,7 @@ describe("BibEntryActions", () => {
         state={state}
         {...h}
         {...defaultLoading}
-        linkingKey="smith2024"
+        isLinking={true}
       />,
     );
     const btn = screen.getByTestId("link-pdf-btn");
