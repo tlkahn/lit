@@ -439,6 +439,18 @@ pub fn get_references(
 }
 
 #[tauri::command]
+pub fn get_reference_counts(
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<HashMap<String, usize>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::reference_counts(&store.conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn bib_delete(
     cite_key: String,
     workspace_path: String,

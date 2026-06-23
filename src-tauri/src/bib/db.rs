@@ -853,6 +853,21 @@ pub fn delete_references_for(
     Ok(deleted)
 }
 
+pub fn reference_counts(conn: &Connection) -> Result<HashMap<String, usize>, GraphError> {
+    let mut stmt = conn.prepare(
+        "SELECT parent_key, COUNT(*) FROM bib_references GROUP BY parent_key",
+    )?;
+    let mut map = HashMap::new();
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+    })?;
+    for row in rows {
+        let (key, count) = row?;
+        map.insert(key, count);
+    }
+    Ok(map)
+}
+
 pub fn live_index(conn: &Connection) -> Result<HashMap<String, BibEntry>, GraphError> {
     let sql = format!(
         "SELECT {} FROM bib_items WHERE deleted_at IS NULL ORDER BY cite_key",
@@ -2752,5 +2767,37 @@ mod tests {
             "get_references_for should return Err when bib_references table is missing, \
              not silently return an empty Vec"
         );
+    }
+
+    #[test]
+    fn test_reference_counts() {
+        let store = Store::open_memory().unwrap();
+        let parent_a = test_entry("parent_a");
+        let child_x = test_entry("child_x");
+        let child_y = test_entry("child_y");
+        upsert_bib_item(&store.conn, &parent_a, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_x, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child_y, None, None, false).unwrap();
+
+        insert_bib_reference(&store.conn, "parent_a", "child_x", Some(0)).unwrap();
+        insert_bib_reference(&store.conn, "parent_a", "child_y", Some(1)).unwrap();
+
+        let counts = reference_counts(&store.conn).unwrap();
+        assert_eq!(counts.get("parent_a"), Some(&2));
+        assert!(
+            !counts.contains_key("child_x"),
+            "keys with no outgoing references should be absent"
+        );
+        assert!(
+            !counts.contains_key("child_y"),
+            "keys with no outgoing references should be absent"
+        );
+    }
+
+    #[test]
+    fn test_reference_counts_empty() {
+        let store = Store::open_memory().unwrap();
+        let counts = reference_counts(&store.conn).unwrap();
+        assert!(counts.is_empty());
     }
 }

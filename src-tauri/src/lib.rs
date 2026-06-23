@@ -360,6 +360,7 @@ pub fn run() {
             commands::bib::bib_update_fields,
             commands::bib::bib_delete,
             commands::bib::get_references,
+            commands::bib::get_reference_counts,
             commands::bib::ensure_in_companion_bib,
             commands::bib_import::lookup_doi,
             commands::bib_import::save_bib_entry,
