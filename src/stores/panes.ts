@@ -232,7 +232,10 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const { root } = get();
     const leaf = findLeaf(root, paneId);
     if (!leaf || leaf.pagePath === pagePath) return;
-    const newRoot = replaceLeaf(root, paneId, { type: "leaf", id: paneId, pagePath });
+    const newLeaf: PaneLeaf = leaf.viewMode
+      ? { type: "leaf", id: paneId, pagePath, viewMode: leaf.viewMode }
+      : { type: "leaf", id: paneId, pagePath };
+    const newRoot = replaceLeaf(root, paneId, newLeaf);
     set({ root: newRoot });
   },
 

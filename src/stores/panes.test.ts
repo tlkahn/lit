@@ -858,7 +858,7 @@ describe("Section B: Store", () => {
     });
   });
 
-  describe("setPanePage resets viewMode", () => {
+  describe("setPanePage preserves viewMode", () => {
     beforeEach(() => {
       usePaneStore.setState({
         root: { type: "leaf", id: "test-root", pagePath: "note.md", viewMode: "mindmap" },
@@ -866,10 +866,10 @@ describe("Section B: Store", () => {
       });
     });
 
-    it("setPanePage clears viewMode on navigation", () => {
+    it("setPanePage keeps viewMode on navigation", () => {
       usePaneStore.getState().setPanePage("test-root", "other.md");
       const leaf = findLeaf(usePaneStore.getState().root, "test-root");
-      expect(leaf!.viewMode).toBeUndefined();
+      expect(leaf!.viewMode).toBe("mindmap");
     });
   });
 

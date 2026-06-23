@@ -142,12 +142,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setEditingYaml(false);
     setYamlDraft("");
     setYamlError(null);
-    if (previousPath !== currentPanePage && currentPanePage !== null) {
-      const mode = defaultViewModeRef.current;
-      const resolved = mode === "graph" && !graphViewEnabledRef.current ? "editor" : mode;
-      setPaneViewMode(focusedPaneId, resolved);
-    }
-  }, [currentPanePage, saveViewState, focusedPaneId, setPaneViewMode]);
+  }, [currentPanePage, saveViewState]);
 
   useEffect(() => {
     if (pendingTitleFocus && title) {
