@@ -892,7 +892,7 @@ describe("PdfViewer", () => {
     expect(mockGetPage).toHaveBeenCalledWith(1);
   });
 
-  it("registerGoToPage publishes (fn, false) before doc loads and (fn, true) after", async () => {
+  it("registerGoToPage publishes goToPage function (single arg, no ready boolean)", async () => {
     const registerGoToPage = vi.fn();
 
     // Make loadDocument deferred so we can observe the pre-load registration
@@ -908,17 +908,72 @@ describe("PdfViewer", () => {
       />,
     );
 
-    // Before doc loads, should register with ready=false
+    // Before doc loads, should register with a function
     await waitFor(() => {
-      expect(registerGoToPage).toHaveBeenCalledWith(expect.any(Function), false);
+      expect(registerGoToPage).toHaveBeenCalledWith(expect.any(Function));
     });
+
+    const preLoadCallCount = registerGoToPage.mock.calls.length;
 
     resolveLoad(mockDoc);
 
-    // After doc loads, should register with ready=true
+    // After doc loads, should re-register with a new function identity
     await waitFor(() => {
-      expect(registerGoToPage).toHaveBeenCalledWith(expect.any(Function), true);
+      expect(registerGoToPage.mock.calls.length).toBeGreaterThan(preLoadCallCount);
     });
+
+    // Every call must pass exactly one argument (no stale ready boolean)
+    expect(registerGoToPage.mock.calls.every((c: unknown[]) => c.length === 1)).toBe(true);
+  });
+
+  it("goToPage is a no-op when called before the document loads", async () => {
+    const onPageChange = vi.fn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let capturedGoToPage: ((i: number) => void) | null = null;
+    let getCurrentPage: (() => number) | null = null;
+
+    // Make loadDocument hang so pdfDoc stays null
+    let resolveLoad!: (v: typeof mockDoc) => void;
+    const deferredLoad = new Promise<typeof mockDoc>((r) => { resolveLoad = r; });
+    mockLoadDocument.mockReturnValue(deferredLoad);
+
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { capturedGoToPage = fn; }}
+        registerGetCurrentPage={(fn) => { getCurrentPage = fn; }}
+      />,
+    );
+
+    // Wait for the pre-load goToPage to be registered
+    await waitFor(() => {
+      expect(capturedGoToPage).not.toBeNull();
+    });
+
+    // Clear any mock calls from initial render
+    mockGetPage.mockClear();
+
+    // Call goToPage while pdfDoc is still null — should be a clean no-op
+    await act(async () => { capturedGoToPage!(1); });
+
+    // getPage should NOT have been called (pdfDoc is null)
+    expect(mockGetPage).not.toHaveBeenCalled();
+    // onPageChange should NOT have been called (no navigation happened)
+    expect(onPageChange).not.toHaveBeenCalled();
+    // currentPageRef should NOT have been mutated to the navigation target
+    expect(getCurrentPage!()).toBe(0);
+    // No error should have been logged (the null guard prevents the crash
+    // path entirely — unlike the catch block which logs a warning)
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // Clean up: resolve the deferred load
+    resolveLoad(mockDoc);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
+    });
+    warnSpy.mockRestore();
   });
 
   it("registerGetCurrentPage publishes a synchronous getter", async () => {

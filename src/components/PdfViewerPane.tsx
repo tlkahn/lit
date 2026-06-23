@@ -1,23 +1,13 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
-import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
+import { registerPdfGoToPage, unregisterPdfGoToPage, registerPdfCurrentPage, unregisterPdfCurrentPage, consumeForwardSync, markForwardSync } from "../lib/pdfPaneRef";
 import { getPaneView, setFocusedPane } from "../lib/editorViewRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
-import { FORWARD_SYNC_GUARD_MS } from "../lib/forwardSync";
 import { PdfViewer } from "./PdfViewer";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
-
-function consumePendingSyncOnMount(paneId: string): number {
-  const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
-  if (pending !== null && pending !== 0) {
-    const token = markForwardSync(paneId);
-    setTimeout(() => clearForwardSync(paneId, token), FORWARD_SYNC_GUARD_MS);
-  }
-  return pending ?? 0;
-}
 
 interface PdfViewerPaneProps {
   paneId: string;
@@ -33,10 +23,38 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     setFocusedPane(paneId);
   }, [paneId]);
 
+  // Non-destructive peek during render: safe to repeat across discarded renders
+  // in concurrent mode. The value is available synchronously for the first paint
+  // so PdfViewer receives the correct initialPage without a page-0 flash.
   const initialPageRef = useRef<number | undefined>(undefined);
-  if (initialPageRef.current === undefined) {
-    initialPageRef.current = consumePendingSyncOnMount(paneId);
+  const consumedRef = useRef(false);
+
+  // Reset one-shot guards when a different PDF is opened in the same pane
+  // (component stays mounted because paneId is stable; only pagePath changes).
+  const prevPagePathRef = useRef(pagePath);
+  if (prevPagePathRef.current !== pagePath) {
+    prevPagePathRef.current = pagePath;
+    initialPageRef.current = undefined;
+    consumedRef.current = false;
   }
+
+  if (initialPageRef.current === undefined) {
+    const pending = usePanePdfLinkStore.getState().pendingPdfSync.get(paneId);
+    initialPageRef.current = pending ?? 0;
+  }
+
+  // Destructive consume in commit phase (useLayoutEffect): runs exactly once per
+  // committed render, before any regular useEffects. This ensures markForwardSync
+  // is set before PdfViewer's document-load useEffect fires onPageChange, keeping
+  // reverse-sync echo suppression correct.
+  useLayoutEffect(() => {
+    if (consumedRef.current) return;
+    consumedRef.current = true;
+    const pending = usePanePdfLinkStore.getState().consumePendingPdfSync(paneId);
+    if (pending !== null && pending !== 0) {
+      markForwardSync(paneId);
+    }
+  }, [paneId, pagePath]);
 
   const handleRegisterGoToPage = useCallback(
     (fn: (pageIndex: number) => void) => {
@@ -83,6 +101,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
     return () => {
       unregisterPdfGoToPage(paneId);
       unregisterPdfCurrentPage(paneId);
+      consumeForwardSync(paneId);
     };
   }, [paneId]);
 
