@@ -1,4 +1,4 @@
-import { createContext, useContext, lazy, Suspense } from "react";
+import { createContext, useContext, useEffect, lazy, Suspense } from "react";
 import type React from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
@@ -12,6 +12,7 @@ import { PaneHeader } from "./PaneHeader";
 import { MindmapPaneView } from "./MindmapPaneView";
 import { GraphPaneView } from "./GraphPaneView";
 import { CardboxPaneView } from "./CardboxPaneView";
+import { getPaneView } from "../lib/editorViewRef";
 
 const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
 
@@ -29,6 +30,14 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   );
   const pages = useWorkspaceStore((s) => s.pages);
   const fileType = getFileType(pagePath, pages);
+
+  useEffect(() => {
+    if (viewMode === "editor") {
+      requestAnimationFrame(() => {
+        getPaneView(paneId)?.focus();
+      });
+    }
+  }, [viewMode, paneId]);
 
   let content: React.ReactNode;
   if (fileType === "pdf") {
