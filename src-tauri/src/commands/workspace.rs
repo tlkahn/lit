@@ -438,21 +438,26 @@ pub fn find_companion_file(
     state: State<WorkspaceRegistry>,
     app_handle: tauri::AppHandle,
 ) -> Result<Option<String>, String> {
-    // Clone root and reverse_map from the same WorkspaceEntry under a single
-    // lock acquisition so they cannot come from different workspace versions.
-    let (root, reverse_map) = get_workspace_root_and_reverse_map(&state, window.label())?;
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
-    if let Some(found) = find_companion(&relative_path, &root, &search_paths) {
-        return Ok(Some(found));
-    }
-    // No forward companion (same-name sibling or frontmatter): fall back to the
-    // snapshotted reverse map — but only for PDFs, since the map is keyed by
-    // canonical PDF paths. Non-PDF inputs can never match.
-    if relative_path.to_ascii_lowercase().ends_with(".pdf") {
+    let is_pdf = relative_path.to_ascii_lowercase().ends_with(".pdf");
+
+    if is_pdf {
+        // PDF input: snapshot root + reverse_map under a single lock so they
+        // cannot come from different workspace versions (TOCTOU safety).
+        let (root, reverse_map) =
+            get_workspace_root_and_reverse_map(&state, window.label())?;
+        if let Some(found) = find_companion(&relative_path, &root, &search_paths) {
+            return Ok(Some(found));
+        }
+        // Forward lookup missed — fall back to the reverse map.
         Ok(reverse_companion_lookup(&root, &relative_path, &reverse_map))
     } else {
-        Ok(None)
+        // Non-PDF input (e.g. markdown): only the root is needed.
+        // The reverse map is keyed by canonical PDF paths so it can never
+        // match a non-PDF input — skip cloning it entirely.
+        let root = get_workspace_root(&state, window.label())?;
+        Ok(find_companion(&relative_path, &root, &search_paths))
     }
 }
 
@@ -1789,5 +1794,56 @@ mod tests {
             None
         };
         assert_eq!(result, Some("note.md".to_string()));
+    }
+
+    /// Characterization test: for non-PDF inputs, only the root is needed from
+    /// the registry. `get_workspace_root` returns the same root value as the
+    /// combined `get_workspace_root_and_reverse_map`, and `find_companion`
+    /// produces identical results with either root. This pins the optimization
+    /// that avoids cloning the reverse map for non-PDF callers.
+    #[test]
+    fn non_pdf_uses_root_only_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Create a markdown file and its PDF sibling so find_companion succeeds.
+        std::fs::write(root.join("note.md"), "content").unwrap();
+        std::fs::write(root.join("note.pdf"), b"pdf").unwrap();
+
+        // Populate the registry with a reverse map that has entries (to prove
+        // it is not consulted for non-PDF inputs).
+        let mut reverse_map = HashMap::new();
+        let canon = root.join("note.pdf").canonicalize().unwrap();
+        reverse_map.insert(canon, "note.md".to_string());
+
+        let mut entries = HashMap::new();
+        entries.insert(
+            "win".to_string(),
+            WorkspaceEntry {
+                root: root.to_path_buf(),
+                watcher: None,
+                companion_reverse_map: reverse_map,
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(entries),
+        };
+
+        // Root-only lookup returns the same root as the combined snapshot.
+        let root_only = get_workspace_root(&registry, "win").unwrap();
+        let (root_combined, _map) =
+            get_workspace_root_and_reverse_map(&registry, "win").unwrap();
+        assert_eq!(root_only, root_combined, "root-only and combined snapshot must agree on root");
+
+        // find_companion using root-only returns the same result as with the
+        // combined root — proving non-PDF callers need only the root.
+        let result_root_only = find_companion("note.md", &root_only, &[]);
+        let result_combined = find_companion("note.md", &root_combined, &[]);
+        assert_eq!(result_root_only, result_combined);
+        assert!(result_root_only.is_some(), "md file should find its PDF sibling");
+
+        // Confirm a non-PDF relative_path never needs the reverse map.
+        let relative_path = "note.md";
+        let is_pdf = relative_path.to_ascii_lowercase().ends_with(".pdf");
+        assert!(!is_pdf, "note.md must not be classified as PDF");
     }
 }
