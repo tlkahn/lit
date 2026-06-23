@@ -866,4 +866,144 @@ describe("EditorPane", () => {
       expect(useCursorInfoStore.getState().col).toBe(2);
     });
   });
+
+  describe("guarded global listeners", () => {
+    function fakeViewWithDoc(doc: string): EditorView {
+      return {
+        state: {
+          doc: Text.of(doc.split("\n")),
+          selection: { main: { head: 0 } },
+        },
+        dispatch: vi.fn(),
+        scrollDOM: { scrollTop: 0 },
+        focus: vi.fn(),
+      } as unknown as EditorView;
+    }
+
+    it("scroll-to-line scrolls the focused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of("line one\nline two\nline three".split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+      expect(view.focus).toHaveBeenCalled();
+    });
+
+    it("scroll-to-line ignores unfocused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "other",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("scroll-to-line without cursor flag does not set selection", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two\nline three");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1 } }),
+      );
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(tx.selection).toBeUndefined();
+      expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("request-editor-focus focuses the focused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+
+      expect(view.focus).toHaveBeenCalled();
+    });
+
+    it("request-editor-focus ignores unfocused pane", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "other",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+
+      expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("cleans up listeners on unmount", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      const { unmount } = render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      unmount();
+
+      expect(() => {
+        window.dispatchEvent(
+          new CustomEvent("lit:scroll-to-line", { detail: { line: 0 } }),
+        );
+        window.dispatchEvent(new CustomEvent("lit:request-editor-focus"));
+      }).not.toThrow();
+    });
+  });
 });

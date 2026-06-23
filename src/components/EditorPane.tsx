@@ -116,6 +116,33 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     return () => unregisterPaneView(paneId);
   }, [paneId]);
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if (usePaneStore.getState().focusedPaneId !== paneId) return;
+      const view = getPaneView(paneId);
+      if (!view) return;
+      const detail = (e as CustomEvent<{ line: number; cursor?: boolean }>).detail;
+      const lineNumber = Math.min(detail.line + 1, view.state.doc.lines);
+      const pos = view.state.doc.line(lineNumber).from;
+      view.dispatch({
+        effects: EditorView.scrollIntoView(pos, { y: "start" }),
+        ...(detail.cursor ? { selection: EditorSelection.cursor(pos) } : {}),
+      });
+      if (detail.cursor) view.focus();
+    };
+    window.addEventListener("lit:scroll-to-line", handler);
+    return () => window.removeEventListener("lit:scroll-to-line", handler);
+  }, [paneId]);
+
+  useEffect(() => {
+    const handler = () => {
+      if (usePaneStore.getState().focusedPaneId !== paneId) return;
+      getPaneView(paneId)?.focus();
+    };
+    window.addEventListener("lit:request-editor-focus", handler);
+    return () => window.removeEventListener("lit:request-editor-focus", handler);
+  }, [paneId]);
+
   const noteDir = useMemo(() => {
     if (!pagePath) return "";
     if (pagePath.startsWith("/")) {

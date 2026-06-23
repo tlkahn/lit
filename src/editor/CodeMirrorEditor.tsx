@@ -1,7 +1,6 @@
 import { useRef, useEffect } from "react";
 import { useCodeMirror } from "./useCodeMirror";
 import { EditorView, type KeyBinding as CM6KeyBinding } from "@codemirror/view";
-import { EditorSelection } from "@codemirror/state";
 
 interface CodeMirrorEditorProps {
   doc: string;
@@ -33,30 +32,6 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
       return () => { onViewChange?.(null); };
     }
   }, [view, viewRef, onViewChange]);
-
-  useEffect(() => {
-    if (!view) return;
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ line: number; cursor?: boolean }>).detail;
-      const doc = view.state.doc;
-      const lineNumber = Math.min(detail.line + 1, doc.lines);
-      const pos = doc.line(lineNumber).from;
-      view.dispatch({
-        effects: EditorView.scrollIntoView(pos, { y: "start" }),
-        ...(detail.cursor ? { selection: EditorSelection.cursor(pos) } : {}),
-      });
-      if (detail.cursor) view.focus();
-    };
-    window.addEventListener("lit:scroll-to-line", handler);
-    return () => window.removeEventListener("lit:scroll-to-line", handler);
-  }, [view]);
-
-  useEffect(() => {
-    if (!view) return;
-    const handler = () => view.focus();
-    window.addEventListener("lit:request-editor-focus", handler);
-    return () => window.removeEventListener("lit:request-editor-focus", handler);
-  }, [view]);
 
   return (
     <div

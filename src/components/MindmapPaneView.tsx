@@ -39,6 +39,7 @@ export function MindmapPaneView({ paneId, pagePath, onExportNetwork }: { paneId:
 
   useEffect(() => {
     const handler = (e: Event) => {
+      if (usePaneStore.getState().focusedPaneId !== paneId) return;
       const { line } = (e as CustomEvent<{ line: number }>).detail;
       const nodeId = `h-${line}`;
       if (findNode(headingTree, nodeId)) {
@@ -47,7 +48,7 @@ export function MindmapPaneView({ paneId, pagePath, onExportNetwork }: { paneId:
     };
     window.addEventListener("lit:scroll-to-line", handler);
     return () => window.removeEventListener("lit:scroll-to-line", handler);
-  }, [headingTree]);
+  }, [headingTree, paneId]);
 
   return (
     <div data-testid="mindmap-view" className="flex-1 min-h-0">
