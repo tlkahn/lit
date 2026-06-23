@@ -230,6 +230,8 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
     // bail early so stale layers don't overwrite current content.
     if (navSeqRef.current !== navSeq) return;
 
+    setCanvasReady(true);
+
     // --- Canvas is painted. Layer work (text/annotation extraction and
     // rendering) happens asynchronously off the critical path so that
     // canvasReady flips and the spinner clears immediately. ---
@@ -321,7 +323,6 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
         if (cancelled) return;
 
         currentPageProxyRef.current = page;
-        setCanvasReady(true);
         onPageChangeRef.current?.(startPage);
       } catch (err) {
         if (cancelled) return;
