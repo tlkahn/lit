@@ -4,6 +4,7 @@ import type { ViewMode } from "../lib/ipc";
 import { saveLayout } from "../lib/paneLayout";
 import { usePanePdfLinkStore, serializeLinks } from "./panePdfLink";
 import { usePaneHistoryStore, serializeHistory } from "./paneHistory";
+import { usePreferencesStore } from "./preferences";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -396,6 +397,34 @@ export function startLayoutSync(
   });
   beforeUnloadHandler = flush;
   window.addEventListener("beforeunload", beforeUnloadHandler);
+}
+
+// ---------------------------------------------------------------------------
+// Section E: Cross-store subscription — reset graph views when disabled
+// ---------------------------------------------------------------------------
+
+let graphViewUnsub: (() => void) | null = null;
+
+export function startGraphViewGuard(): void {
+  stopGraphViewGuard();
+  let prev = usePreferencesStore.getState().graphViewEnabled;
+  graphViewUnsub = usePreferencesStore.subscribe((state) => {
+    const cur = state.graphViewEnabled;
+    if (prev && !cur) {
+      const { root } = usePaneStore.getState();
+      for (const leaf of collectLeaves(root)) {
+        if (leaf.viewMode === "graph") {
+          usePaneStore.getState().setPaneViewMode(leaf.id, "editor");
+        }
+      }
+    }
+    prev = cur;
+  });
+}
+
+export function stopGraphViewGuard(): void {
+  graphViewUnsub?.();
+  graphViewUnsub = null;
 }
 
 export function stopLayoutSync(): void {

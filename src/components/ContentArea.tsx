@@ -154,12 +154,6 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     }
   }, [pendingTitleFocus, title, clearPendingTitleFocus]);
 
-  useEffect(() => {
-    if (!graphViewEnabled && viewMode === "graph") {
-      setPaneViewMode(focusedPaneId, "editor");
-    }
-  }, [graphViewEnabled, viewMode, focusedPaneId, setPaneViewMode]);
-
   const commitTitle = () => {
     const trimmed = editingTitle.trim();
     if (trimmed && trimmed !== title && currentPanePage) {
