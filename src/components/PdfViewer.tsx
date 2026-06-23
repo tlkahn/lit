@@ -228,6 +228,8 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
     // bail early so stale layers don't overwrite current content.
     if (navSeqRef.current !== navSeq) return;
 
+    setCanvasReady(true);
+
     // --- Canvas is painted. Layer work (text/annotation extraction and
     // rendering) happens asynchronously off the critical path so that
     // canvasReady flips and the spinner clears immediately. ---
@@ -314,7 +316,6 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         if (cancelled) return;
 
         currentPageProxyRef.current = page;
-        setCanvasReady(true);
         // Publish the initial page exactly once so the parent's status bar and
         // reverse sync are seeded. The goToPage same-page guard would otherwise
         // suppress this for page 0 since currentPageRef is already 0.
@@ -366,7 +367,6 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         }
 
         setCurrentPage(index);
-        setCanvasReady(true);
         currentPageRef.current = index;
         onPageChange?.(index);
       } catch (err) {

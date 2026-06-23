@@ -454,7 +454,7 @@ describe("PdfViewer", () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
-      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+      expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
 
     fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "j" });
@@ -2515,12 +2515,14 @@ describe("PdfViewer", () => {
       expect(screen.getByTestId("pdf-viewer")).toBeInTheDocument();
     });
 
-    resolveInitGetPage({
-      getViewport: mockGetViewport,
-      render: mockRender,
-      getTextContent: mockGetTextContent,
-      getAnnotations: mockGetAnnotations,
-      cleanup: mockPageCleanup,
+    await act(async () => {
+      resolveInitGetPage({
+        getViewport: mockGetViewport,
+        render: mockRender,
+        getTextContent: mockGetTextContent,
+        getAnnotations: mockGetAnnotations,
+        cleanup: mockPageCleanup,
+      });
     });
   });
 });
