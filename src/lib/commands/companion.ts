@@ -38,6 +38,20 @@ export function selectCompanionTarget(
   return { kind: "must-split" };
 }
 
+export function resolveEditorPageIndex(paneId: string): number | null {
+  const view = getPaneView(paneId);
+  if (!view) return null;
+  const offset = view.state.selection.main.head;
+  const markers = getCachedPageMarkers(view.state.doc);
+  return pageForOffset(markers, offset);
+}
+
+export function resolvePdfPage(paneId: string): number {
+  return getPdfCurrentPage(paneId)
+    ?? usePanePdfLinkStore.getState().currentPage.get(paneId)
+    ?? 0;
+}
+
 export function initCompanionCommands(): void {
   registerOnce("companion", [
     {
@@ -85,11 +99,8 @@ export function initCompanionCommands(): void {
                 usePanePdfLinkStore.getState().linkPanes(sourceId, existingId);
 
                 if (!pagePath.toLowerCase().endsWith(".pdf")) {
-                  const view = getPaneView(sourceId);
-                  if (view) {
-                    const offset = view.state.selection.main.head;
-                    const markers = getCachedPageMarkers(view.state.doc);
-                    const pageIndex = pageForOffset(markers, offset);
+                  const pageIndex = resolveEditorPageIndex(sourceId);
+                  if (pageIndex != null) {
                     const goTo = getPdfGoToPage(existingId);
                     if (goTo) {
                       const token = markForwardSync(existingId);
@@ -98,9 +109,7 @@ export function initCompanionCommands(): void {
                     }
                   }
                 } else {
-                  const page = getPdfCurrentPage(sourceId)
-                    ?? usePanePdfLinkStore.getState().currentPage.get(sourceId)
-                    ?? 0;
+                  const page = resolvePdfPage(sourceId);
                   const view = getPaneView(existingId);
                   if (view) {
                     const markers = getCachedPageMarkers(view.state.doc);
@@ -138,15 +147,12 @@ export function initCompanionCommands(): void {
             linkStore.linkPanes(sourceId, newId);
 
             if (!pagePath.toLowerCase().endsWith(".pdf")) {
-              const view = getPaneView(sourceId);
-              if (view) {
-                const offset = view.state.selection.main.head;
-                const markers = getCachedPageMarkers(view.state.doc);
-                const pageIndex = pageForOffset(markers, offset);
+              const pageIndex = resolveEditorPageIndex(sourceId);
+              if (pageIndex != null) {
                 linkStore.setPendingPdfSync(newId, pageIndex);
               }
             } else {
-              const page = getPdfCurrentPage(sourceId) ?? linkStore.currentPage.get(sourceId) ?? 0;
+              const page = resolvePdfPage(sourceId);
               linkStore.setPendingEditorSync(newId, page);
             }
 

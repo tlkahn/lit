@@ -116,7 +116,7 @@ vi.mock("../forwardSync", () => ({
   FORWARD_SYNC_GUARD_MS: 2000,
 }));
 
-import { initCompanionCommands, selectCompanionTarget } from "./companion";
+import { initCompanionCommands, selectCompanionTarget, resolveEditorPageIndex, resolvePdfPage } from "./companion";
 import type { PaneLeaf } from "../../stores/panes";
 
 function leaf(id: string, pagePath: string | null = null): PaneLeaf {
@@ -210,6 +210,73 @@ describe("selectCompanionTarget", () => {
       kind: "reuse",
       paneId: "c",
     });
+  });
+});
+
+describe("resolveEditorPageIndex", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns page index when editor view exists", () => {
+    const fakeView = {
+      state: { doc: {}, selection: { main: { head: 42 } } },
+    };
+    mockGetPaneView.mockReturnValue(fakeView);
+    const fakeMarkers = [{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }];
+    mockGetCachedPageMarkers.mockReturnValue(fakeMarkers);
+    mockPageForOffset.mockReturnValue(1);
+
+    expect(resolveEditorPageIndex("pane-a")).toBe(1);
+    expect(mockGetPaneView).toHaveBeenCalledWith("pane-a");
+    expect(mockGetCachedPageMarkers).toHaveBeenCalledWith(fakeView.state.doc);
+    expect(mockPageForOffset).toHaveBeenCalledWith(fakeMarkers, 42);
+  });
+
+  it("returns null when editor view is not available", () => {
+    mockGetPaneView.mockReturnValue(null);
+
+    expect(resolveEditorPageIndex("pane-a")).toBeNull();
+    expect(mockGetCachedPageMarkers).not.toHaveBeenCalled();
+    expect(mockPageForOffset).not.toHaveBeenCalled();
+  });
+
+  it("returns 0 when cursor is before all markers", () => {
+    const fakeView = {
+      state: { doc: {}, selection: { main: { head: 0 } } },
+    };
+    mockGetPaneView.mockReturnValue(fakeView);
+    mockGetCachedPageMarkers.mockReturnValue([{ page: 1, charOffset: 10 }]);
+    mockPageForOffset.mockReturnValue(0);
+
+    expect(resolveEditorPageIndex("pane-a")).toBe(0);
+  });
+});
+
+describe("resolvePdfPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLinkState.currentPage.clear();
+  });
+
+  it("returns value from getPdfCurrentPage when available", () => {
+    mockGetPdfCurrentPage.mockReturnValue(7);
+
+    expect(resolvePdfPage("pane-a")).toBe(7);
+    expect(mockGetPdfCurrentPage).toHaveBeenCalledWith("pane-a");
+  });
+
+  it("falls back to store currentPage when getPdfCurrentPage returns null", () => {
+    mockGetPdfCurrentPage.mockReturnValue(null);
+    mockLinkState.currentPage.set("pane-a", 5);
+
+    expect(resolvePdfPage("pane-a")).toBe(5);
+  });
+
+  it("returns 0 when both sources return null/undefined", () => {
+    mockGetPdfCurrentPage.mockReturnValue(null);
+
+    expect(resolvePdfPage("pane-a")).toBe(0);
   });
 });
 
