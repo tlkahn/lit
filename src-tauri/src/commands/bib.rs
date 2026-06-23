@@ -1955,7 +1955,17 @@ mod tests {
         db::insert_bib_reference(&store.conn, "parent2024", "alive2024", Some(0)).unwrap();
         db::insert_bib_reference(&store.conn, "parent2024", "dead2024", Some(1)).unwrap();
 
-        db::tombstone_bib_item(&store.conn, "dead2024").unwrap();
+        // Manually tombstone the child WITHOUT calling tombstone_bib_item,
+        // which would also DELETE the bib_references edge. Leaving the
+        // orphan edge in place is the scenario that actually exercises the
+        // INNER JOIN / deleted_at IS NULL filter in reference_counts().
+        store
+            .conn
+            .execute(
+                "UPDATE bib_items SET deleted_at = datetime('now') WHERE cite_key = 'dead2024'",
+                [],
+            )
+            .unwrap();
 
         let counts = db::reference_counts(&store.conn).unwrap();
         assert_eq!(

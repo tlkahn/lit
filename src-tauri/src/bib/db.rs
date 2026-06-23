@@ -593,21 +593,36 @@ pub fn tombstone_bib_item(
     conn: &Connection,
     cite_key: &str,
 ) -> Result<bool, GraphError> {
-    let rows = conn.execute(
-        "UPDATE bib_items SET deleted_at = datetime('now'), updated_at = datetime('now') \
-         WHERE cite_key = ?1 AND deleted_at IS NULL",
-        params![cite_key],
-    )?;
-    if rows > 0 {
-        // Clean up bib_references edges to/from the tombstoned item
-        // to prevent orphan rows and stale re-linking if the cite_key
-        // is later reused by a different entry.
-        conn.execute(
-            "DELETE FROM bib_references WHERE parent_key = ?1 OR child_key = ?1",
+    // Use a SAVEPOINT (not BEGIN) so this is safe both as a top-level
+    // call and when nested inside an existing transaction.
+    conn.execute_batch("SAVEPOINT tombstone_bib_item")?;
+    let result = (|| -> Result<bool, GraphError> {
+        let rows = conn.execute(
+            "UPDATE bib_items SET deleted_at = datetime('now'), updated_at = datetime('now') \
+             WHERE cite_key = ?1 AND deleted_at IS NULL",
             params![cite_key],
         )?;
+        if rows > 0 {
+            // Clean up bib_references edges to/from the tombstoned item
+            // to prevent orphan rows and stale re-linking if the cite_key
+            // is later reused by a different entry.
+            conn.execute(
+                "DELETE FROM bib_references WHERE parent_key = ?1 OR child_key = ?1",
+                params![cite_key],
+            )?;
+        }
+        Ok(rows > 0)
+    })();
+    match &result {
+        Ok(_) => conn.execute_batch("RELEASE tombstone_bib_item")?,
+        // ROLLBACK TO reverts changes but leaves the savepoint on the
+        // stack, so RELEASE it too — otherwise the (implicit) transaction
+        // leaks open on the connection.
+        Err(_) => {
+            conn.execute_batch("ROLLBACK TO tombstone_bib_item; RELEASE tombstone_bib_item")?
+        }
     }
-    Ok(rows > 0)
+    result
 }
 
 /// Return the set of live cite_keys whose source_file matches the given path.
@@ -2750,6 +2765,54 @@ mod tests {
         let refs = get_references_for(&store.conn, "parent2024").unwrap();
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].key, "child_b");
+    }
+
+    /// Verify that tombstone_bib_item's UPDATE + DELETE are wrapped in a
+    /// single SAVEPOINT.  We open an outer transaction, call the function
+    /// (whose inner SAVEPOINT nests correctly), then DROP the outer
+    /// transaction to roll everything back.  Both the tombstone and the
+    /// edge deletion must revert together, proving they share a single
+    /// atomic scope.
+    #[test]
+    fn test_tombstone_bib_item_atomic_rollback() {
+        let store = Store::open_memory().unwrap();
+
+        let parent = test_entry("parent2024x");
+        let child = test_entry("child2024x");
+        upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        upsert_bib_item(&store.conn, &child, None, None, false).unwrap();
+        insert_bib_reference(&store.conn, "parent2024x", "child2024x", Some(0)).unwrap();
+
+        {
+            // Outer transaction — anything inside rolls back on drop.
+            let outer_tx = store.conn.unchecked_transaction().unwrap();
+            // tombstone_bib_item's inner SAVEPOINT nests inside outer_tx.
+            tombstone_bib_item(&store.conn, "child2024x").unwrap();
+            // Drop outer_tx without commit → rollback.
+            drop(outer_tx);
+        }
+
+        // After rollback: item must NOT be tombstoned.
+        let item = get_bib_item(&store.conn, "child2024x").unwrap();
+        assert!(
+            item.is_some(),
+            "rollback must restore the bib_item (not tombstoned)"
+        );
+
+        // After rollback: bib_references edge must still exist.
+        let ref_count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM bib_references \
+                 WHERE parent_key = 'parent2024x' AND child_key = 'child2024x'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ref_count, 1,
+            "rollback must restore bib_references edge"
+        );
     }
 
     /// Regression test for F6: `get_references_for` must return `Err` (not be
