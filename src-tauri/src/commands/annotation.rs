@@ -486,6 +486,7 @@ mod tests {
             WorkspaceEntry {
                 root: dir.path().to_path_buf(),
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {

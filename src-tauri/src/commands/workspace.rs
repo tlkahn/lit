@@ -14,6 +14,12 @@ pub struct WorkspaceEntry {
     pub root: PathBuf,
     #[allow(dead_code)]
     pub watcher: Option<FileWatcher>,
+    /// Reverse companion index: canonical absolute PDF path -> md relative path.
+    /// Built during `annotate_companions` from markdown `companion:` frontmatter,
+    /// so a PDF can be mapped back to the md note that declares it without
+    /// walking the filesystem. Canonical keys handle case-insensitive macOS APFS
+    /// and symlinks.
+    pub companion_reverse_map: HashMap<PathBuf, String>,
 }
 
 pub struct WorkspaceRegistry {
@@ -180,10 +186,65 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
     None
 }
 
-fn annotate_companions(pages: &mut [PageMeta], root: &Path, search_paths: &[String]) {
+/// Look up the markdown note that declares `pdf_relative_path` as its
+/// `companion:` via the reverse map built by `annotate_companions`. Keys are
+/// canonical absolute PDF paths, so canonicalize the query path before lookup.
+/// The returned md path is routed through `canonicalize_within_root` to recover
+/// real on-disk casing and guarantee it stays inside `root`.
+fn reverse_companion_lookup(
+    root: &Path,
+    pdf_relative_path: &str,
+    map: &HashMap<PathBuf, String>,
+) -> Option<String> {
+    let canon = root.join(pdf_relative_path).canonicalize().ok()?;
+    let md_rel = map.get(&canon)?;
+    Some(canonicalize_within_root(root, &root.join(md_rel), Path::new(md_rel)))
+}
+
+/// Annotate each page's `has_companion` flag and build a reverse companion
+/// index (canonical absolute PDF path -> md relative path) from markdown
+/// `companion:` frontmatter.
+///
+/// Two-phase so a PDF whose companion is declared only via another note's
+/// frontmatter (no same-name sibling) is still flagged:
+///   Phase 1 — set `has_companion` for every page via `find_companion`; for
+///             markdown pages, also record any frontmatter `companion:` target
+///             in the reverse map. The first md (by sorted `relative_path`) to
+///             claim a given PDF wins, making the map deterministic.
+///   Phase 2 — for PDF pages still unflagged, check the reverse map.
+fn annotate_companions(
+    pages: &mut [PageMeta],
+    root: &Path,
+    search_paths: &[String],
+) -> HashMap<PathBuf, String> {
+    let mut reverse_map: HashMap<PathBuf, String> = HashMap::new();
+
+    // Phase 1: forward companion detection + reverse-map construction.
     for page in pages.iter_mut() {
         page.has_companion = find_companion(&page.relative_path, root, search_paths).is_some();
+
+        if page.relative_path.to_ascii_lowercase().ends_with(".md") {
+            if let Some(companion) = companion_from_frontmatter(root, &page.relative_path) {
+                if let Ok(canon) = root.join(&companion).canonicalize() {
+                    reverse_map
+                        .entry(canon)
+                        .or_insert_with(|| page.relative_path.clone());
+                }
+            }
+        }
     }
+
+    // Phase 2: PDFs with no same-name md sibling but claimed via frontmatter.
+    for page in pages.iter_mut() {
+        if !page.has_companion
+            && page.relative_path.to_ascii_lowercase().ends_with(".pdf")
+            && reverse_companion_lookup(root, &page.relative_path, &reverse_map).is_some()
+        {
+            page.has_companion = true;
+        }
+    }
+
+    reverse_map
 }
 
 pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<PathBuf, String> {
@@ -213,7 +274,7 @@ pub fn open_workspace(
 
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
-    annotate_companions(&mut pages, &root, &search_paths);
+    let reverse_map = annotate_companions(&mut pages, &root, &search_paths);
 
     app_handle
         .asset_protocol_scope()
@@ -237,6 +298,7 @@ pub fn open_workspace(
         WorkspaceEntry {
             root: root.clone(),
             watcher,
+            companion_reverse_map: reverse_map,
         },
     );
 
@@ -295,7 +357,10 @@ pub fn list_pages(
     let mut pages = scan_pages(&root).map_err(|e| e.to_string())?;
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
-    annotate_companions(&mut pages, &root, &search_paths);
+    let reverse_map = annotate_companions(&mut pages, &root, &search_paths);
+    if let Some(entry) = state.workspaces.lock().unwrap().get_mut(window.label()) {
+        entry.companion_reverse_map = reverse_map;
+    }
     Ok(pages)
 }
 
@@ -320,7 +385,16 @@ pub fn find_companion_file(
     let root = get_workspace_root(&state, window.label())?;
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
-    Ok(find_companion(&relative_path, &root, &search_paths))
+    if let Some(found) = find_companion(&relative_path, &root, &search_paths) {
+        return Ok(Some(found));
+    }
+    // No forward companion (same-name sibling or frontmatter): fall back to the
+    // cached reverse map for a PDF whose md note declares it via `companion:`.
+    let workspaces = state.workspaces.lock().unwrap();
+    let reverse = workspaces
+        .get(window.label())
+        .and_then(|entry| reverse_companion_lookup(&root, &relative_path, &entry.companion_reverse_map));
+    Ok(reverse)
 }
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -478,6 +552,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/test/workspace"),
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {
@@ -908,6 +983,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/my/vault"),
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {
@@ -927,6 +1003,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/my/vault"),
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {
@@ -950,6 +1027,7 @@ mod tests {
             WorkspaceEntry {
                 root: non_canonical,
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {
@@ -973,6 +1051,7 @@ mod tests {
             WorkspaceEntry {
                 root: canonical,
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {
@@ -992,6 +1071,7 @@ mod tests {
             WorkspaceEntry {
                 root: PathBuf::from("/nonexistent/path"),
                 watcher: None,
+                companion_reverse_map: HashMap::new(),
             },
         );
         let registry = WorkspaceRegistry {
@@ -1019,7 +1099,7 @@ mod tests {
             file_type: crate::workspace::page::FileType::Markdown,
             has_companion: false,
         }];
-        annotate_companions(&mut pages, root, &[]);
+        let _ = annotate_companions(&mut pages, root, &[]);
         assert!(pages[0].has_companion);
     }
 
@@ -1039,7 +1119,7 @@ mod tests {
             file_type: crate::workspace::page::FileType::Pdf,
             has_companion: false,
         }];
-        annotate_companions(&mut pages, root, &[]);
+        let _ = annotate_companions(&mut pages, root, &[]);
         assert!(pages[0].has_companion);
     }
 
@@ -1058,7 +1138,7 @@ mod tests {
             file_type: crate::workspace::page::FileType::Markdown,
             has_companion: false,
         }];
-        annotate_companions(&mut pages, root, &[]);
+        let _ = annotate_companions(&mut pages, root, &[]);
         assert!(!pages[0].has_companion);
     }
 
@@ -1080,7 +1160,7 @@ mod tests {
             file_type: crate::workspace::page::FileType::Markdown,
             has_companion: false,
         }];
-        annotate_companions(&mut pages, root, &["pdfs".to_string()]);
+        let _ = annotate_companions(&mut pages, root, &["pdfs".to_string()]);
         assert!(pages[0].has_companion);
     }
 
@@ -1144,6 +1224,203 @@ mod tests {
         assert_eq!(
             find_companion("paper.md", root, &[]),
             Some("paper.pdf".to_string())
+        );
+    }
+
+    fn page(relative_path: &str, file_type: crate::workspace::page::FileType) -> PageMeta {
+        PageMeta {
+            title: relative_path.to_string(),
+            relative_path: relative_path.to_string(),
+            frontmatter: IndexMap::new(),
+            created_at: None,
+            modified_at: None,
+            file_type,
+            has_companion: false,
+        }
+    }
+
+    // ---- reverse_companion_lookup ----
+
+    #[test]
+    fn reverse_companion_lookup_finds_md_for_mapped_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf").unwrap();
+        std::fs::write(root.join("note.md"), b"x").unwrap();
+
+        let mut map = HashMap::new();
+        let canon = root.join("assets/pdf/ref61-1.pdf").canonicalize().unwrap();
+        map.insert(canon, "note.md".to_string());
+
+        assert_eq!(
+            reverse_companion_lookup(root, "assets/pdf/ref61-1.pdf", &map),
+            Some("note.md".to_string())
+        );
+    }
+
+    #[test]
+    fn reverse_companion_lookup_returns_none_for_unmapped_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf").unwrap();
+
+        let map = HashMap::new();
+        assert_eq!(
+            reverse_companion_lookup(root, "assets/pdf/ref61-1.pdf", &map),
+            None
+        );
+    }
+
+    #[test]
+    fn reverse_companion_lookup_returns_canonicalized_path() {
+        // The map stores a non-canonical-cased md path; the lookup should route
+        // it through canonicalize_within_root and recover the on-disk casing.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf").unwrap();
+        std::fs::write(root.join("Note.md"), b"x").unwrap();
+
+        let mut map = HashMap::new();
+        let canon = root.join("assets/pdf/ref61-1.pdf").canonicalize().unwrap();
+        map.insert(canon, "Note.md".to_string());
+
+        assert_eq!(
+            reverse_companion_lookup(root, "assets/pdf/ref61-1.pdf", &map),
+            Some("Note.md".to_string())
+        );
+    }
+
+    // ---- annotate_companions reverse map ----
+
+    #[test]
+    fn annotate_companions_returns_reverse_map_from_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: assets/pdf/ref61-1.pdf\n---\nContent\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf").unwrap();
+
+        let mut pages = vec![
+            page("note.md", crate::workspace::page::FileType::Markdown),
+            page("assets/pdf/ref61-1.pdf", crate::workspace::page::FileType::Pdf),
+        ];
+        let map = annotate_companions(&mut pages, root, &[]);
+
+        let canon = root.join("assets/pdf/ref61-1.pdf").canonicalize().unwrap();
+        assert_eq!(map.get(&canon), Some(&"note.md".to_string()));
+        assert!(pages[0].has_companion, "md page should have companion");
+        assert!(pages[1].has_companion, "pdf page should have companion");
+    }
+
+    #[test]
+    fn annotate_companions_reverse_map_first_md_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/shared.pdf"), b"pdf").unwrap();
+        std::fs::write(
+            root.join("aaa.md"),
+            "---\ncompanion: assets/pdf/shared.pdf\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("bbb.md"),
+            "---\ncompanion: assets/pdf/shared.pdf\n---\n",
+        )
+        .unwrap();
+
+        // Pages pre-sorted by relative_path (as scan_pages produces).
+        let mut pages = vec![
+            page("aaa.md", crate::workspace::page::FileType::Markdown),
+            page("bbb.md", crate::workspace::page::FileType::Markdown),
+        ];
+        let map = annotate_companions(&mut pages, root, &[]);
+
+        let canon = root.join("assets/pdf/shared.pdf").canonicalize().unwrap();
+        assert_eq!(map.get(&canon), Some(&"aaa.md".to_string()));
+    }
+
+    #[test]
+    fn annotate_companions_pdf_gets_has_companion_via_reverse_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        // md declares a differently-named PDF; no same-name sibling exists.
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: assets/pdf/ref61-1.pdf\n---\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf").unwrap();
+
+        let mut pages = vec![
+            page("note.md", crate::workspace::page::FileType::Markdown),
+            page("assets/pdf/ref61-1.pdf", crate::workspace::page::FileType::Pdf),
+        ];
+        let _ = annotate_companions(&mut pages, root, &[]);
+
+        // The PDF has no same-name md sibling, so phase 2 (reverse map) flags it.
+        assert!(pages[1].has_companion);
+    }
+
+    #[test]
+    fn reverse_lookup_end_to_end_pdf_to_md_via_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("the-entropy-of-hawking-radiation-ref61.md"),
+            "---\ncompanion: assets/pdf/ref61-1.pdf\n---\nNotes\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/ref61-1.pdf"), b"pdf").unwrap();
+
+        let mut pages = vec![
+            page(
+                "the-entropy-of-hawking-radiation-ref61.md",
+                crate::workspace::page::FileType::Markdown,
+            ),
+            page("assets/pdf/ref61-1.pdf", crate::workspace::page::FileType::Pdf),
+        ];
+        let map = annotate_companions(&mut pages, root, &[]);
+
+        // No same-name sibling, so the forward lookup finds nothing.
+        assert_eq!(find_companion("assets/pdf/ref61-1.pdf", root, &[]), None);
+        // The reverse map resolves the PDF back to the declaring md note.
+        assert_eq!(
+            reverse_companion_lookup(root, "assets/pdf/ref61-1.pdf", &map),
+            Some("the-entropy-of-hawking-radiation-ref61.md".to_string())
+        );
+        // And the PDF page is flagged as having a companion.
+        assert!(pages[1].has_companion);
+    }
+
+    #[test]
+    fn find_companion_same_name_wins_over_reverse_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        // A note declares paper.pdf as its companion via frontmatter...
+        std::fs::write(
+            root.join("notes.md"),
+            "---\ncompanion: assets/pdf/paper.pdf\n---\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/paper.pdf"), b"pdf").unwrap();
+        // ...but a same-name sibling assets/pdf/paper.md also exists.
+        std::fs::write(root.join("assets/pdf/paper.md"), b"x").unwrap();
+
+        // Forward lookup must prefer the same-name sibling.
+        assert_eq!(
+            find_companion("assets/pdf/paper.pdf", root, &[]),
+            Some("assets/pdf/paper.md".to_string())
         );
     }
 }
