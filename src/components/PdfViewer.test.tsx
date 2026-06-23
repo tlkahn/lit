@@ -571,19 +571,75 @@ describe("PdfViewer", () => {
     });
   });
 
-  it("ignores a `page` prop and does not navigate from it (imperative-only navigation)", async () => {
-    render(
-      <PdfViewer filePath="/test/doc.pdf" paneId="pane-1" {...({ page: 2 } as unknown as Record<string, never>)} />,
-    );
+  it("default behavior: no initialPage renders page 0", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
     await waitFor(() => {
       expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
     });
+    expect(mockGetPage).toHaveBeenCalledWith(1);
+    expect(onPageChange).toHaveBeenCalledWith(0);
+  });
 
-    await Promise.resolve();
+  it("initialPage={2} renders page 2 directly without flash of page 0", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" initialPage={2} onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    expect(mockGetPage).toHaveBeenCalledWith(3);
+    expect(onPageChange).toHaveBeenCalledWith(2);
+    const calledWithPage1 = mockGetPage.mock.calls.some((c: unknown[]) => c[0] === 1);
+    expect(calledWithPage1).toBe(false);
+  });
 
-    // getPage should only have been called with page 1 (0-based index 0 = 1-based page 1)
-    const calledWith2Based = mockGetPage.mock.calls.some((c: unknown[]) => c[0] === 3);
-    expect(calledWith2Based).toBe(false);
+  it("initialPage overflow is clamped to last page", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" initialPage={99} onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    expect(mockGetPage).toHaveBeenCalledWith(3);
+    expect(onPageChange).toHaveBeenCalledWith(2);
+  });
+
+  it("initialPage underflow is clamped to page 0", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" initialPage={-5} onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    expect(mockGetPage).toHaveBeenCalledWith(1);
+    expect(onPageChange).toHaveBeenCalledWith(0);
+  });
+
+  it("changing initialPage prop does not re-init the document", async () => {
+    const { rerender } = render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" initialPage={0} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    mockLoadDocument.mockClear();
+
+    rerender(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" initialPage={2} />);
+    await act(() => Promise.resolve());
+
+    expect(mockLoadDocument).not.toHaveBeenCalled();
+  });
+
+  it("file change picks up new initialPage", async () => {
+    const onPageChange = vi.fn();
+    const { rerender } = render(<PdfViewer filePath="/test/a.pdf" paneId="pane-1" initialPage={0} onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    mockGetPage.mockClear();
+    onPageChange.mockClear();
+
+    rerender(<PdfViewer filePath="/test/b.pdf" paneId="pane-1" initialPage={1} onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(mockGetPage).toHaveBeenCalledWith(2);
+    });
+    expect(onPageChange).toHaveBeenCalledWith(1);
   });
 
   it("goToPage does not fire onPageChange for same-page navigation", async () => {

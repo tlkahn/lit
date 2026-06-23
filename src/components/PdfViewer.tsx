@@ -56,6 +56,7 @@ interface RenderTask {
 interface PdfViewerProps {
   filePath: string;
   paneId: string;
+  initialPage?: number;
   onPageChange?: (pageIndex: number) => void;
   onPageCount?: (count: number) => void;
   /**
@@ -72,7 +73,7 @@ interface PdfViewerProps {
   registerGetCurrentPage?: (fn: () => number) => void;
 }
 
-export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
+export function PdfViewer({ filePath, paneId, initialPage, onPageChange, onPageCount, registerGoToPage, registerGetCurrentPage }: PdfViewerProps) {
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
@@ -87,6 +88,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
   const filePathRef = useRef(filePath);
   const currentPageRef = useRef(currentPage);
   const navSeqRef = useRef(0);
+  const initialPageRef = useRef(initialPage ?? 0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<RenderTask | null>(null);
   const zoomLevelRef = useRef(DEFAULT_ZOOM);
@@ -271,6 +273,7 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
 
   useEffect(() => {
     filePathRef.current = filePath;
+    initialPageRef.current = initialPage ?? 0;
     setPdfDoc(null);
     setPageCount(0);
     setCurrentPage(0);
@@ -307,18 +310,19 @@ export function PdfViewer({ filePath, paneId, onPageChange, onPageCount, registe
         pageCountRef.current = doc.numPages;
         onPageCountRef.current?.(doc.numPages);
 
-        const page = await doc.getPage(1); // pdf.js uses 1-based page numbers
+        const startPage = Math.max(0, Math.min(initialPageRef.current, doc.numPages - 1));
+        currentPageRef.current = startPage;
+        setCurrentPage(startPage);
+
+        const page = await doc.getPage(startPage + 1); // pdf.js uses 1-based page numbers
         if (cancelled) return;
 
-        await renderPageToCanvas(page, 0);
+        await renderPageToCanvas(page, startPage);
         if (cancelled) return;
 
         currentPageProxyRef.current = page;
         setCanvasReady(true);
-        // Publish the initial page exactly once so the parent's status bar and
-        // reverse sync are seeded. The goToPage same-page guard would otherwise
-        // suppress this for page 0 since currentPageRef is already 0.
-        onPageChangeRef.current?.(0);
+        onPageChangeRef.current?.(startPage);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
