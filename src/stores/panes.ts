@@ -24,6 +24,7 @@ export const MAX_PANES = 6;
 export interface PaneStore {
   root: PaneNode;
   focusedPaneId: string;
+  pendingJumpLines: Record<string, number>;
   splitPane(paneId: string, direction: "horizontal" | "vertical"): string | null;
   closePane(paneId: string): void;
   focusPane(paneId: string): void;
@@ -34,6 +35,8 @@ export interface PaneStore {
   resize(splitPath: number[], sizes: number[]): void;
   clearPageFromPanes(pagePath: string): void;
   swapLayout(): void;
+  setPendingJumpLine(paneId: string, line: number): void;
+  consumePendingJumpLine(paneId: string): number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +225,21 @@ export function createInitialState() {
 
 export const usePaneStore = create<PaneStore>((set, get) => ({
   ...createInitialState(),
+  pendingJumpLines: {},
+
+  setPendingJumpLine: (paneId, line) => {
+    set({ pendingJumpLines: { ...get().pendingJumpLines, [paneId]: line } });
+  },
+
+  consumePendingJumpLine: (paneId) => {
+    const { pendingJumpLines } = get();
+    const line = pendingJumpLines[paneId];
+    if (line == null) return null;
+    const next = { ...pendingJumpLines };
+    delete next[paneId];
+    set({ pendingJumpLines: next });
+    return line;
+  },
 
   focusPane: (paneId) => {
     const { root } = get();

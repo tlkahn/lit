@@ -176,9 +176,17 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     requestAnimationFrame(() => {
       const view = getPaneView(paneId);
       if (!view) return;
+      const pendingJumpLine = usePaneStore.getState().consumePendingJumpLine(paneId);
+      if (pendingJumpLine != null) {
+        const lineNum = Math.min(pendingJumpLine, view.state.doc.lines);
+        const pos = view.state.doc.line(lineNum).from;
+        view.dispatch({
+          selection: EditorSelection.cursor(pos),
+          effects: EditorView.scrollIntoView(pos, { y: "start" }),
+        });
+      } else {
       const pendingSync = usePanePdfLinkStore.getState().consumePendingEditorSync(paneId);
       if (pendingSync !== null) {
-        // Initial companion sync: scroll to the page marker, bypassing guards and clamping.
         const markers = getCachedPageMarkers(view.state.doc);
         dispatchReverseSync(pendingSync, paneId, markers, {
           skipGuards: true,
@@ -218,6 +226,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;
         const cursor = Math.min(vs?.cursor ?? 0, view.state.doc.length);
         view.dispatch({ selection: EditorSelection.cursor(cursor) });
+      }
       }
       if (isFocusedRef.current) {
         const active = document.activeElement;

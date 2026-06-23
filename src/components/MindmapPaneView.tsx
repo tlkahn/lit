@@ -1,6 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef, lazy, Suspense } from "react";
-import { EditorSelection } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { useState, useMemo, useCallback, useEffect, lazy, Suspense } from "react";
 import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneField, type PaneContentEntry } from "../lib/paneContentRegistry";
@@ -18,7 +16,6 @@ export function MindmapPaneView({ paneId, pagePath, onExportNetwork }: { paneId:
   const setPaneViewMode = usePaneStore((s) => s.setPaneViewMode);
 
   const [mindmapSelectedId, setMindmapSelectedId] = useState<string | null>(null);
-  const pendingScrollLineRef = useRef<number | null>(null);
 
   const headingTree = useMemo(
     () => buildHeadingTree(extractHeadings(body)),
@@ -51,22 +48,6 @@ export function MindmapPaneView({ paneId, pagePath, onExportNetwork }: { paneId:
     window.addEventListener("lit:scroll-to-line", handler);
     return () => window.removeEventListener("lit:scroll-to-line", handler);
   }, [headingTree]);
-
-  useEffect(() => {
-    const line = pendingScrollLineRef.current;
-    if (line == null) return;
-    pendingScrollLineRef.current = null;
-    const view = getPaneView(paneId);
-    if (!view) return;
-    view.requestMeasure();
-    const lineNum = Math.min(line + 1, view.state.doc.lines);
-    const pos = view.state.doc.line(lineNum).from;
-    view.dispatch({
-      selection: EditorSelection.cursor(pos),
-      effects: EditorView.scrollIntoView(pos, { y: "start" }),
-    });
-    view.focus();
-  });
 
   return (
     <div data-testid="mindmap-view" className="flex-1 min-h-0">
@@ -124,7 +105,7 @@ export function MindmapPaneView({ paneId, pagePath, onExportNetwork }: { paneId:
             return result.nodeId;
           }}
           onNodeJump={(node) => {
-            pendingScrollLineRef.current = node.line;
+            usePaneStore.getState().setPendingJumpLine(paneId, node.line + 1);
             setPaneViewMode(paneId, "editor");
           }}
           onDeleteNode={(nodeId) => {

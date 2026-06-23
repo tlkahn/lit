@@ -619,6 +619,70 @@ describe("EditorPane", () => {
     });
   });
 
+  describe("pendingJumpLine", () => {
+    function fakeViewWithDoc(doc: string): EditorView {
+      return {
+        state: {
+          doc: Text.of(doc.split("\n")),
+          selection: { main: { head: 0 } },
+        },
+        dispatch: vi.fn(),
+        scrollDOM: { scrollTop: 0 },
+        focus: vi.fn(),
+      } as unknown as EditorView;
+    }
+
+    it("scrolls to the correct line when pendingJumpLine is set", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePaneStore.getState().setPendingJumpLine("pane-1", 2);
+
+      const body = "# Heading 1\n## Heading 2\nContent";
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+      expect(usePaneStore.getState().pendingJumpLines["pane-1"]).toBeUndefined();
+    });
+
+    it("pendingJumpLine takes priority over pendingCursorLine", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePaneStore.getState().setPendingJumpLine("pane-1", 3);
+      useWorkspaceStore.setState({ pendingCursorLine: 1 });
+
+      const body = "# Heading 1\n## Heading 2\nContent";
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      vi.advanceTimersByTime(16);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(3).from;
+      expect(tx.selection.head).toBe(expectedPos);
+    });
+  });
+
   describe("forward sync (md -> PDF)", () => {
     // Body with two page markers. Marker for "Page 2" starts at index 19.
     const bodyWithMarkers = "<!-- Page 1 -->\nfoo\n<!-- Page 2 -->\nbar";

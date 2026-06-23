@@ -858,6 +858,48 @@ describe("Section B: Store", () => {
     });
   });
 
+  describe("pendingJumpLines", () => {
+    beforeEach(() => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "note.md" },
+        focusedPaneId: "test-root",
+        pendingJumpLines: {},
+      });
+    });
+
+    it("setPendingJumpLine stores line for paneId", () => {
+      usePaneStore.getState().setPendingJumpLine("test-root", 42);
+      expect(usePaneStore.getState().pendingJumpLines["test-root"]).toBe(42);
+    });
+
+    it("consumePendingJumpLine returns line and clears it", () => {
+      usePaneStore.getState().setPendingJumpLine("test-root", 10);
+      const line = usePaneStore.getState().consumePendingJumpLine("test-root");
+      expect(line).toBe(10);
+      expect(usePaneStore.getState().pendingJumpLines["test-root"]).toBeUndefined();
+    });
+
+    it("consumePendingJumpLine returns null when nothing pending", () => {
+      const line = usePaneStore.getState().consumePendingJumpLine("test-root");
+      expect(line).toBeNull();
+    });
+
+    it("consumePendingJumpLine returns null for wrong paneId", () => {
+      usePaneStore.getState().setPendingJumpLine("test-root", 5);
+      const line = usePaneStore.getState().consumePendingJumpLine("other-pane");
+      expect(line).toBeNull();
+      expect(usePaneStore.getState().pendingJumpLines["test-root"]).toBe(5);
+    });
+
+    it("multiple panes have independent pending jump lines", () => {
+      usePaneStore.getState().setPendingJumpLine("pane-a", 3);
+      usePaneStore.getState().setPendingJumpLine("pane-b", 7);
+      expect(usePaneStore.getState().consumePendingJumpLine("pane-a")).toBe(3);
+      expect(usePaneStore.getState().consumePendingJumpLine("pane-b")).toBe(7);
+      expect(usePaneStore.getState().pendingJumpLines).toEqual({});
+    });
+  });
+
   describe("setPanePage preserves viewMode", () => {
     beforeEach(() => {
       usePaneStore.setState({
