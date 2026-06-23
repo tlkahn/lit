@@ -439,6 +439,18 @@ pub fn get_references(
 }
 
 #[tauri::command]
+pub fn get_reference_counts(
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<HashMap<String, usize>, String> {
+    let root = PathBuf::from(&workspace_path);
+    let gi = lookup_graph_index(&graph_state, &root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    crate::bib::db::reference_counts(&store.conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn bib_delete(
     cite_key: String,
     workspace_path: String,
@@ -1898,6 +1910,69 @@ mod tests {
 
         let refs = crate::bib::db::get_references_for(&store.conn, "lonely2024").unwrap();
         assert!(refs.is_empty());
+    }
+
+    // ── reference_counts (backing get_reference_counts command) ──
+
+    #[test]
+    fn test_reference_counts_returns_map() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        let child_a = test_entry("child_a2024");
+        db::upsert_bib_item(&store.conn, &child_a, None, None, false).unwrap();
+        let child_b = test_entry("child_b2024");
+        db::upsert_bib_item(&store.conn, &child_b, None, None, false).unwrap();
+
+        db::insert_bib_reference(&store.conn, "parent2024", "child_a2024", Some(0)).unwrap();
+        db::insert_bib_reference(&store.conn, "parent2024", "child_b2024", Some(1)).unwrap();
+
+        let counts = db::reference_counts(&store.conn).unwrap();
+        assert_eq!(counts.get("parent2024"), Some(&2));
+        assert!(
+            !counts.contains_key("child_a2024"),
+            "keys with no outgoing references should be absent"
+        );
+    }
+
+    #[test]
+    fn test_reference_counts_empty_store() {
+        let store = Store::open_memory().unwrap();
+        let counts = db::reference_counts(&store.conn).unwrap();
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_reference_counts_excludes_tombstoned() {
+        let store = Store::open_memory().unwrap();
+        let parent = test_entry("parent2024");
+        db::upsert_bib_item(&store.conn, &parent, None, None, false).unwrap();
+        let alive = test_entry("alive2024");
+        db::upsert_bib_item(&store.conn, &alive, None, None, false).unwrap();
+        let dead = test_entry("dead2024");
+        db::upsert_bib_item(&store.conn, &dead, None, None, false).unwrap();
+
+        db::insert_bib_reference(&store.conn, "parent2024", "alive2024", Some(0)).unwrap();
+        db::insert_bib_reference(&store.conn, "parent2024", "dead2024", Some(1)).unwrap();
+
+        // Manually tombstone the child WITHOUT calling tombstone_bib_item,
+        // which would also DELETE the bib_references edge. Leaving the
+        // orphan edge in place is the scenario that actually exercises the
+        // INNER JOIN / deleted_at IS NULL filter in reference_counts().
+        store
+            .conn
+            .execute(
+                "UPDATE bib_items SET deleted_at = datetime('now') WHERE cite_key = 'dead2024'",
+                [],
+            )
+            .unwrap();
+
+        let counts = db::reference_counts(&store.conn).unwrap();
+        assert_eq!(
+            counts.get("parent2024"),
+            Some(&1),
+            "should only count live children"
+        );
     }
 
     /// Regression test for F10: bib_update_fields must trigger refresh_shadows

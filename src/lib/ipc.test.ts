@@ -56,6 +56,7 @@ import {
   bibUpdateFields,
   bibDelete,
   getReferences,
+  getReferenceCounts,
   ensureInCompanionBib,
   type RecognizeResult,
   type ConfirmReason,
@@ -816,6 +817,8 @@ describe("ipc", () => {
             },
           ];
         }
+        case "get_reference_counts":
+          return { parent2024: 3, smith2020: 1 };
         case "ensure_in_companion_bib":
           return { bib_path: "assets/bib/Note.bib", bibliography_value: null };
         case "read_cardbox_layout":
@@ -2483,6 +2486,15 @@ describe("ipc", () => {
   it("getReferences returns empty array when no references", async () => {
     const result = await getReferences("empty_refs", "/workspace");
     expect(result).toEqual([]);
+  });
+
+  it("getReferenceCounts returns reference count map", async () => {
+    const result = await getReferenceCounts("/workspace");
+    expect(result).toEqual({ parent2024: 3, smith2020: 1 });
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_reference_counts", {
+      workspacePath: "/workspace",
+    });
   });
 
   it("ensureInCompanionBib calls ensure_in_companion_bib and returns result", async () => {

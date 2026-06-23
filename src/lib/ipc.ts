@@ -632,6 +632,12 @@ export async function getReferences(
   return invoke<BibEntry[]>("get_references", { bibKey, workspacePath });
 }
 
+export async function getReferenceCounts(
+  workspacePath: string,
+): Promise<Record<string, number>> {
+  return invoke<Record<string, number>>("get_reference_counts", { workspacePath });
+}
+
 export async function bibDelete(
   citeKey: string,
   workspacePath: string,
