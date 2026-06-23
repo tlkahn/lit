@@ -10,7 +10,6 @@ import { EntryTypeBadge } from "./EntryTypeBadge";
 import { BibEntryActions, type BibEntryActionProps } from "./BibEntryActions";
 
 export interface BibEntryRowProps {
-  entry: BibEntry;
   isExpanded: boolean;
   modHeld: boolean;
   onToggleExpand: (entryId: string) => void;
@@ -117,39 +116,23 @@ function CitedBySection({ bibKey }: { bibKey: string }) {
  * (e.g. note/markdown opens already include `recordDeparture()`).
  */
 function areEqual(prev: BibEntryRowProps, next: BibEntryRowProps): boolean {
-  if (prev.entry !== next.entry) return false;
   if (prev.isExpanded !== next.isExpanded) return false;
   if (prev.modHeld !== next.modHeld) return false;
   if (prev.onToggleExpand !== next.onToggleExpand) return false;
   if (prev.onNavigateToBibFile !== next.onNavigateToBibFile) return false;
-  const pa = prev.actionProps;
-  const na = next.actionProps;
-  return pa.entry === na.entry
-    && pa.state === na.state
-    && pa.ocrCompanionCurrent === na.ocrCompanionCurrent
-    && pa.isMaterializing === na.isMaterializing
-    && pa.isEnriching === na.isEnriching
-    && pa.enrichPhase === na.enrichPhase
-    && pa.isDownloading === na.isDownloading
-    && pa.downloadProgress === na.downloadProgress
-    && pa.isLinking === na.isLinking
-    && pa.onOpenNote === na.onOpenNote
-    && pa.onCreateNote === na.onCreateNote
-    && pa.onEnrich === na.onEnrich
-    && pa.onOpenPdf === na.onOpenPdf
-    && pa.onOpenMarkdown === na.onOpenMarkdown
-    && pa.onOcr === na.onOcr
-    && pa.onCopyCitation === na.onCopyCitation
-    && pa.onDownloadPdf === na.onDownloadPdf
-    && pa.onLinkPdf === na.onLinkPdf;
+  const pa = prev.actionProps as unknown as Record<string, unknown>;
+  const na = next.actionProps as unknown as Record<string, unknown>;
+  const keys = Object.keys(pa);
+  if (keys.length !== Object.keys(na).length) return false;
+  for (const k of keys) {
+    if (pa[k] !== na[k]) return false;
+  }
+  return true;
 }
 
 export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
-  const {
-    entry, isExpanded, modHeld,
-    onToggleExpand, onNavigateToBibFile,
-    actionProps,
-  } = props;
+  const { isExpanded, modHeld, onToggleExpand, onNavigateToBibFile, actionProps } = props;
+  const { entry } = actionProps;
 
   const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
   const tags = entry.tags ?? [];

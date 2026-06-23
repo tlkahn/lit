@@ -575,18 +575,10 @@ export function ReferenceLibrary() {
     [workspacePath, show],
   );
 
-  const handleOpenNote = useCallback(
-    (pageId: string) => {
+  const handleNavigateWithDeparture = useCallback(
+    (target: string) => {
       recordDeparture();
-      selectPage(pageId);
-    },
-    [recordDeparture, selectPage],
-  );
-
-  const handleOpenMarkdown = useCallback(
-    (filename: string) => {
-      recordDeparture();
-      selectPage(filename);
+      selectPage(target);
     },
     [recordDeparture, selectPage],
   );
@@ -1003,7 +995,6 @@ export function ReferenceLibrary() {
                     }}
                   >
                     <BibEntryRow
-                      entry={entry}
                       isExpanded={isExpanded}
                       modHeld={modHeld}
                       onToggleExpand={toggleExpand}
@@ -1018,11 +1009,11 @@ export function ReferenceLibrary() {
                         isDownloading: downloadingKey === entry.key,
                         downloadProgress: downloadingKey === entry.key ? downloadProgress : null,
                         isLinking: linkingKey === entry.key,
-                        onOpenNote: handleOpenNote,
+                        onOpenNote: handleNavigateWithDeparture,
                         onCreateNote: materializeNote,
                         onEnrich: handleEnrich,
                         onOpenPdf: selectPage,
-                        onOpenMarkdown: handleOpenMarkdown,
+                        onOpenMarkdown: handleNavigateWithDeparture,
                         onOcr: handleOcr,
                         onCopyCitation: copyCitation,
                         onDownloadPdf: handleDownload,

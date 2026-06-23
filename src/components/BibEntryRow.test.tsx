@@ -79,7 +79,6 @@ function renderRow(overrides: {
   const entry = overrides.entry ?? baseEntry;
   const ah = actionHandlers();
   const props: BibEntryRowProps = {
-    entry,
     isExpanded: overrides.isExpanded ?? false,
     modHeld: overrides.modHeld ?? false,
     onToggleExpand: (overrides.onToggleExpand ?? vi.fn()) as (entryId: string) => void,
