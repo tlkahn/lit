@@ -16,25 +16,25 @@ export interface BibActionDescriptor {
   renderContent?: React.ReactNode;
 }
 
-interface BibEntryActionsProps {
+export interface BibEntryActionProps {
   entry: BibEntry;
   state: BibKeyState | undefined;
+  ocrCompanionCurrent: string | false | undefined;
+  isMaterializing: boolean;
+  isEnriching: boolean;
+  enrichPhase: "fetch" | "search";
+  isDownloading: boolean;
+  downloadProgress: { bytes: number; total: number | null } | null;
+  isLinking: boolean;
   onOpenNote: (pageId: string) => void;
   onCreateNote: (key: string) => void;
   onEnrich: (entry: BibEntry) => void;
   onOpenPdf: (file: string) => void;
-  onOcr: (entry: BibEntry) => void;
   onOpenMarkdown: (filename: string) => void;
+  onOcr: (entry: BibEntry) => void;
   onCopyCitation: (key: string) => void;
   onDownloadPdf: (entry: BibEntry) => void;
   onLinkPdf: (entry: BibEntry) => void;
-  materializingKey: string | null;
-  enrichingKey: string | null;
-  enrichPhase: "fetch" | "search";
-  downloadingKey: string | null;
-  downloadProgress: { bytes: number; total: number | null } | null;
-  linkingKey: string | null;
-  ocrCompanionCurrent?: string | false;
 }
 
 const TRIGGER_WIDTH = 28;
@@ -42,14 +42,14 @@ const TRIGGER_WIDTH = 28;
 const BUTTON_CLASS =
   "inline-flex items-center justify-center rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50";
 
-export function BibEntryActions(props: BibEntryActionsProps) {
+export function BibEntryActions(props: BibEntryActionProps) {
   const {
     entry, state,
+    ocrCompanionCurrent,
+    isMaterializing, isEnriching, enrichPhase,
+    isDownloading, downloadProgress, isLinking,
     onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOcr,
     onOpenMarkdown, onCopyCitation, onDownloadPdf, onLinkPdf,
-    materializingKey, enrichingKey, enrichPhase,
-    downloadingKey, downloadProgress, linkingKey,
-    ocrCompanionCurrent,
   } = props;
 
   const actions = useMemo<BibActionDescriptor[]>(() => {
@@ -65,20 +65,20 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         testId: "has-note-link",
       });
     } else if (state) {
-      const createLabel = materializingKey === entry.key ? "Creating…" : "Create note";
+      const createLabel = isMaterializing ? "Creating…" : "Create note";
       list.push({
         key: "create-note",
         icon: "󰝒",
         label: createLabel,
         onClick: () => onCreateNote(entry.key),
-        disabled: materializingKey !== null,
+        disabled: isMaterializing,
         testId: "create-note-btn",
-        spinner: materializingKey === entry.key,
+        spinner: isMaterializing,
       });
     }
 
-    if (!state?.page_id && (state?.materialization !== "partial" || enrichingKey === entry.key)) {
-      const enrichLabel = enrichingKey === entry.key
+    if (!state?.page_id && (state?.materialization !== "partial" || isEnriching)) {
+      const enrichLabel = isEnriching
         ? (enrichPhase === "fetch" ? "Fetching…" : "Searching providers…")
         : "Fetch details";
       list.push({
@@ -86,9 +86,9 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         icon: "󰇚",
         label: enrichLabel,
         onClick: () => onEnrich(entry),
-        disabled: enrichingKey === entry.key,
+        disabled: isEnriching,
         testId: "fetch-details-btn",
-        spinner: enrichingKey === entry.key,
+        spinner: isEnriching,
       });
     }
 
@@ -130,7 +130,7 @@ export function BibEntryActions(props: BibEntryActionsProps) {
     });
 
     if (!entry.file && (entry.doi || entry.arxiv_id)) {
-      const dlLabel = downloadingKey === entry.key
+      const dlLabel = isDownloading
         ? downloadProgress
           ? downloadProgress.total
             ? `Downloading ${Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%`
@@ -142,16 +142,16 @@ export function BibEntryActions(props: BibEntryActionsProps) {
         icon: "󰇚",
         label: dlLabel,
         onClick: () => onDownloadPdf(entry),
-        disabled: downloadingKey === entry.key || linkingKey === entry.key,
+        disabled: isDownloading || isLinking,
         testId: "download-pdf-btn",
-        spinner: downloadingKey === entry.key,
-        renderContent: downloadingKey === entry.key
+        spinner: isDownloading,
+        renderContent: isDownloading
           ? <>{downloadProgress?.total ? <span>{Math.round((downloadProgress.bytes / downloadProgress.total) * 100)}%</span> : null}</>
           : undefined,
       });
     }
 
-    const linkLabel = linkingKey === entry.key
+    const linkLabel = isLinking
       ? "Linking…"
       : entry.file
         ? "Re-link PDF"
@@ -161,9 +161,9 @@ export function BibEntryActions(props: BibEntryActionsProps) {
       icon: "󰌷",
       label: linkLabel,
       onClick: () => onLinkPdf(entry),
-      disabled: linkingKey === entry.key || downloadingKey === entry.key,
+      disabled: isLinking || isDownloading,
       testId: "link-pdf-btn",
-      spinner: linkingKey === entry.key,
+      spinner: isLinking,
     });
 
     return list;
@@ -171,8 +171,8 @@ export function BibEntryActions(props: BibEntryActionsProps) {
     entry, state,
     onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOcr,
     onOpenMarkdown, onCopyCitation, onDownloadPdf, onLinkPdf,
-    materializingKey, enrichingKey, enrichPhase,
-    downloadingKey, downloadProgress, linkingKey,
+    isMaterializing, isEnriching, enrichPhase,
+    isDownloading, downloadProgress, isLinking,
     ocrCompanionCurrent,
   ]);
 

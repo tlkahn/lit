@@ -15,7 +15,6 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import {
   listBibEntries,
-  getCitingPages,
   getBibKeyStates,
   enrichBibEntry,
   applyEnrichmentCandidate,
@@ -29,7 +28,6 @@ import {
   isOcrCompanionCurrent,
   type BibEntry,
   type BibKeyState,
-  type BacklinkEntry,
   type FileEvent,
   type PaperSearchResult,
 } from "../lib/ipc";
@@ -47,16 +45,12 @@ import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { ImportPdfDialog } from "./ImportPdfDialog";
 import { OcrDialog } from "./OcrDialog";
-import { highlightWikilinks } from "../lib/highlightWikilinks";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
 import { useModKeyHeld } from "../hooks/useModKeyHeld";
-import { doiHref } from "../lib/urlUtils";
 import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
-import { EntryTypeBadge } from "./EntryTypeBadge";
 import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
-import { BibEntryActions } from "./BibEntryActions";
-import { distinctPublisher } from "../lib/bibUtils";
+import { BibEntryRow } from "./BibEntryRow";
 
 /**
  * Check whether an entry's absolute bib_file path ends with the given
@@ -109,95 +103,6 @@ function combinedText(entry: BibEntry): string {
     entry.publisher ?? "",
     entry.isbn ?? "",
   ].join(" ");
-}
-
-function urlHref(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : "#";
-}
-
-function CitedBySection({ bibKey }: { bibKey: string }) {
-  const graphReady = useWorkspaceStore((s) => s.graphReady);
-  const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
-  const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
-  const currentPageRef = useRef(currentPagePath ?? "");
-  currentPageRef.current = currentPagePath ?? "";
-  const recordDeparture = useRecordDeparture(currentPageRef);
-  const [citing, setCiting] = useState<BacklinkEntry[] | null>(null);
-  const [open, setOpen] = useState(false);
-  const bibKeyRef = useRef(bibKey);
-  bibKeyRef.current = bibKey;
-
-  const fetchCitingPages = useCallback(async () => {
-    const capturedKey = bibKeyRef.current;
-    try {
-      const result = await getCitingPages(capturedKey);
-      if (bibKeyRef.current !== capturedKey) return;
-      setCiting(result);
-    } catch {
-      if (bibKeyRef.current !== capturedKey) return;
-      setCiting([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (graphReady) fetchCitingPages();
-  }, [bibKey, graphReady, fetchCitingPages]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen("lit:graph-updated", () => {
-      fetchCitingPages();
-    }).then((fn) => {
-      if (cancelled) { fn(); } else { unlisten = fn; }
-    });
-    return () => { cancelled = true; unlisten?.(); };
-  }, [fetchCitingPages]);
-
-  if (!graphReady || citing === null) return null;
-  if (citing.length === 0) {
-    return <div className="mt-2 text-xs text-text-faint">Not cited</div>;
-  }
-  return (
-    <div className="mt-2" data-testid="cited-by-section">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-      >
-        Cited by ({citing.length})
-      </button>
-      {open ? (
-        <div className="mt-1">
-          {citing.map((e, i) => (
-            <div key={`${e.source_id}-${i}`} className="mt-1 text-xs">
-              <button
-                className="font-medium text-interactive-accent hover:underline"
-                onClick={() => {
-                  recordDeparture();
-                  selectPageAtLine(e.source_id, e.source_line);
-                }}
-              >
-                {e.source_title || e.source_id}
-              </button>
-              {e.context ? (
-                <p
-                  data-testid={`citing-context-${i}`}
-                  className="mt-0.5 cursor-pointer text-text-muted hover:text-text-normal"
-                  onClick={() => {
-                    recordDeparture();
-                    selectPageAtLine(e.source_id, e.source_line);
-                  }}
-                >
-                  {highlightWikilinks(e.context)}
-                  <span className="ml-1 text-text-faint">line {e.source_line}</span>
-                </p>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 // Lightweight UI heuristic only; full validation with check-digits lives in recognize/identifiers.rs
@@ -524,6 +429,13 @@ export function ReferenceLibrary() {
     [show],
   );
 
+  const materializingKeyRef = useRef(materializingKey);
+  materializingKeyRef.current = materializingKey;
+  const downloadingKeyRef = useRef(downloadingKey);
+  downloadingKeyRef.current = downloadingKey;
+  const linkingKeyRef = useRef(linkingKey);
+  linkingKeyRef.current = linkingKey;
+
   const doMaterialize = useMaterializeCitation({
     recordDeparture,
     navigate: selectPage,
@@ -533,7 +445,7 @@ export function ReferenceLibrary() {
 
   const materializeNote = useCallback(
     async (bibKey: string) => {
-      if (materializingKey !== null) return;
+      if (materializingKeyRef.current !== null) return;
       setMaterializingKey(bibKey);
       try {
         await doMaterialize(bibKey);
@@ -541,7 +453,7 @@ export function ReferenceLibrary() {
         setMaterializingKey(null);
       }
     },
-    [materializingKey, doMaterialize],
+    [doMaterialize],
   );
 
   /** Shared enrichment flow: spinner, phase timer, classify result, toast. */
@@ -602,7 +514,7 @@ export function ReferenceLibrary() {
 
   const handleDownload = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || downloadingKey || linkingKey) return;
+      if (!workspacePath || downloadingKeyRef.current || linkingKeyRef.current) return;
       setDownloadingKey(entry.key);
       setDownloadProgress(null);
       try {
@@ -621,12 +533,12 @@ export function ReferenceLibrary() {
         setDownloadProgress(null);
       }
     },
-    [workspacePath, downloadingKey, linkingKey, show],
+    [workspacePath, show],
   );
 
   const handleLinkPdf = useCallback(
     async (entry: BibEntry) => {
-      if (!workspacePath || linkingKey || downloadingKey) return;
+      if (!workspacePath || linkingKeyRef.current || downloadingKeyRef.current) return;
       setLinkingKey(entry.key);
       try {
         const { ask, open: openDialog } = await import("@tauri-apps/plugin-dialog");
@@ -660,7 +572,22 @@ export function ReferenceLibrary() {
         setLinkingKey(null);
       }
     },
-    [workspacePath, linkingKey, downloadingKey, show],
+    [workspacePath, show],
+  );
+
+  const handleNavigateWithDeparture = useCallback(
+    (target: string) => {
+      recordDeparture();
+      selectPage(target);
+    },
+    [recordDeparture, selectPage],
+  );
+
+  const handleOcr = useCallback(
+    (e: BibEntry) => {
+      if (workspacePath) setOcrEntry(e);
+    },
+    [workspacePath],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1040,7 +967,6 @@ export function ReferenceLibrary() {
                 const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
                 const isExpanded = expandedKey === entryId;
                 const isRevealed = revealedKey === entryId;
-                const tags = entry.tags ?? [];
                 const state = bibKeyStates[entry.key];
                 return (
                   <div
@@ -1068,144 +994,32 @@ export function ReferenceLibrary() {
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    <button
-                      onClick={() => toggleExpand(entryId)}
-                      className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-start hover:bg-bg-hover"
-                    >
-                      <span
-                        data-testid="reference-entry-title"
-                        className={`w-full truncate text-xs ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
-                        onClick={(e) => {
-                          if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
-                            e.stopPropagation();
-                            navigateToBibFile(entry);
-                          }
-                        }}
-                      >
-                        {entry.title}
-                      </span>
-                      <span className="flex w-full items-center gap-1 text-xs text-text-muted">
-                        <span className="truncate">
-                          {entry.authors.join("; ")}
-                          {entry.year ? ` (${entry.year})` : ""}
-                        </span>
-                        <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
-                      </span>
-                    </button>
-                    {isExpanded ? (
-                      <div className="mt-1 rounded border border-border bg-bg-primary px-2 py-2 font-serif italic text-xs">
-                        <div className="flex items-start gap-2">
-                          <div
-                            className={`font-semibold ${modHeld && entry.bib_file ? "cursor-pointer underline text-interactive-accent" : "text-text-normal"}`}
-                            onClick={(e) => {
-                              if ((e.metaKey || e.ctrlKey) && entry.bib_file) {
-                                navigateToBibFile(entry);
-                              }
-                            }}
-                          >
-                            {entry.title}
-                          </div>
-                          <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
-                        </div>
-                        {entry.authors.length > 0 ? (
-                          <div className="mt-1 text-text-muted">
-                            {entry.authors.join("; ")}
-                          </div>
-                        ) : null}
-                        {entry.editors && entry.editors.length > 0 ? (
-                          <div data-testid="entry-editors" className="text-text-muted">
-                            Ed. {entry.editors.join("; ")}
-                          </div>
-                        ) : null}
-                        {entry.year ? (
-                          <div className="text-text-muted">{entry.year}</div>
-                        ) : null}
-                        {entry.journal ? (
-                          <div className="text-text-muted">{entry.journal}</div>
-                        ) : null}
-                        {distinctPublisher(entry) ? (
-                          <div data-testid="entry-publisher" className="text-text-muted">{distinctPublisher(entry)}</div>
-                        ) : null}
-                        {entry.isbn ? (
-                          <div data-testid="entry-isbn" className="text-text-muted">
-                            ISBN:{" "}
-                            <a
-                              href={`https://openlibrary.org/isbn/${entry.isbn}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-interactive-accent hover:underline"
-                            >
-                              {entry.isbn}
-                            </a>
-                          </div>
-                        ) : null}
-                        {entry.doi ? (
-                          <div className="mt-1">
-                            <a
-                              href={doiHref(entry.doi)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-interactive-accent hover:underline"
-                            >
-                              {entry.doi}
-                            </a>
-                          </div>
-                        ) : null}
-                        {entry.url ? (
-                          <div className="mt-1">
-                            <a
-                              href={urlHref(entry.url)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="break-all text-interactive-accent hover:underline"
-                            >
-                              {entry.url}
-                            </a>
-                          </div>
-                        ) : null}
-                        {entry.abstract_text ? (
-                          <p className="mt-2 text-text-normal">{entry.abstract_text}</p>
-                        ) : null}
-                        {tags.length > 0 ? (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {tags.map((t, i) => (
-                              <span
-                                key={`${t}-${i}`}
-                                className="rounded bg-bg-hover px-1.5 py-0.5 text-xs text-text-muted"
-                              >
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                        <div className="not-italic">
-                          <BibEntryActions
-                            entry={entry}
-                            state={state}
-                            onOpenNote={(pageId) => {
-                              recordDeparture();
-                              selectPage(pageId);
-                            }}
-                            onCreateNote={materializeNote}
-                            onEnrich={handleEnrich}
-                            onOpenPdf={selectPage}
-                            onOpenMarkdown={(filename) => { recordDeparture(); selectPage(filename); }}
-                            onOcr={(e) => { if (workspacePath) setOcrEntry(e); }}
-                            onCopyCitation={copyCitation}
-                            onDownloadPdf={handleDownload}
-                            onLinkPdf={handleLinkPdf}
-                            materializingKey={materializingKey}
-                            enrichingKey={enrichingKey}
-                            enrichPhase={enrichPhase}
-                            downloadingKey={downloadingKey}
-                            downloadProgress={downloadProgress}
-                            linkingKey={linkingKey}
-                            ocrCompanionCurrent={ocrCompanionCurrentMap[entryId]}
-                          />
-                          <CitedBySection bibKey={entry.key} />
-                        </div>
-                      </div>
-                    ) : null}
+                    <BibEntryRow
+                      isExpanded={isExpanded}
+                      modHeld={modHeld}
+                      onToggleExpand={toggleExpand}
+                      onNavigateToBibFile={navigateToBibFile}
+                      actionProps={{
+                        entry,
+                        state,
+                        ocrCompanionCurrent: ocrCompanionCurrentMap[entryId],
+                        isMaterializing: materializingKey === entry.key,
+                        isEnriching: enrichingKey === entry.key,
+                        enrichPhase: enrichingKey === entry.key ? enrichPhase : "fetch",
+                        isDownloading: downloadingKey === entry.key,
+                        downloadProgress: downloadingKey === entry.key ? downloadProgress : null,
+                        isLinking: linkingKey === entry.key,
+                        onOpenNote: handleNavigateWithDeparture,
+                        onCreateNote: materializeNote,
+                        onEnrich: handleEnrich,
+                        onOpenPdf: selectPage,
+                        onOpenMarkdown: handleNavigateWithDeparture,
+                        onOcr: handleOcr,
+                        onCopyCitation: copyCitation,
+                        onDownloadPdf: handleDownload,
+                        onLinkPdf: handleLinkPdf,
+                      }}
+                    />
                   </div>
                 );
               })}
