@@ -59,11 +59,8 @@ interface PdfViewerProps {
   initialPage?: number;
   onPageChange?: (pageIndex: number) => void;
   onPageCount?: (count: number) => void;
-  /**
-   * Publish this viewer's `goToPage`. `ready` is false before the backend doc
-   * is open; the owner should only consume a pending sync on a ready call.
-   */
-  registerGoToPage?: (fn: (pageIndex: number) => void, ready: boolean) => void;
+  /** Publish this viewer's goToPage so the owner can trigger programmatic navigation. */
+  registerGoToPage?: (fn: (pageIndex: number) => void) => void;
   /**
    * Publish a getter for this viewer's SYNCHRONOUS current page (currentPageRef)
    * so an external owner (e.g. the status bar) can derive a navigation target
@@ -343,6 +340,7 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
   const goToPage = useCallback(
     async (index: number) => {
       if (index === currentPageRef.current) return;
+      if (!pdfDoc) return; // doc not loaded yet — no-op
       // Monotonic navigation token: any newer navigation supersedes an
       // in-flight slow render so it cannot revert us.
       const mySeq = ++navSeqRef.current;
@@ -397,8 +395,8 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
   }, [goToPage]);
 
   useEffect(() => {
-    registerGoToPage?.(goToPage, pdfDoc !== null);
-  }, [goToPage, registerGoToPage, paneId, pdfDoc]);
+    registerGoToPage?.(goToPage);
+  }, [goToPage, registerGoToPage, paneId]);
 
   // Publish a stable getter that reads currentPageRef.current at call time, so
   // the status bar always sees the synchronous navigation target (set in

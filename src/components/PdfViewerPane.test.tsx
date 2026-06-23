@@ -17,39 +17,37 @@ import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMark
 
 const mockGoToPage = vi.fn();
 
-// Controls the readiness flag the mocked PdfViewer passes to registerGoToPage.
-// Defaults to true so existing tests register a ready closure on mount.
-let mockReady = true;
+/**
+ * Optional spy invoked during PdfViewer mock's render body (before any effects).
+ * Tests can set this to capture store state during the render phase.
+ */
+let onMockRender: ((paneId: string) => void) | null = null;
 
 vi.mock("./PdfViewer", () => ({
   PdfViewer: ({
     filePath,
     paneId,
+    initialPage,
     registerGoToPage,
     onPageChange,
     onPageCount,
   }: {
     filePath: string;
     paneId: string;
-    registerGoToPage?: (fn: (i: number) => void, ready: boolean) => void;
+    initialPage?: number;
+    registerGoToPage?: (fn: (i: number) => void) => void;
     onPageChange?: (i: number) => void;
     onPageCount?: (count: number) => void;
   }) => {
-    // Simulate PdfViewer publishing its internal goToPage on mount, carrying a
-    // readiness flag (false before the PDF document loads, true once loaded).
+    // Notify render-phase spy if installed.
+    onMockRender?.(paneId);
     useEffect(() => {
-      registerGoToPage?.(mockGoToPage, mockReady);
+      registerGoToPage?.(mockGoToPage);
     }, [registerGoToPage]);
-    // Expose buttons the test can click to drive callbacks, plus a button that
-    // re-registers with ready=true to mimic the second (ready) registration.
     return (
-      <div data-testid={`pdf-viewer-${filePath}-${paneId}`}>
+      <div data-testid={`pdf-viewer-${filePath}-${paneId}`} data-initial-page={initialPage}>
         <button data-testid="fire-page-change" onClick={() => onPageChange?.(2)} />
         <button data-testid="fire-page-count" onClick={() => onPageCount?.(10)} />
-        <button
-          data-testid="register-ready"
-          onClick={() => registerGoToPage?.(mockGoToPage, true)}
-        />
       </div>
     );
   },
@@ -85,7 +83,7 @@ beforeEach(() => {
   resetEditorViewRef();
   resetMarkerCache();
   mockGoToPage.mockClear();
-  mockReady = true;
+  onMockRender = null;
   return cleanup;
 });
 
@@ -214,10 +212,10 @@ describe("PdfViewerPane", () => {
   });
 
   describe("pending initial PDF sync", () => {
-    it("calls goToPage with pending page index when PdfViewer registers", () => {
+    it("passes pending page index as initialPage to PdfViewer", () => {
       usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
-      render(<PdfViewerPane paneId="p1" />);
-      expect(mockGoToPage).toHaveBeenCalledWith(5);
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1").getAttribute("data-initial-page")).toBe("5");
     });
 
     it("consumes the pending entry so it does not fire again", () => {
@@ -226,69 +224,132 @@ describe("PdfViewerPane", () => {
       expect(usePanePdfLinkStore.getState().pendingPdfSync.has("p1")).toBe(false);
     });
 
-    it("skips goToPage when pending page is 0 (already the default)", () => {
+    it("passes initialPage 0 when pending page is 0", () => {
       usePanePdfLinkStore.getState().setPendingPdfSync("p1", 0);
-      render(<PdfViewerPane paneId="p1" />);
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1").getAttribute("data-initial-page")).toBe("0");
       expect(mockGoToPage).not.toHaveBeenCalled();
     });
 
     it("marks forward sync to suppress the reverse-sync echo", () => {
       usePanePdfLinkStore.getState().setPendingPdfSync("p1", 3);
       render(<PdfViewerPane paneId="p1" />);
-      // The forward-sync flag should have been set (and not yet cleared by the 500ms timer)
       expect(pdfPaneRef.consumeForwardSync("p1")).toBe(true);
     });
 
-    it("does not call goToPage when there is no pending sync", () => {
+    it("passes initialPage 0 when there is no pending sync", () => {
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1").getAttribute("data-initial-page")).toBe("0");
+    });
+
+    it("suppresses reverse-sync echo even when onPageChange fires after the guard timeout", () => {
+      vi.useFakeTimers();
+      const doc = "<!-- Page 1 -->\nintro\n<!-- Page 2 -->\nbody\n<!-- Page 3 -->\nend";
+      const view = makeFakeEditorView(doc);
+      registerPaneView("ed1", view);
+      usePanePdfLinkStore.getState().linkPanes("p1", "ed1");
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 2);
+
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+
+      // Simulate slow PDF load: advance past FORWARD_SYNC_GUARD_MS (2000ms)
+      act(() => { vi.advanceTimersByTime(3000); });
+
+      // PdfViewer finally fires onPageChange AFTER the guard timeout expired
+      fireEvent.click(getByTestId("fire-page-change"));
+
+      // Reverse sync must still be suppressed (the flag should NOT have been
+      // cleared by a premature timeout)
+      expect(view.dispatch).not.toHaveBeenCalled();
+      expect(usePanePdfLinkStore.getState().currentPage.get("p1")).toBe(2);
+
+      vi.useRealTimers();
+    });
+
+    it("never calls goToPage imperatively from PdfViewerPane", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
       render(<PdfViewerPane paneId="p1" />);
       expect(mockGoToPage).not.toHaveBeenCalled();
     });
 
-    describe("readiness gating (Finding 2)", () => {
-      it("does NOT consume pending sync on a not-ready registration", () => {
-        mockReady = false;
-        usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
-        render(<PdfViewerPane paneId="p1" />);
-        // The stale (pdfInfo=null) closure must not be invoked...
-        expect(mockGoToPage).not.toHaveBeenCalled();
-        // ...and the pending sync must still be available for the ready closure.
-        expect(usePanePdfLinkStore.getState().pendingPdfSync.get("p1")).toBe(5);
+    it("still registers the goToPage callback in pdfPaneRef", () => {
+      render(<PdfViewerPane paneId="p1" />);
+      expect(pdfPaneRef.getPdfGoToPage("p1")).toBeTypeOf("function");
+    });
+
+    it("resets initialPage to 0 when pagePath changes with no new pending sync", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      // First PDF opens at page 5
+      expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1").getAttribute("data-initial-page")).toBe("5");
+
+      // Switch to a different PDF in the same pane (no new pending sync)
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: "other.pdf" },
+          focusedPaneId: "p1",
+        });
       });
 
-      it("consumes + fires pending sync once a ready registration arrives", () => {
-        mockReady = false;
-        usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
-        const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
-        expect(mockGoToPage).not.toHaveBeenCalled();
+      // The new PDF should open at page 0, not the stale page 5
+      expect(getByTestId("pdf-viewer-/ws/other.pdf-p1").getAttribute("data-initial-page")).toBe("0");
+    });
 
-        // Second registration with ready=true (pdfInfo now set).
-        fireEvent.click(getByTestId("register-ready"));
-        expect(mockGoToPage).toHaveBeenCalledWith(5);
-        expect(usePanePdfLinkStore.getState().pendingPdfSync.has("p1")).toBe(false);
+    it("honors a fresh pending sync when pagePath changes", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 5);
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1").getAttribute("data-initial-page")).toBe("5");
+
+      // Set a new pending sync for the second PDF, then switch pagePath
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 8);
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: "other.pdf" },
+          focusedPaneId: "p1",
+        });
       });
 
-      it("does NOT set the forward-sync flag on a not-ready registration", () => {
-        mockReady = false;
-        usePanePdfLinkStore.getState().setPendingPdfSync("p1", 3);
-        render(<PdfViewerPane paneId="p1" />);
-        expect(pdfPaneRef.consumeForwardSync("p1")).toBe(false);
+      // The new PDF should open at page 8
+      expect(getByTestId("pdf-viewer-/ws/other.pdf-p1").getAttribute("data-initial-page")).toBe("8");
+      // The pending sync should have been consumed
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.has("p1")).toBe(false);
+    });
+
+    it("marks forward sync for the new pending sync after pagePath change", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 3);
+      render(<PdfViewerPane paneId="p1" />);
+      // Consume the initial forward sync flag
+      expect(pdfPaneRef.consumeForwardSync("p1")).toBe(true);
+
+      // Set a new pending sync and switch pagePath
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 7);
+      act(() => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "p1", pagePath: "other.pdf" },
+          focusedPaneId: "p1",
+        });
       });
 
-      it("sets the forward-sync flag once a ready registration arrives", () => {
-        mockReady = false;
-        usePanePdfLinkStore.getState().setPendingPdfSync("p1", 3);
-        const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
-        fireEvent.click(getByTestId("register-ready"));
-        expect(pdfPaneRef.consumeForwardSync("p1")).toBe(true);
-      });
+      // A fresh forward sync flag should be set for the new PDF
+      expect(pdfPaneRef.consumeForwardSync("p1")).toBe(true);
+    });
 
-      it("still registers the live goToPage closure even when not ready", () => {
-        mockReady = false;
-        render(<PdfViewerPane paneId="p1" />);
-        // StatusBar/keyboard nav rely on the registry pointing at the closure
-        // regardless of readiness.
-        expect(pdfPaneRef.getPdfGoToPage("p1")).toBeTypeOf("function");
-      });
+    it("does not destructively consume the pending entry during the render phase", () => {
+      usePanePdfLinkStore.getState().setPendingPdfSync("p1", 7);
+      // Capture the store's pending entry during PdfViewer's render body
+      // (runs AFTER parent's render body but BEFORE any effects).
+      let pendingDuringChildRender: number | undefined;
+      onMockRender = (paneId) => {
+        pendingDuringChildRender = usePanePdfLinkStore.getState().pendingPdfSync.get(paneId);
+      };
+      const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+      // If the parent peeks non-destructively during render, the entry
+      // should still be in the store when the child renders.
+      expect(pendingDuringChildRender).toBe(7);
+      // initialPage should still be correct
+      expect(getByTestId("pdf-viewer-/ws/doc.pdf-p1").getAttribute("data-initial-page")).toBe("7");
+      // The entry is consumed after effects run (not during render)
+      expect(usePanePdfLinkStore.getState().pendingPdfSync.has("p1")).toBe(false);
     });
   });
 
