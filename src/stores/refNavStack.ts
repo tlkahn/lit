@@ -22,7 +22,16 @@ export const useRefNavStackStore = create<RefNavStackStore>((set, get) => ({
   push: (paneId, key, title) => {
     const { stacks } = get();
     const arr = stacks.get(paneId) ?? [];
-    if (arr.some((e) => e.key === key)) return;
+    const idx = arr.findIndex((e) => e.key === key);
+    if (idx !== -1) {
+      if (arr[idx]!.title === title) return;
+      const updated = arr.slice();
+      updated[idx] = { key, title };
+      const next = new Map(stacks);
+      next.set(paneId, updated);
+      set({ stacks: next });
+      return;
+    }
     const next = new Map(stacks);
     next.set(paneId, [...arr, { key, title }]);
     set({ stacks: next });

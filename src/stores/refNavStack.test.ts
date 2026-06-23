@@ -39,12 +39,12 @@ describe("refNavStack store", () => {
       ]);
     });
 
-    it("no-ops when key is already on pane stack (cycle guard)", () => {
+    it("updates title in-place when key is already on stack", () => {
       useRefNavStackStore.getState().push("pane1", "a", "Note A");
       useRefNavStackStore.getState().push("pane1", "b", "Note B");
-      useRefNavStackStore.getState().push("pane1", "a", "Note A again");
+      useRefNavStackStore.getState().push("pane1", "a", "Renamed A");
       expect(useRefNavStackStore.getState().stacks.get("pane1")).toEqual([
-        { key: "a", title: "Note A" },
+        { key: "a", title: "Renamed A" },
         { key: "b", title: "Note B" },
       ]);
     });
@@ -52,9 +52,29 @@ describe("refNavStack store", () => {
     it("preserves reference identity on cycle-guard no-op", () => {
       useRefNavStackStore.getState().push("pane1", "a", "Note A");
       const stacksBefore = useRefNavStackStore.getState().stacks;
-      useRefNavStackStore.getState().push("pane1", "a", "Different Title");
+      useRefNavStackStore.getState().push("pane1", "a", "Note A");
       const stacksAfter = useRefNavStackStore.getState().stacks;
       expect(stacksAfter).toBe(stacksBefore);
+    });
+
+    it("title update on deep entry does not reorder stack", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().push("pane1", "c", "C");
+      useRefNavStackStore.getState().push("pane1", "a", "New A");
+      expect(useRefNavStackStore.getState().stacks.get("pane1")).toEqual([
+        { key: "a", title: "New A" },
+        { key: "b", title: "B" },
+        { key: "c", title: "C" },
+      ]);
+    });
+
+    it("title update creates new stacks reference", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      const stacksBefore = useRefNavStackStore.getState().stacks;
+      useRefNavStackStore.getState().push("pane1", "a", "New A");
+      const stacksAfter = useRefNavStackStore.getState().stacks;
+      expect(stacksAfter).not.toBe(stacksBefore);
     });
   });
 
@@ -186,7 +206,7 @@ describe("refNavStack store", () => {
   });
 
   describe("cycle guard", () => {
-    it("push A, push B, push A = no-op", () => {
+    it("push A, push B, push A (same title) = no-op", () => {
       useRefNavStackStore.getState().push("pane1", "a", "A");
       useRefNavStackStore.getState().push("pane1", "b", "B");
       useRefNavStackStore.getState().push("pane1", "a", "A");
