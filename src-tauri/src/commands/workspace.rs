@@ -147,15 +147,13 @@ fn companion_from_frontmatter(root: &Path, relative_path: &str) -> Option<String
     }
 }
 
-/// Given a workspace-relative path to a markdown or PDF file, return the
-/// path of its sibling with the swapped extension (md<->pdf) if that sibling
-/// exists on disk. Looks first in the same directory under `root`, then in
-/// each of `search_paths` (workspace-relative or absolute directories) for a
-/// file with the same name and the swapped extension. Returns `None` for
-/// unsupported extensions or when no companion exists. The returned string
-/// uses forward slashes; it is workspace-relative when the companion is under
-/// `root`, or absolute when found via an absolute search path outside `root`.
-pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String]) -> Option<String> {
+/// Find a companion by same-name sibling or search-path lookup only (no
+/// frontmatter). Given a workspace-relative path, swap the extension
+/// (md<->pdf) and look for that file first in the same directory, then in
+/// each of `search_paths`. Returns `None` for unsupported extensions or when
+/// no sibling/search-path companion exists. This is the I/O-free-of-frontmatter
+/// counterpart to `find_companion`.
+fn find_companion_by_sibling(relative_path: &str, root: &Path, search_paths: &[String]) -> Option<String> {
     let rel = Path::new(relative_path);
     let ext = rel.extension()?.to_str()?.to_ascii_lowercase();
     let target_ext = match ext.as_str() {
@@ -163,11 +161,6 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
         "pdf" => "md",
         _ => return None,
     };
-    if ext == "md" {
-        if let Some(companion) = companion_from_frontmatter(root, relative_path) {
-            return Some(companion);
-        }
-    }
     let candidate = rel.with_extension(target_ext);
     let absolute = root.join(&candidate);
     if absolute.is_file() {
@@ -186,6 +179,29 @@ pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String])
     None
 }
 
+/// Given a workspace-relative path to a markdown or PDF file, return the
+/// path of its sibling with the swapped extension (md<->pdf) if that sibling
+/// exists on disk. For markdown files, also checks `companion:` frontmatter
+/// first. Looks first in the same directory under `root`, then in each of
+/// `search_paths` (workspace-relative or absolute directories) for a file
+/// with the same name and the swapped extension. Returns `None` for
+/// unsupported extensions or when no companion exists. The returned string
+/// uses forward slashes; it is workspace-relative when the companion is under
+/// `root`, or absolute when found via an absolute search path outside `root`.
+pub fn find_companion(relative_path: &str, root: &Path, search_paths: &[String]) -> Option<String> {
+    let ext = Path::new(relative_path).extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "pdf" => {}
+        _ => return None,
+    }
+    if ext == "md" {
+        if let Some(companion) = companion_from_frontmatter(root, relative_path) {
+            return Some(companion);
+        }
+    }
+    find_companion_by_sibling(relative_path, root, search_paths)
+}
+
 /// Look up the markdown note that declares `pdf_relative_path` as its
 /// `companion:` via the reverse map built by `annotate_companions`. Keys are
 /// canonical absolute PDF paths, so canonicalize the query path before lookup.
@@ -199,6 +215,21 @@ fn reverse_companion_lookup(
     let canon = root.join(pdf_relative_path).canonicalize().ok()?;
     let md_rel = map.get(&canon)?;
     Some(canonicalize_within_root(root, &root.join(md_rel), Path::new(md_rel)))
+}
+
+/// Cheap boolean check: is the canonical absolute path of `pdf_relative_path`
+/// present as a key in the reverse map? Unlike `reverse_companion_lookup` this
+/// skips the md-path canonicalization (two extra syscalls) that callers needing
+/// only a boolean don't need.
+fn reverse_map_contains_pdf(
+    root: &Path,
+    pdf_relative_path: &str,
+    map: &HashMap<PathBuf, String>,
+) -> bool {
+    root.join(pdf_relative_path)
+        .canonicalize()
+        .ok()
+        .map_or(false, |canon| map.contains_key(&canon))
 }
 
 /// Annotate each page's `has_companion` flag and build a reverse companion
@@ -219,26 +250,36 @@ fn annotate_companions(
 ) -> HashMap<PathBuf, String> {
     let mut reverse_map: HashMap<PathBuf, String> = HashMap::new();
 
-    // Phase 1: forward companion detection + reverse-map construction.
-    for page in pages.iter_mut() {
-        page.has_companion = find_companion(&page.relative_path, root, search_paths).is_some();
+    // Ensure deterministic "first md wins" tie-break regardless of caller
+    // sort order. The doc contract says the first md by sorted relative_path
+    // claims each PDF; enforce that here rather than relying on callers.
+    pages.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
+    // Phase 1: forward companion detection + reverse-map construction.
+    // For markdown pages, call companion_from_frontmatter once and reuse the
+    // result for both has_companion and the reverse-map insertion, falling
+    // through to the sibling-only helper when frontmatter returns None.
+    for page in pages.iter_mut() {
         if page.relative_path.to_ascii_lowercase().ends_with(".md") {
             if let Some(companion) = companion_from_frontmatter(root, &page.relative_path) {
+                page.has_companion = true;
                 if let Ok(canon) = root.join(&companion).canonicalize() {
                     reverse_map
                         .entry(canon)
                         .or_insert_with(|| page.relative_path.clone());
                 }
+                continue;
             }
         }
+        page.has_companion =
+            find_companion_by_sibling(&page.relative_path, root, search_paths).is_some();
     }
 
     // Phase 2: PDFs with no same-name md sibling but claimed via frontmatter.
     for page in pages.iter_mut() {
         if !page.has_companion
             && page.relative_path.to_ascii_lowercase().ends_with(".pdf")
-            && reverse_companion_lookup(root, &page.relative_path, &reverse_map).is_some()
+            && reverse_map_contains_pdf(root, &page.relative_path, &reverse_map)
         {
             page.has_companion = true;
         }
@@ -252,6 +293,21 @@ pub fn get_workspace_root(registry: &WorkspaceRegistry, label: &str) -> Result<P
     workspaces
         .get(label)
         .map(|e| e.root.clone())
+        .ok_or_else(|| format!("No workspace open in window '{label}'"))
+}
+
+/// Clone both root and companion_reverse_map from the same WorkspaceEntry
+/// under a single lock acquisition so they cannot come from different
+/// workspace versions. This closes the TOCTOU race where `open_workspace`
+/// could replace the entry between two separate lock acquisitions.
+pub fn get_workspace_root_and_reverse_map(
+    registry: &WorkspaceRegistry,
+    label: &str,
+) -> Result<(PathBuf, HashMap<PathBuf, String>), String> {
+    let workspaces = registry.workspaces.lock().unwrap();
+    workspaces
+        .get(label)
+        .map(|e| (e.root.clone(), e.companion_reverse_map.clone()))
         .ok_or_else(|| format!("No workspace open in window '{label}'"))
 }
 
@@ -382,19 +438,22 @@ pub fn find_companion_file(
     state: State<WorkspaceRegistry>,
     app_handle: tauri::AppHandle,
 ) -> Result<Option<String>, String> {
-    let root = get_workspace_root(&state, window.label())?;
+    // Clone root and reverse_map from the same WorkspaceEntry under a single
+    // lock acquisition so they cannot come from different workspace versions.
+    let (root, reverse_map) = get_workspace_root_and_reverse_map(&state, window.label())?;
     let prefs = crate::preferences::read_preferences(&app_handle);
     let search_paths = crate::preferences::companion_search_paths(&prefs);
     if let Some(found) = find_companion(&relative_path, &root, &search_paths) {
         return Ok(Some(found));
     }
     // No forward companion (same-name sibling or frontmatter): fall back to the
-    // cached reverse map for a PDF whose md note declares it via `companion:`.
-    let workspaces = state.workspaces.lock().unwrap();
-    let reverse = workspaces
-        .get(window.label())
-        .and_then(|entry| reverse_companion_lookup(&root, &relative_path, &entry.companion_reverse_map));
-    Ok(reverse)
+    // snapshotted reverse map — but only for PDFs, since the map is keyed by
+    // canonical PDF paths. Non-PDF inputs can never match.
+    if relative_path.to_ascii_lowercase().ends_with(".pdf") {
+        Ok(reverse_companion_lookup(&root, &relative_path, &reverse_map))
+    } else {
+        Ok(None)
+    }
 }
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -1239,6 +1298,46 @@ mod tests {
         }
     }
 
+    // ---- reverse_map_contains_pdf ----
+
+    #[test]
+    fn reverse_map_contains_pdf_returns_true_for_mapped_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/paper.pdf"), b"pdf").unwrap();
+
+        let mut map = HashMap::new();
+        let canon = root.join("assets/pdf/paper.pdf").canonicalize().unwrap();
+        map.insert(canon, "note.md".to_string());
+
+        assert!(reverse_map_contains_pdf(root, "assets/pdf/paper.pdf", &map));
+    }
+
+    #[test]
+    fn reverse_map_contains_pdf_returns_false_for_unmapped_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/paper.pdf"), b"pdf").unwrap();
+
+        let map: HashMap<PathBuf, String> = HashMap::new();
+
+        assert!(!reverse_map_contains_pdf(root, "assets/pdf/paper.pdf", &map));
+    }
+
+    #[test]
+    fn reverse_map_contains_pdf_returns_false_for_nonexistent_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let mut map = HashMap::new();
+        // Insert a dummy key so map is non-empty.
+        map.insert(PathBuf::from("/nonexistent/dummy.pdf"), "note.md".to_string());
+
+        assert!(!reverse_map_contains_pdf(root, "no-such-file.pdf", &map));
+    }
+
     // ---- reverse_companion_lookup ----
 
     #[test]
@@ -1348,6 +1447,38 @@ mod tests {
     }
 
     #[test]
+    fn annotate_companions_reverse_map_first_md_wins_regardless_of_input_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(root.join("assets/pdf/shared.pdf"), b"pdf").unwrap();
+        std::fs::write(
+            root.join("aaa.md"),
+            "---\ncompanion: assets/pdf/shared.pdf\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("bbb.md"),
+            "---\ncompanion: assets/pdf/shared.pdf\n---\n",
+        )
+        .unwrap();
+
+        // Deliberately reverse-sorted: bbb before aaa.
+        let mut pages = vec![
+            page("bbb.md", crate::workspace::page::FileType::Markdown),
+            page("aaa.md", crate::workspace::page::FileType::Markdown),
+        ];
+        let map = annotate_companions(&mut pages, root, &[]);
+
+        let canon = root.join("assets/pdf/shared.pdf").canonicalize().unwrap();
+        assert_eq!(
+            map.get(&canon),
+            Some(&"aaa.md".to_string()),
+            "aaa.md should win even when bbb.md appears first in input",
+        );
+    }
+
+    #[test]
     fn annotate_companions_pdf_gets_has_companion_via_reverse_map() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -1422,5 +1553,241 @@ mod tests {
             find_companion("assets/pdf/paper.pdf", root, &[]),
             Some("assets/pdf/paper.md".to_string())
         );
+    }
+
+    // ---- find_companion_by_sibling ----
+
+    #[test]
+    fn find_companion_by_sibling_does_not_check_frontmatter() {
+        // A markdown file with a `companion:` frontmatter pointing to custom.pdf,
+        // but no same-name sibling paper.pdf. The sibling-only helper must return
+        // None because it never reads frontmatter.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("paper.md"),
+            "---\ncompanion: custom.pdf\n---\nContent\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("custom.pdf"), b"pdf").unwrap();
+
+        // Sibling-only: no same-name paper.pdf, so None.
+        assert_eq!(
+            find_companion_by_sibling("paper.md", root, &[]),
+            None,
+        );
+        // Full find_companion reads frontmatter and finds custom.pdf.
+        assert_eq!(
+            find_companion("paper.md", root, &[]),
+            Some("custom.pdf".to_string()),
+        );
+    }
+
+    #[test]
+    fn find_companion_by_sibling_finds_same_name_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "x").unwrap();
+        std::fs::write(root.join("paper.pdf"), "x").unwrap();
+
+        assert_eq!(
+            find_companion_by_sibling("paper.md", root, &[]),
+            Some("paper.pdf".to_string()),
+        );
+    }
+
+    // ---- get_workspace_root_and_reverse_map ----
+
+    #[test]
+    fn snapshot_returns_consistent_root_and_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let mut reverse_map = HashMap::new();
+        reverse_map.insert(
+            root.join("assets/paper.pdf"),
+            "note.md".to_string(),
+        );
+        let mut map = HashMap::new();
+        map.insert(
+            "win".to_string(),
+            WorkspaceEntry {
+                root: root.clone(),
+                watcher: None,
+                companion_reverse_map: reverse_map.clone(),
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(map),
+        };
+
+        let (snap_root, snap_map) =
+            get_workspace_root_and_reverse_map(&registry, "win").unwrap();
+        assert_eq!(snap_root, root);
+        assert_eq!(snap_map, reverse_map);
+    }
+
+    #[test]
+    fn snapshot_is_not_affected_by_later_workspace_swap() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let root_a = dir_a.path().to_path_buf();
+        let root_b = dir_b.path().to_path_buf();
+
+        let mut map_a = HashMap::new();
+        map_a.insert(root_a.join("a.pdf"), "a.md".to_string());
+
+        let mut map_b = HashMap::new();
+        map_b.insert(root_b.join("b.pdf"), "b.md".to_string());
+
+        let mut entries = HashMap::new();
+        entries.insert(
+            "win".to_string(),
+            WorkspaceEntry {
+                root: root_a.clone(),
+                watcher: None,
+                companion_reverse_map: map_a.clone(),
+            },
+        );
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(entries),
+        };
+
+        // Take the snapshot (simulates the single lock in find_companion_file).
+        let (snap_root, snap_map) =
+            get_workspace_root_and_reverse_map(&registry, "win").unwrap();
+
+        // Now simulate open_workspace replacing the entry.
+        registry.workspaces.lock().unwrap().insert(
+            "win".to_string(),
+            WorkspaceEntry {
+                root: root_b.clone(),
+                watcher: None,
+                companion_reverse_map: map_b.clone(),
+            },
+        );
+
+        // The snapshot is still from workspace A — root and map are consistent.
+        assert_eq!(snap_root, root_a);
+        assert_eq!(snap_map, map_a);
+        // Importantly, snap_root is NOT root_b and snap_map is NOT map_b.
+        assert_ne!(snap_root, root_b);
+        assert_ne!(snap_map, map_b);
+    }
+
+    #[test]
+    fn snapshot_returns_error_for_unknown_label() {
+        let registry = WorkspaceRegistry {
+            workspaces: Mutex::new(HashMap::new()),
+        };
+        let result = get_workspace_root_and_reverse_map(&registry, "unknown");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown"));
+    }
+
+    #[test]
+    fn find_companion_by_sibling_finds_via_search_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("pdfs")).unwrap();
+        std::fs::write(root.join("notes/paper.md"), "x").unwrap();
+        std::fs::write(root.join("pdfs/paper.pdf"), "x").unwrap();
+
+        assert_eq!(
+            find_companion_by_sibling("notes/paper.md", root, &["pdfs".to_string()]),
+            Some("pdfs/paper.pdf".to_string()),
+        );
+    }
+
+    #[test]
+    fn annotate_companions_frontmatter_companion_populates_reverse_map_and_has_companion() {
+        // Verifies that annotate_companions populates both has_companion and the
+        // reverse map from a single frontmatter read, without relying on sibling
+        // logic.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: assets/pdf/paper.pdf\n---\nContent\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/paper.pdf"), b"pdf").unwrap();
+        // Crucially: no same-name sibling note.pdf exists.
+
+        let mut pages = vec![
+            page("note.md", crate::workspace::page::FileType::Markdown),
+            page("assets/pdf/paper.pdf", crate::workspace::page::FileType::Pdf),
+        ];
+        let map = annotate_companions(&mut pages, root, &[]);
+
+        // md page flagged via frontmatter companion.
+        assert!(pages[0].has_companion, "md page should have companion from frontmatter");
+        // PDF page flagged via phase 2 reverse map.
+        assert!(pages[1].has_companion, "pdf page should have companion via reverse map");
+        // Reverse map contains the canonical PDF path pointing to the md.
+        let canon = root.join("assets/pdf/paper.pdf").canonicalize().unwrap();
+        assert_eq!(map.get(&canon), Some(&"note.md".to_string()));
+
+        // Confirm sibling-only helper returns None for note.md (no note.pdf sibling).
+        assert_eq!(
+            find_companion_by_sibling("note.md", root, &[]),
+            None,
+            "sibling helper should return None for frontmatter-only companion",
+        );
+    }
+
+    #[test]
+    fn reverse_lookup_skipped_for_non_pdf_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("note.md"), "no companion").unwrap();
+
+        // Rig the reverse map so that note.md's canonical path maps to something.
+        // This would be a false positive if the guard were missing.
+        let mut map = HashMap::new();
+        let canon = root.join("note.md").canonicalize().unwrap();
+        map.insert(canon, "other.md".to_string());
+
+        // Forward lookup returns None (no note.pdf sibling, no frontmatter companion).
+        assert_eq!(find_companion("note.md", root, &[]), None);
+
+        // The reverse map DOES contain note.md if we look it up directly...
+        assert!(reverse_companion_lookup(root, "note.md", &map).is_some());
+
+        // ...but a .md path should never reach the reverse lookup.
+        // Simulate the guarded logic from find_companion_file:
+        let relative_path = "note.md";
+        let result = if relative_path.to_ascii_lowercase().ends_with(".pdf") {
+            reverse_companion_lookup(root, relative_path, &map)
+        } else {
+            None
+        };
+        assert_eq!(result, None, ".md path must not consult the reverse map");
+    }
+
+    #[test]
+    fn reverse_lookup_reached_for_pdf_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("assets/paper.pdf"), b"pdf").unwrap();
+        std::fs::write(root.join("note.md"), b"x").unwrap();
+
+        let mut map = HashMap::new();
+        let canon = root.join("assets/paper.pdf").canonicalize().unwrap();
+        map.insert(canon, "note.md".to_string());
+
+        // Forward lookup returns None (no assets/paper.md sibling).
+        assert_eq!(find_companion("assets/paper.pdf", root, &[]), None);
+
+        // With the .pdf guard, the reverse lookup IS reached.
+        let relative_path = "assets/paper.pdf";
+        let result = if relative_path.to_ascii_lowercase().ends_with(".pdf") {
+            reverse_companion_lookup(root, relative_path, &map)
+        } else {
+            None
+        };
+        assert_eq!(result, Some("note.md".to_string()));
     }
 }
