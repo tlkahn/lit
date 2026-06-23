@@ -39,10 +39,11 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
         <CodeEditorPane paneId={paneId} />
       </Suspense>
     );
-  } else if (fileType === "markdown" && viewMode !== "editor" && pagePath) {
+  } else if (fileType === "markdown" && pagePath) {
+    const isEditor = viewMode === "editor";
     content = (
       <>
-        <div style={{ display: "none" }}>
+        <div className={isEditor ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
           <EditorPane paneId={paneId} />
         </div>
         {viewMode === "mindmap" && <MindmapPaneView paneId={paneId} pagePath={pagePath} onExportNetwork={onExportNetwork} />}
