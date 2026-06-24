@@ -54,3 +54,19 @@ Thank you for being an early adopter! Here is your license key:
 
 ${pem}`;
 }
+
+export function trialEmailHtml(pem: string, expiryDate: string): string {
+  return `<html><body>
+<p>Hello,</p>
+<p>Here is your 7-day trial license key. It expires on ${escapeHtml(expiryDate)}.</p>
+<pre>${pem}</pre>
+</body></html>`;
+}
+
+export function trialEmailText(pem: string, expiryDate: string): string {
+  return `Hello,
+
+Here is your 7-day trial license key. It expires on ${expiryDate}.
+
+${pem}`;
+}

@@ -2,8 +2,12 @@ import { ed25519 } from "@noble/curves/ed25519";
 import type { LicensePayload } from "../types.js";
 
 export function buildPayloadJson(payload: LicensePayload): string {
-  const { license_id, name, email, issued_at, type } = payload;
-  return JSON.stringify({ license_id, name, email, issued_at, type });
+  const { license_id, name, email, issued_at, type, expires_at } = payload;
+  const obj: Record<string, unknown> = { license_id, name, email, issued_at, type };
+  if (expires_at !== undefined) {
+    obj.expires_at = expires_at;
+  }
+  return JSON.stringify(obj);
 }
 
 export function encodePayload(json: string): string {
