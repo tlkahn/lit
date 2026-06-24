@@ -15,6 +15,8 @@ export interface BibEntryRowProps {
   onToggleExpand: (entryId: string) => void;
   onNavigateToBibFile: (entry: BibEntry) => void;
   actionProps: BibEntryActionProps;
+  referenceCount?: number;
+  onDrillDown?: (entry: BibEntry) => void;
 }
 
 function urlHref(url: string): string {
@@ -120,6 +122,8 @@ function areEqual(prev: BibEntryRowProps, next: BibEntryRowProps): boolean {
   if (prev.modHeld !== next.modHeld) return false;
   if (prev.onToggleExpand !== next.onToggleExpand) return false;
   if (prev.onNavigateToBibFile !== next.onNavigateToBibFile) return false;
+  if (prev.referenceCount !== next.referenceCount) return false;
+  if (prev.onDrillDown !== next.onDrillDown) return false;
   const pa = prev.actionProps as unknown as Record<string, unknown>;
   const na = next.actionProps as unknown as Record<string, unknown>;
   const keys = Object.keys(pa);
@@ -131,7 +135,7 @@ function areEqual(prev: BibEntryRowProps, next: BibEntryRowProps): boolean {
 }
 
 export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
-  const { isExpanded, modHeld, onToggleExpand, onNavigateToBibFile, actionProps } = props;
+  const { isExpanded, modHeld, onToggleExpand, onNavigateToBibFile, actionProps, referenceCount, onDrillDown } = props;
   const { entry } = actionProps;
 
   const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
@@ -166,6 +170,19 @@ export const BibEntryRow = memo(function BibEntryRow(props: BibEntryRowProps) {
             {entry.year ? ` (${entry.year})` : ""}
           </span>
           <EntryTypeBadge entryType={entry.entry_type} className="shrink-0" />
+          {referenceCount != null && referenceCount > 0 && onDrillDown ? (
+            <span
+              role="button"
+              data-testid="drill-down-btn"
+              className="ml-auto shrink-0 cursor-pointer text-text-faint hover:text-text-normal"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDrillDown(entry);
+              }}
+            >
+              {referenceCount} refs ›
+            </span>
+          ) : null}
         </span>
       </button>
       {isExpanded ? (

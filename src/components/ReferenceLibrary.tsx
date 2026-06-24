@@ -16,6 +16,7 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import {
   listBibEntries,
   getBibKeyStates,
+  getReferenceCounts,
   enrichBibEntry,
   applyEnrichmentCandidate,
   downloadEntryPdf,
@@ -51,6 +52,8 @@ import { lastName, initialOf, buildSectionedList } from "../lib/sectionedList";
 import { AlphabetStrip } from "./AlphabetStrip";
 import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
 import { BibEntryRow } from "./BibEntryRow";
+import { RefChildList } from "./RefChildList";
+import { useRefNavStackStore } from "../stores/refNavStack";
 
 /**
  * Check whether an entry's absolute bib_file path ends with the given
@@ -112,6 +115,8 @@ function looksLikeIsbn(query: string): boolean {
   return ISBN_RE.test(query.replace(/[-\s]/g, ""));
 }
 
+const PANE_ID = "sidebar";
+
 export function ReferenceLibrary() {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const graphReady = useWorkspaceStore((s) => s.graphReady);
@@ -123,6 +128,7 @@ export function ReferenceLibrary() {
   const modHeld = useModKeyHeld();
   const [entries, setEntries] = useState<BibEntry[]>([]);
   const [bibKeyStates, setBibKeyStates] = useState<Record<string, BibKeyState>>({});
+  const [refCounts, setRefCounts] = useState<Record<string, number>>({});
   const [search, setSearch] = useState("");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [materializingKey, setMaterializingKey] = useState<string | null>(null);
@@ -193,6 +199,37 @@ export function ReferenceLibrary() {
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [duplicateKeys, setDuplicateKeys] = useState<Map<string, string>>(new Map());
 
+  const navCurrent = useRefNavStackStore((s) => s.current(PANE_ID));
+  const navDepth = useRefNavStackStore((s) => s.depth(PANE_ID));
+  const navPush = useRefNavStackStore((s) => s.push);
+  const navPop = useRefNavStackStore((s) => s.pop);
+  const navReset = useRefNavStackStore((s) => s.reset);
+
+  const handleDrillDown = useCallback(
+    (entry: BibEntry) => {
+      setSearch("");
+      navPush(PANE_ID, entry.key, entry.title);
+    },
+    [navPush],
+  );
+
+  const handleDrillBack = useCallback(() => {
+    navPop(PANE_ID);
+  }, [navPop]);
+
+  // Reset nav stack on workspace change
+  useEffect(() => {
+    navReset(PANE_ID);
+  }, [workspacePath, navReset]);
+
+  const handleModeChange = useCallback(
+    (v: string) => {
+      setMode(v as "library" | "search");
+      if (v === "search") navReset(PANE_ID);
+    },
+    [navReset],
+  );
+
   const handleSearchPapers = useCallback(async () => {
     const q = searchQuery.trim();
     if (!q || searching) return;
@@ -249,6 +286,7 @@ export function ReferenceLibrary() {
 
   const requestIdRef = useRef(0);
   const bibStatesRequestIdRef = useRef(0);
+  const refCountsRequestIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadEntries = useCallback(() => {
@@ -289,17 +327,37 @@ export function ReferenceLibrary() {
     loadBibKeyStates();
   }, [loadBibKeyStates]);
 
+  const loadRefCounts = useCallback(() => {
+    if (!workspacePath) {
+      setRefCounts({});
+      return;
+    }
+    const id = ++refCountsRequestIdRef.current;
+    getReferenceCounts(workspacePath)
+      .then((result) => {
+        if (id === refCountsRequestIdRef.current) setRefCounts(result);
+      })
+      .catch(() => {
+        if (id === refCountsRequestIdRef.current) setRefCounts({});
+      });
+  }, [workspacePath]);
+
+  useEffect(() => {
+    loadRefCounts();
+  }, [loadRefCounts]);
+
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
       loadEntries();
       loadBibKeyStates();
+      loadRefCounts();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
-  }, [loadEntries, loadBibKeyStates]);
+  }, [loadEntries, loadBibKeyStates, loadRefCounts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,11 +365,12 @@ export function ReferenceLibrary() {
     listen("lit:bib-items-changed", () => {
       loadEntries();
       loadBibKeyStates();
+      loadRefCounts();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
-  }, [loadEntries, loadBibKeyStates]);
+  }, [loadEntries, loadBibKeyStates, loadRefCounts]);
 
   useEffect(() => {
     if (!workspacePath) return;
@@ -327,6 +386,7 @@ export function ReferenceLibrary() {
           debounceRef.current = null;
           loadEntries();
           loadBibKeyStates();
+          loadRefCounts();
         }, 200);
       }
     };
@@ -356,7 +416,7 @@ export function ReferenceLibrary() {
         unlisten();
       }
     };
-  }, [workspacePath, loadEntries, loadBibKeyStates]);
+  }, [workspacePath, loadEntries, loadBibKeyStates, loadRefCounts]);
 
   useEffect(() => {
     if (!downloadingKey) return;
@@ -703,6 +763,7 @@ export function ReferenceLibrary() {
     ensureSidebarVisible();
     dispatchSetSidebarTab("references");
 
+    navReset(PANE_ID);
     setSearch("");
 
     const items = buildSectionedList(sortedRef.current).items;
@@ -728,7 +789,7 @@ export function ReferenceLibrary() {
 
     setExpandedKey(entryId);
     triggerReveal(entryId, idx);
-  }, [triggerReveal]);
+  }, [triggerReveal, navReset]);
 
   useEffect(() => {
     return onRevealBibEntry(({ citekey, bibFile }) => {
@@ -840,7 +901,7 @@ export function ReferenceLibrary() {
         <SegmentedControl
           options={modeOptions}
           value={mode}
-          onChange={(v) => setMode(v as "library" | "search")}
+          onChange={handleModeChange}
           testId="ref-lib-mode"
         />
       </div>
@@ -906,7 +967,29 @@ export function ReferenceLibrary() {
         </div>
       )}
 
-      {mode === "library" && entries.length === 0 ? (
+      {mode === "library" && navDepth > 0 && navCurrent && workspacePath ? (
+        <RefChildList
+          parentKey={navCurrent.key}
+          parentTitle={navCurrent.title}
+          paneId={PANE_ID}
+          workspacePath={workspacePath}
+          refCounts={refCounts}
+          bibKeyStates={bibKeyStates}
+          modHeld={modHeld}
+          onDrillDown={handleDrillDown}
+          onBack={handleDrillBack}
+          onNavigateToBibFile={navigateToBibFile}
+          onOpenNote={handleNavigateWithDeparture}
+          onCreateNote={materializeNote}
+          onEnrich={handleEnrich}
+          onOpenPdf={selectPage}
+          onOpenMarkdown={handleNavigateWithDeparture}
+          onOcr={handleOcr}
+          onCopyCitation={copyCitation}
+          onDownloadPdf={handleDownload}
+          onLinkPdf={handleLinkPdf}
+        />
+      ) : mode === "library" && entries.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-xs text-text-faint">
           <div>No references found. Add .bib files to your workspace.</div>
           <div className="mt-2 flex gap-2">{addButton}{importPdfButton}</div>
@@ -999,6 +1082,8 @@ export function ReferenceLibrary() {
                       modHeld={modHeld}
                       onToggleExpand={toggleExpand}
                       onNavigateToBibFile={navigateToBibFile}
+                      referenceCount={refCounts[entry.key]}
+                      onDrillDown={handleDrillDown}
                       actionProps={{
                         entry,
                         state,
