@@ -178,6 +178,39 @@ describe("LicenseGate", () => {
     expect(splash!.textContent).not.toContain("refund");
   });
 
+  it("shows trial button for unlicensed state", () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    expect(queryByTestId("splash-start-trial")).toBeTruthy();
+  });
+
+  it("hides trial button for license_expired state", () => {
+    useLicenseStore.setState({ state: "license_expired", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    expect(queryByTestId("splash-start-trial")).toBeNull();
+  });
+
+  it("hides trial button for revoked state", () => {
+    useLicenseStore.setState({ state: "revoked", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    expect(queryByTestId("splash-start-trial")).toBeNull();
+  });
+
+  it("trial button calls openUrl with trial URL", () => {
+    useLicenseStore.setState({ state: "unlicensed", loading: false });
+    const { queryByTestId } = render(
+      <LicenseGate><div data-testid="child" /></LicenseGate>,
+    );
+    fireEvent.click(queryByTestId("splash-start-trial")!);
+    expect(openUrl).toHaveBeenCalledWith("https://lit.solar/trial");
+  });
+
   it("loading screen shows a spinner", () => {
     const { queryByTestId } = render(
       <LicenseGate><div data-testid="child" /></LicenseGate>,
