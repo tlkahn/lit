@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { listen } from "@tauri-apps/api/event";
 import { getReferences, type BibEntry, type BibKeyState } from "../lib/ipc";
+import { materializationBorderClass } from "../lib/bibUtils";
 import { BibEntryRow } from "./BibEntryRow";
 import type { BibEntryActionProps } from "./BibEntryActions";
 
 export interface RefChildListProps {
   parentKey: string;
   parentTitle: string;
-  paneId: string;
   workspacePath: string;
   refCounts: Record<string, number>;
   bibKeyStates: Record<string, BibKeyState>;
@@ -68,9 +69,7 @@ export function RefChildList(props: RefChildListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
 
-  useEffect(() => {
-    setLoading(true);
-    setExpandedKey(null);
+  const loadChildren = useCallback(() => {
     const id = ++requestIdRef.current;
     getReferences(parentKey, workspacePath)
       .then((result) => {
@@ -86,6 +85,34 @@ export function RefChildList(props: RefChildListProps) {
         }
       });
   }, [parentKey, workspacePath]);
+
+  useEffect(() => {
+    setLoading(true);
+    setExpandedKey(null);
+    loadChildren();
+  }, [loadChildren]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:graph-updated", () => {
+      loadChildren();
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [loadChildren]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("lit:bib-items-changed", () => {
+      loadChildren();
+    }).then((fn) => {
+      if (cancelled) { fn(); } else { unlisten = fn; }
+    });
+    return () => { cancelled = true; unlisten?.(); };
+  }, [loadChildren]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedKey((prev) => (prev === key ? null : key));
@@ -151,25 +178,6 @@ export function RefChildList(props: RefChildListProps) {
     [bibKeyStates, materializingKey, enrichingKey, enrichPhase, downloadingKey, downloadProgress, linkingKey, ocrCompanionCurrentMap, onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOpenMarkdown, onOcr, onCopyCitation, onDownloadPdf, onLinkPdf],
   );
 
-  if (loading) {
-    return (
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-1 px-2 py-1">
-          <button
-            onClick={onBack}
-            className="shrink-0 rounded px-1 py-0.5 text-xs text-text-muted hover:bg-bg-hover"
-          >
-            ‹ Back
-          </button>
-          <span className="truncate text-xs font-medium text-text-normal">{truncatedTitle}</span>
-        </div>
-        <div className="flex flex-1 items-center justify-center text-xs text-text-faint">
-          Loading…
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="flex items-center gap-1 px-2 py-1">
@@ -182,7 +190,11 @@ export function RefChildList(props: RefChildListProps) {
         </button>
         <span className="truncate text-xs font-medium text-text-normal">{truncatedTitle}</span>
       </div>
-      {children.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-1 items-center justify-center text-xs text-text-faint">
+          Loading…
+        </div>
+      ) : children.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-xs text-text-faint">
           No references
         </div>
@@ -205,13 +217,7 @@ export function RefChildList(props: RefChildListProps) {
                   key={entryId}
                   data-index={virtualRow.index}
                   ref={virtualizer.measureElement}
-                  className={
-                    state?.page_id
-                      ? "border-l-2 border-interactive-accent"
-                      : state?.materialization === "partial"
-                        ? "border-l-2 border-dashed border-text-muted"
-                        : undefined
-                  }
+                  className={materializationBorderClass(state)}
                   style={{
                     position: "absolute",
                     top: 0,

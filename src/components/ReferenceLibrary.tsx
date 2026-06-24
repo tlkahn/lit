@@ -33,6 +33,7 @@ import {
   type PaperSearchResult,
 } from "../lib/ipc";
 import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
+import { materializationBorderClass } from "../lib/bibUtils";
 import { ensureSidebarVisible } from "../lib/sidebarVisibility";
 import {
   onRevealBibEntry,
@@ -328,6 +329,10 @@ export function ReferenceLibrary() {
   }, [loadBibKeyStates]);
 
   const loadRefCounts = useCallback(() => {
+    if (!graphReady) {
+      setRefCounts({});
+      return;
+    }
     if (!workspacePath) {
       setRefCounts({});
       return;
@@ -340,7 +345,7 @@ export function ReferenceLibrary() {
       .catch(() => {
         if (id === refCountsRequestIdRef.current) setRefCounts({});
       });
-  }, [workspacePath]);
+  }, [workspacePath, graphReady]);
 
   useEffect(() => {
     loadRefCounts();
@@ -348,28 +353,21 @@ export function ReferenceLibrary() {
 
   useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen("lit:graph-updated", () => {
+    const unlistenFns: (() => void)[] = [];
+    const handler = () => {
       loadEntries();
       loadBibKeyStates();
       loadRefCounts();
-    }).then((fn) => {
-      if (cancelled) { fn(); } else { unlisten = fn; }
-    });
-    return () => { cancelled = true; unlisten?.(); };
-  }, [loadEntries, loadBibKeyStates, loadRefCounts]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen("lit:bib-items-changed", () => {
-      loadEntries();
-      loadBibKeyStates();
-      loadRefCounts();
-    }).then((fn) => {
-      if (cancelled) { fn(); } else { unlisten = fn; }
-    });
-    return () => { cancelled = true; unlisten?.(); };
+    };
+    for (const event of ["lit:graph-updated", "lit:bib-items-changed"]) {
+      listen(event, handler).then((fn) => {
+        if (cancelled) { fn(); } else { unlistenFns.push(fn); }
+      });
+    }
+    return () => {
+      cancelled = true;
+      for (const fn of unlistenFns) fn();
+    };
   }, [loadEntries, loadBibKeyStates, loadRefCounts]);
 
   useEffect(() => {
@@ -971,7 +969,6 @@ export function ReferenceLibrary() {
         <RefChildList
           parentKey={navCurrent.key}
           parentTitle={navCurrent.title}
-          paneId={PANE_ID}
           workspacePath={workspacePath}
           refCounts={refCounts}
           bibKeyStates={bibKeyStates}
@@ -1064,11 +1061,7 @@ export function ReferenceLibrary() {
                     data-index={virtualRow.index}
                     ref={virtualizer.measureElement}
                     className={[
-                      state?.page_id
-                        ? "border-l-2 border-interactive-accent"
-                        : state?.materialization === "partial"
-                          ? "border-l-2 border-dashed border-text-muted"
-                          : undefined,
+                      materializationBorderClass(state),
                       isRevealed ? "bib-entry-revealed" : undefined,
                     ].filter(Boolean).join(" ") || undefined}
                     data-indicator={

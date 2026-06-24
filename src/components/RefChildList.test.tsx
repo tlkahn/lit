@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { mockInvoke, mockListen, resetListenMock } from "../test/tauri-mock";
+import { mockInvoke, mockListen, resetListenMock, emitMockEvent } from "../test/tauri-mock";
 import { RefChildList, type RefChildListProps } from "./RefChildList";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { BibEntry } from "../lib/ipc";
@@ -36,7 +36,6 @@ function renderRefChildList(overrides: Partial<RefChildListProps> = {}) {
   const props: RefChildListProps = {
     parentKey: "parent2020",
     parentTitle: "Parent Reference",
-    paneId: "test-pane",
     workspacePath: "/workspace",
     refCounts: {},
     bibKeyStates: { jones2020: { materialization: "shadow", page_id: null } },
@@ -72,6 +71,25 @@ beforeEach(() => {
     workspacePath: "/workspace",
     currentPagePath: null,
     graphReady: false,
+  });
+});
+
+describe("RefChildList — loading state", () => {
+  it("renders back button with data-testid during loading", async () => {
+    // Override mockInvoke so get_references never resolves — component stays in loading state
+    mockInvoke((cmd) => {
+      if (cmd === "get_references") return new Promise(() => {});
+      if (cmd === "get_citing_pages") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    const onBack = vi.fn();
+    renderRefChildList({ onBack });
+    // The back button should be present even while loading
+    const backBtn = screen.getByTestId("ref-child-back-btn");
+    expect(backBtn).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(backBtn);
+    expect(onBack).toHaveBeenCalledOnce();
   });
 });
 
@@ -189,5 +207,55 @@ describe("RefChildList — ocrCompanionCurrentMap", () => {
     renderRefChildList({ ocrCompanionCurrentMap: {} });
     await expandEntry();
     expect(screen.queryByTestId("open-markdown-btn")).not.toBeInTheDocument();
+  });
+});
+
+describe("RefChildList — event-driven refresh", () => {
+  it("re-fetches children when lit:graph-updated fires", async () => {
+    let getRefCallCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "get_references") {
+        getRefCallCount++;
+        if (getRefCallCount === 1) return [childEntry];
+        return [{ ...childEntry, title: "Updated Reference" }];
+      }
+      if (cmd === "get_citing_pages") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    renderRefChildList();
+    await waitFor(() =>
+      expect(screen.getByText("Child Reference")).toBeInTheDocument(),
+    );
+
+    emitMockEvent("lit:graph-updated", {});
+
+    await waitFor(() =>
+      expect(screen.getByText("Updated Reference")).toBeInTheDocument(),
+    );
+  });
+
+  it("re-fetches children when lit:bib-items-changed fires", async () => {
+    let getRefCallCount = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "get_references") {
+        getRefCallCount++;
+        if (getRefCallCount === 1) return [childEntry];
+        return [{ ...childEntry, title: "Changed Reference" }];
+      }
+      if (cmd === "get_citing_pages") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    renderRefChildList();
+    await waitFor(() =>
+      expect(screen.getByText("Child Reference")).toBeInTheDocument(),
+    );
+
+    emitMockEvent("lit:bib-items-changed", {});
+
+    await waitFor(() =>
+      expect(screen.getByText("Changed Reference")).toBeInTheDocument(),
+    );
   });
 });
