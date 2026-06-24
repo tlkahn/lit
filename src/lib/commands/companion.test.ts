@@ -46,6 +46,19 @@ const mockLinkState = vi.hoisted(() => ({
   syncEnabled: true,
   setPendingPdfSync: vi.fn(),
   setPendingEditorSync: vi.fn(),
+  setPageOffset: vi.fn(),
+  // Mirror the real store: report the most recently set offset for a pane.
+  // Backed by setPageOffset's recorded calls so it auto-resets with
+  // vi.clearAllMocks() between tests (companion.ts always calls setPageOffset
+  // before resolveForwardPage reads the offset).
+  getPageOffset: vi.fn((paneId: string) => {
+    const calls = mockLinkState.setPageOffset.mock.calls as Array<[string, number]>;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const call = calls[i];
+      if (call && call[0] === paneId) return call[1];
+    }
+    return 0;
+  }),
   currentPage: new Map<string, number>(),
 }));
 
@@ -114,6 +127,10 @@ vi.mock("../reverseSync", () => ({
 // --- forwardSync mock ------------------------------------------------------
 vi.mock("../forwardSync", () => ({
   FORWARD_SYNC_GUARD_MS: 2000,
+  // The sync layer now owns the offset arithmetic; mirror the real helper so
+  // companion.ts's direct (non-dispatch) forward paths apply it.
+  resolveForwardPage: (paneId: string, raw: number) =>
+    raw + mockLinkState.getPageOffset(paneId),
 }));
 
 import { initCompanionCommands, selectCompanionTarget, resolveEditorPageIndex, resolvePdfPage } from "./companion";
@@ -290,7 +307,7 @@ describe("initCompanionCommands", () => {
     _clear();
     vi.clearAllMocks();
     resetPaneState("paper.md");
-    mockFindCompanionFile.mockResolvedValue("paper.pdf");
+    mockFindCompanionFile.mockResolvedValue({ path: "paper.pdf", pageOffset: 0 });
     mockLinkState.syncEnabled = true;
   });
 
@@ -406,7 +423,7 @@ describe("initCompanionCommands", () => {
 
   it("dispatches reverse sync for already-open markdown (PDF→md)", async () => {
     resetPaneState("paper.pdf");
-    mockFindCompanionFile.mockResolvedValue("paper.md");
+    mockFindCompanionFile.mockResolvedValue({ path: "paper.md", pageOffset: 0 });
     mockPaneState.root = {
       type: "split",
       id: "root",
@@ -568,7 +585,7 @@ describe("initCompanionCommands", () => {
 
   it("opens markdown companion when the focused pane is a PDF (reverse)", async () => {
     resetPaneState("paper.pdf");
-    mockFindCompanionFile.mockResolvedValue("paper.md");
+    mockFindCompanionFile.mockResolvedValue({ path: "paper.md", pageOffset: 0 });
     initCompanionCommands();
     executeCommand("companion.open");
 
@@ -708,7 +725,7 @@ describe("initCompanionCommands", () => {
 
     it("sets pendingEditorSync when source is PDF", async () => {
       resetPaneState("paper.pdf");
-      mockFindCompanionFile.mockResolvedValue("paper.md");
+      mockFindCompanionFile.mockResolvedValue({ path: "paper.md", pageOffset: 0 });
       mockGetPdfCurrentPage.mockReturnValue(3);
 
       initCompanionCommands();
@@ -723,7 +740,7 @@ describe("initCompanionCommands", () => {
 
     it("falls back to store currentPage when getPdfCurrentPage returns null", async () => {
       resetPaneState("paper.pdf");
-      mockFindCompanionFile.mockResolvedValue("paper.md");
+      mockFindCompanionFile.mockResolvedValue({ path: "paper.md", pageOffset: 0 });
       mockGetPdfCurrentPage.mockReturnValue(null);
       mockLinkState.currentPage.set("src-pane", 5);
 
@@ -747,6 +764,116 @@ describe("initCompanionCommands", () => {
         expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
       });
       expect(mockLinkState.setPendingPdfSync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("page offset application", () => {
+    beforeEach(() => {
+      mockPaneState.splitPane.mockImplementation((_paneId: string, _direction: string): string | null => {
+        mockPaneState.focusedPaneId = "new-pane";
+        return "new-pane";
+      });
+    });
+
+    it("adds offset to pendingPdfSync and stores it on the editor pane (md source)", async () => {
+      resetPaneState("paper.md");
+      mockFindCompanionFile.mockResolvedValue({ path: "paper.pdf", pageOffset: 2 });
+      const fakeView = { state: { doc: {}, selection: { main: { head: 42 } } } };
+      mockGetPaneView.mockReturnValue(fakeView);
+      mockGetCachedPageMarkers.mockReturnValue([{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }]);
+      mockPageForOffset.mockReturnValue(1);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      });
+      // markerIndex 1 + offset 2 = 3
+      expect(mockLinkState.setPendingPdfSync).toHaveBeenCalledWith("new-pane", 3);
+      // Offset is keyed by the EDITOR pane (the markdown source).
+      expect(mockLinkState.setPageOffset).toHaveBeenCalledWith("src-pane", 2);
+    });
+
+    it("subtracts offset from pendingEditorSync and stores it on the editor pane (pdf source)", async () => {
+      resetPaneState("paper.pdf");
+      mockFindCompanionFile.mockResolvedValue({ path: "paper.md", pageOffset: 2 });
+      mockGetPdfCurrentPage.mockReturnValue(3);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockLinkState.linkPanes).toHaveBeenCalledWith("src-pane", "new-pane");
+      });
+      // Raw pdfPage 3 is stored; the consumer (EditorPane) subtracts the offset
+      // via dispatchReverseSync, so the call site no longer pre-subtracts.
+      expect(mockLinkState.setPendingEditorSync).toHaveBeenCalledWith("new-pane", 3);
+      // Offset is keyed by the EDITOR pane (the new markdown pane).
+      expect(mockLinkState.setPageOffset).toHaveBeenCalledWith("new-pane", 2);
+    });
+
+    it("adds offset when navigating an already-open PDF (md source)", async () => {
+      mockFindCompanionFile.mockResolvedValue({ path: "paper.pdf", pageOffset: 2 });
+      mockPaneState.root = {
+        type: "split",
+        id: "root",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "src-pane", pagePath: "paper.md" },
+          { type: "leaf", id: "companion-pane", pagePath: "paper.pdf" },
+        ],
+        sizes: [0.5, 0.5],
+      };
+      mockPaneState.focusedPaneId = "src-pane";
+      const fakeView = { state: { doc: {}, selection: { main: { head: 42 } } } };
+      mockGetPaneView.mockReturnValue(fakeView);
+      mockGetCachedPageMarkers.mockReturnValue([{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }]);
+      mockPageForOffset.mockReturnValue(1);
+      const mockGoTo = vi.fn();
+      mockGetPdfGoToPage.mockReturnValue(mockGoTo);
+      mockMarkForwardSync.mockReturnValue(42);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockGoTo).toHaveBeenCalledWith(3); // 1 + 2
+      });
+      expect(mockLinkState.setPageOffset).toHaveBeenCalledWith("src-pane", 2);
+    });
+
+    it("subtracts offset when reverse-syncing an already-open markdown (pdf source)", async () => {
+      resetPaneState("paper.pdf");
+      mockFindCompanionFile.mockResolvedValue({ path: "paper.md", pageOffset: 2 });
+      mockPaneState.root = {
+        type: "split",
+        id: "root",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "src-pane", pagePath: "paper.pdf" },
+          { type: "leaf", id: "companion-pane", pagePath: "paper.md" },
+        ],
+        sizes: [0.5, 0.5],
+      };
+      mockGetPdfCurrentPage.mockReturnValue(3);
+      const fakeView = { state: { doc: {} } };
+      mockGetPaneView.mockReturnValue(fakeView);
+      const fakeMarkers = [{ page: 1, charOffset: 0 }, { page: 2, charOffset: 30 }];
+      mockGetCachedPageMarkers.mockReturnValue(fakeMarkers);
+
+      initCompanionCommands();
+      executeCommand("companion.open");
+
+      await vi.waitFor(() => {
+        expect(mockDispatchReverseSync).toHaveBeenCalledWith(
+          3, // raw PDF page; dispatchReverseSync subtracts the offset internally
+          "companion-pane",
+          fakeMarkers,
+          { skipGuards: true, clampIndex: true },
+        );
+      });
+      expect(mockLinkState.setPageOffset).toHaveBeenCalledWith("companion-pane", 2);
     });
   });
 });

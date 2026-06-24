@@ -8,7 +8,7 @@ import { getPaneView } from "../editorViewRef";
 import { getCachedPageMarkers, pageForOffset } from "../pageMarkers";
 import { getPdfCurrentPage, getPdfGoToPage, markForwardSync, clearForwardSync } from "../pdfPaneRef";
 import { dispatchReverseSync } from "../reverseSync";
-import { FORWARD_SYNC_GUARD_MS } from "../forwardSync";
+import { FORWARD_SYNC_GUARD_MS, resolveForwardPage } from "../forwardSync";
 
 export type CompanionTarget =
   | { kind: "source-gone" }
@@ -73,13 +73,18 @@ export function initCompanionCommands(): void {
         if (pagePath == null) return;
 
         findCompanionFile(pagePath)
-          .then((companion) => {
-            if (companion == null) {
+          .then((info) => {
+            if (info == null) {
               useStatusMessageStore
                 .getState()
                 .show("No companion file found", "error");
               return;
             }
+            // `companion` is the companion file path; `pageOffset` compensates for
+            // OCR first-page trimming so scroll sync maps cleanly between the
+            // markdown's 0-indexed page markers and the original PDF's pages.
+            const { path: companion, pageOffset } = info;
+            const sourceIsPdf = pagePath.toLowerCase().endsWith(".pdf");
             const store = usePaneStore.getState();
             const selection = selectCompanionTarget(
               collectLeaves(store.root),
@@ -96,15 +101,19 @@ export function initCompanionCommands(): void {
               case "open-only": {
                 const existingId = selection.openId;
                 store.focusPane(existingId);
-                usePanePdfLinkStore.getState().linkPanes(sourceId, existingId);
+                const linkStore = usePanePdfLinkStore.getState();
+                linkStore.linkPanes(sourceId, existingId);
+                // Offset is keyed by the editor pane: the source when the source
+                // is markdown, otherwise the companion (existing) pane.
+                linkStore.setPageOffset(sourceIsPdf ? existingId : sourceId, pageOffset);
 
-                if (!pagePath.toLowerCase().endsWith(".pdf")) {
+                if (!sourceIsPdf) {
                   const pageIndex = resolveEditorPageIndex(sourceId);
                   if (pageIndex != null) {
                     const goTo = getPdfGoToPage(existingId);
                     if (goTo) {
                       const token = markForwardSync(existingId);
-                      goTo(pageIndex);
+                      goTo(resolveForwardPage(sourceId, pageIndex));
                       setTimeout(() => clearForwardSync(existingId, token), FORWARD_SYNC_GUARD_MS);
                     }
                   }
@@ -113,6 +122,7 @@ export function initCompanionCommands(): void {
                   const view = getPaneView(existingId);
                   if (view) {
                     const markers = getCachedPageMarkers(view.state.doc);
+                    // dispatchReverseSync subtracts the page offset internally.
                     dispatchReverseSync(page, existingId, markers, { skipGuards: true, clampIndex: true });
                   }
                 }
@@ -145,13 +155,18 @@ export function initCompanionCommands(): void {
             store.setPanePage(newId, companion);
             const linkStore = usePanePdfLinkStore.getState();
             linkStore.linkPanes(sourceId, newId);
+            // Offset is keyed by the editor pane: the source when the source is
+            // markdown, otherwise the newly opened companion (markdown) pane.
+            linkStore.setPageOffset(sourceIsPdf ? newId : sourceId, pageOffset);
 
-            if (!pagePath.toLowerCase().endsWith(".pdf")) {
+            if (!sourceIsPdf) {
               const pageIndex = resolveEditorPageIndex(sourceId);
               if (pageIndex != null) {
-                linkStore.setPendingPdfSync(newId, pageIndex);
+                linkStore.setPendingPdfSync(newId, resolveForwardPage(sourceId, pageIndex));
               }
             } else {
+              // Store the raw PDF page. The consumer (EditorPane) passes it to
+              // dispatchReverseSync which subtracts the offset internally.
               const page = resolvePdfPage(sourceId);
               linkStore.setPendingEditorSync(newId, page);
             }

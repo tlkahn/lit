@@ -961,11 +961,22 @@ export async function allowAssetScope(path: string): Promise<void> {
 }
 
 /**
- * Given a workspace-relative markdown or PDF path, return the relative path of
- * its sibling with the swapped extension (md<->pdf) if it exists, else null.
+ * A resolved companion file plus the page offset to apply when syncing scroll
+ * position between a markdown note and its companion PDF. `pageOffset` is the
+ * number of leading PDF pages trimmed before OCR (0 when none).
  */
-export async function findCompanionFile(relativePath: string): Promise<string | null> {
-  return invoke<string | null>("find_companion_file", { relativePath });
+export interface CompanionInfo {
+  path: string;
+  pageOffset: number;
+}
+
+/**
+ * Given a workspace-relative markdown or PDF path, return its companion (the
+ * sibling with the swapped extension, md<->pdf) together with the page offset
+ * to apply during scroll sync, or null when no companion exists.
+ */
+export async function findCompanionFile(relativePath: string): Promise<CompanionInfo | null> {
+  return invoke<CompanionInfo | null>("find_companion_file", { relativePath });
 }
 
 // External editor

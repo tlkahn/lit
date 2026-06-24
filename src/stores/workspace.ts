@@ -118,7 +118,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         const validLinks = stored.pdfLinks.filter(
           ([x, y]) => liveIds.has(x) && liveIds.has(y),
         );
-        usePanePdfLinkStore.setState({ links: deserializeLinks(validLinks) });
+        // Restore page offsets, dropping entries for pane IDs that no longer
+        // exist in the validated layout tree (same pruning as pdfLinks).
+        const validPageOffsets = new Map<string, number>();
+        for (const [id, offset] of Object.entries(stored.pageOffsets ?? {})) {
+          if (liveIds.has(id)) validPageOffsets.set(id, offset);
+        }
+        usePanePdfLinkStore.setState({ links: deserializeLinks(validLinks), pageOffset: validPageOffsets });
         // Restore pane history, dropping entries for pane IDs that no longer
         // exist in the validated layout tree (same pruning as pdfLinks).
         const validHistory: Record<string, PaneHistoryStack> = {};

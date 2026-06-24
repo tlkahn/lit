@@ -78,6 +78,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     const view = getPaneView(paneId);
     if (!view) return;
     dispatchForwardSync({
+      editorPaneId: paneId,
       // The offset and markers are read inside this fire-time callback (not at
       // schedule time) so a document edit during the debounce window — one that
       // mutates the doc/cursor without re-firing onSelectionChange — cannot make
@@ -96,6 +97,8 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       // The lastSyncedPage echo guard lives in dispatchForwardSync's fire path
       // (it consults the panePdfLink store), so reverse sync (PDF -> md) cannot
       // bounce back into forward sync. No guard wrapping needed here.
+      // The page offset is applied inside dispatchForwardSync, so goToPage
+      // receives the already-offset-adjusted PDF page index.
       goToPage: (pageIndex) => {
         const linkedNow = usePanePdfLinkStore.getState().getLinkedPane(paneId);
         if (!linkedNow) return;

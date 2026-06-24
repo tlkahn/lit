@@ -397,17 +397,22 @@ pub async fn ocr_pdf_to_markdown(
     }
 
     // Step 8c: Persist companion frontmatter so the md↔pdf pairing survives renames.
+    // Always point `companion:` at the ORIGINAL imported PDF (the file the user
+    // sees in the sidebar) — the trimmed PDF is a pure ephemeral OCR artifact.
+    // `lead` is recorded as `companion_page_offset` so scroll sync can map the
+    // 0-indexed OCR page markers back onto the original PDF's page numbers.
     {
         let root_clone = root.clone();
         let md_rel = md_relative.clone();
-        let pdf_rel = trimmed_pdf_relative.as_deref().unwrap_or(relative_pdf).to_string();
+        let pdf_rel = relative_pdf.to_string();
+        let page_offset = lead as i32;
         let key_for_fm = key.clone();
         let flock = file_lock.inner().clone();
         let full_path = root.join(&md_rel);
         tokio::task::spawn_blocking(move || {
             flock.with_lock(&full_path, || {
                 if let Err(e) = crate::workspace::ops::persist_companion_frontmatter(
-                    &root_clone, &md_rel, &pdf_rel, Some(&key_for_fm), &reg,
+                    &root_clone, &md_rel, &pdf_rel, Some(&key_for_fm), Some(page_offset), &reg,
                 ) {
                     eprintln!("[ocr] failed to persist companion frontmatter: {e}");
                 }
@@ -1613,6 +1618,7 @@ mod tests {
             "smith2024.md",
             "assets/pdf/smith2024.pdf",
             None,
+            None,
             &registry,
         )
         .unwrap();
@@ -1646,6 +1652,7 @@ mod tests {
                 root,
                 "smith2024.md",
                 "assets/pdf/smith2024.pdf",
+                None,
                 None,
                 &registry,
             )
@@ -1820,7 +1827,7 @@ mod tests {
     fn ocr_companion_frontmatter_slug_named_roundtrip() {
         // After OCR, artifacts are named from a title-derived slug. Verify the
         // companion frontmatter roundtrips for a slug-named markdown file paired
-        // with a slug-named trimmed PDF.
+        // with the ORIGINAL (slug-named) PDF — the trimmed PDF is ephemeral.
         use crate::workspace::write_hash::WriteHashRegistry;
 
         let dir = tempfile::TempDir::new().unwrap();
@@ -1829,8 +1836,8 @@ mod tests {
         let pdf_dir = root.join("assets").join("pdf");
         std::fs::create_dir_all(&pdf_dir).unwrap();
         std::fs::write(
-            pdf_dir.join("the-well-posed-problem-trimmed.pdf"),
-            b"trimmed pdf",
+            pdf_dir.join("the-well-posed-problem.pdf"),
+            b"original pdf",
         )
         .unwrap();
 
@@ -1838,8 +1845,9 @@ mod tests {
         crate::workspace::ops::persist_companion_frontmatter(
             root,
             "the-well-posed-problem.md",
-            "assets/pdf/the-well-posed-problem-trimmed.pdf",
+            "assets/pdf/the-well-posed-problem.pdf",
             None,
+            Some(1),
             &registry,
         )
         .unwrap();
@@ -1852,7 +1860,7 @@ mod tests {
         );
         assert_eq!(
             found,
-            Some("assets/pdf/the-well-posed-problem-trimmed.pdf".to_string())
+            Some("assets/pdf/the-well-posed-problem.pdf".to_string())
         );
     }
 
@@ -1872,6 +1880,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024.pdf",
+            None,
             None,
             &registry,
         )
@@ -1897,23 +1906,28 @@ mod tests {
     }
 
     #[test]
-    fn ocr_companion_frontmatter_trimmed_pdf_roundtrip() {
+    fn ocr_companion_frontmatter_original_pdf_with_offset_roundtrip() {
+        // OCR with first-page trimming (lead > 0) records the ORIGINAL PDF as the
+        // companion plus a `companion_page_offset` equal to `lead`. Verify both
+        // the frontmatter shape and that find_companion resolves the original PDF.
         use crate::workspace::frontmatter::parse_frontmatter;
         use crate::workspace::write_hash::WriteHashRegistry;
 
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path();
         std::fs::write(root.join("smith2024.md"), "# OCR\n").unwrap();
-        let trimmed_dir = root.join("assets").join("pdf");
-        std::fs::create_dir_all(&trimmed_dir).unwrap();
-        std::fs::write(trimmed_dir.join("smith2024-trimmed.pdf"), b"trimmed pdf").unwrap();
+        let pdf_dir = root.join("assets").join("pdf");
+        std::fs::create_dir_all(&pdf_dir).unwrap();
+        std::fs::write(pdf_dir.join("smith2024.pdf"), b"original pdf").unwrap();
 
         let registry = WriteHashRegistry::new();
+        // Simulates OCR with lead=2: companion -> original PDF, offset = 2.
         crate::workspace::ops::persist_companion_frontmatter(
             root,
             "smith2024.md",
-            "assets/pdf/smith2024-trimmed.pdf",
+            "assets/pdf/smith2024.pdf",
             None,
+            Some(2),
             &registry,
         )
         .unwrap();
@@ -1922,7 +1936,11 @@ mod tests {
         let parsed = parse_frontmatter(&content);
         assert_eq!(
             parsed.map.get("companion").unwrap().as_str().unwrap(),
-            "assets/pdf/smith2024-trimmed.pdf"
+            "assets/pdf/smith2024.pdf"
+        );
+        assert_eq!(
+            parsed.map.get("companion_page_offset").unwrap().as_i64().unwrap(),
+            2
         );
 
         let search_paths = vec![".".to_string(), "assets/pdf".to_string()];
@@ -1931,7 +1949,7 @@ mod tests {
             root,
             &search_paths,
         );
-        assert_eq!(found, Some("assets/pdf/smith2024-trimmed.pdf".to_string()));
+        assert_eq!(found, Some("assets/pdf/smith2024.pdf".to_string()));
     }
 
     // --- ocr_slug overlong slug invariant tests ---
@@ -1988,6 +2006,7 @@ mod tests {
             "smith2024.md",
             "assets/pdf/smith2024-trimmed.pdf",
             None,
+            None,
             &registry,
         )
         .unwrap();
@@ -1998,6 +2017,7 @@ mod tests {
             root,
             "smith2024.md",
             "assets/pdf/smith2024.pdf",
+            None,
             None,
             &registry,
         )

@@ -83,7 +83,7 @@ beforeEach(() => {
   pdfPaneRef._resetForTesting();
   resetForwardSync();
   resetMarkerCache();
-  usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null, pendingPdfSync: new Map(), pendingEditorSync: new Map() });
+  usePanePdfLinkStore.setState({ links: new Map(), lastSyncedPage: null, pendingPdfSync: new Map(), pendingEditorSync: new Map(), pageOffset: new Map() });
   useCursorInfoStore.setState({ line: 0, col: 0 });
 
   mockInvoke((cmd) => {
@@ -710,6 +710,32 @@ describe("EditorPane", () => {
       vi.advanceTimersByTime(150);
       expect(goToPageSpy).toHaveBeenCalledTimes(1);
       expect(goToPageSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("adds the editor pane's page offset to the forward-sync target", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      usePanePdfLinkStore.getState().linkPanes("pane-1", "pane-pdf");
+      // OCR trimmed 2 leading pages: md page marker index 1 maps to pdf page 3.
+      usePanePdfLinkStore.getState().setPageOffset("pane-1", 2);
+      const goToPageSpy = vi.fn();
+      pdfPaneRef.registerPdfGoToPage("pane-pdf", goToPageSpy);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(
+        fakeViewAt(page2Offset, bodyWithMarkers),
+      );
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onSelectionChange).toBeDefined();
+      });
+      const onSelectionChange = capturedProps.onSelectionChange as (l: number, c: number) => void;
+      onSelectionChange(3, 0);
+
+      vi.advanceTimersByTime(150);
+      expect(goToPageSpy).toHaveBeenCalledTimes(1);
+      expect(goToPageSpy).toHaveBeenCalledWith(3); // markerIndex 1 + offset 2
     });
 
     it("does nothing when the editor pane is not linked", async () => {

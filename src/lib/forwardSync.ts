@@ -28,6 +28,8 @@ export const ECHO_GUARD_MS = 300;
 export const FORWARD_SYNC_GUARD_MS = 2000;
 
 export interface ForwardSyncArgs {
+  /** The editor pane whose page offset should be applied. */
+  editorPaneId: string;
   /**
    * Reads the cursor offset and page markers at FIRE time (inside the
    * trailing-edge timer), not at schedule time. Reading here — rather than
@@ -49,6 +51,15 @@ export interface ForwardSyncArgs {
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 /**
+ * Pure helper: translate a raw 0-based marker-array page index into the
+ * corresponding PDF page index by adding the stored companion page offset.
+ * Exported so companion.ts can use it for direct (non-dispatch) paths.
+ */
+export function resolveForwardPage(editorPaneId: string, rawPage: number): number {
+  return rawPage + usePanePdfLinkStore.getState().getPageOffset(editorPaneId);
+}
+
+/**
  * Schedule a forward sync. Cancels any pending sync and schedules a fresh one so
  * only the most recent cursor position drives the PDF after the user pauses.
  *
@@ -56,7 +67,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
  * trailing-edge timer, not at call time — the resolved page index is what the
  * guard compares against the store's lastSyncedPage (see ECHO_GUARD_MS).
  */
-export function dispatchForwardSync({ read, goToPage }: ForwardSyncArgs): void {
+export function dispatchForwardSync({ editorPaneId, read, goToPage }: ForwardSyncArgs): void {
   if (timer !== null) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
@@ -66,7 +77,7 @@ export function dispatchForwardSync({ read, goToPage }: ForwardSyncArgs): void {
     const resolved = pageForOffset(data.markers, data.offset);
     const last = usePanePdfLinkStore.getState().lastSyncedPage;
     if (last !== null && last.page === resolved && Date.now() - last.at < ECHO_GUARD_MS) return;
-    goToPage(resolved);
+    goToPage(resolveForwardPage(editorPaneId, resolved));
   }, DEBOUNCE_MS);
 }
 

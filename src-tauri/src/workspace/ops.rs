@@ -214,6 +214,7 @@ pub fn persist_companion_frontmatter(
     md_relative: &str,
     pdf_relative: &str,
     citekey: Option<&str>,
+    page_offset: Option<i32>,
     registry: &WriteHashRegistry,
 ) -> Result<(), WorkspaceError> {
     let full_path = root.join(md_relative);
@@ -223,12 +224,21 @@ pub fn persist_companion_frontmatter(
     let raw = fs::read_to_string(&full_path)?;
     let parsed = parse_frontmatter(&raw);
 
+    // Only a positive offset is meaningful; 0 / None leaves the key absent.
+    let offset = page_offset.filter(|&n| n > 0);
+
     let companion_ok = parsed.map.get("companion").and_then(|v| v.as_str()) == Some(pdf_relative);
     let citekey_ok = match citekey {
         Some(ck) => parsed.map.get("citekey").and_then(|v| v.as_str()) == Some(ck),
         None => true,
     };
-    if companion_ok && citekey_ok {
+    let offset_ok = match offset {
+        Some(n) => {
+            parsed.map.get("companion_page_offset").and_then(|v| v.as_i64()) == Some(n as i64)
+        }
+        None => !parsed.map.contains_key("companion_page_offset"),
+    };
+    if companion_ok && citekey_ok && offset_ok {
         registry.record(&full_path, &raw);
         return Ok(());
     }
@@ -243,6 +253,14 @@ pub fn persist_companion_frontmatter(
             "citekey".to_string(),
             serde_yaml::Value::String(ck.to_string()),
         );
+    }
+    if let Some(n) = offset {
+        fm.insert(
+            "companion_page_offset".to_string(),
+            serde_yaml::Value::Number(serde_yaml::Number::from(n)),
+        );
+    } else {
+        fm.swap_remove("companion_page_offset");
     }
     write_page(root, md_relative, parsed.body, &fm, registry)
 }
@@ -606,7 +624,7 @@ mod tests {
         let content = "---\ncompanion: foo.pdf\n---\n# Body\n";
         fs::write(dir.path().join("note.md"), content).unwrap();
 
-        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, &registry).unwrap();
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, None, &registry).unwrap();
 
         let full_path = dir.path().join("note.md");
         assert!(registry.check(&full_path, content));
@@ -618,7 +636,7 @@ mod tests {
         let registry = WriteHashRegistry::new();
         fs::write(dir.path().join("note.md"), "# Body\n").unwrap();
 
-        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", Some("smith2024"), &registry).unwrap();
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", Some("smith2024"), None, &registry).unwrap();
 
         let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
         let parsed = parse_frontmatter(&content);
@@ -634,10 +652,77 @@ mod tests {
         let content = "---\ncompanion: foo.pdf\ncitekey: smith2024\n---\n# Body\n";
         fs::write(dir.path().join("note.md"), content).unwrap();
 
-        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", Some("smith2024"), &registry).unwrap();
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", Some("smith2024"), None, &registry).unwrap();
 
         let full_path = dir.path().join("note.md");
         assert!(registry.check(&full_path, content));
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_writes_page_offset() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "# Body\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, Some(2), &registry)
+            .unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        let parsed = parse_frontmatter(&content);
+        assert_eq!(parsed.map.get("companion").unwrap().as_str().unwrap(), "foo.pdf");
+        assert_eq!(
+            parsed.map.get("companion_page_offset").unwrap().as_i64().unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_omits_zero_page_offset() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        fs::write(dir.path().join("note.md"), "# Body\n").unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, Some(0), &registry)
+            .unwrap();
+
+        let content = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        let parsed = parse_frontmatter(&content);
+        assert!(
+            parsed.map.get("companion_page_offset").is_none(),
+            "offset of 0 must not be written"
+        );
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_offset_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\ncompanion: foo.pdf\ncompanion_page_offset: 2\n---\n# Body\n";
+        fs::write(dir.path().join("note.md"), content).unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, Some(2), &registry)
+            .unwrap();
+
+        let full_path = dir.path().join("note.md");
+        assert!(registry.check(&full_path, content), "no rewrite when offset matches");
+    }
+
+    #[test]
+    fn persist_companion_frontmatter_removes_stale_offset() {
+        let dir = TempDir::new().unwrap();
+        let registry = WriteHashRegistry::new();
+        let content = "---\ncompanion: foo.pdf\ncompanion_page_offset: 2\n---\n# Body\n";
+        fs::write(dir.path().join("note.md"), content).unwrap();
+
+        persist_companion_frontmatter(dir.path(), "note.md", "foo.pdf", None, Some(0), &registry)
+            .unwrap();
+
+        let rewritten = fs::read_to_string(dir.path().join("note.md")).unwrap();
+        let parsed = parse_frontmatter(&rewritten);
+        assert!(
+            parsed.map.get("companion_page_offset").is_none(),
+            "stale companion_page_offset must be removed when offset is 0"
+        );
     }
 
     #[test]

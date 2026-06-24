@@ -83,6 +83,8 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
       const view = getPaneView(linked);
       if (!view) return;
       const markers = getCachedPageMarkers(view.state.doc);
+      // The page offset is subtracted inside dispatchReverseSync, so pass the raw
+      // PDF page index directly.
       dispatchReverseSync(pageIndex, linked, markers);
     },
     [paneId],

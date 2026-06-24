@@ -24,9 +24,19 @@ export interface ReverseSyncOptions {
 }
 
 /**
+ * Pure helper: translate a raw 0-based PDF page index into the corresponding
+ * marker-array index by subtracting the stored companion page offset.
+ * Exported so companion.ts can use it for direct (non-dispatch) paths.
+ */
+export function resolveReversePage(editorPaneId: string, pdfPage: number): number {
+  return pdfPage - usePanePdfLinkStore.getState().getPageOffset(editorPaneId);
+}
+
+/**
  * Scroll the linked editor pane so the marker for `pageIndex` (0-based PDF page
- * index) is at the top. No-op when there is no marker for that index or no
- * editor view registered for `linkedEditorPaneId`.
+ * index) is at the top. The stored page offset is subtracted internally, so
+ * callers pass the raw PDF page index. No-op when there is no marker for the
+ * adjusted index or no editor view registered for `linkedEditorPaneId`.
  */
 export function dispatchReverseSync(
   pageIndex: number,
@@ -39,11 +49,15 @@ export function dispatchReverseSync(
 
   if (markers.length === 0) return;
 
+  // Subtract the companion page offset so the raw PDF page index maps onto the
+  // editor's 0-indexed marker array.
+  const adjusted = resolveReversePage(linkedEditorPaneId, pageIndex);
+
   // Clamping is intentionally pre-guard: it's cheap and avoids double resolution.
   // setLastSyncedPage only fires if guards pass, so a clamped-but-guarded call is harmless.
   const index = clampIndex
-    ? Math.min(pageIndex, markers.length - 1)
-    : pageIndex;
+    ? Math.max(0, Math.min(adjusted, markers.length - 1))
+    : adjusted;
 
   const marker = markers[index];
   if (!marker) return;
