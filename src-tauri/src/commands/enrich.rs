@@ -426,11 +426,7 @@ fn link_references_from_sources(
         let remaining_slots = MAX_REFERENCES.saturating_sub(counters.position);
         for cr in crossref_refs.iter().take(remaining_slots) {
             let cr_doi = cr.doi.as_deref().map(normalize_doi);
-            let cr_title = cr
-                .article_title
-                .as_deref()
-                .map(strip_jats)
-                .unwrap_or_default();
+            let cr_title = crate::bib::convert::crossref_ref_title(cr);
             let cr_year = cr.year.as_deref().unwrap_or_default();
             if let Some(identity) =
                 ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year)
@@ -2351,21 +2347,21 @@ mod tests {
                 article_title: Some("CR Ref A (dup)".to_string()),
                 author: Some("A. Author".to_string()),
                 year: Some("2020".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
             CrossrefReference {
                 doi: Some("10.1/b".to_string()),
                 article_title: Some("CR Ref B (new)".to_string()),
                 author: Some("C. Author".to_string()),
                 year: Some("2022".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
             CrossrefReference {
                 doi: None,
                 article_title: Some("CR Ref C (no DOI)".to_string()),
                 author: Some("D. Author".to_string()),
                 year: Some("2023".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
         ];
 
@@ -2452,7 +2448,7 @@ mod tests {
                 article_title: Some("CR Only Ref".to_string()),
                 author: Some("Solo, H.".to_string()),
                 year: Some("2021".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
         ];
 
@@ -2515,7 +2511,7 @@ mod tests {
             article_title: Some(format!("CR Paper {}", i)),
             author: Some(format!("CrAuthor{}", i)),
             year: Some(format!("{}", 2020 + (i % 5))),
-            volume: None, first_page: None, journal_title: None,
+            volume: None, first_page: None, journal_title: None, unstructured: None,
         }).collect();
 
         db::delete_references_for(&store.conn, "parent2024").unwrap();
@@ -2671,6 +2667,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         }];
 
         db::delete_references_for(&store.conn, "parent2024").unwrap();
@@ -2788,6 +2785,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
             CrossrefReference {
                 doi: Some("10.1234/same-paper".to_string()),
@@ -2797,6 +2795,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
         ];
 
@@ -2947,6 +2946,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
             CrossrefReference {
                 doi: Some("10.1/c".to_string()),
@@ -2956,6 +2956,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
         ];
 
@@ -2998,6 +2999,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         }];
 
         // All 3 have no identity key, so each counts as distinct
@@ -3293,7 +3295,7 @@ mod tests {
                 article_title: Some("CR Ref Paper".to_string()),
                 author: Some("B. Author".to_string()),
                 year: Some("2021".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             }]),
             volume: None,
             issue: None,
