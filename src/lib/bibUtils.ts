@@ -1,4 +1,17 @@
-import type { BibEntry } from "./ipc";
+import type { BibEntry, BibKeyState } from "./ipc";
+
+/**
+ * Returns the border className for a bib entry based on its materialization
+ * state: accent border when a note page exists, dashed muted border for
+ * partially-enriched entries, or `undefined` for everything else.
+ */
+export function materializationBorderClass(
+  state: BibKeyState | undefined,
+): string | undefined {
+  if (state?.page_id) return "border-l-2 border-interactive-accent";
+  if (state?.materialization === "partial") return "border-l-2 border-dashed border-text-muted";
+  return undefined;
+}
 
 /**
  * Abbreviate an author list for compact display:

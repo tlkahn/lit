@@ -83,6 +83,7 @@ pub struct CrossrefReference {
     pub first_page: Option<String>,
     #[serde(rename = "journal-title")]
     pub journal_title: Option<String>,
+    pub unstructured: Option<String>,
 }
 
 static TAG_RE: LazyLock<Regex> =
@@ -217,6 +218,18 @@ pub fn csl_to_bib_entry(item: &CslItem) -> BibEntry {
     }
 }
 
+/// Title for a CrossRef reference: prefer `article-title`, fall back to the
+/// raw `unstructured` citation string. Both are JATS/HTML-stripped.
+pub fn crossref_ref_title(cr_ref: &CrossrefReference) -> String {
+    cr_ref
+        .article_title
+        .as_deref()
+        .map(strip_jats)
+        .filter(|s| !s.is_empty())
+        .or_else(|| cr_ref.unstructured.as_deref().map(strip_jats))
+        .unwrap_or_default()
+}
+
 /// Convert a Crossref reference entry into a minimal `BibEntry`.
 /// Mirrors `s2_ref_to_bib_entry` from the S2 pipeline.
 pub fn crossref_ref_to_bib_entry(
@@ -230,11 +243,7 @@ pub fn crossref_ref_to_bib_entry(
         .map(|s| vec![s.to_string()])
         .unwrap_or_default();
 
-    let title = cr_ref
-        .article_title
-        .as_deref()
-        .map(strip_jats)
-        .unwrap_or_default();
+    let title = crossref_ref_title(cr_ref);
 
     let year = cr_ref.year.clone().unwrap_or_default();
 
@@ -996,6 +1005,17 @@ mod tests {
         assert!(cr.article_title.is_none());
     }
 
+    #[test]
+    fn deserialize_crossref_reference_unstructured() {
+        let json = r#"{"unstructured": "Creighton J D D, Mann R B, Phys. Rev. D 52, 4569 (1995)"}"#;
+        let cr: CrossrefReference = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            cr.unstructured,
+            Some("Creighton J D D, Mann R B, Phys. Rev. D 52, 4569 (1995)".to_string())
+        );
+        assert!(cr.article_title.is_none());
+    }
+
     // ── Group 11: crossref_ref_to_bib_entry ────────────────────────
 
     #[test]
@@ -1008,6 +1028,7 @@ mod tests {
             volume: Some("42".to_string()),
             first_page: Some("100".to_string()),
             journal_title: Some("Nature".to_string()),
+            unstructured: None,
         };
         let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
         assert_eq!(entry.entry_type, "misc");
@@ -1031,6 +1052,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         };
         let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
         assert_eq!(entry.entry_type, "misc");
@@ -1053,6 +1075,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         };
         let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
         assert_eq!(entry.doi, Some("10.1038/nature12373".to_string()));
@@ -1071,6 +1094,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         };
         let entry = crossref_ref_to_bib_entry(&cr, &existing);
         assert_eq!(entry.key, "smith2024a");
@@ -1086,9 +1110,63 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         };
         let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
         assert_eq!(entry.title, "Tagged Title");
+    }
+
+    #[test]
+    fn crossref_ref_to_bib_entry_uses_unstructured_when_no_article_title() {
+        let cr = CrossrefReference {
+            doi: None,
+            article_title: None,
+            author: None,
+            year: Some("1995".to_string()),
+            volume: None,
+            first_page: None,
+            journal_title: None,
+            unstructured: Some(
+                "Creighton J D D, Mann R B, Phys. Rev. D 52, 4569 (1995)".to_string(),
+            ),
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
+        assert_eq!(
+            entry.title,
+            "Creighton J D D, Mann R B, Phys. Rev. D 52, 4569 (1995)"
+        );
+    }
+
+    #[test]
+    fn crossref_ref_to_bib_entry_prefers_article_title_over_unstructured() {
+        let cr = CrossrefReference {
+            doi: None,
+            article_title: Some("Real Article Title".to_string()),
+            author: None,
+            year: None,
+            volume: None,
+            first_page: None,
+            journal_title: None,
+            unstructured: Some("raw citation string".to_string()),
+        };
+        let entry = crossref_ref_to_bib_entry(&cr, &HashSet::new());
+        assert_eq!(entry.title, "Real Article Title");
+    }
+
+    #[test]
+    fn crossref_ref_title_falls_back_and_strips_jats() {
+        // Empty article-title falls through to unstructured, which is stripped.
+        let cr = CrossrefReference {
+            doi: None,
+            article_title: Some("   ".to_string()),
+            author: None,
+            year: None,
+            volume: None,
+            first_page: None,
+            journal_title: None,
+            unstructured: Some("<i>Raw</i> citation".to_string()),
+        };
+        assert_eq!(crossref_ref_title(&cr), "Raw citation");
     }
 
     // ── Group 12: CslItem reference field deserialization ───────────

@@ -57,6 +57,7 @@ let invokedCommands: { cmd: string; args: unknown }[] = [];
 let fixture: BibEntry[] = [];
 let citingFixture: BacklinkEntry[] = [];
 let bibKeyStatesFixture: Record<string, { materialization: string; page_id: string | null }> = {};
+let refCountsFixture: Record<string, number> = {};
 let clipboardOverridden = false;
 const origClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 
@@ -83,6 +84,7 @@ beforeEach(() => {
   fixture = [sanderson, flood, abrams];
   citingFixture = [];
   bibKeyStatesFixture = {};
+  refCountsFixture = {};
   resetListenMock();
   mockListen();
   useWorkspaceStore.setState({
@@ -101,6 +103,7 @@ beforeEach(() => {
     if (cmd === "list_bib_entries") return fixture;
     if (cmd === "get_citing_pages") return citingFixture;
     if (cmd === "get_bib_key_states") return bibKeyStatesFixture;
+    if (cmd === "get_reference_counts") return refCountsFixture;
     throw new Error(`Unknown command: ${cmd}`);
   });
 });
@@ -725,6 +728,25 @@ describe("ReferenceLibrary", () => {
     expect(
       await screen.findByRole("button", { name: /Cited by \(1\)/ }),
     ).toBeInTheDocument();
+  });
+
+  it("does not call getReferenceCounts when graphReady is false", async () => {
+    useWorkspaceStore.setState({ graphReady: false });
+    refCountsFixture = { sanderson2009: 3 };
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    // Give any erroneous fetch a chance to fire.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokedCommands.filter((c) => c.cmd === "get_reference_counts")).toHaveLength(0);
+
+    act(() => {
+      useWorkspaceStore.setState({ graphReady: true });
+    });
+
+    await waitFor(() =>
+      expect(invokedCommands.filter((c) => c.cmd === "get_reference_counts").length).toBeGreaterThan(0),
+    );
   });
 
   it("records a jump before navigating from a citing page", async () => {
@@ -1669,6 +1691,44 @@ describe("ReferenceLibrary", () => {
     await waitFor(() => {
       const statesAfter = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
       expect(statesAfter).toBeGreaterThan(statesBefore);
+    });
+  });
+
+  it("lit:graph-updated re-fetches reference counts too", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    const countsBefore = invokedCommands.filter((c) => c.cmd === "get_reference_counts").length;
+
+    emitMockEvent("lit:graph-updated", {});
+
+    await waitFor(() => {
+      const countsAfter = invokedCommands.filter((c) => c.cmd === "get_reference_counts").length;
+      expect(countsAfter).toBeGreaterThan(countsBefore);
+    });
+  });
+
+  it("lit:bib-items-changed re-fetches entries, bib key states, and reference counts", async () => {
+    render(<ReferenceLibrary />);
+    await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+
+    const entriesBefore = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+    const statesBefore = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
+    const countsBefore = invokedCommands.filter((c) => c.cmd === "get_reference_counts").length;
+
+    emitMockEvent("lit:bib-items-changed", {});
+
+    await waitFor(() => {
+      const entriesAfter = invokedCommands.filter((c) => c.cmd === "list_bib_entries").length;
+      expect(entriesAfter).toBeGreaterThan(entriesBefore);
+    });
+    await waitFor(() => {
+      const statesAfter = invokedCommands.filter((c) => c.cmd === "get_bib_key_states").length;
+      expect(statesAfter).toBeGreaterThan(statesBefore);
+    });
+    await waitFor(() => {
+      const countsAfter = invokedCommands.filter((c) => c.cmd === "get_reference_counts").length;
+      expect(countsAfter).toBeGreaterThan(countsBefore);
     });
   });
 

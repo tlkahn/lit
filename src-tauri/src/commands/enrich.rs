@@ -274,6 +274,19 @@ pub fn merge_enrichment_fields(
         }
     }
 
+    // Title: always prefer the authoritative enriched title over whatever
+    // the sparse stub had (empty, unstructured fallback, etc.).
+    let enriched_title = crossref
+        .map(|e| e.title.as_str())
+        .filter(|t| !t.is_empty())
+        .or_else(|| s2.map(|e| e.title.as_str()).filter(|t| !t.is_empty()));
+
+    if let Some(title) = enriched_title {
+        if title != existing.title {
+            result.insert("title".to_string(), title.to_string());
+        }
+    }
+
     result
 }
 
@@ -426,11 +439,7 @@ fn link_references_from_sources(
         let remaining_slots = MAX_REFERENCES.saturating_sub(counters.position);
         for cr in crossref_refs.iter().take(remaining_slots) {
             let cr_doi = cr.doi.as_deref().map(normalize_doi);
-            let cr_title = cr
-                .article_title
-                .as_deref()
-                .map(strip_jats)
-                .unwrap_or_default();
+            let cr_title = crate::bib::convert::crossref_ref_title(cr);
             let cr_year = cr.year.as_deref().unwrap_or_default();
             if let Some(identity) =
                 ref_identity_key(cr_doi.as_deref(), &cr_title, cr_year)
@@ -946,6 +955,7 @@ mod tests {
         db::upsert_bib_item(&store.conn, &existing, None, None, false).unwrap();
 
         let candidate = make_entry(|e| {
+            e.title = String::new();
             e.doi = Some("10.1/candidate".to_string());
             e.abstract_text = Some("Candidate abstract".to_string());
             e.journal = Some("Nature".to_string());
@@ -1233,6 +1243,7 @@ mod tests {
         let existing = make_entry(|_| {});
 
         let crossref = make_entry(|e| {
+            e.title = "Enriched Title".to_string();
             e.abstract_text = Some("abs".to_string());
             e.doi = Some("10.1/x".to_string());
             e.journal = Some("Nature".to_string());
@@ -1246,6 +1257,7 @@ mod tests {
         });
 
         let merged = merge_enrichment_fields(&existing, Some(&crossref), None);
+        assert!(merged.contains_key("title"));
         assert!(merged.contains_key("abstract"));
         assert!(merged.contains_key("doi"));
         assert!(merged.contains_key("journal"));
@@ -1256,7 +1268,7 @@ mod tests {
         assert!(merged.contains_key("publisher"));
         assert!(merged.contains_key("issn"));
         assert!(merged.contains_key("isbn"));
-        assert_eq!(merged.len(), 10);
+        assert_eq!(merged.len(), 11);
     }
 
     #[test]
@@ -1303,6 +1315,50 @@ mod tests {
 
         let merged = merge_enrichment_fields(&existing, Some(&source), None);
         assert!(!merged.contains_key("doi"), "empty string should not be merged");
+    }
+
+    // ── merge_enrichment_fields: title ───────────────────────────────
+
+    #[test]
+    fn merge_title_overwrites_unstructured_fallback() {
+        let existing = make_entry(|e| {
+            e.title = "Creighton J D D, Mann R B, Phys. Rev. D 52, 4569 (1995)".to_string();
+        });
+
+        let crossref = make_entry(|e| {
+            e.title = "Quasilocal thermodynamics".to_string();
+        });
+
+        let merged = merge_enrichment_fields(&existing, Some(&crossref), None);
+        assert_eq!(merged.get("title").unwrap(), "Quasilocal thermodynamics");
+    }
+
+    #[test]
+    fn merge_title_fills_empty() {
+        let existing = make_entry(|e| {
+            e.title = String::new();
+        });
+
+        let source = make_entry(|e| {
+            e.title = "Real Title".to_string();
+        });
+
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
+        assert_eq!(merged.get("title").unwrap(), "Real Title");
+    }
+
+    #[test]
+    fn merge_title_skips_when_source_title_empty() {
+        let existing = make_entry(|e| {
+            e.title = "Keep Me".to_string();
+        });
+
+        let source = make_entry(|e| {
+            e.title = String::new();
+        });
+
+        let merged = merge_enrichment_fields(&existing, Some(&source), None);
+        assert!(!merged.contains_key("title"));
     }
 
     // ── merge_enrichment_fields: ISBN ─────────────────────────────────
@@ -2351,21 +2407,21 @@ mod tests {
                 article_title: Some("CR Ref A (dup)".to_string()),
                 author: Some("A. Author".to_string()),
                 year: Some("2020".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
             CrossrefReference {
                 doi: Some("10.1/b".to_string()),
                 article_title: Some("CR Ref B (new)".to_string()),
                 author: Some("C. Author".to_string()),
                 year: Some("2022".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
             CrossrefReference {
                 doi: None,
                 article_title: Some("CR Ref C (no DOI)".to_string()),
                 author: Some("D. Author".to_string()),
                 year: Some("2023".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
         ];
 
@@ -2452,7 +2508,7 @@ mod tests {
                 article_title: Some("CR Only Ref".to_string()),
                 author: Some("Solo, H.".to_string()),
                 year: Some("2021".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             },
         ];
 
@@ -2515,7 +2571,7 @@ mod tests {
             article_title: Some(format!("CR Paper {}", i)),
             author: Some(format!("CrAuthor{}", i)),
             year: Some(format!("{}", 2020 + (i % 5))),
-            volume: None, first_page: None, journal_title: None,
+            volume: None, first_page: None, journal_title: None, unstructured: None,
         }).collect();
 
         db::delete_references_for(&store.conn, "parent2024").unwrap();
@@ -2671,6 +2727,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         }];
 
         db::delete_references_for(&store.conn, "parent2024").unwrap();
@@ -2788,6 +2845,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
             CrossrefReference {
                 doi: Some("10.1234/same-paper".to_string()),
@@ -2797,6 +2855,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
         ];
 
@@ -2947,6 +3006,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
             CrossrefReference {
                 doi: Some("10.1/c".to_string()),
@@ -2956,6 +3016,7 @@ mod tests {
                 volume: None,
                 first_page: None,
                 journal_title: None,
+                unstructured: None,
             },
         ];
 
@@ -2998,6 +3059,7 @@ mod tests {
             volume: None,
             first_page: None,
             journal_title: None,
+            unstructured: None,
         }];
 
         // All 3 have no identity key, so each counts as distinct
@@ -3293,7 +3355,7 @@ mod tests {
                 article_title: Some("CR Ref Paper".to_string()),
                 author: Some("B. Author".to_string()),
                 year: Some("2021".to_string()),
-                volume: None, first_page: None, journal_title: None,
+                volume: None, first_page: None, journal_title: None, unstructured: None,
             }]),
             volume: None,
             issue: None,

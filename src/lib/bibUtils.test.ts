@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { distinctPublisher } from "./bibUtils";
+import { distinctPublisher, materializationBorderClass } from "./bibUtils";
 import type { BibEntry } from "./ipc";
 
 function makeEntry(overrides: Partial<BibEntry> = {}): BibEntry {
@@ -49,5 +49,35 @@ describe("distinctPublisher", () => {
 
   it("returns trimmed publisher", () => {
     expect(distinctPublisher(makeEntry({ publisher: "  MIT Press  " }))).toBe("MIT Press");
+  });
+});
+
+describe("materializationBorderClass", () => {
+  it("returns accent border when page_id is set", () => {
+    expect(
+      materializationBorderClass({ materialization: "materialized", page_id: "notes/foo.md" }),
+    ).toBe("border-l-2 border-interactive-accent");
+  });
+
+  it("returns accent border even when materialization is partial if page_id is set", () => {
+    expect(
+      materializationBorderClass({ materialization: "partial", page_id: "notes/foo.md" }),
+    ).toBe("border-l-2 border-interactive-accent");
+  });
+
+  it("returns dashed muted border when materialization is partial and page_id is null", () => {
+    expect(
+      materializationBorderClass({ materialization: "partial", page_id: null }),
+    ).toBe("border-l-2 border-dashed border-text-muted");
+  });
+
+  it("returns undefined when state is undefined", () => {
+    expect(materializationBorderClass(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for shadow materialization with no page_id", () => {
+    expect(
+      materializationBorderClass({ materialization: "shadow", page_id: null }),
+    ).toBeUndefined();
   });
 });
