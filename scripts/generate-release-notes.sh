@@ -60,7 +60,7 @@ fi
 # --- Determine range start ---
 
 if [[ -z "$FROM_TAG" ]]; then
-  FROM_TAG=$(git tag --sort=-v:creatordate | grep -A1 "^${TAG}$" | tail -1) || true
+  FROM_TAG=$(git tag --sort=-creatordate | grep -A1 "^${TAG}$" | tail -1) || true
   if [[ "$FROM_TAG" == "$TAG" || -z "$FROM_TAG" ]]; then
     # First release or no previous tag — use root commit
     FROM_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
@@ -69,14 +69,25 @@ fi
 
 # --- Collect commits ---
 
-COMMITS=$(git log --oneline --no-merges "$FROM_TAG..$TAG")
-if [[ -z "$COMMITS" ]]; then
+ALL_COMMITS=$(git log --oneline --no-merges "$FROM_TAG..$TAG")
+if [[ -z "$ALL_COMMITS" ]]; then
   die "No commits found in range $FROM_TAG..$TAG"
 fi
 
-# --- Generate notes via LLM ---
+# --- Filter to feat/fix commits ---
 
-NOTES=$(echo "$COMMITS" | llm -s "$(cat "$PROMPT_FILE")")
+COMMITS=$(echo "$ALL_COMMITS" | grep -E '^[0-9a-f]+ (feat|fix)[:(]' || true)
+HAS_FEAT=$(echo "$COMMITS" | grep -E '^[0-9a-f]+ feat[:(]' || true)
+
+if [[ -z "$COMMITS" ]]; then
+  NOTES="Internal improvements and maintenance."
+elif [[ -z "$HAS_FEAT" ]]; then
+  NOTES="Bug fixes and internal improvements."
+else
+  # --- Generate notes via LLM ---
+  MODEL="${LLM_MODEL:-claude-sonnet-4-6}"
+  NOTES=$(echo "$COMMITS" | llm -m "$MODEL" -s "$(cat "$PROMPT_FILE")")
+fi
 
 # --- Get tag date ---
 

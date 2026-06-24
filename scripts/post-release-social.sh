@@ -103,7 +103,8 @@ BODY=$(awk 'BEGIN{n=0} /^---$/{n++; next} n>=2{print}' "$NOTES_FILE" | sed '/./,
 
 # --- Generate social post via LLM ---
 
-POST_BODY=$(echo "$BODY" | llm -s "$(cat "$PROMPT_FILE")")
+MODEL="${LLM_MODEL:-claude-sonnet-4-6}"
+POST_BODY=$(echo "$BODY" | llm -m "$MODEL" -s "$(cat "$PROMPT_FILE")")
 [[ -n "$POST_BODY" ]] || die "LLM returned empty output"
 
 RELEASE_URL="${RELEASE_URL_BASE}${VERSION}"

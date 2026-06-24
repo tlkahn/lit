@@ -81,8 +81,8 @@ release_check_env() {
         missing+=("$var")
       fi
     done
-    if [[ "$skip_website" -eq 0 && -z "${OPENAI_API_KEY:-}" ]]; then
-      missing+=("OPENAI_API_KEY")
+    if [[ "$skip_website" -eq 0 && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      missing+=("ANTHROPIC_API_KEY")
     fi
   fi
 

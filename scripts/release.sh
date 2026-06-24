@@ -18,8 +18,8 @@
 #
 # Optional:
 #   APPLE_SIGNING_IDENTITY       override auto-detection from keychain
-#   OPENAI_API_KEY               for LLM-generated release notes (website deploy)
-#   LLM_DEFAULT_MODEL            defaults to gpt-4o-mini
+#   ANTHROPIC_API_KEY             for LLM-generated release notes (website deploy)
+#   LLM_MODEL                    defaults to claude-sonnet-4-6
 #
 # The llm binary staging step from CI is intentionally skipped — llm is a Cargo
 # library dependency (llm-rs), not a sidecar binary (not in externalBin).
