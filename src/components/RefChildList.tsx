@@ -12,6 +12,13 @@ export interface RefChildListProps {
   refCounts: Record<string, number>;
   bibKeyStates: Record<string, BibKeyState>;
   modHeld: boolean;
+  materializingKey: string | null;
+  enrichingKey: string | null;
+  enrichPhase: "fetch" | "search";
+  downloadingKey: string | null;
+  downloadProgress: { bytes: number; total: number | null } | null;
+  linkingKey: string | null;
+  ocrCompanionCurrentMap: Record<string, string | false>;
   onDrillDown: (entry: BibEntry) => void;
   onBack: () => void;
   onNavigateToBibFile: (entry: BibEntry) => void;
@@ -34,6 +41,13 @@ export function RefChildList(props: RefChildListProps) {
     refCounts,
     bibKeyStates,
     modHeld,
+    materializingKey,
+    enrichingKey,
+    enrichPhase,
+    downloadingKey,
+    downloadProgress,
+    linkingKey,
+    ocrCompanionCurrentMap,
     onDrillDown,
     onBack,
     onNavigateToBibFile,
@@ -111,27 +125,30 @@ export function RefChildList(props: RefChildListProps) {
   const virtualItems = virtualizer.getVirtualItems();
 
   const makeActionProps = useCallback(
-    (entry: BibEntry): BibEntryActionProps => ({
-      entry,
-      state: bibKeyStates[entry.key],
-      ocrCompanionCurrent: undefined,
-      isMaterializing: false,
-      isEnriching: false,
-      enrichPhase: "fetch",
-      isDownloading: false,
-      downloadProgress: null,
-      isLinking: false,
-      onOpenNote,
-      onCreateNote,
-      onEnrich,
-      onOpenPdf,
-      onOpenMarkdown,
-      onOcr,
-      onCopyCitation,
-      onDownloadPdf,
-      onLinkPdf,
-    }),
-    [bibKeyStates, onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOpenMarkdown, onOcr, onCopyCitation, onDownloadPdf, onLinkPdf],
+    (entry: BibEntry): BibEntryActionProps => {
+      const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
+      return {
+        entry,
+        state: bibKeyStates[entry.key],
+        ocrCompanionCurrent: ocrCompanionCurrentMap[entryId],
+        isMaterializing: materializingKey === entry.key,
+        isEnriching: enrichingKey === entry.key,
+        enrichPhase: enrichingKey === entry.key ? enrichPhase : "fetch",
+        isDownloading: downloadingKey === entry.key,
+        downloadProgress: downloadingKey === entry.key ? downloadProgress : null,
+        isLinking: linkingKey === entry.key,
+        onOpenNote,
+        onCreateNote,
+        onEnrich,
+        onOpenPdf,
+        onOpenMarkdown,
+        onOcr,
+        onCopyCitation,
+        onDownloadPdf,
+        onLinkPdf,
+      };
+    },
+    [bibKeyStates, materializingKey, enrichingKey, enrichPhase, downloadingKey, downloadProgress, linkingKey, ocrCompanionCurrentMap, onOpenNote, onCreateNote, onEnrich, onOpenPdf, onOpenMarkdown, onOcr, onCopyCitation, onDownloadPdf, onLinkPdf],
   );
 
   if (loading) {

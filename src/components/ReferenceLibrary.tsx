@@ -976,6 +976,13 @@ export function ReferenceLibrary() {
           refCounts={refCounts}
           bibKeyStates={bibKeyStates}
           modHeld={modHeld}
+          materializingKey={materializingKey}
+          enrichingKey={enrichingKey}
+          enrichPhase={enrichPhase}
+          downloadingKey={downloadingKey}
+          downloadProgress={downloadProgress}
+          linkingKey={linkingKey}
+          ocrCompanionCurrentMap={ocrCompanionCurrentMap}
           onDrillDown={handleDrillDown}
           onBack={handleDrillBack}
           onNavigateToBibFile={navigateToBibFile}
