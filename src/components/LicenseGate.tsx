@@ -60,6 +60,7 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
   // generic "requires a license" copy.
   const expired = state === "license_expired";
   const revoked = state === "revoked";
+  const unlicensed = state === "unlicensed";
   const greeting = licensedTo ? `${licensedTo}, your` : "Your";
   const headline = revoked
     ? `${greeting} license was revoked.`
@@ -72,7 +73,9 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
     ? (reason
         ? `Reason: ${reason}. If you believe this is a mistake, contact support@lit.solar. You can buy a new license or enter a different key to continue.`
         : "If you believe this is a mistake, contact support@lit.solar. You can buy a new license or enter a different key to continue.")
-    : "Lit is a one-time purchase. Buy a license or enter your existing key to continue.";
+    : unlicensed
+      ? "Lit is a one-time purchase. Start a free trial, buy a license, or enter your existing key to continue."
+      : "Lit is a one-time purchase. Buy a license or enter your existing key to continue.";
 
   return (
     <>
@@ -85,8 +88,19 @@ export function LicenseGate({ children, entryOpen, onEntryOpenChange }: LicenseG
           {subline}
         </p>
         <div className="flex gap-3">
+          {unlicensed && (
+            <button
+              className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:opacity-90"
+              onClick={() => openUrl("https://lit.solar/trial")}
+              data-testid="splash-start-trial"
+            >
+              Start Free Trial
+            </button>
+          )}
           <button
-            className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:opacity-90"
+            className={unlicensed
+              ? "rounded border border-border-primary px-4 py-2 text-sm text-text-normal hover:bg-bg-secondary"
+              : "rounded bg-blue-600 px-4 py-2 text-sm text-white hover:opacity-90"}
             onClick={() => openUrl("https://lit.solar/buy")}
             data-testid="splash-buy-license"
           >
