@@ -94,24 +94,19 @@ export function RefChildList(props: RefChildListProps) {
 
   useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen("lit:graph-updated", () => {
+    const unlistenFns: (() => void)[] = [];
+    const handler = () => {
       loadChildren();
-    }).then((fn) => {
-      if (cancelled) { fn(); } else { unlisten = fn; }
-    });
-    return () => { cancelled = true; unlisten?.(); };
-  }, [loadChildren]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen("lit:bib-items-changed", () => {
-      loadChildren();
-    }).then((fn) => {
-      if (cancelled) { fn(); } else { unlisten = fn; }
-    });
-    return () => { cancelled = true; unlisten?.(); };
+    };
+    for (const event of ["lit:graph-updated", "lit:bib-items-changed"]) {
+      listen(event, handler).then((fn) => {
+        if (cancelled) { fn(); } else { unlistenFns.push(fn); }
+      });
+    }
+    return () => {
+      cancelled = true;
+      for (const fn of unlistenFns) fn();
+    };
   }, [loadChildren]);
 
   const toggleExpand = useCallback((key: string) => {
