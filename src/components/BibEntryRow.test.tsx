@@ -74,6 +74,8 @@ function renderRow(overrides: {
   modHeld?: boolean;
   onToggleExpand?: (...args: unknown[]) => void;
   onNavigateToBibFile?: (entry: BibEntry) => void;
+  referenceCount?: number;
+  onDrillDown?: (entry: BibEntry) => void;
   actionProps?: Partial<BibEntryActionProps>;
 } = {}) {
   const entry = overrides.entry ?? baseEntry;
@@ -83,6 +85,8 @@ function renderRow(overrides: {
     modHeld: overrides.modHeld ?? false,
     onToggleExpand: (overrides.onToggleExpand ?? vi.fn()) as (entryId: string) => void,
     onNavigateToBibFile: overrides.onNavigateToBibFile ?? vi.fn(),
+    referenceCount: overrides.referenceCount,
+    onDrillDown: overrides.onDrillDown,
     actionProps: {
       entry,
       state: undefined,
@@ -160,6 +164,35 @@ describe("BibEntryRow — collapsed row", () => {
     const title = screen.getByTestId("reference-entry-title");
     expect(title.className).not.toContain("underline");
     expect(title.className).toContain("text-text-normal");
+  });
+
+  it("renders drill-down badge when referenceCount > 0 and onDrillDown provided", () => {
+    renderRow({ referenceCount: 5, onDrillDown: vi.fn() });
+    const badge = screen.getByTestId("drill-down-btn");
+    expect(badge).toHaveTextContent("5 refs ›");
+  });
+
+  it("does not render drill-down badge when referenceCount is 0", () => {
+    renderRow({ referenceCount: 0, onDrillDown: vi.fn() });
+    expect(screen.queryByTestId("drill-down-btn")).not.toBeInTheDocument();
+  });
+
+  it("does not render drill-down badge when referenceCount is undefined", () => {
+    renderRow({ onDrillDown: vi.fn() });
+    expect(screen.queryByTestId("drill-down-btn")).not.toBeInTheDocument();
+  });
+
+  it("does not render drill-down badge when onDrillDown is not provided", () => {
+    renderRow({ referenceCount: 3 });
+    expect(screen.queryByTestId("drill-down-btn")).not.toBeInTheDocument();
+  });
+
+  it("clicking drill-down badge calls onDrillDown with the entry", async () => {
+    const user = userEvent.setup();
+    const onDrillDown = vi.fn();
+    renderRow({ referenceCount: 3, onDrillDown });
+    await user.click(screen.getByTestId("drill-down-btn"));
+    expect(onDrillDown).toHaveBeenCalledWith(baseEntry);
   });
 });
 
