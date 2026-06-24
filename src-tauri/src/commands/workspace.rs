@@ -242,6 +242,35 @@ fn find_companion_by_sibling(relative_path: &str, root: &Path, search_paths: &[S
     None
 }
 
+/// Resolve the companion for a non-PDF input file.  Only `.md` files are
+/// supported — any other extension returns `None`, matching the documented
+/// contract of `find_companion`.  For `.md`, tries the frontmatter fast
+/// path first (single read for both path and offset), then falls back to
+/// sibling/search-path lookup.
+fn find_companion_non_pdf(
+    root: &Path,
+    relative_path: &str,
+    search_paths: &[String],
+) -> Option<(String, i32)> {
+    let ext = Path::new(relative_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    if ext.as_deref() != Some("md") {
+        return None;
+    }
+    // Fast path: single frontmatter read for both companion path and offset.
+    if let Some(info) = companion_info_from_frontmatter(root, relative_path) {
+        return Some(info);
+    }
+    // Fallback: sibling/search-path lookup (frontmatter already returned None,
+    // so no double-read).
+    find_companion_by_sibling(relative_path, root, search_paths).map(|found| {
+        let page_offset = companion_page_offset(root, relative_path, &found);
+        (found, page_offset)
+    })
+}
+
 /// Given a workspace-relative path to a markdown or PDF file, return the
 /// path of its sibling with the swapped extension (md<->pdf) if that sibling
 /// exists on disk. For markdown files, also checks `companion:` frontmatter
@@ -524,18 +553,8 @@ pub fn find_companion_file(
         // The reverse map is keyed by canonical PDF paths so it can never
         // match a non-PDF input — skip cloning it entirely.
         let root = get_workspace_root(&state, window.label())?;
-        // Fast path: read frontmatter once for both companion path and offset.
-        if let Some((path, page_offset)) =
-            companion_info_from_frontmatter(&root, &relative_path)
-        {
-            return Ok(Some(CompanionInfo { path, page_offset }));
-        }
-        // Fallback: sibling/search-path lookup (no frontmatter read needed
-        // since we already know frontmatter returned None).
-        Ok(find_companion_by_sibling(&relative_path, &root, &search_paths).map(|found| {
-            let page_offset = companion_page_offset(&root, &relative_path, &found);
-            CompanionInfo { path: found, page_offset }
-        }))
+        Ok(find_companion_non_pdf(&root, &relative_path, &search_paths)
+            .map(|(path, page_offset)| CompanionInfo { path, page_offset }))
     }
 }
 
@@ -1225,6 +1244,61 @@ mod tests {
         let path = result.unwrap();
         assert!(path.starts_with('/'), "expected absolute path, got: {path}");
         assert!(path.ends_with("paper.pdf"));
+    }
+
+    // ---- find_companion_non_pdf ----
+
+    #[test]
+    fn find_companion_non_pdf_returns_none_for_txt_with_companion_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("notes.txt"),
+            "---\ncompanion: notes.pdf\ncompanion_page_offset: 3\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("notes.pdf"), b"pdf").unwrap();
+        // Must return None — .txt is not a supported extension for companion lookup.
+        assert!(find_companion_non_pdf(root, "notes.txt", &[]).is_none());
+    }
+
+    #[test]
+    fn find_companion_non_pdf_md_with_frontmatter_returns_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("assets/pdf")).unwrap();
+        std::fs::write(
+            root.join("note.md"),
+            "---\ncompanion: assets/pdf/paper.pdf\ncompanion_page_offset: 5\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("assets/pdf/paper.pdf"), b"pdf").unwrap();
+        let result = find_companion_non_pdf(root, "note.md", &[]);
+        assert_eq!(result, Some(("assets/pdf/paper.pdf".to_string(), 5)));
+    }
+
+    #[test]
+    fn find_companion_non_pdf_md_sibling_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("paper.md"), "no frontmatter").unwrap();
+        std::fs::write(root.join("paper.pdf"), b"pdf").unwrap();
+        let result = find_companion_non_pdf(root, "paper.md", &[]);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().0, "paper.pdf");
+    }
+
+    #[test]
+    fn find_companion_non_pdf_org_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("notes.org"),
+            "---\ncompanion: notes.pdf\n---\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("notes.pdf"), b"pdf").unwrap();
+        assert!(find_companion_non_pdf(root, "notes.org", &[]).is_none());
     }
 
     #[test]
