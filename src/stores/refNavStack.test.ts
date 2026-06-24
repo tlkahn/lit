@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useRefNavStackStore } from "./refNavStack";
 
 function resetStore() {
-  useRefNavStackStore.setState({ stacks: new Map() });
+  useRefNavStackStore.setState({ stacks: new Map(), directions: new Map() });
 }
 
 describe("refNavStack store", () => {
@@ -280,6 +280,68 @@ describe("refNavStack store", () => {
       expect(useRefNavStackStore.getState().isOnStack("pane1", "b")).toBe(false);
       expect(useRefNavStackStore.getState().isOnStack("pane2", "b")).toBe(true);
       expect(useRefNavStackStore.getState().isOnStack("pane2", "a")).toBe(false);
+    });
+  });
+
+  describe("direction tracking", () => {
+    it("direction defaults to 'none' for unknown pane", () => {
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("none");
+    });
+
+    it("push sets direction to 'push'", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("push");
+    });
+
+    it("pop sets direction to 'pop'", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane1", "b", "B");
+      useRefNavStackStore.getState().pop("pane1");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("pop");
+    });
+
+    it("reset sets direction to 'none'", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().reset("pane1");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("none");
+    });
+
+    it("cycle-guard no-op does not change direction", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("push");
+      useRefNavStackStore.getState().clearDirection("pane1");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("none");
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("none");
+    });
+
+    it("title-update push does not change direction", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().clearDirection("pane1");
+      useRefNavStackStore.getState().push("pane1", "a", "New A");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("none");
+    });
+
+    it("clearDirection resets to 'none'", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("push");
+      useRefNavStackStore.getState().clearDirection("pane1");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("none");
+    });
+
+    it("clearDirection is a no-op when already 'none'", () => {
+      const dirsBefore = useRefNavStackStore.getState().directions;
+      useRefNavStackStore.getState().clearDirection("pane1");
+      const dirsAfter = useRefNavStackStore.getState().directions;
+      expect(dirsAfter).toBe(dirsBefore);
+    });
+
+    it("directions are isolated across panes", () => {
+      useRefNavStackStore.getState().push("pane1", "a", "A");
+      useRefNavStackStore.getState().push("pane2", "x", "X");
+      useRefNavStackStore.getState().pop("pane1");
+      expect(useRefNavStackStore.getState().direction("pane1")).toBe("pop");
+      expect(useRefNavStackStore.getState().direction("pane2")).toBe("push");
     });
   });
 

@@ -54,6 +54,7 @@ import { AlphabetStrip } from "./AlphabetStrip";
 import { EnrichCandidatePicker } from "./EnrichCandidatePicker";
 import { BibEntryRow } from "./BibEntryRow";
 import { RefChildList } from "./RefChildList";
+import { SlideTransition } from "./SlideTransition";
 import { useRefNavStackStore } from "../stores/refNavStack";
 
 /**
@@ -202,9 +203,11 @@ export function ReferenceLibrary() {
 
   const navCurrent = useRefNavStackStore((s) => s.current(PANE_ID));
   const navDepth = useRefNavStackStore((s) => s.depth(PANE_ID));
+  const navDirection = useRefNavStackStore((s) => s.direction(PANE_ID));
   const navPush = useRefNavStackStore((s) => s.push);
   const navPop = useRefNavStackStore((s) => s.pop);
   const navReset = useRefNavStackStore((s) => s.reset);
+  const clearDirection = useRefNavStackStore((s) => s.clearDirection);
 
   const handleDrillDown = useCallback(
     (entry: BibEntry) => {
@@ -965,161 +968,169 @@ export function ReferenceLibrary() {
         </div>
       )}
 
-      {mode === "library" && navDepth > 0 && navCurrent && workspacePath ? (
-        <RefChildList
-          parentKey={navCurrent.key}
-          parentTitle={navCurrent.title}
-          workspacePath={workspacePath}
-          refCounts={refCounts}
-          bibKeyStates={bibKeyStates}
-          modHeld={modHeld}
-          materializingKey={materializingKey}
-          enrichingKey={enrichingKey}
-          enrichPhase={enrichPhase}
-          downloadingKey={downloadingKey}
-          downloadProgress={downloadProgress}
-          linkingKey={linkingKey}
-          ocrCompanionCurrentMap={ocrCompanionCurrentMap}
-          onDrillDown={handleDrillDown}
-          onBack={handleDrillBack}
-          onNavigateToBibFile={navigateToBibFile}
-          onOpenNote={handleNavigateWithDeparture}
-          onCreateNote={materializeNote}
-          onEnrich={handleEnrich}
-          onOpenPdf={selectPage}
-          onOpenMarkdown={handleNavigateWithDeparture}
-          onOcr={handleOcr}
-          onCopyCitation={copyCitation}
-          onDownloadPdf={handleDownload}
-          onLinkPdf={handleLinkPdf}
-        />
-      ) : mode === "library" && entries.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-xs text-text-faint">
-          <div>No references found. Add .bib files to your workspace.</div>
-          <div className="mt-2 flex gap-2">{addButton}{importPdfButton}</div>
-        </div>
-      ) : mode === "library" ? (
-        <>
-          <div className="flex items-center gap-2 p-2">
-            <input
-              type="text"
-              placeholder="Search references…"
-              aria-label="Search references"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-normal"
+      {mode === "library" && (
+        <SlideTransition
+          viewKey={navCurrent?.key ?? "__root__"}
+          direction={navDirection}
+          onTransitionEnd={() => clearDirection(PANE_ID)}
+        >
+          {navDepth > 0 && navCurrent && workspacePath ? (
+            <RefChildList
+              parentKey={navCurrent.key}
+              parentTitle={navCurrent.title}
+              workspacePath={workspacePath}
+              refCounts={refCounts}
+              bibKeyStates={bibKeyStates}
+              modHeld={modHeld}
+              materializingKey={materializingKey}
+              enrichingKey={enrichingKey}
+              enrichPhase={enrichPhase}
+              downloadingKey={downloadingKey}
+              downloadProgress={downloadProgress}
+              linkingKey={linkingKey}
+              ocrCompanionCurrentMap={ocrCompanionCurrentMap}
+              onDrillDown={handleDrillDown}
+              onBack={handleDrillBack}
+              onNavigateToBibFile={navigateToBibFile}
+              onOpenNote={handleNavigateWithDeparture}
+              onCreateNote={materializeNote}
+              onEnrich={handleEnrich}
+              onOpenPdf={selectPage}
+              onOpenMarkdown={handleNavigateWithDeparture}
+              onOcr={handleOcr}
+              onCopyCitation={copyCitation}
+              onDownloadPdf={handleDownload}
+              onLinkPdf={handleLinkPdf}
             />
-            {addButton}
-            {importPdfButton}
-          </div>
-          <div className="relative flex flex-1 overflow-hidden">
-          <div
-            ref={scrollRef}
-            data-testid="reference-library-list"
-            data-virtual-scroll
-            className={`flex-1 overflow-y-auto overscroll-contain px-1${showStrip ? " pr-5" : ""}`}
-          >
-            <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-              {virtualItems.map((virtualRow) => {
-                const item = sectionedItems[virtualRow.index];
-                if (!item) return null;
-
-                if (item.kind === "header") {
-                  return (
-                    <div
-                      key={`header-${item.letter}`}
-                      data-index={virtualRow.index}
-                      ref={virtualizer.measureElement}
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        transform: `translateY(${virtualRow.start}px)`,
-                      }}
-                    >
-                      <div
-                        data-testid="section-header"
-                        role="heading"
-                        aria-level={2}
-                        className="px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-text-section-header"
-                      >
-                        {item.letter}
-                      </div>
-                    </div>
-                  );
-                }
-
-                const entry = item.entry;
-                const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
-                const isExpanded = expandedKey === entryId;
-                const isRevealed = revealedKey === entryId;
-                const state = bibKeyStates[entry.key];
-                return (
-                  <div
-                    key={entryId}
-                    data-index={virtualRow.index}
-                    ref={virtualizer.measureElement}
-                    className={[
-                      materializationBorderClass(state),
-                      isRevealed ? "bib-entry-revealed" : undefined,
-                    ].filter(Boolean).join(" ") || undefined}
-                    data-indicator={
-                      state?.page_id ? "has-note"
-                        : state?.materialization === "partial" ? "enriched"
-                        : undefined
-                    }
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}
-                  >
-                    <BibEntryRow
-                      isExpanded={isExpanded}
-                      modHeld={modHeld}
-                      onToggleExpand={toggleExpand}
-                      onNavigateToBibFile={navigateToBibFile}
-                      referenceCount={refCounts[entry.key]}
-                      onDrillDown={handleDrillDown}
-                      actionProps={{
-                        entry,
-                        state,
-                        ocrCompanionCurrent: ocrCompanionCurrentMap[entryId],
-                        isMaterializing: materializingKey === entry.key,
-                        isEnriching: enrichingKey === entry.key,
-                        enrichPhase: enrichingKey === entry.key ? enrichPhase : "fetch",
-                        isDownloading: downloadingKey === entry.key,
-                        downloadProgress: downloadingKey === entry.key ? downloadProgress : null,
-                        isLinking: linkingKey === entry.key,
-                        onOpenNote: handleNavigateWithDeparture,
-                        onCreateNote: materializeNote,
-                        onEnrich: handleEnrich,
-                        onOpenPdf: selectPage,
-                        onOpenMarkdown: handleNavigateWithDeparture,
-                        onOcr: handleOcr,
-                        onCopyCitation: copyCitation,
-                        onDownloadPdf: handleDownload,
-                        onLinkPdf: handleLinkPdf,
-                      }}
-                    />
-                  </div>
-                );
-              })}
+          ) : entries.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center p-4 text-center text-xs text-text-faint">
+              <div>No references found. Add .bib files to your workspace.</div>
+              <div className="mt-2 flex gap-2">{addButton}{importPdfButton}</div>
             </div>
-          </div>
-          <AlphabetStrip
-            letterSet={letterSet}
-            activeLetter={activeLetter}
-            onLetterClick={handleLetterClick}
-            onLetterDrag={handleLetterDrag}
-            visible={showStrip}
-          />
-          </div>
-        </>
-      ) : null}
+          ) : (
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <div className="flex items-center gap-2 p-2">
+                <input
+                  type="text"
+                  placeholder="Search references…"
+                  aria-label="Search references"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-normal"
+                />
+                {addButton}
+                {importPdfButton}
+              </div>
+              <div className="relative flex flex-1 overflow-hidden">
+              <div
+                ref={scrollRef}
+                data-testid="reference-library-list"
+                data-virtual-scroll
+                className={`flex-1 overflow-y-auto overscroll-contain px-1${showStrip ? " pr-5" : ""}`}
+              >
+                <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+                  {virtualItems.map((virtualRow) => {
+                    const item = sectionedItems[virtualRow.index];
+                    if (!item) return null;
+
+                    if (item.kind === "header") {
+                      return (
+                        <div
+                          key={`header-${item.letter}`}
+                          data-index={virtualRow.index}
+                          ref={virtualizer.measureElement}
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            width: "100%",
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        >
+                          <div
+                            data-testid="section-header"
+                            role="heading"
+                            aria-level={2}
+                            className="px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-text-section-header"
+                          >
+                            {item.letter}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const entry = item.entry;
+                    const entryId = `${entry.bib_file ?? ""}:${entry.key}`;
+                    const isExpanded = expandedKey === entryId;
+                    const isRevealed = revealedKey === entryId;
+                    const state = bibKeyStates[entry.key];
+                    return (
+                      <div
+                        key={entryId}
+                        data-index={virtualRow.index}
+                        ref={virtualizer.measureElement}
+                        className={[
+                          materializationBorderClass(state),
+                          isRevealed ? "bib-entry-revealed" : undefined,
+                        ].filter(Boolean).join(" ") || undefined}
+                        data-indicator={
+                          state?.page_id ? "has-note"
+                            : state?.materialization === "partial" ? "enriched"
+                            : undefined
+                        }
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }}
+                      >
+                        <BibEntryRow
+                          isExpanded={isExpanded}
+                          modHeld={modHeld}
+                          onToggleExpand={toggleExpand}
+                          onNavigateToBibFile={navigateToBibFile}
+                          referenceCount={refCounts[entry.key]}
+                          onDrillDown={handleDrillDown}
+                          actionProps={{
+                            entry,
+                            state,
+                            ocrCompanionCurrent: ocrCompanionCurrentMap[entryId],
+                            isMaterializing: materializingKey === entry.key,
+                            isEnriching: enrichingKey === entry.key,
+                            enrichPhase: enrichingKey === entry.key ? enrichPhase : "fetch",
+                            isDownloading: downloadingKey === entry.key,
+                            downloadProgress: downloadingKey === entry.key ? downloadProgress : null,
+                            isLinking: linkingKey === entry.key,
+                            onOpenNote: handleNavigateWithDeparture,
+                            onCreateNote: materializeNote,
+                            onEnrich: handleEnrich,
+                            onOpenPdf: selectPage,
+                            onOpenMarkdown: handleNavigateWithDeparture,
+                            onOcr: handleOcr,
+                            onCopyCitation: copyCitation,
+                            onDownloadPdf: handleDownload,
+                            onLinkPdf: handleLinkPdf,
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <AlphabetStrip
+                letterSet={letterSet}
+                activeLetter={activeLetter}
+                onLetterClick={handleLetterClick}
+                onLetterDrag={handleLetterDrag}
+                visible={showStrip}
+              />
+              </div>
+            </div>
+          )}
+        </SlideTransition>
+      )}
       {dialog}
       {importPdfDialog}
       {ocrEntry && workspacePath ? (
