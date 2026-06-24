@@ -433,6 +433,18 @@ describe("template.yaml", () => {
         method: "GET",
         memory: 128,
       },
+      {
+        name: "TrialPageFunction",
+        path: "/trial",
+        method: "GET",
+        memory: 128,
+      },
+      {
+        name: "TrialFunction",
+        path: "/api/trial",
+        method: "POST",
+        memory: 256,
+      },
     ];
 
     it.each(specs)(
@@ -463,8 +475,8 @@ describe("template.yaml", () => {
   });
 
   describe("cross-cutting", () => {
-    it("has exactly 13 Serverless::Function resources", () => {
-      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(13);
+    it("has exactly 15 Serverless::Function resources", () => {
+      expect(resourcesOfType("AWS::Serverless::Function")).toHaveLength(15);
     });
 
     it("all functions use nodejs22.x runtime via Globals", () => {
@@ -504,7 +516,7 @@ describe("template.yaml", () => {
     });
 
     it("static functions have no Policies", () => {
-      for (const name of ["CancelPageFunction", "RecoverPageFunction", "PrivacyPageFunction", "RefundPageFunction", "BuyPageFunction"]) {
+      for (const name of ["CancelPageFunction", "RecoverPageFunction", "PrivacyPageFunction", "RefundPageFunction", "BuyPageFunction", "TrialPageFunction"]) {
         expect(template.Resources[name].Properties.Policies).toBeUndefined();
       }
     });
@@ -520,11 +532,11 @@ describe("template.yaml", () => {
       expect(policies[0]).toHaveProperty("SSMParameterReadPolicy");
     });
 
-    it("exactly 7 resources have Condition: HasCustomDomain", () => {
+    it("exactly 8 resources have Condition: HasCustomDomain", () => {
       const conditioned = Object.entries(template.Resources).filter(
         ([, r]) => (r as CfnResource & { Condition?: string }).Condition === "HasCustomDomain",
       );
-      expect(conditioned).toHaveLength(7);
+      expect(conditioned).toHaveLength(8);
     });
   });
 

@@ -7,6 +7,8 @@ import {
   recoveryEmailText,
   earlyAdopterEmailHtml,
   earlyAdopterEmailText,
+  trialEmailHtml,
+  trialEmailText,
 } from "./templates.js";
 
 async function sendEmail(
@@ -81,6 +83,23 @@ export async function sendEarlyAdopterEmail(
   );
 }
 
+export async function sendTrialEmail(
+  ses: SESClient,
+  from: string,
+  to: string,
+  pem: string,
+  expiryDate: string,
+): Promise<void> {
+  await sendEmail(
+    ses,
+    from,
+    to,
+    "Your 7-day trial license key",
+    trialEmailHtml(pem, expiryDate),
+    trialEmailText(pem, expiryDate),
+  );
+}
+
 export function createEmailOps(ses: SESClient, from: string): EmailOps {
   return {
     sendLicenseEmail: (to, name, pem) =>
@@ -89,5 +108,7 @@ export function createEmailOps(ses: SESClient, from: string): EmailOps {
       sendRecoveryEmail(ses, from, to, pem),
     sendEarlyAdopterEmail: (to, pem) =>
       sendEarlyAdopterEmail(ses, from, to, pem),
+    sendTrialEmail: (to, pem, expiryDate) =>
+      sendTrialEmail(ses, from, to, pem, expiryDate),
   };
 }

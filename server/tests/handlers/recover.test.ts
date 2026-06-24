@@ -21,6 +21,7 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
       sendLicenseEmail: vi.fn(),
       sendRecoveryEmail: vi.fn().mockResolvedValue(undefined),
       sendEarlyAdopterEmail: vi.fn(),
+      sendTrialEmail: vi.fn(),
     },
     config: {
       tableName: "test-table",

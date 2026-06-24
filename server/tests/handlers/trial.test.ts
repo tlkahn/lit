@@ -1,8 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import type { APIGatewayProxyEvent } from "aws-lambda";
 import type { HandlerDeps } from "../../src/types.js";
-import { handleEarlyAccess } from "../../src/handlers/early-access.js";
 import { IdempotencyError } from "../../src/db/errors.js";
+
+vi.mock("../../src/lib/turnstile.js", () => ({
+  validateTurnstile: vi.fn().mockResolvedValue(true),
+}));
+
+import { handleTrial } from "../../src/handlers/trial.js";
+import { validateTurnstile } from "../../src/lib/turnstile.js";
 
 const fakePem = "-----BEGIN LICENSE KEY-----\nfake\n-----END LICENSE KEY-----";
 
@@ -23,8 +29,8 @@ function makeDeps(overrides: Partial<HandlerDeps> = {}): HandlerDeps {
     email: {
       sendLicenseEmail: vi.fn(),
       sendRecoveryEmail: vi.fn(),
-      sendEarlyAdopterEmail: vi.fn().mockResolvedValue(undefined),
-      sendTrialEmail: vi.fn(),
+      sendEarlyAdopterEmail: vi.fn(),
+      sendTrialEmail: vi.fn().mockResolvedValue(undefined),
     },
     config: {
       tableName: "test-table",
@@ -54,7 +60,7 @@ function makeEvent(body?: string): APIGatewayProxyEvent {
     multiValueHeaders: {},
     httpMethod: "POST",
     isBase64Encoded: false,
-    path: "/api/early-access",
+    path: "/api/trial",
     pathParameters: null,
     queryStringParameters: null,
     multiValueQueryStringParameters: null,
@@ -64,106 +70,118 @@ function makeEvent(body?: string): APIGatewayProxyEvent {
   };
 }
 
-describe("handleEarlyAccess — validation + deadline", () => {
+describe("handleTrial — validation", () => {
   it("returns 400 when body is missing", async () => {
     const deps = makeDeps();
-    const result = await handleEarlyAccess(deps, makeEvent());
+    const result = await handleTrial(deps, makeEvent());
     expect(result.statusCode).toBe(400);
   });
 
   it("returns 400 when email field is missing", async () => {
     const deps = makeDeps();
-    const result = await handleEarlyAccess(deps, makeEvent("name=Alice"));
+    const result = await handleTrial(deps, makeEvent("name=Alice"));
     expect(result.statusCode).toBe(400);
   });
 
   it("returns 400 when email is empty", async () => {
     const deps = makeDeps();
-    const result = await handleEarlyAccess(deps, makeEvent("email="));
+    const result = await handleTrial(deps, makeEvent("email="));
     expect(result.statusCode).toBe(400);
   });
 
   it("returns 400 when email has no @", async () => {
     const deps = makeDeps();
-    const result = await handleEarlyAccess(deps, makeEvent("email=notanemail"));
+    const result = await handleTrial(deps, makeEvent("email=notanemail"));
     expect(result.statusCode).toBe(400);
-  });
-
-  it("returns 410 with closed HTML when past deadline", async () => {
-    const deps = makeDeps({
-      clock: {
-        nowEpochSeconds: vi.fn().mockReturnValue(2000000001),
-        isOlderThan: vi.fn(),
-      },
-    });
-
-    const result = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
-
-    expect(result.statusCode).toBe(410);
-    expect(result.body.toLowerCase()).toMatch(/closed|ended/);
-  });
-
-  it("parses application/x-www-form-urlencoded body", async () => {
-    const deps = makeDeps();
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
-
-    expect(deps.computeEmailHash).toHaveBeenCalledWith("alice@example.com");
   });
 });
 
-describe("handleEarlyAccess — new license (happy path)", () => {
-  it("generates license with type early_adopter for new email", async () => {
+describe("handleTrial — Turnstile", () => {
+  it("skips Turnstile when turnstileSecret is not configured", async () => {
     const deps = makeDeps();
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    vi.mocked(validateTurnstile).mockClear();
+
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
+
+    expect(validateTurnstile).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when Turnstile is configured but token is missing", async () => {
+    const deps = makeDeps({ config: { ...makeDeps().config, turnstileSecret: "tsec_test" } });
+
+    const result = await handleTrial(deps, makeEvent("email=alice%40example.com"));
+
+    expect(result.statusCode).toBe(403);
+  });
+
+  it("returns 403 when Turnstile validation fails", async () => {
+    const deps = makeDeps({ config: { ...makeDeps().config, turnstileSecret: "tsec_test" } });
+    vi.mocked(validateTurnstile).mockResolvedValue(false);
+
+    const result = await handleTrial(deps, makeEvent("email=alice%40example.com&cf-turnstile-response=tok_bad"));
+
+    expect(result.statusCode).toBe(403);
+  });
+
+  it("proceeds when Turnstile validation succeeds", async () => {
+    const deps = makeDeps({ config: { ...makeDeps().config, turnstileSecret: "tsec_test" } });
+    vi.mocked(validateTurnstile).mockResolvedValue(true);
+
+    const result = await handleTrial(deps, makeEvent("email=alice%40example.com&cf-turnstile-response=tok_ok"));
+
+    expect(result.statusCode).toBe(200);
+    expect(validateTurnstile).toHaveBeenCalledWith("tsec_test", "tok_ok");
+  });
+});
+
+describe("handleTrial — happy path", () => {
+  it("generates license with type trial and expires_at for new email", async () => {
+    const deps = makeDeps();
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(deps.generateLicenseKey).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "early_adopter" }),
+      expect.objectContaining({
+        type: "trial",
+        expires_at: 1000 + 7 * 24 * 60 * 60,
+      }),
       deps.config.privateKey,
     );
   });
 
-  it("stores in DynamoDB with early-access sentinel session ID", async () => {
+  it("stores in DynamoDB with trial sentinel session ID", async () => {
     const deps = makeDeps();
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(deps.db.createLicense).toHaveBeenCalledWith(
       expect.objectContaining({
-        stripe_session_id: "early-access:hashed_email",
+        stripe_session_id: "trial:hashed_email",
       }),
     );
-    const record = (deps.db.createLicense as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(record).not.toHaveProperty("stripe_charge_id");
   });
 
-  it("sends early-adopter email", async () => {
+  it("sends trial email", async () => {
     const deps = makeDeps();
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
-    expect(deps.email.sendEarlyAdopterEmail).toHaveBeenCalledWith(
+    expect(deps.email.sendTrialEmail).toHaveBeenCalledWith(
       "alice@example.com",
       fakePem,
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     );
   });
 
-  it("returns 200 with generic confirmation HTML", async () => {
+  it("returns 200 with confirmation HTML", async () => {
     const deps = makeDeps();
-    const result = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    const result = await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(result.statusCode).toBe(200);
     expect(result.headers?.["Content-Type"]).toBe("text/html");
     expect(result.body.toLowerCase()).toContain("check your email");
   });
 
-  it("uses computeEmailHash on the raw email", async () => {
-    const deps = makeDeps();
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
-
-    expect(deps.computeEmailHash).toHaveBeenCalledWith("alice@example.com");
-  });
-
   it("license payload uses name Customer", async () => {
     const deps = makeDeps();
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(deps.generateLicenseKey).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Customer" }),
@@ -172,7 +190,7 @@ describe("handleEarlyAccess — new license (happy path)", () => {
   });
 });
 
-describe("handleEarlyAccess — existing user re-send", () => {
+describe("handleTrial — email dedup", () => {
   it("re-sends existing PEM when active license found", async () => {
     const deps = makeDeps({
       db: {
@@ -187,11 +205,12 @@ describe("handleEarlyAccess — existing user re-send", () => {
       },
     });
 
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
-    expect(deps.email.sendEarlyAdopterEmail).toHaveBeenCalledWith(
+    expect(deps.email.sendTrialEmail).toHaveBeenCalledWith(
       "alice@example.com",
       "-----BEGIN LICENSE KEY-----\nexisting\n-----END LICENSE KEY-----",
+      expect.any(String),
     );
   });
 
@@ -209,7 +228,7 @@ describe("handleEarlyAccess — existing user re-send", () => {
       },
     });
 
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(deps.generateLicenseKey).not.toHaveBeenCalled();
     expect(deps.db.createLicense).not.toHaveBeenCalled();
@@ -226,8 +245,8 @@ describe("handleEarlyAccess — existing user re-send", () => {
       },
     });
 
-    const resultNew = await handleEarlyAccess(depsNew, makeEvent("email=alice%40example.com"));
-    const resultExisting = await handleEarlyAccess(depsExisting, makeEvent("email=alice%40example.com"));
+    const resultNew = await handleTrial(depsNew, makeEvent("email=alice%40example.com"));
+    const resultExisting = await handleTrial(depsExisting, makeEvent("email=alice%40example.com"));
 
     expect(resultNew.statusCode).toBe(200);
     expect(resultExisting.statusCode).toBe(200);
@@ -244,20 +263,19 @@ describe("handleEarlyAccess — existing user re-send", () => {
       },
     });
 
-    await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(deps.generateLicenseKey).toHaveBeenCalled();
     expect(deps.db.createLicense).toHaveBeenCalled();
   });
 });
 
-describe("handleEarlyAccess — IdempotencyError", () => {
+describe("handleTrial — IdempotencyError", () => {
   it("on IdempotencyError, fetches via getBySessionId and re-sends", async () => {
     const existingRecord = {
       license_id: "LIT-2025-EXISTING",
       email_hash: "hashed_email",
-      stripe_session_id: "early-access:hashed_email",
-      stripe_charge_id: "",
+      stripe_session_id: "trial:hashed_email",
       status: "active" as const,
       license_key_pem: "-----BEGIN LICENSE KEY-----\nexisting\n-----END LICENSE KEY-----",
       issued_at: 500,
@@ -271,12 +289,13 @@ describe("handleEarlyAccess — IdempotencyError", () => {
       },
     });
 
-    const result = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    const result = await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
-    expect(deps.db.getBySessionId).toHaveBeenCalledWith("early-access:hashed_email");
-    expect(deps.email.sendEarlyAdopterEmail).toHaveBeenCalledWith(
+    expect(deps.db.getBySessionId).toHaveBeenCalledWith("trial:hashed_email");
+    expect(deps.email.sendTrialEmail).toHaveBeenCalledWith(
       "alice@example.com",
       existingRecord.license_key_pem,
+      expect.any(String),
     );
     expect(result.statusCode).toBe(200);
   });
@@ -290,7 +309,7 @@ describe("handleEarlyAccess — IdempotencyError", () => {
       },
     });
 
-    const result = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
+    const result = await handleTrial(deps, makeEvent("email=alice%40example.com"));
 
     expect(result.statusCode).toBe(200);
   });
@@ -304,17 +323,7 @@ describe("handleEarlyAccess — IdempotencyError", () => {
     });
 
     await expect(
-      handleEarlyAccess(deps, makeEvent("email=alice%40example.com")),
+      handleTrial(deps, makeEvent("email=alice%40example.com")),
     ).rejects.toThrow("DynamoDB timeout");
-  });
-});
-
-describe("handleEarlyAccess — response identity", () => {
-  it("consecutive calls return distinct response objects", async () => {
-    const deps = makeDeps();
-    const result1 = await handleEarlyAccess(deps, makeEvent("email=alice%40example.com"));
-    const result2 = await handleEarlyAccess(deps, makeEvent("email=bob%40example.com"));
-
-    expect(result1).not.toBe(result2);
   });
 });

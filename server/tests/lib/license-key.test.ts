@@ -25,6 +25,24 @@ describe("license-key", () => {
       expect(parsed.type).toBe("perpetual");
       expect(parsed).not.toHaveProperty("license_type");
     });
+
+    it("omits expires_at when not present in payload", () => {
+      const json = buildPayloadJson(payload);
+      const parsed = JSON.parse(json);
+      expect(parsed).not.toHaveProperty("expires_at");
+    });
+
+    it("includes expires_at when present in payload", () => {
+      const trialPayload: LicensePayload = {
+        ...payload,
+        type: "trial",
+        expires_at: 1700604800,
+      };
+      const json = buildPayloadJson(trialPayload);
+      const parsed = JSON.parse(json);
+      expect(parsed.expires_at).toBe(1700604800);
+      expect(parsed.type).toBe("trial");
+    });
   });
 
   describe("encodePayload", () => {

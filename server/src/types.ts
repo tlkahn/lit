@@ -4,6 +4,7 @@ export interface LicensePayload {
   email: string;
   issued_at: number;
   type: string;
+  expires_at?: number;
 }
 
 export type LicenseStatus = "active" | "revoked";
@@ -68,6 +69,11 @@ export interface EmailOps {
   sendEarlyAdopterEmail(
     to: string,
     pem: string,
+  ): Promise<void>;
+  sendTrialEmail(
+    to: string,
+    pem: string,
+    expiryDate: string,
   ): Promise<void>;
 }
 
