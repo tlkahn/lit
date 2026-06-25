@@ -7,6 +7,7 @@ import {
   useDeferredValue,
   useCallback,
 } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { SegmentedControl } from "./SegmentedControl";
 import { PaperSearchResults } from "./PaperSearchResults";
@@ -44,6 +45,7 @@ import {
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
 import { useRevealFlash } from "../hooks/useRevealFlash";
+import { useOverflowMenu } from "../hooks/useOverflowMenu";
 import { localeFilter } from "../lib/localeSearch";
 import { AddReferenceDialog } from "./AddReferenceDialog";
 import { ImportPdfDialog } from "./ImportPdfDialog";
@@ -148,6 +150,8 @@ export function ReferenceLibrary() {
   const [enrichCandidates, setEnrichCandidates] = useState<EnrichCandidateState | null>(null);
   const [dropPdfPath, setDropPdfPath] = useState<string | null>(null);
   const deferredSearch = useDeferredValue(search);
+  const { open: moreOpen, setOpen: setMoreOpen, triggerRef: moreTriggerRef, menuRef: moreMenuRef } =
+    useOverflowMenu({ dismissOnScroll: false });
 
   // Clean up enrichPhase timer on unmount
   useEffect(() => {
@@ -848,6 +852,45 @@ export function ReferenceLibrary() {
     </button>
   );
 
+  const overflowMenu = (
+    <>
+      <button
+        ref={moreTriggerRef}
+        onClick={() => setMoreOpen((v) => !v)}
+        aria-label="More actions"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-sm text-text-faint hover:bg-bg-hover"
+      >
+        ⋮
+      </button>
+      {moreOpen && createPortal(
+        <div
+          ref={moreMenuRef}
+          data-testid="library-overflow-menu"
+          style={{ position: "fixed", left: 0, top: 0 }}
+          className="z-50 min-w-[160px] select-none rounded-lg border border-border/20 bg-bg-primary/80 p-1 shadow-lg shadow-black/10 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+        >
+          <button
+            data-testid="reference-library-add-btn"
+            onClick={() => { setAddDialogOpen(true); setMoreOpen(false); }}
+            disabled={!workspacePath}
+            className="flex w-full items-center rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50"
+          >
+            + Add
+          </button>
+          <button
+            data-testid="reference-library-import-pdf-btn"
+            onClick={() => { setImportPdfDialogOpen(true); setMoreOpen(false); }}
+            disabled={!workspacePath}
+            className="flex w-full items-center rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50"
+          >
+            Import PDF...
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+
   const dialog = (
     <AddReferenceDialog
       open={addDialogOpen}
@@ -986,8 +1029,7 @@ export function ReferenceLibrary() {
               onChange={(e) => setSearch(e.target.value)}
               className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-normal"
             />
-            {addButton}
-            {importPdfButton}
+            {overflowMenu}
           </div>
           <div className="relative flex flex-1 overflow-hidden">
           <div

@@ -535,8 +535,10 @@ describe("ReferenceLibrary", () => {
   });
 
   it("renders '+ Add' button in header when entries exist", async () => {
+    const user = userEvent.setup();
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+    await user.click(screen.getByLabelText("More actions"));
     const addBtn = screen.getByTestId("reference-library-add-btn");
     expect(addBtn).toBeInTheDocument();
   });
@@ -562,6 +564,7 @@ describe("ReferenceLibrary", () => {
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
 
+    await user.click(screen.getByLabelText("More actions"));
     await user.click(screen.getByTestId("reference-library-add-btn"));
     expect(screen.getByTestId("add-reference-dialog")).toBeInTheDocument();
   });
@@ -591,7 +594,8 @@ describe("ReferenceLibrary", () => {
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
 
-    // Open dialog
+    // Open overflow menu, then dialog
+    await user.click(screen.getByLabelText("More actions"));
     await user.click(screen.getByTestId("reference-library-add-btn"));
     expect(screen.getByTestId("add-reference-dialog")).toBeInTheDocument();
 
@@ -1231,8 +1235,10 @@ describe("ReferenceLibrary", () => {
 
   describe("Import PDF button", () => {
     it("renders 'Import PDF...' button in header when entries exist", async () => {
+      const user = userEvent.setup();
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
+      await user.click(screen.getByLabelText("More actions"));
       const importBtn = screen.getByTestId("reference-library-import-pdf-btn");
       expect(importBtn).toBeInTheDocument();
     });
@@ -1260,6 +1266,7 @@ describe("ReferenceLibrary", () => {
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
 
+      await user.click(screen.getByLabelText("More actions"));
       await user.click(screen.getByTestId("reference-library-import-pdf-btn"));
       expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
     });
@@ -1298,7 +1305,8 @@ describe("ReferenceLibrary", () => {
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
 
-      // Open dialog
+      // Open overflow menu, then dialog
+      await user.click(screen.getByLabelText("More actions"));
       await user.click(screen.getByTestId("reference-library-import-pdf-btn"));
       expect(screen.getByTestId("import-pdf-dialog")).toBeInTheDocument();
 
