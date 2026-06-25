@@ -54,14 +54,14 @@ function CardNoteEditor({
   if (!note && !editing) {
     return (
       <button
-        className="pt-2 text-xs text-text-faint hover:text-text-muted"
+        className="flex items-center gap-1 pt-2 text-xs text-text-faint hover:text-text-muted"
         data-testid="card-note-add"
         onClick={(e) => {
           e.stopPropagation();
           startEditing();
         }}
       >
-        + Add note
+        <span className="nerd-font" aria-hidden="true">{''}</span> Add note
       </button>
     );
   }
@@ -266,28 +266,32 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 {annotation.date}
               </div>
             )}
-            <button
-              className="text-xs text-text-accent underline hover:no-underline"
-              onClick={(e) => {
-                e.stopPropagation();
-                onNavigate();
-              }}
-              data-testid="card-navigate"
-            >
-              Open in document
-            </button>
-            {onShowConnections && (
+            <div className="flex items-center gap-3">
               <button
-                className="text-xs text-text-accent underline hover:no-underline"
+                className="flex items-center gap-1 text-xs text-text-accent hover:text-text-normal"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onShowConnections();
+                  onNavigate();
                 }}
-                data-testid="card-show-connections"
+                data-testid="card-navigate"
               >
-                Show connections
+                <span className="nerd-font" aria-hidden="true">{'󰈙'}</span>
+                Open in document
               </button>
-            )}
+              {onShowConnections && (
+                <button
+                  className="flex items-center gap-1 text-xs text-text-accent hover:text-text-normal"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowConnections();
+                  }}
+                  data-testid="card-show-connections"
+                >
+                  <span className="nerd-font" aria-hidden="true">{'󰌹'}</span>
+                  Show connections
+                </button>
+              )}
+            </div>
             {linkedCards && linkedCards.length > 0 && (
               <div
                 data-testid="card-linked-section"
