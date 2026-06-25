@@ -57,7 +57,7 @@ function CardNoteEditor({ note, onSetNote, onExportNote }: {
         aria-label="Add note"
         title="Add note"
       >
-        <span className="nerd-font" aria-hidden="true">{'󰎕'}</span>
+        <span className="nerd-font" aria-hidden="true" data-fallback="+">{'󰎕'}</span>
       </button>
     );
   }
@@ -113,7 +113,7 @@ function CardNoteEditor({ note, onSetNote, onExportNote }: {
           aria-label="Edit note"
           title="Edit note"
         >
-          <span className="nerd-font" aria-hidden="true">{'󰏫'}</span>
+          <span className="nerd-font" aria-hidden="true" data-fallback="Ed">{'󰏫'}</span>
         </button>
         {onExportNote && (
           <button
@@ -123,7 +123,7 @@ function CardNoteEditor({ note, onSetNote, onExportNote }: {
             aria-label="Export note"
             title="Export note"
           >
-            <span className="nerd-font" aria-hidden="true">{'󰈝'}</span>
+            <span className="nerd-font" aria-hidden="true" data-fallback="Ex">{'󰈝'}</span>
           </button>
         )}
       </div>
@@ -198,6 +198,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           className="nerd-font absolute top-2 right-2 text-sm text-interactive-accent"
           data-testid="pin-icon"
           aria-hidden="true"
+          data-fallback="P"
         >{'󰐃'}</span>
       )}
       {/* Original quote - always visible when present */}
@@ -274,7 +275,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 aria-label="Open in document"
                 title="Open in document"
               >
-                <span className="nerd-font" aria-hidden="true">{'󰈙'}</span>
+                <span className="nerd-font" aria-hidden="true" data-fallback="Go">{'󰈙'}</span>
               </button>
               {onShowConnections && (
                 <button
@@ -284,7 +285,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                   aria-label="Show connections"
                   title="Show connections"
                 >
-                  <span className="nerd-font" aria-hidden="true">{'󱁉'}</span>
+                  <span className="nerd-font" aria-hidden="true" data-fallback="Lk">{'󱁉'}</span>
                 </button>
               )}
             </div>

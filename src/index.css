@@ -46,6 +46,17 @@
   font-family: "Symbols Nerd Font Mono", monospace;
 }
 
+.nerd-font-failed .nerd-font[data-fallback] {
+  font-size: 0;
+  line-height: 0;
+}
+.nerd-font-failed .nerd-font[data-fallback]::before {
+  content: attr(data-fallback);
+  font-size: 0.6875rem;
+  font-family: var(--default-font-family);
+  line-height: 1;
+}
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
