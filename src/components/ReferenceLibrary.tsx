@@ -10,6 +10,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { SegmentedControl } from "./SegmentedControl";
 import { PaperSearchResults } from "./PaperSearchResults";
+import { SearchComboBar } from "./SearchComboBar";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
@@ -906,39 +907,15 @@ export function ReferenceLibrary() {
 
       {mode === "search" && (
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex items-center gap-2 px-2 pb-1">
-            <input
-              type="text"
-              placeholder="Search academic papers..."
-              aria-label="Search academic papers"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSearchPapers();
-              }}
-              className="min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-normal"
+          <div className="px-2 pb-1">
+            <SearchComboBar
+              query={searchQuery}
+              onQueryChange={setSearchQuery}
+              mode={searchMode}
+              onModeChange={setSearchMode}
+              onSearch={handleSearchPapers}
+              searching={searching}
             />
-            <select
-              data-testid="search-mode-select"
-              value={searchMode}
-              onChange={(e) => setSearchMode(e.target.value)}
-              className="rounded border border-border bg-bg-primary px-1 py-1 text-xs text-text-normal"
-            >
-              <option value="auto">Auto</option>
-              <option value="keywords">Keywords</option>
-              <option value="isbn">ISBN</option>
-              <option value="doi">DOI</option>
-              <option value="author">Author</option>
-              <option value="title">Title</option>
-            </select>
-            <button
-              data-testid="search-papers-btn"
-              onClick={handleSearchPapers}
-              disabled={searching || !searchQuery.trim()}
-              className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
-            >
-              {searching ? "Searching..." : "Search"}
-            </button>
           </div>
           {searchMode === "auto" && looksLikeIsbn(searchQuery) && (
             <div data-testid="isbn-auto-detect-hint" className="px-2 pb-1 text-xs text-interactive-accent">

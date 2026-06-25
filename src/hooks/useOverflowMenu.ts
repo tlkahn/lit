@@ -5,7 +5,7 @@ export interface OverflowMenuConfig {
    *  "below-right" (default): menu appears below, right-aligned with trigger.
    *  "above-left": menu appears above, left-aligned with trigger.
    */
-  anchor?: "below-right" | "above-left";
+  anchor?: "below-right" | "above-left" | "below-left";
   /** Whether to close the menu on scroll events. Defaults to true. */
   dismissOnScroll?: boolean;
   /** Whether to reposition on window resize. Defaults to false. */
@@ -68,6 +68,9 @@ export function useOverflowMenu(config?: OverflowMenuConfig) {
       if (anchor === "above-left") {
         left = btnRect.left;
         top = btnRect.top - rect.height - 4;
+      } else if (anchor === "below-left") {
+        left = btnRect.left;
+        top = btnRect.bottom + 4;
       } else {
         left = btnRect.right - rect.width;
         top = btnRect.bottom + 4;
