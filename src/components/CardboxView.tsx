@@ -41,7 +41,7 @@ interface DragState {
   draggedUuids: string[];
 }
 
-export default function CardboxView() {
+export default function CardboxView({ pagePath }: { pagePath: string }) {
   const annotations = useCardboxStore((s) => s.annotations);
   const expandedUuid = useCardboxStore((s) => s.expandedUuid);
   const loading = useCardboxStore((s) => s.loading);
@@ -172,6 +172,7 @@ export default function CardboxView() {
   const filteredAnnotations = useMemo(() => {
     const query = searchQuery.toLowerCase();
     return annotations.filter((ann) => {
+      if (ann.source_page_id !== pagePath) return false;
       // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
@@ -192,7 +193,7 @@ export default function CardboxView() {
       }
       return true;
     });
-  }, [annotations, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet, notes]);
+  }, [annotations, pagePath, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet, notes]);
 
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
