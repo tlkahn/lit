@@ -91,7 +91,7 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
         </div>
         {viewMode === "mindmap" && <MindmapPaneView paneId={paneId} pagePath={pagePath} onExportNetwork={onExportNetwork} />}
         {viewMode === "graph" && <GraphPaneView paneId={paneId} pagePath={pagePath} onExportNetwork={onExportNetwork} />}
-        {viewMode === "cardbox" && <CardboxPaneView />}
+        {viewMode === "cardbox" && <CardboxPaneView pagePath={pagePath} />}
       </>
     );
   } else {

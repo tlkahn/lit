@@ -7,6 +7,7 @@ interface UseCardboxKeyboardOptions {
   onOpenLinkPicker?: () => void;
   onTogglePin?: (index: number) => void;
   onToggleNote?: () => void;
+  onToggleScope?: () => void;
   onShowConnections?: () => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
@@ -19,7 +20,7 @@ interface UseCardboxKeyboardOptions {
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -64,6 +65,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
+    if ((e.key === "s" || e.key === "S") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      onToggleScope?.();
+      return;
+    }
+
     // Escape: clear selection (globally, regardless of focus)
     // Connections-mode Escape stays on the grid-level handler
     if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
@@ -74,7 +82,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         return;
       }
     }
-  }, [onUndo, onRedo, onSelectAll, onClearSelection, connectionsActive]);
+  }, [onUndo, onRedo, onSelectAll, onClearSelection, onToggleScope, connectionsActive]);
 
   useEffect(() => {
     window.addEventListener("keydown", globalHandler, true);
