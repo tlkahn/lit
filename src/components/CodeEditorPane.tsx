@@ -14,6 +14,8 @@ import {
   setFocusedPane,
   getPaneView,
 } from "../lib/editorViewRef";
+import { usePaneFocus } from "../hooks/usePaneFocus";
+import { singlePaneFocusBorderClass } from "../lib/paneFocusBorder";
 import { useWorkspaceStore } from "../stores/workspace";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -23,6 +25,7 @@ import { basename } from "../lib/pathUtils";
 function CodeEditorPaneInner({ paneId }: { paneId: string }) {
   const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
   const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
+  const isMultiPane = usePaneStore((s) => s.root.type === "split");
 
   const { body, handleChange } = useCodeFileContent(paneId, pagePath);
   const { editorBindings } = useKeymaps();
@@ -108,10 +111,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     }
   }, [view, paneId]);
 
-  const handleFocus = useCallback(() => {
-    usePaneStore.getState().focusPane(paneId);
-    setFocusedPane(paneId);
-  }, [paneId]);
+  const handleFocus = usePaneFocus(paneId);
 
   const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
 
@@ -121,8 +121,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
         ref={emptyContainerRef}
         data-testid={`code-editor-pane-${paneId}`}
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
-        onMouseDownCapture={handleFocus}
+        className={`flex min-h-0 flex-1 items-center justify-center ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -135,8 +134,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     <div
       data-testid={`code-editor-pane-${paneId}`}
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}
-      onMouseDownCapture={handleFocus}
+      className={`flex min-h-0 flex-1 flex-col ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >

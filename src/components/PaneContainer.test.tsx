@@ -5,10 +5,11 @@ import type { PaneNode } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import type { PageMeta } from "../lib/ipc";
-import { getPaneView } from "../lib/editorViewRef";
+import { getPaneView, setFocusedPane } from "../lib/editorViewRef";
 
 vi.mock("../lib/editorViewRef", () => ({
   getPaneView: vi.fn(),
+  setFocusedPane: vi.fn(),
 }));
 
 vi.mock("./EditorPane", () => ({
@@ -64,6 +65,7 @@ beforeEach(() => {
     cleanup();
     focusSpy.mockClear();
     mockGetPaneView.mockClear();
+    (setFocusedPane as ReturnType<typeof vi.fn>).mockClear();
     vi.restoreAllMocks();
   };
 });
@@ -238,8 +240,8 @@ describe("PaneContainer", () => {
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
 
     const { getByTestId } = render(<PaneContainer />);
-    const parentA = getByTestId("editor-pane-pane-a").parentElement!;
-    const parentB = getByTestId("editor-pane-pane-b").parentElement!;
+    const parentA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
+    const parentB = getByTestId("editor-pane-pane-b").closest("[data-pane-id]")!.parentElement!;
     expect(parentA.style.flexBasis).toBe("calc(30% - 1.2px)");
     expect(parentB.style.flexBasis).toBe("calc(70% - 2.8px)");
   });
@@ -392,7 +394,7 @@ describe("PaneContainer", () => {
     };
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
     const { getByTestId } = render(<PaneContainer />);
-    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.className).toContain("grow-0");
     expect(wrapperA.className).toContain("shrink-0");
   });
@@ -478,7 +480,7 @@ describe("PaneContainer", () => {
     };
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
     const { getByTestId } = render(<PaneContainer />);
-    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.style.minWidth).toBe("120px");
   });
 
@@ -495,7 +497,7 @@ describe("PaneContainer", () => {
     };
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
     const { getByTestId } = render(<PaneContainer />);
-    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.style.minHeight).toBe("120px");
   });
 
@@ -556,6 +558,78 @@ describe("PaneLeafRenderer focus-on-mount guard", () => {
     });
     render(<PaneContainer />);
     expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it("wrapper mouseDown on unfocused pane calls focusPane exactly once", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    const focusPaneSpy = vi.spyOn(usePaneStore.getState(), "focusPane");
+
+    render(<PaneContainer />);
+
+    const wrapperB = document.querySelector('[data-pane-id="pane-b"]') as HTMLElement;
+    expect(wrapperB).toBeTruthy();
+
+    fireEvent.mouseDown(wrapperB);
+
+    expect(focusPaneSpy).toHaveBeenCalledTimes(1);
+    expect(focusPaneSpy).toHaveBeenCalledWith("pane-b");
+    expect(usePaneStore.getState().focusedPaneId).toBe("pane-b");
+
+    // Verify setFocusedPane (from editorViewRef) is called with the correct paneId
+    expect(setFocusedPane).toHaveBeenCalledTimes(1);
+    expect(setFocusedPane).toHaveBeenCalledWith("pane-b");
+
+    focusPaneSpy.mockRestore();
+  });
+
+  it("multi-pane wrapper div has tabIndex -1", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    expect(wrapperA).toBeTruthy();
+    expect(wrapperA.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("multi-pane wrapper div is focusable via .focus()", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    expect(wrapperA).toBeTruthy();
+    wrapperA.focus();
+    expect(document.activeElement).toBe(wrapperA);
   });
 
   it("does not focus non-focused pane on initial mount in multi-pane layout", () => {
@@ -680,5 +754,249 @@ describe("PaneContainer collapsed mode", () => {
     const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
     expect(wrapperA.style.display).toBe("");
     expect(wrapperB.style.display).toBe("");
+  });
+});
+
+/**
+ * Header mousedown focus-routing tests.
+ *
+ * jsdom does NOT implement the browser behavior of moving DOM focus to
+ * the nearest focusable ancestor on mousedown. The preventDefault() call
+ * that fixes the focus-steal cannot be verified in jsdom.
+ *
+ * Manual browser verification required:
+ *   (1) In multi-pane mode, click the header title of the focused pane
+ *       and verify the CM editor cursor remains visible and keystrokes
+ *       still reach the editor.
+ *   (2) Click the header of an unfocused editor pane and verify that
+ *       pane's editor receives keyboard focus.
+ */
+describe("PaneLeafRenderer header mouseDown focus routing", () => {
+  it("mouseDown on pane header of already-focused editor pane calls view.focus()", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("other.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "other.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    const viewFocusSpy = vi.fn();
+    mockGetPaneView.mockImplementation((id: string) =>
+      id === "pane-a" ? { focus: viewFocusSpy } : null,
+    );
+
+    render(<PaneContainer />);
+
+    const headerA = document.querySelector('[data-pane-id="pane-a"] [data-testid="pane-header"]') as HTMLElement;
+    expect(headerA).toBeTruthy();
+
+    const focusPaneSpy = vi.spyOn(usePaneStore.getState(), "focusPane");
+
+    fireEvent.mouseDown(headerA);
+
+    // The CM view's focus() must be called to re-focus the editor
+    expect(viewFocusSpy).toHaveBeenCalledTimes(1);
+    // usePaneFocus guard should have early-returned since pane-a is already focused
+    expect(focusPaneSpy).not.toHaveBeenCalled();
+
+    focusPaneSpy.mockRestore();
+  });
+
+  it("mouseDown on pane header of unfocused pane updates store and focuses CM view", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("other.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "other.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    const viewFocusSpy = vi.fn();
+    mockGetPaneView.mockImplementation((id: string) =>
+      id === "pane-b" ? { focus: viewFocusSpy } : null,
+    );
+
+    render(<PaneContainer />);
+
+    const headerB = document.querySelector('[data-pane-id="pane-b"] [data-testid="pane-header"]') as HTMLElement;
+    expect(headerB).toBeTruthy();
+
+    fireEvent.mouseDown(headerB);
+
+    // Store should have been updated to pane-b
+    expect(usePaneStore.getState().focusedPaneId).toBe("pane-b");
+    // CM view.focus() should have been called
+    expect(viewFocusSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("mouseDown on pane header of non-editor pane (no CM view) focuses the wrapper div", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("other.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "other.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    // No CM view for pane-b (simulating graph/cardbox/mindmap)
+    mockGetPaneView.mockImplementation(() => null);
+
+    render(<PaneContainer />);
+
+    const wrapperB = document.querySelector('[data-pane-id="pane-b"]') as HTMLElement;
+    const headerB = wrapperB.querySelector('[data-testid="pane-header"]') as HTMLElement;
+    expect(headerB).toBeTruthy();
+
+    const wrapperFocusSpy = vi.spyOn(wrapperB, "focus");
+
+    fireEvent.mouseDown(headerB);
+
+    // With no CM view, the wrapper div should be focused as fallback
+    expect(wrapperFocusSpy).toHaveBeenCalledTimes(1);
+
+    wrapperFocusSpy.mockRestore();
+  });
+
+  it("mouseDown on pane header calls preventDefault to suppress browser focus-steal", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("other.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "other.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    render(<PaneContainer />);
+
+    const headerA = document.querySelector('[data-pane-id="pane-a"] [data-testid="pane-header"]') as HTMLElement;
+    expect(headerA).toBeTruthy();
+
+    // Create a real event and spy on preventDefault
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+
+    headerA.dispatchEvent(event);
+
+    expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PaneLeafRenderer focus border in multi-pane mode", () => {
+  it("multi-pane wrapper shows focus border for editor pane", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("other.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "other.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    expect(wrapperA).toBeTruthy();
+    expect(wrapperA.className).toContain("border-interactive-accent");
+  });
+
+  it("multi-pane wrapper shows focus border for pdf pane", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("doc.pdf", "pdf"), meta("note.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "doc.pdf" },
+        { type: "leaf", id: "pane-b", pagePath: "note.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    expect(wrapperA).toBeTruthy();
+    expect(wrapperA.className).toContain("border-interactive-accent");
+  });
+
+  it("multi-pane wrapper shows transparent border for UNFOCUSED pane", () => {
+    useWorkspaceStore.setState({
+      pages: [meta("note.md", "markdown"), meta("other.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "note.md" },
+        { type: "leaf", id: "pane-b", pagePath: "other.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperB = document.querySelector('[data-pane-id="pane-b"]') as HTMLElement;
+    expect(wrapperB).toBeTruthy();
+    expect(wrapperB.className).toContain("border-transparent");
+    expect(wrapperB.className).not.toContain("border-interactive-accent");
+  });
+
+  it("multi-pane wrapper shows focus border for code pane", async () => {
+    useWorkspaceStore.setState({
+      pages: [meta("refs.bib", "code"), meta("note.md", "markdown")],
+    });
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: "refs.bib" },
+        { type: "leaf", id: "pane-b", pagePath: "note.md" },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    expect(wrapperA).toBeTruthy();
+    expect(wrapperA.className).toContain("border-interactive-accent");
   });
 });

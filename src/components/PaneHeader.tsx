@@ -11,11 +11,12 @@ interface PaneHeaderProps {
   paneId: string;
   pagePath: string | null;
   fileType: LeafFileType | null;
+  onMouseDown?: React.MouseEventHandler<HTMLDivElement>;
 }
 
 const titleSel = (e: PaneContentEntry | null) => e?.title ?? "";
 
-export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
+export function PaneHeader({ paneId, pagePath, fileType, onMouseDown }: PaneHeaderProps) {
   const mdTitle = usePaneField(paneId, titleSel);
   const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
   const viewMode = usePaneStore((s) => findLeaf(s.root, paneId)?.viewMode ?? "editor");
@@ -38,6 +39,7 @@ export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
     <div
       data-testid="pane-header"
       className="flex items-center gap-1.5 px-3 py-1.5 text-sm"
+      onMouseDown={onMouseDown}
     >
       <HistoryNavButtons paneId={paneId} testIdPrefix="pane-history-" />
       <span className="truncate text-text-muted" data-testid="pane-header-title">
