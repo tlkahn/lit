@@ -839,38 +839,14 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2">
-              <div role="group" aria-label="Annotation scope" className="flex gap-0.5 rounded-md border border-border p-0.5" data-testid="cardbox-scope-toggle">
-                <button
-                  aria-pressed={scope === "document"}
-                  className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-                    scope === "document" ? "bg-interactive-accent text-on-accent" : "text-text-faint hover:text-text-normal"
-                  }`}
-                  onClick={() => setScope("document")}
-                  data-testid="scope-document"
-                >
-                  Document
-                </button>
-                <button
-                  aria-pressed={scope === "workspace"}
-                  className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-                    scope === "workspace" ? "bg-interactive-accent text-on-accent" : "text-text-faint hover:text-text-normal"
-                  }`}
-                  onClick={() => setScope("workspace")}
-                  data-testid="scope-workspace"
-                >
-                  Workspace
-                </button>
-              </div>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search annotations…"
-                className="w-full rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-faint outline-none focus:ring-1 focus:ring-interactive-accent"
-                data-testid="cardbox-search"
-              />
-            </div>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search annotations…"
+              className="w-full rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-faint outline-none focus:ring-1 focus:ring-interactive-accent"
+              data-testid="cardbox-search"
+            />
             {allTypes.length > 1 && (
               <div className="flex flex-wrap gap-1" data-testid="cardbox-type-chips">
                 {allTypes.map((type) => (
@@ -905,10 +881,34 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                 ))}
               </div>
             )}
-            <div className="text-xs text-text-faint" data-testid="cardbox-count">
-              {filteredAnnotations.length === documentAnnotations.length
-                ? `${documentAnnotations.length} annotation${documentAnnotations.length !== 1 ? "s" : ""}${scope === "workspace" ? " (all documents)" : ""}`
-                : `${filteredAnnotations.length} of ${documentAnnotations.length} annotation${documentAnnotations.length !== 1 ? "s" : ""}${scope === "workspace" ? " (all documents)" : ""}`}
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-text-faint" data-testid="cardbox-count">
+                {filteredAnnotations.length === documentAnnotations.length
+                  ? `${documentAnnotations.length} annotation${documentAnnotations.length !== 1 ? "s" : ""}${scope === "workspace" ? " (all documents)" : ""}`
+                  : `${filteredAnnotations.length} of ${documentAnnotations.length} annotation${documentAnnotations.length !== 1 ? "s" : ""}${scope === "workspace" ? " (all documents)" : ""}`}
+              </div>
+              <div role="group" aria-label="Annotation scope" className="flex gap-0.5 rounded-md border border-border p-0.5" data-testid="cardbox-scope-toggle">
+                <button
+                  aria-pressed={scope === "document"}
+                  className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+                    scope === "document" ? "bg-interactive-accent text-on-accent" : "text-text-faint hover:text-text-normal"
+                  }`}
+                  onClick={() => setScope("document")}
+                  data-testid="scope-document"
+                >
+                  Document
+                </button>
+                <button
+                  aria-pressed={scope === "workspace"}
+                  className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+                    scope === "workspace" ? "bg-interactive-accent text-on-accent" : "text-text-faint hover:text-text-normal"
+                  }`}
+                  onClick={() => setScope("workspace")}
+                  data-testid="scope-workspace"
+                >
+                  Workspace
+                </button>
+              </div>
             </div>
           </>
         )}
