@@ -178,8 +178,8 @@ export function AnnotationBuilderModal({
         className="w-[28rem] max-h-[90vh] flex flex-col rounded-lg bg-bg-primary p-5 shadow-lg"
         data-testid="annotation-builder-panel"
       >
-        <div className="mb-4 grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
+        <div className="mb-3 flex items-end gap-3">
+          <label className="flex flex-1 flex-col gap-1">
             <span className="text-xs text-text-muted">Type</span>
             {mark ? (
               <span
@@ -206,26 +206,44 @@ export function AnnotationBuilderModal({
             )}
           </label>
 
-          <div className="flex items-end justify-end">
-            <button
-              type="button"
-              data-testid="annotation-overflow-toggle"
-              className="relative rounded px-2 py-1 text-sm text-text-muted hover:bg-bg-secondary"
-              onClick={() => setShowAdvanced(v => !v)}
-              aria-expanded={showAdvanced}
-              aria-label={hasNonDefaultAdvanced ? "Toggle advanced fields (modified)" : "Toggle advanced fields"}
+          <label className="flex flex-1 flex-col gap-1">
+            <span className="text-xs text-text-muted">Scope</span>
+            <select
+              data-testid="annotation-scope-select"
+              value={scopeKind}
+              onChange={(e) => setScopeKind(e.target.value as BuilderScopeKind)}
             >
-              ⋮
-              {hasNonDefaultAdvanced && !showAdvanced && (
-                <span
-                  data-testid="annotation-overflow-dot"
-                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-interactive-accent"
-                  aria-hidden="true"
-                />
-              )}
-            </button>
-          </div>
+              <option value="none">Default (sentence)</option>
+              <option value="words">Words</option>
+              <option value="sentence">Sentence</option>
+              <option value="paragraph">Paragraph</option>
+              <option value="page">Page</option>
+              <option value="anchor">Anchor</option>
+              <option value="document">Document</option>
+              <option value="section">Section</option>
+            </select>
+          </label>
 
+          <button
+            type="button"
+            data-testid="annotation-overflow-toggle"
+            className="relative rounded px-2 py-1 text-sm text-text-muted hover:bg-bg-secondary"
+            onClick={() => setShowAdvanced(v => !v)}
+            aria-expanded={showAdvanced}
+            aria-label={hasNonDefaultAdvanced ? "Toggle advanced fields (modified)" : "Toggle advanced fields"}
+          >
+            {showAdvanced ? "" : ""}
+            {hasNonDefaultAdvanced && !showAdvanced && (
+              <span
+                data-testid="annotation-overflow-dot"
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-interactive-accent"
+                aria-hidden="true"
+              />
+            )}
+          </button>
+        </div>
+
+        <div className="mb-4 grid grid-cols-2 gap-3">
           {showAdvanced && (
             <>
               <label className="flex flex-col gap-1">
@@ -266,24 +284,6 @@ export function AnnotationBuilderModal({
               </label>
             </>
           )}
-
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-text-muted">Scope</span>
-            <select
-              data-testid="annotation-scope-select"
-              value={scopeKind}
-              onChange={(e) => setScopeKind(e.target.value as BuilderScopeKind)}
-            >
-              <option value="none">Default (sentence)</option>
-              <option value="words">Words</option>
-              <option value="sentence">Sentence</option>
-              <option value="paragraph">Paragraph</option>
-              <option value="page">Page</option>
-              <option value="anchor">Anchor</option>
-              <option value="document">Document</option>
-              <option value="section">Section</option>
-            </select>
-          </label>
 
           {UNIT_SCOPE_KINDS.includes(scopeKind) && !asymmetric && (
             <label className="flex flex-col gap-1">
@@ -361,7 +361,6 @@ export function AnnotationBuilderModal({
               />
             </label>
           )}
-
         </div>
 
         <label className="mb-3 flex flex-col gap-1">
