@@ -54,6 +54,7 @@ describe("cardbox store", () => {
       colors: {},
       connectionsForUuid: null,
       connectionsSavedFilters: null,
+      scope: "document",
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;

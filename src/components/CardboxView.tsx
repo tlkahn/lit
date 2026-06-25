@@ -52,6 +52,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const setScope = useCardboxStore((s) => s.setScope);
   const toggleColor = useCardboxStore((s) => s.toggleColor);
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
+  const collapseAll = useCardboxStore((s) => s.collapseAll);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
   const toggleType = useCardboxStore((s) => s.toggleType);
@@ -135,6 +136,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   useEffect(() => {
     clearSelection();
   }, [searchQuery, activeTypes, activeColors, scope, clearSelection]);
+
+  useEffect(() => {
+    collapseAll();
+  }, [scope, collapseAll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -835,7 +840,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <div className="flex gap-0.5 rounded-md border border-border p-0.5" data-testid="cardbox-scope-toggle">
+              <div role="group" aria-label="Annotation scope" className="flex gap-0.5 rounded-md border border-border p-0.5" data-testid="cardbox-scope-toggle">
                 <button
                   aria-pressed={scope === "document"}
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${

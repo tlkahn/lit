@@ -65,6 +65,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
+    if ((e.key === "s" || e.key === "S") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      onToggleScope?.();
+      return;
+    }
+
     // Escape: clear selection (globally, regardless of focus)
     // Connections-mode Escape stays on the grid-level handler
     if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
@@ -75,7 +82,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         return;
       }
     }
-  }, [onUndo, onRedo, onSelectAll, onClearSelection, connectionsActive]);
+  }, [onUndo, onRedo, onSelectAll, onClearSelection, onToggleScope, connectionsActive]);
 
   useEffect(() => {
     window.addEventListener("keydown", globalHandler, true);
@@ -158,13 +165,6 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
           onShowConnections?.();
         }
         return;
-      case "s":
-      case "S":
-        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-          e.preventDefault();
-          onToggleScope?.();
-        }
-        return;
       case "?":
         if (!e.metaKey && !e.ctrlKey && !e.altKey) {
           e.preventDefault();
@@ -179,7 +179,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onShowConnections, onExitConnections, onShowShortcuts, expandedUuid, connectionsActive]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, expandedUuid, connectionsActive]);
 
   return { gridRef, handleKeyDown };
 }

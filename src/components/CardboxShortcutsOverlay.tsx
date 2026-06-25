@@ -16,8 +16,8 @@ const SHORTCUTS: { key: string; description: string }[] = [
   { key: "C", description: "Show connections (expanded card)" },
   { key: "S", description: "Toggle document / workspace scope" },
   { key: "Esc", description: "Exit connections mode" },
+  { key: "Esc", description: "Clear selection" },
   { key: "⌘ A", description: "Select all visible cards" },
-  { key: "Escape", description: "Clear selection" },
   { key: "⌘ Click", description: "Toggle card selection" },
   { key: "⇧ Click", description: "Range select cards" },
   { key: "⌘ Z", description: "Undo last operation" },
@@ -67,7 +67,7 @@ export function CardboxShortcutsOverlay({ open, onClose }: CardboxShortcutsOverl
         <div className="flex-1 overflow-y-auto px-4 py-2">
           {SHORTCUTS.map((s) => (
             <div
-              key={s.key}
+              key={s.description}
               className="flex items-center justify-between py-1.5"
               data-testid="shortcut-entry"
             >
