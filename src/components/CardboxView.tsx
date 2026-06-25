@@ -150,15 +150,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     selectPageAtLine(ann.source_page_id, ann.source_line);
   }, [selectPageAtLine]);
 
+  const documentAnnotations = useMemo(
+    () => annotations.filter((a) => a.source_page_id === pagePath),
+    [annotations, pagePath],
+  );
+
   // Derive all unique types from annotations (for chips)
   const allTypes = useMemo(
-    () => [...new Set(annotations.map((a) => a.annotation_type))].sort(),
-    [annotations],
+    () => [...new Set(documentAnnotations.map((a) => a.annotation_type))].sort(),
+    [documentAnnotations],
   );
 
   const usedColors = useMemo(
-    () => [...new Set(Object.values(colors))].sort(),
-    [colors],
+    () => [...new Set(documentAnnotations.map((a) => colors[a.uuid]).filter((c): c is string => !!c))].sort(),
+    [documentAnnotations, colors],
   );
 
   const effectiveActiveColors = useMemo(() => {
@@ -783,10 +788,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     );
   }
 
-  if (annotations.length === 0) {
+  if (documentAnnotations.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-text-faint" data-testid="cardbox-empty">
-        No annotations in this workspace
+        No annotations in this document
       </div>
     );
   }
@@ -862,9 +867,9 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
               </div>
             )}
             <div className="text-xs text-text-faint" data-testid="cardbox-count">
-              {filteredAnnotations.length === annotations.length
-                ? `${annotations.length} annotations`
-                : `${filteredAnnotations.length} of ${annotations.length} annotations`}
+              {filteredAnnotations.length === documentAnnotations.length
+                ? `${documentAnnotations.length} annotations`
+                : `${filteredAnnotations.length} of ${documentAnnotations.length} annotations`}
             </div>
           </>
         )}
