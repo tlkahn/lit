@@ -837,7 +837,7 @@ export function ReferenceLibrary() {
       disabled={!workspacePath}
       className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
     >
-      + Add
+      Add
     </button>
   );
 
@@ -848,7 +848,7 @@ export function ReferenceLibrary() {
       disabled={!workspacePath}
       className="rounded border border-border px-2 py-0.5 text-xs text-text-muted hover:bg-bg-hover disabled:opacity-50"
     >
-      Import PDF...
+      Import PDF
     </button>
   );
 
@@ -875,7 +875,7 @@ export function ReferenceLibrary() {
             disabled={!workspacePath}
             className="flex w-full items-center rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50"
           >
-            + Add
+            Add
           </button>
           <button
             data-testid="reference-library-import-pdf-btn"
@@ -883,7 +883,7 @@ export function ReferenceLibrary() {
             disabled={!workspacePath}
             className="flex w-full items-center rounded-md px-3 py-1 text-start text-[13px] text-text-normal hover:bg-interactive-accent hover:text-text-on-accent disabled:opacity-50"
           >
-            Import PDF...
+            Import PDF
           </button>
         </div>,
         document.body,

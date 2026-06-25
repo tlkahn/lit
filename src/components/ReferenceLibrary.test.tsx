@@ -534,7 +534,7 @@ describe("ReferenceLibrary", () => {
     expect(useStatusMessageStore.getState().variant).toBe("error");
   });
 
-  it("renders '+ Add' button in header when entries exist", async () => {
+  it("renders 'Add' button in header when entries exist", async () => {
     const user = userEvent.setup();
     render(<ReferenceLibrary />);
     await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
@@ -543,7 +543,7 @@ describe("ReferenceLibrary", () => {
     expect(addBtn).toBeInTheDocument();
   });
 
-  it("renders '+ Add' button in empty state", async () => {
+  it("renders 'Add' button in empty state", async () => {
     fixture = [];
     render(<ReferenceLibrary />);
     await waitFor(() =>
@@ -553,7 +553,7 @@ describe("ReferenceLibrary", () => {
     expect(addBtn).toBeInTheDocument();
   });
 
-  it("clicking '+ Add' opens the AddReferenceDialog", async () => {
+  it("clicking 'Add' opens the AddReferenceDialog", async () => {
     const user = userEvent.setup();
     mockInvoke((cmd, args) => {
       invokedCommands.push({ cmd, args });
@@ -1234,7 +1234,7 @@ describe("ReferenceLibrary", () => {
   });
 
   describe("Import PDF button", () => {
-    it("renders 'Import PDF...' button in header when entries exist", async () => {
+    it("renders 'Import PDF' button in header when entries exist", async () => {
       const user = userEvent.setup();
       render(<ReferenceLibrary />);
       await waitFor(() => expect(screen.getByText("The Saiva Age")).toBeInTheDocument());
@@ -1243,7 +1243,7 @@ describe("ReferenceLibrary", () => {
       expect(importBtn).toBeInTheDocument();
     });
 
-    it("renders 'Import PDF...' button in empty state", async () => {
+    it("renders 'Import PDF' button in empty state", async () => {
       fixture = [];
       render(<ReferenceLibrary />);
       await waitFor(() =>
@@ -1253,7 +1253,7 @@ describe("ReferenceLibrary", () => {
       expect(importBtn).toBeInTheDocument();
     });
 
-    it("clicking 'Import PDF...' opens the ImportPdfDialog", async () => {
+    it("clicking 'Import PDF' opens the ImportPdfDialog", async () => {
       const user = userEvent.setup();
       mockInvoke((cmd, args) => {
         invokedCommands.push({ cmd, args });
