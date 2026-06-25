@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useOverflowMenu } from "../hooks/useOverflowMenu";
 
@@ -36,10 +37,16 @@ export function SearchComboBar({
     dismissOnScroll: false,
   });
 
+  useEffect(() => {
+    if (open && menuRef.current) {
+      menuRef.current.focus();
+    }
+  }, [open]);
+
   const disabled = searching || !query.trim();
 
   return (
-    <div className="flex items-stretch rounded-md border border-border bg-bg-primary focus-within:ring-1 focus-within:ring-interactive-accent">
+    <div className="flex items-stretch rounded-md border border-border bg-bg-primary">
       {/* Mode chip trigger */}
       <button
         ref={triggerRef}
@@ -48,6 +55,8 @@ export function SearchComboBar({
           mode !== "auto" ? "text-interactive-accent" : "text-text-muted"
         }`}
         aria-label="Search mode"
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
         <span>{MODE_LABELS[mode] ?? "Auto"}</span>
         <span className="text-[10px]">▾</span>
@@ -76,36 +85,45 @@ export function SearchComboBar({
         {searching ? "..." : "Search"}
       </button>
 
-      {/* Hidden native select for test compatibility */}
-      <select
-        data-testid="search-mode-select"
-        value={mode}
-        onChange={(e) => onModeChange(e.target.value)}
-        className="absolute h-0 w-0 overflow-hidden opacity-0"
-        tabIndex={-1}
-        aria-hidden="true"
-      >
-        {MODE_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-
       {/* Portal dropdown */}
       {open &&
         createPortal(
           <div
             ref={menuRef}
             data-testid="search-mode-dropdown"
+            role="listbox"
+            tabIndex={0}
             style={{ position: "fixed", left: 0, top: 0 }}
-            className="z-50 min-w-[120px] select-none rounded-lg border border-border/20 bg-bg-primary/80 p-1 shadow-lg shadow-black/10 backdrop-blur-xl backdrop-saturate-150 dark:border-border/10 dark:bg-bg-primary/70"
+            className="z-50 min-w-[120px] select-none rounded-lg border border-border/20 bg-bg-primary/80 p-1 shadow-lg shadow-black/10 backdrop-blur-xl backdrop-saturate-150 outline-none dark:border-border/10 dark:bg-bg-primary/70"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const buttons = Array.from(
+                  menuRef.current?.querySelectorAll<HTMLElement>("button") ?? [],
+                );
+                const currentIndex = buttons.indexOf(document.activeElement as HTMLElement);
+                const next =
+                  e.key === "ArrowDown"
+                    ? (currentIndex + 1) % buttons.length
+                    : (currentIndex - 1 + buttons.length) % buttons.length;
+                buttons[next]?.focus();
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                const buttons = Array.from(
+                  menuRef.current?.querySelectorAll<HTMLElement>("button") ?? [],
+                );
+                const currentIndex = buttons.indexOf(document.activeElement as HTMLElement);
+                if (currentIndex >= 0) buttons[currentIndex]!.click();
+              }
+            }}
           >
             {MODE_OPTIONS.map((o) => {
               const active = mode === o.value;
               return (
                 <button
                   key={o.value}
+                  role="option"
+                  aria-selected={active}
                   onClick={() => {
                     onModeChange(o.value);
                     setOpen(false);

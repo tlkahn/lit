@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   mockInvoke,
@@ -3280,9 +3280,9 @@ describe("ReferenceLibrary", () => {
 
       await switchToSearch(user);
 
-      const dropdown = screen.getByTestId("search-mode-select");
-      expect(dropdown).toBeInTheDocument();
-      expect(dropdown).toHaveValue("auto");
+      const chip = screen.getByLabelText("Search mode");
+      expect(chip).toBeInTheDocument();
+      expect(chip.textContent).toContain("Auto");
     });
 
     it("dropdown has Auto, Keywords, ISBN, DOI, Author, Title options", async () => {
@@ -3292,9 +3292,10 @@ describe("ReferenceLibrary", () => {
 
       await switchToSearch(user);
 
-      const dropdown = screen.getByTestId("search-mode-select") as HTMLSelectElement;
-      const options = Array.from(dropdown.options).map((o) => o.value);
-      expect(options).toEqual(["auto", "keywords", "isbn", "doi", "author", "title"]);
+      await user.click(screen.getByLabelText("Search mode"));
+      const dropdown = screen.getByTestId("search-mode-dropdown");
+      const options = within(dropdown).getAllByRole("option");
+      expect(options.map((o) => o.textContent)).toEqual(["Auto", "Keywords", "ISBN", "DOI", "Author", "Title"]);
     });
 
     it("shows ISBN auto-detect hint when query looks like ISBN", async () => {
@@ -3344,8 +3345,9 @@ describe("ReferenceLibrary", () => {
 
       await switchToSearch(user);
 
-      const dropdown = screen.getByTestId("search-mode-select");
-      await user.selectOptions(dropdown, "keywords");
+      await user.click(screen.getByLabelText("Search mode"));
+      const dropdown = screen.getByTestId("search-mode-dropdown");
+      await user.click(within(dropdown).getByText("Keywords"));
 
       const input = screen.getByLabelText("Search academic papers");
       await user.type(input, "9780199767465");
@@ -3394,8 +3396,9 @@ describe("ReferenceLibrary", () => {
 
       await switchToSearch(user);
 
-      const dropdown = screen.getByTestId("search-mode-select");
-      await user.selectOptions(dropdown, "doi");
+      await user.click(screen.getByLabelText("Search mode"));
+      const dropdown = screen.getByTestId("search-mode-dropdown");
+      await user.click(within(dropdown).getByText("DOI"));
 
       const input = screen.getByLabelText("Search academic papers");
       await user.type(input, "10.1000/xyz");

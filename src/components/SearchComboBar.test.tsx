@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SearchComboBar } from "./SearchComboBar";
 
@@ -43,7 +43,7 @@ describe("SearchComboBar", () => {
     const props = renderBar();
     await user.click(screen.getByLabelText("Search mode"));
     const dropdown = screen.getByTestId("search-mode-dropdown");
-    await user.click(dropdown.querySelector("button:nth-child(3)")!);
+    await user.click(within(dropdown).getByText("ISBN"));
     expect(props.onModeChange).toHaveBeenCalledWith("isbn");
     expect(screen.queryByTestId("search-mode-dropdown")).not.toBeInTheDocument();
   });
@@ -96,10 +96,64 @@ describe("SearchComboBar", () => {
     expect(chip.className).toContain("text-interactive-accent");
   });
 
-  it("hidden select is present with all options", () => {
+  it("trigger has aria-haspopup='listbox'", () => {
     renderBar();
-    const select = screen.getByTestId("search-mode-select") as HTMLSelectElement;
-    const values = Array.from(select.options).map((o) => o.value);
-    expect(values).toEqual(["auto", "keywords", "isbn", "doi", "author", "title"]);
+    expect(screen.getByLabelText("Search mode")).toHaveAttribute("aria-haspopup", "listbox");
+  });
+
+  it("trigger has aria-expanded false when closed, true when open", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    const chip = screen.getByLabelText("Search mode");
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    await user.click(chip);
+    expect(chip).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("dropdown has role='listbox'", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    await user.click(screen.getByLabelText("Search mode"));
+    expect(screen.getByTestId("search-mode-dropdown")).toHaveAttribute("role", "listbox");
+  });
+
+  it("all option buttons have role='option'", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    await user.click(screen.getByLabelText("Search mode"));
+    const options = within(screen.getByTestId("search-mode-dropdown")).getAllByRole("option");
+    expect(options).toHaveLength(6);
+  });
+
+  it("active option has aria-selected='true'", async () => {
+    const user = userEvent.setup();
+    renderBar({ mode: "doi" });
+    await user.click(screen.getByLabelText("Search mode"));
+    const doiOption = within(screen.getByTestId("search-mode-dropdown")).getByText("DOI");
+    expect(doiOption).toHaveAttribute("aria-selected", "true");
+    const autoOption = within(screen.getByTestId("search-mode-dropdown")).getByText("Auto");
+    expect(autoOption).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("ArrowDown moves focus to next option", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    await user.click(screen.getByLabelText("Search mode"));
+    const dropdown = screen.getByTestId("search-mode-dropdown");
+    fireEvent.keyDown(dropdown, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("Auto");
+    fireEvent.keyDown(dropdown, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("Keywords");
+  });
+
+  it("ArrowUp wraps from first to last option", async () => {
+    const user = userEvent.setup();
+    renderBar();
+    await user.click(screen.getByLabelText("Search mode"));
+    const dropdown = screen.getByTestId("search-mode-dropdown");
+    fireEvent.keyDown(dropdown, { key: "ArrowDown" });
+    expect(document.activeElement?.textContent).toBe("Auto");
+    fireEvent.keyDown(dropdown, { key: "ArrowUp" });
+    expect(document.activeElement?.textContent).toBe("Title");
   });
 });
