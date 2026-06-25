@@ -270,7 +270,7 @@ describe("validateLayout", () => {
   });
 
   it("returns leaf as-is when pagePath is already null even with stale viewMode", () => {
-    const root: PaneLeaf = { type: "leaf", id: "1", pagePath: null, viewMode: "graph" as any };
+    const root: PaneLeaf = { type: "leaf", id: "1", pagePath: null, viewMode: "graph" };
     const result = validateLayout(root, existing);
     // early return path: pagePath is already null, node returned by reference
     expect(result).toBe(root);
