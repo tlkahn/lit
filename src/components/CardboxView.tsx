@@ -857,7 +857,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                 <button
                   aria-pressed={scope === "document"}
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-                    scope === "document" ? "bg-interactive-hover text-text-normal font-medium" : "text-text-faint hover:text-text-normal"
+                    scope === "document" ? "bg-bg-primary text-text-normal font-medium shadow-sm" : "text-text-faint hover:text-text-normal"
                   }`}
                   onClick={() => setScope("document")}
                   data-testid="scope-document"
@@ -867,7 +867,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                 <button
                   aria-pressed={scope === "workspace"}
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-                    scope === "workspace" ? "bg-interactive-hover text-text-normal font-medium" : "text-text-faint hover:text-text-normal"
+                    scope === "workspace" ? "bg-bg-primary text-text-normal font-medium shadow-sm" : "text-text-faint hover:text-text-normal"
                   }`}
                   onClick={() => setScope("workspace")}
                   data-testid="scope-workspace"
