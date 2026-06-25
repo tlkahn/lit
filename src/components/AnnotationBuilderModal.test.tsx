@@ -670,7 +670,6 @@ describe("AnnotationBuilderModal", () => {
       enablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
-      expandOverflow();
       expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("firm");
       expect(screen.getByTestId("annotation-scope-select")).toHaveValue("paragraph");
       expect(screen.getByTestId("annotation-scope-count")).toHaveValue(3);
@@ -722,7 +721,6 @@ describe("AnnotationBuilderModal", () => {
       expect(screen.getByTestId("annotation-scope-select")).toHaveValue("anchor");
       // type/certainty still from defaults
       expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
-      expandOverflow();
       expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("firm");
     });
 
@@ -738,7 +736,6 @@ describe("AnnotationBuilderModal", () => {
 
       enablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
-      expandOverflow();
       fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
       fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
@@ -900,6 +897,23 @@ describe("AnnotationBuilderModal", () => {
       expect(screen.getByTestId("annotation-overflow-dot")).toBeInTheDocument();
     });
 
+    it("dot badge appears when date is changed from default and section is collapsed", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-date-input"), { target: { value: "2020-01-01" } });
+      expandOverflow();
+      expect(screen.getByTestId("annotation-overflow-dot")).toBeInTheDocument();
+    });
+
+    it("dot badge appears when id is changed from default and section is collapsed", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      const idInput = screen.getByTestId("annotation-id-input");
+      fireEvent.change(idInput, { target: { value: "custom-id" } });
+      expandOverflow();
+      expect(screen.getByTestId("annotation-overflow-dot")).toBeInTheDocument();
+    });
+
     it("dot badge hidden when section is expanded", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       expandOverflow();
@@ -941,6 +955,7 @@ describe("AnnotationBuilderModal", () => {
         <AnnotationBuilderModal
           onClose={onClose}
           onInsert={onInsert}
+          mode="edit"
           initialFields={{ id: "custom-id", body: "test" }}
         />,
       );

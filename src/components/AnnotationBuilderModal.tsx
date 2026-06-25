@@ -105,6 +105,7 @@ export function AnnotationBuilderModal({
     if (initialFields?.certainty && initialFields.certainty !== "neutral") return true;
     if (initialFields?.date) return true;
     if (initialFields?.id) return true;
+    if (defaults?.certainty && defaults.certainty !== "neutral") return true;
     return false;
   });
 
@@ -211,13 +212,15 @@ export function AnnotationBuilderModal({
               data-testid="annotation-overflow-toggle"
               className="relative rounded px-2 py-1 text-sm text-text-muted hover:bg-bg-secondary"
               onClick={() => setShowAdvanced(v => !v)}
-              aria-label="Toggle advanced fields"
+              aria-expanded={showAdvanced}
+              aria-label={hasNonDefaultAdvanced ? "Toggle advanced fields (modified)" : "Toggle advanced fields"}
             >
               ⋮
               {hasNonDefaultAdvanced && !showAdvanced && (
                 <span
                   data-testid="annotation-overflow-dot"
                   className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-interactive-accent"
+                  aria-hidden="true"
                 />
               )}
             </button>
