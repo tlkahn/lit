@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, lazy, Suspense } from "react";
+import { createContext, useContext, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import type React from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
@@ -12,7 +12,7 @@ import { PaneHeader } from "./PaneHeader";
 import { MindmapPaneView } from "./MindmapPaneView";
 import { GraphPaneView } from "./GraphPaneView";
 import { CardboxPaneView } from "./CardboxPaneView";
-import { getPaneView } from "../lib/editorViewRef";
+import { getPaneView, setFocusedPane } from "../lib/editorViewRef";
 
 const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
 
@@ -20,6 +20,7 @@ const ExportNetworkContext = createContext<((nodeId: string) => void) | undefine
 
 function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const isMultiPane = usePaneStore((s) => s.root.type === "split");
+  const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
   const onExportNetwork = useContext(ExportNetworkContext);
 
   const pagePath = usePaneStore(
@@ -31,6 +32,11 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const pages = useWorkspaceStore((s) => s.pages);
   const fileType = getFileType(pagePath, pages);
+
+  const handleFocus = useCallback(() => {
+    usePaneStore.getState().focusPane(paneId);
+    setFocusedPane(paneId);
+  }, [paneId]);
 
   const prevViewModeRef = useRef(viewMode);
   useEffect(() => {
@@ -44,6 +50,12 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
       });
     }
   }, [viewMode, paneId, focusedPaneId]);
+
+  const isNonEditorMarkdown = fileType === "markdown" && viewMode !== "editor";
+  const needsFocusBorder = isMultiPane && isNonEditorMarkdown;
+  const borderClass = needsFocusBorder
+    ? isFocused ? "border-t-2 border-interactive-accent" : "border-t-2 border-transparent"
+    : "";
 
   let content: React.ReactNode;
   if (fileType === "pdf") {
@@ -73,10 +85,14 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   if (!isMultiPane) return content;
 
   return (
-    <>
+    <div
+      onMouseDownCapture={handleFocus}
+      data-pane-id={paneId}
+      className={`flex min-h-0 flex-1 flex-col ${borderClass}`}
+    >
       <PaneHeader paneId={paneId} pagePath={pagePath} fileType={fileType} />
       {content}
-    </>
+    </div>
   );
 }
 

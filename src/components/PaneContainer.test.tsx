@@ -237,8 +237,8 @@ describe("PaneContainer", () => {
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
 
     const { getByTestId } = render(<PaneContainer />);
-    const parentA = getByTestId("editor-pane-pane-a").parentElement!;
-    const parentB = getByTestId("editor-pane-pane-b").parentElement!;
+    const parentA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
+    const parentB = getByTestId("editor-pane-pane-b").closest("[data-pane-id]")!.parentElement!;
     expect(parentA.style.flexBasis).toBe("calc(30% - 1.2px)");
     expect(parentB.style.flexBasis).toBe("calc(70% - 2.8px)");
   });
@@ -391,7 +391,7 @@ describe("PaneContainer", () => {
     };
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
     const { getByTestId } = render(<PaneContainer />);
-    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.className).toContain("grow-0");
     expect(wrapperA.className).toContain("shrink-0");
   });
@@ -477,7 +477,7 @@ describe("PaneContainer", () => {
     };
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
     const { getByTestId } = render(<PaneContainer />);
-    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.style.minWidth).toBe("120px");
   });
 
@@ -494,7 +494,7 @@ describe("PaneContainer", () => {
     };
     usePaneStore.setState({ root, focusedPaneId: "pane-a" });
     const { getByTestId } = render(<PaneContainer />);
-    const wrapperA = getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.style.minHeight).toBe("120px");
   });
 
