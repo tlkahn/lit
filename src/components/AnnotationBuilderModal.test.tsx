@@ -24,6 +24,10 @@ describe("AnnotationBuilderModal", () => {
     vi.useRealTimers();
   });
 
+  function expandOverflow() {
+    fireEvent.click(screen.getByTestId("annotation-overflow-toggle"));
+  }
+
   it("renders panel when mounted", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
     expect(screen.getByTestId("annotation-builder-panel")).toBeInTheDocument();
@@ -34,12 +38,14 @@ describe("AnnotationBuilderModal", () => {
     expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-builder-panel")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-type-select")).toBeInTheDocument();
-    expect(screen.getByTestId("annotation-certainty-select")).toBeInTheDocument();
+    expect(screen.getByTestId("annotation-overflow-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-scope-select")).toBeInTheDocument();
-    expect(screen.getByTestId("annotation-id-input")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-body-input")).toBeInTheDocument();
-    expect(screen.getByTestId("annotation-date-input")).toBeInTheDocument();
     expect(screen.getByTestId("annotation-preview")).toBeInTheDocument();
+    expandOverflow();
+    expect(screen.getByTestId("annotation-certainty-select")).toBeInTheDocument();
+    expect(screen.getByTestId("annotation-id-input")).toBeInTheDocument();
+    expect(screen.getByTestId("annotation-date-input")).toBeInTheDocument();
   });
 
   it("type dropdown changes update live preview", () => {
@@ -52,6 +58,7 @@ describe("AnnotationBuilderModal", () => {
 
   it("certainty changes update preview", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
     fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "tentative" } });
     const preview = screen.getByTestId("annotation-preview");
@@ -83,6 +90,7 @@ describe("AnnotationBuilderModal", () => {
 
   it("date input changes update preview", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "note" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "x" } });
     fireEvent.change(screen.getByTestId("annotation-date-input"), { target: { value: "2026-03" } });
@@ -92,6 +100,7 @@ describe("AnnotationBuilderModal", () => {
 
   it("insert button calls onInsert with correct DSL", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     // type defaults to "note", clear the auto-generated id so we can test a known shape
     fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test body" } });
@@ -113,6 +122,7 @@ describe("AnnotationBuilderModal", () => {
 
   it("Cmd+Enter calls onInsert with current preview", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "confirm test" } });
     fireEvent.keyDown(document, { key: "Enter", metaKey: true });
@@ -121,6 +131,7 @@ describe("AnnotationBuilderModal", () => {
 
   it("Ctrl+Enter calls onInsert with current preview", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "confirm test" } });
     fireEvent.keyDown(document, { key: "Enter", ctrlKey: true });
@@ -129,6 +140,7 @@ describe("AnnotationBuilderModal", () => {
 
   it("preview shows generateDsl output", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     // Clear auto-generated id so the preview is predictable
     fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
     fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
@@ -169,6 +181,7 @@ describe("AnnotationBuilderModal", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
     expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
     expect(screen.getByTestId("annotation-body-input")).toHaveValue("");
+    expandOverflow();
     expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
     const idInput = screen.getByTestId("annotation-id-input") as HTMLInputElement;
     expect(idInput.value).toMatch(UUID_RE);
@@ -196,11 +209,13 @@ describe("AnnotationBuilderModal", () => {
     );
     expect(screen.getByTestId("annotation-preview").textContent).toContain("second");
     expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+    expandOverflow();
     expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
   });
 
   it("select elements do not carry ad-hoc border/background classes", () => {
     render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+    expandOverflow();
     const selects = [
       screen.getByTestId("annotation-type-select"),
       screen.getByTestId("annotation-certainty-select"),
@@ -391,6 +406,7 @@ describe("AnnotationBuilderModal", () => {
 
     it("pre-fills ID with UUID in create mode", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
       const idInput = screen.getByTestId("annotation-id-input") as HTMLInputElement;
       expect(idInput.value).toMatch(UUID_RE);
     });
@@ -399,11 +415,13 @@ describe("AnnotationBuilderModal", () => {
       render(
         <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
       );
+      expandOverflow();
       expect(screen.getByTestId("annotation-id-input")).toHaveValue("");
     });
 
     it("pre-fills date with today in create mode", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
       expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-06-01");
     });
 
@@ -411,6 +429,7 @@ describe("AnnotationBuilderModal", () => {
       render(
         <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
       );
+      expandOverflow();
       expect(screen.getByTestId("annotation-date-input")).toHaveValue("");
     });
   });
@@ -487,6 +506,7 @@ describe("AnnotationBuilderModal", () => {
   describe("[id] support", () => {
     it("ID input renders and is pre-filled with UUID by default", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
       const idInput = screen.getByTestId("annotation-id-input") as HTMLInputElement;
       expect(idInput).toBeInTheDocument();
       expect(idInput.value).toMatch(UUID_RE);
@@ -494,6 +514,7 @@ describe("AnnotationBuilderModal", () => {
 
     it("ID input updates preview with [id]", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
       fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "hello" } });
       fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "my-note" } });
       const preview = screen.getByTestId("annotation-preview");
@@ -502,6 +523,7 @@ describe("AnnotationBuilderModal", () => {
 
     it("insert with [id] produces correct DSL", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
       fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test" } });
       fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "ref-1" } });
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
@@ -648,6 +670,7 @@ describe("AnnotationBuilderModal", () => {
       enablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
+      expandOverflow();
       expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("firm");
       expect(screen.getByTestId("annotation-scope-select")).toHaveValue("paragraph");
       expect(screen.getByTestId("annotation-scope-count")).toHaveValue(3);
@@ -657,6 +680,7 @@ describe("AnnotationBuilderModal", () => {
       disablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+      expandOverflow();
       expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("neutral");
       expect(screen.getByTestId("annotation-scope-select")).toHaveValue("none");
     });
@@ -667,6 +691,7 @@ describe("AnnotationBuilderModal", () => {
         <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} mode="edit" />,
       );
       expect(screen.getByTestId("annotation-type-select")).toHaveValue("note");
+      expandOverflow();
       expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("neutral");
     });
 
@@ -697,6 +722,7 @@ describe("AnnotationBuilderModal", () => {
       expect(screen.getByTestId("annotation-scope-select")).toHaveValue("anchor");
       // type/certainty still from defaults
       expect(screen.getByTestId("annotation-type-select")).toHaveValue("question");
+      expandOverflow();
       expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("firm");
     });
 
@@ -712,6 +738,7 @@ describe("AnnotationBuilderModal", () => {
 
       enablePrefill();
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
       fireEvent.change(screen.getByTestId("annotation-type-select"), { target: { value: "question" } });
       fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
@@ -841,6 +868,83 @@ describe("AnnotationBuilderModal", () => {
       expect(toggle.checked).toBe(true);
       expect(screen.getByTestId("annotation-scope-before")).toHaveValue(2);
       expect(screen.getByTestId("annotation-scope-after")).toHaveValue(4);
+    });
+  });
+
+  describe("overflow toggle", () => {
+    it("advanced fields are hidden by default in create mode", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.queryByTestId("annotation-certainty-select")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("annotation-date-input")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("annotation-id-input")).not.toBeInTheDocument();
+      expect(screen.getByTestId("annotation-overflow-toggle")).toBeInTheDocument();
+    });
+
+    it("clicking toggle shows and hides advanced fields", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      expect(screen.getByTestId("annotation-certainty-select")).toBeInTheDocument();
+      expect(screen.getByTestId("annotation-date-input")).toBeInTheDocument();
+      expect(screen.getByTestId("annotation-id-input")).toBeInTheDocument();
+      expandOverflow();
+      expect(screen.queryByTestId("annotation-certainty-select")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("annotation-date-input")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("annotation-id-input")).not.toBeInTheDocument();
+    });
+
+    it("dot badge appears when certainty is non-default and section is collapsed", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
+      expandOverflow();
+      expect(screen.getByTestId("annotation-overflow-dot")).toBeInTheDocument();
+    });
+
+    it("dot badge hidden when section is expanded", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-certainty-select"), { target: { value: "firm" } });
+      expect(screen.queryByTestId("annotation-overflow-dot")).not.toBeInTheDocument();
+    });
+
+    it("dot badge hidden when all values are default", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expect(screen.queryByTestId("annotation-overflow-dot")).not.toBeInTheDocument();
+    });
+
+    it("auto-expands in edit mode with non-neutral certainty", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ certainty: "tentative", body: "test" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-certainty-select")).toHaveValue("tentative");
+    });
+
+    it("auto-expands when initialFields has date", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ date: "2026-03", body: "test" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-date-input")).toHaveValue("2026-03");
+    });
+
+    it("auto-expands when initialFields has id", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          initialFields={{ id: "custom-id", body: "test" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-id-input")).toHaveValue("custom-id");
     });
   });
 });

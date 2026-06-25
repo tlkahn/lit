@@ -96,6 +96,18 @@ export function AnnotationBuilderModal({
   });
   const [mark] = useState<string | undefined>(initialFields?.mark);
 
+  const [defaultDate] = useState(date);
+  const [defaultId] = useState(id);
+
+  const hasNonDefaultAdvanced = certainty !== "neutral" || date !== defaultDate || id !== defaultId;
+
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    if (initialFields?.certainty && initialFields.certainty !== "neutral") return true;
+    if (initialFields?.date) return true;
+    if (initialFields?.id) return true;
+    return false;
+  });
+
   const scope: Scope | null = useMemo(() => {
     if (scopeKind === "none") return null;
     if (scopeKind === "anchor") return { kind: "anchor" as const, value: anchorText || "" };
@@ -193,18 +205,64 @@ export function AnnotationBuilderModal({
             )}
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-text-muted">Certainty</span>
-            <select
-              data-testid="annotation-certainty-select"
-              value={certainty}
-              onChange={(e) => setCertainty(e.target.value as Certainty)}
+          <div className="flex items-end justify-end">
+            <button
+              type="button"
+              data-testid="annotation-overflow-toggle"
+              className="relative rounded px-2 py-1 text-sm text-text-muted hover:bg-bg-secondary"
+              onClick={() => setShowAdvanced(v => !v)}
+              aria-label="Toggle advanced fields"
             >
-              <option value="neutral">Neutral</option>
-              <option value="tentative">Tentative (?)</option>
-              <option value="firm">Firm (!)</option>
-            </select>
-          </label>
+              ⋮
+              {hasNonDefaultAdvanced && !showAdvanced && (
+                <span
+                  data-testid="annotation-overflow-dot"
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-interactive-accent"
+                />
+              )}
+            </button>
+          </div>
+
+          {showAdvanced && (
+            <>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">Certainty</span>
+                <select
+                  data-testid="annotation-certainty-select"
+                  value={certainty}
+                  onChange={(e) => setCertainty(e.target.value as Certainty)}
+                >
+                  <option value="neutral">Neutral</option>
+                  <option value="tentative">Tentative (?)</option>
+                  <option value="firm">Firm (!)</option>
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">Date</span>
+                <input
+                  type="text"
+                  className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                  data-testid="annotation-date-input"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  placeholder="YYYY-MM or YYYY-MM-DD"
+                />
+              </label>
+
+              <label className="col-span-2 flex flex-col gap-1">
+                <span className="text-xs text-text-muted">ID (optional)</span>
+                <input
+                  type="text"
+                  className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                  data-testid="annotation-id-input"
+                  value={id}
+                  onChange={(e) => setId(e.target.value)}
+                  placeholder="e.g. my-note-1"
+                />
+              </label>
+            </>
+          )}
 
           <label className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">Scope</span>
@@ -301,29 +359,6 @@ export function AnnotationBuilderModal({
             </label>
           )}
 
-          <label className="col-span-2 flex flex-col gap-1">
-            <span className="text-xs text-text-muted">ID (optional)</span>
-            <input
-              type="text"
-              className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
-              data-testid="annotation-id-input"
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              placeholder="e.g. my-note-1"
-            />
-          </label>
-
-          <label className="col-span-2 flex flex-col gap-1">
-            <span className="text-xs text-text-muted">Date</span>
-            <input
-              type="text"
-              className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
-              data-testid="annotation-date-input"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              placeholder="YYYY-MM or YYYY-MM-DD"
-            />
-          </label>
         </div>
 
         <label className="mb-3 flex flex-col gap-1">
