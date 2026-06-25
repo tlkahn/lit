@@ -9,6 +9,7 @@ import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
 import { PdfViewer } from "./PdfViewer";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
+import { singlePaneFocusBorderClass } from "../lib/paneFocusBorder";
 
 interface PdfViewerPaneProps {
   paneId: string;
@@ -120,9 +121,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
 
-  const borderClass = isMultiPane
-    ? ""
-    : `border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`;
+  const borderClass = singlePaneFocusBorderClass(isMultiPane, isFocused);
 
   if (!pagePath || !workspacePath) {
     return (

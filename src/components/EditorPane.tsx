@@ -22,6 +22,7 @@ import {
   setFocusedPane,
 } from "../lib/editorViewRef";
 import { usePaneFocus } from "../hooks/usePaneFocus";
+import { singlePaneFocusBorderClass } from "../lib/paneFocusBorder";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { getPdfGoToPage, markForwardSync, clearForwardSync } from "../lib/pdfPaneRef";
 import { getCachedPageMarkers } from "../lib/pageMarkers";
@@ -306,7 +307,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         ref={emptyContainerRef}
         data-testid="editor-pane"
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center ${isMultiPane ? "" : `border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}`}
+        className={`flex min-h-0 flex-1 items-center justify-center ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -319,7 +320,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     <div
       data-testid="editor-pane"
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col ${isMultiPane ? "" : `border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}`}
+      className={`flex min-h-0 flex-1 flex-col ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >

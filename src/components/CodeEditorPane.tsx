@@ -15,6 +15,7 @@ import {
   getPaneView,
 } from "../lib/editorViewRef";
 import { usePaneFocus } from "../hooks/usePaneFocus";
+import { singlePaneFocusBorderClass } from "../lib/paneFocusBorder";
 import { useWorkspaceStore } from "../stores/workspace";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -120,7 +121,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
         ref={emptyContainerRef}
         data-testid={`code-editor-pane-${paneId}`}
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center ${isMultiPane ? "" : `border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}`}
+        className={`flex min-h-0 flex-1 items-center justify-center ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -133,7 +134,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     <div
       data-testid={`code-editor-pane-${paneId}`}
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col ${isMultiPane ? "" : `border-t-2 ${isFocused ? "border-interactive-accent" : "border-transparent"}`}`}
+      className={`flex min-h-0 flex-1 flex-col ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >
