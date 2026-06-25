@@ -12,7 +12,7 @@ import {
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { ReferenceLibrary, findBibKeyForPage } from "./ReferenceLibrary";
+import { ReferenceLibrary, findBibKeyForPage, findActiveLetter } from "./ReferenceLibrary";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import type { BibEntry, BacklinkEntry, BibKeyState } from "../lib/ipc";
@@ -4137,6 +4137,106 @@ describe("EnrichCandidatePicker integration", () => {
         expect(screen.getByText("A long abstract about Saivism.")).toBeInTheDocument(),
       );
     });
+  });
+});
+
+describe("findActiveLetter", () => {
+  // Layout: header D at index 0, entry d1 at index 1, entry d2 at index 2,
+  //         header E at index 3, entry e1 at index 4, entry e2 at index 5.
+  // Each row is 40px tall.
+  const sectionedItems = [
+    { kind: "header", letter: "D" },
+    { kind: "entry" },
+    { kind: "entry" },
+    { kind: "header", letter: "E" },
+    { kind: "entry" },
+    { kind: "entry" },
+  ];
+
+  it("returns the correct letter when overscan items precede the viewport (the off-by-one bug)", () => {
+    // Viewport scrolled to 120px (start of "E" header at index 3).
+    // With overscan, virtualItems includes items from the D section that are
+    // rendered above the viewport (their .start < scrollOffset).
+    const virtualItems = [
+      { index: 1, start: 40 },   // D-section entry (overscan, above viewport)
+      { index: 2, start: 80 },   // D-section entry (overscan, above viewport)
+      { index: 3, start: 120 },  // E header (first visible)
+      { index: 4, start: 160 },
+      { index: 5, start: 200 },
+    ];
+
+    // The fix should return "E" — the section visible at the scroll offset.
+    expect(findActiveLetter(virtualItems, sectionedItems, 120)).toBe("E");
+  });
+
+  it("would return the WRONG letter with the old algorithm (proving the bug)", () => {
+    // Same scenario as above. The old algorithm used virtualItems[0].index
+    // (which is 1, in the D section) and walked backward to find "D".
+    const virtualItems = [
+      { index: 1, start: 40 },
+      { index: 2, start: 80 },
+      { index: 3, start: 120 },
+      { index: 4, start: 160 },
+      { index: 5, start: 200 },
+    ];
+
+    // Old algorithm: walk backward from virtualItems[0].index = 1 → finds "D"
+    function oldFindActiveLetter(
+      vis: { index: number; start: number }[],
+      items: { kind: string; letter?: string }[],
+    ) {
+      if (vis.length === 0) return "";
+      const topIndex = vis[0]!.index;
+      for (let i = topIndex; i >= 0; i--) {
+        const item = items[i];
+        if (item?.kind === "header") return item.letter!;
+      }
+      return "";
+    }
+
+    expect(oldFindActiveLetter(virtualItems, sectionedItems)).toBe("D"); // wrong!
+    expect(findActiveLetter(virtualItems, sectionedItems, 120)).toBe("E"); // correct
+  });
+
+  it("returns the first letter when no overscan items exist", () => {
+    const virtualItems = [
+      { index: 0, start: 0 },
+      { index: 1, start: 40 },
+      { index: 2, start: 80 },
+    ];
+    expect(findActiveLetter(virtualItems, sectionedItems, 0)).toBe("D");
+  });
+
+  it("returns empty string when virtualItems is empty", () => {
+    expect(findActiveLetter([], sectionedItems, 0)).toBe("");
+  });
+
+  it("returns empty string when no header is found walking backward", () => {
+    const items = [{ kind: "entry" }, { kind: "entry" }];
+    const virtualItems = [{ index: 0, start: 0 }];
+    expect(findActiveLetter(virtualItems, items, 0)).toBe("");
+  });
+
+  it("handles scrollOffset in the middle of a section", () => {
+    // Scrolled to 180px — between e1 (160px) and e2 (200px).
+    // First visible item is e2 at index 5, walk back to E header at index 3.
+    const virtualItems = [
+      { index: 2, start: 80 },   // overscan
+      { index: 3, start: 120 },  // overscan
+      { index: 4, start: 160 },  // overscan
+      { index: 5, start: 200 },  // first visible
+    ];
+    expect(findActiveLetter(virtualItems, sectionedItems, 180)).toBe("E");
+  });
+
+  it("uses the overscan item correctly when all items are below the viewport", () => {
+    // Edge case: scrollOffset is 0 but all virtual items start at 0+.
+    // The first item with start >= 0 is the first one.
+    const virtualItems = [
+      { index: 3, start: 120 },
+      { index: 4, start: 160 },
+    ];
+    expect(findActiveLetter(virtualItems, sectionedItems, 0)).toBe("E");
   });
 });
 

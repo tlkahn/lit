@@ -99,6 +99,31 @@ export function findBibKeyForPage(
   return undefined;
 }
 
+export interface VirtualItemLike {
+  index: number;
+  start: number;
+}
+
+export function findActiveLetter(
+  virtualItems: VirtualItemLike[],
+  sectionedItems: { kind: string; letter?: string }[],
+  scrollOffset: number,
+): string {
+  if (virtualItems.length === 0) return "";
+  let topIndex = virtualItems[0]!.index;
+  for (const vi of virtualItems) {
+    if (vi.start >= scrollOffset) {
+      topIndex = vi.index;
+      break;
+    }
+  }
+  for (let i = topIndex; i >= 0; i--) {
+    const item = sectionedItems[i];
+    if (item?.kind === "header") return item.letter!;
+  }
+  return "";
+}
+
 function combinedText(entry: BibEntry): string {
   return [
     entry.key,
@@ -918,22 +943,10 @@ export function ReferenceLibrary() {
 
   const showStrip = filtered.length >= 30;
   const virtualItems = virtualizer.getVirtualItems();
-  const activeLetter = useMemo(() => {
-    if (virtualItems.length === 0) return "";
-    const offset = virtualizer.scrollOffset ?? 0;
-    let topIndex = virtualItems[0]!.index;
-    for (const vi of virtualItems) {
-      if (vi.start >= offset) {
-        topIndex = vi.index;
-        break;
-      }
-    }
-    for (let i = topIndex; i >= 0; i--) {
-      const item = sectionedItems[i];
-      if (item?.kind === "header") return item.letter;
-    }
-    return "";
-  }, [virtualItems, sectionedItems, virtualizer.scrollOffset]);
+  const activeLetter = useMemo(
+    () => findActiveLetter(virtualItems, sectionedItems, virtualizer.scrollOffset ?? 0),
+    [virtualItems, sectionedItems, virtualizer.scrollOffset],
+  );
 
   const modeOptions = useMemo(() => [
     { value: "library", label: "Library" },
