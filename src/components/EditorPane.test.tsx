@@ -150,6 +150,24 @@ describe("EditorPane", () => {
     expect(screen.getByTestId("editor-pane")).not.toHaveClass("border-interactive-accent");
   });
 
+  it("no border in multi-pane mode (wrapper owns border)", () => {
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "pane-1", pagePath: null },
+          { type: "leaf", id: "pane-2", pagePath: null },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "pane-1",
+    });
+    render(<EditorPane paneId="pane-1" />);
+    expect(screen.getByTestId("editor-pane")).not.toHaveClass("border-t-2");
+  });
+
   it("clicking pane calls focusPane", async () => {
     usePaneStore.setState({
       root: {
@@ -216,7 +234,7 @@ describe("EditorPane", () => {
     });
   });
 
-  it("focuses pane on mousedown even when click propagation is blocked", () => {
+  it("syncs focus via onFocus when the editor pane receives focus", () => {
     usePaneStore.setState({
       root: {
         type: "split",
@@ -231,12 +249,8 @@ describe("EditorPane", () => {
       focusedPaneId: "other",
     });
     render(<EditorPane paneId="pane-1" />);
-    const child = screen.getByTestId("pane-empty-state");
 
-    child.addEventListener("click", (e) => e.stopPropagation());
-    child.addEventListener("mousedown", (e) => e.stopPropagation());
-
-    fireEvent.mouseDown(child);
+    fireEvent.focus(screen.getByTestId("editor-pane"));
 
     expect(usePaneStore.getState().focusedPaneId).toBe("pane-1");
   });

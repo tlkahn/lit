@@ -131,6 +131,24 @@ describe("PdfViewerPane", () => {
     expect(getByTestId("pdf-viewer-pane").className).toContain("border-transparent");
   });
 
+  it("no border in multi-pane mode (wrapper owns border)", () => {
+    usePaneStore.setState({
+      root: {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "p1", pagePath: "doc.pdf" },
+          { type: "leaf", id: "p2", pagePath: null },
+        ],
+        sizes: [50, 50],
+      },
+      focusedPaneId: "p1",
+    });
+    const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+    expect(getByTestId("pdf-viewer-pane").className).not.toContain("border-t-2");
+  });
+
   it("registers a goToPage callback in pdfPaneRef under its paneId", () => {
     render(<PdfViewerPane paneId="p1" />);
     expect(pdfPaneRef.getPdfGoToPage("p1")).toBeTypeOf("function");
