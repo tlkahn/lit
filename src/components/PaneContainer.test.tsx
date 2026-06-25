@@ -3,6 +3,7 @@ import { render, cleanup, act, fireEvent, screen } from "@testing-library/react"
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import type { PageMeta } from "../lib/ipc";
 import { getPaneView, setFocusedPane } from "../lib/editorViewRef";
 
@@ -699,6 +700,60 @@ describe("PaneLeafRenderer focus-on-mount guard", () => {
 
     // focus() should NOT be called since pane-a is not the focused pane
     expect(focusSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("PaneContainer collapsed mode", () => {
+  beforeEach(() => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: false });
+  });
+
+  const splitRoot: PaneNode = {
+    type: "split",
+    id: "s1",
+    direction: "horizontal",
+    children: [
+      { type: "leaf", id: "pane-a", pagePath: null },
+      { type: "leaf", id: "pane-b", pagePath: null },
+    ],
+    sizes: [50, 50],
+  };
+
+  it("panesCollapsed=true shows only the focused pane", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = screen.getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
+    expect(wrapperA.style.display).toBe("flex");
+    expect(wrapperB.style.display).toBe("none");
+  });
+
+  it("switching focusedPaneId shows the other pane", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    act(() => {
+      usePaneStore.setState({ focusedPaneId: "pane-b" });
+    });
+
+    const wrapperA = screen.getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
+    expect(wrapperA.style.display).toBe("none");
+    expect(wrapperB.style.display).toBe("flex");
+  });
+
+  it("panesCollapsed=false shows all panes normally", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: false });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const wrapperA = screen.getByTestId("editor-pane-pane-a").parentElement!;
+    const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
+    expect(wrapperA.style.display).toBe("");
+    expect(wrapperB.style.display).toBe("");
   });
 });
 

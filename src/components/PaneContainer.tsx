@@ -3,6 +3,7 @@ import type React from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import { EditorPane } from "./EditorPane";
 import { PdfViewerPane } from "./PdfViewerPane";
 import { PaneDivider } from "./PaneDivider";
@@ -16,6 +17,11 @@ import { getPaneView } from "../lib/editorViewRef";
 import { usePaneFocus } from "../hooks/usePaneFocus";
 
 const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
+
+function subtreeContainsLeaf(node: PaneNode, leafId: string): boolean {
+  if (node.type === "leaf") return node.id === leafId;
+  return node.children.some((child) => subtreeContainsLeaf(child, leafId));
+}
 
 const ExportNetworkContext = createContext<((nodeId: string) => void) | undefined>(undefined);
 
@@ -108,8 +114,32 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
 }
 
 function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
+  const panesCollapsed = useResponsiveLayoutStore((s) => s.panesCollapsed);
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+
   if (node.type === "leaf") {
     return <PaneLeafRenderer paneId={node.id} />;
+  }
+
+  if (panesCollapsed && node.children.length > 1) {
+    const focusedIdx = node.children.findIndex((child) =>
+      subtreeContainsLeaf(child, focusedPaneId),
+    );
+    const activeIdx = focusedIdx >= 0 ? focusedIdx : 0;
+
+    return (
+      <div data-testid="pane-split" className="flex flex-col min-h-0 flex-1">
+        {node.children.map((child, i) => (
+          <div
+            key={child.id}
+            style={{ display: i === activeIdx ? "flex" : "none" }}
+            className="min-h-0 min-w-0 flex-1 flex flex-col overflow-hidden"
+          >
+            <PaneNodeRenderer node={child} path={[...path, i]} />
+          </div>
+        ))}
+      </div>
+    );
   }
 
   const directionClass =

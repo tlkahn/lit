@@ -36,6 +36,8 @@ import { useSubgraphExport } from "./hooks/useSubgraphExport";
 import { SubgraphExportPicker } from "./components/SubgraphExportPicker";
 import { useBottomPanelEvents } from "./hooks/useBottomPanelEvents";
 import { useBottomPanelPosition } from "./hooks/useBottomPanelPosition";
+import { useWindowWidth } from "./hooks/useWindowWidth";
+import { useResponsiveLayoutStore } from "./stores/responsiveLayout";
 
 import { BottomPanel } from "./components/BottomPanel";
 import { getCurrentEditorView } from "./lib/editorViewRef";
@@ -82,6 +84,16 @@ function App() {
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
   const { mode: bottomPanelMode, effectiveSide } = useBottomPanelPosition();
+
+  const windowWidth = useWindowWidth();
+  const setWindowWidth = useResponsiveLayoutStore((s) => s.setWindowWidth);
+  const sidebarAutoCollapsed = useResponsiveLayoutStore((s) => s.sidebarAutoCollapsed);
+  useEffect(() => {
+    setWindowWidth(windowWidth);
+  }, [windowWidth, setWindowWidth]);
+
+  const effectiveSidebarVisible = sidebarVisible && !sidebarAutoCollapsed;
+  const showSidebarOverlay = sidebarAutoCollapsed && sidebarVisible;
 
   const focusedLeaf = usePaneStore((s) => findLeaf(s.root, s.focusedPaneId));
   const currentPanePage = focusedLeaf?.pagePath ?? null;
@@ -551,13 +563,31 @@ function App() {
   return (
     <LicenseGate entryOpen={licenseEntryOpen} onEntryOpenChange={setLicenseEntryOpen}>
       <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
-        <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+        <div className={`relative flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+          {showSidebarOverlay && (
+            <div
+              className="fixed inset-0"
+              style={{ zIndex: 45, backgroundColor: "rgba(0,0,0,0.3)" }}
+              onClick={() => usePreferencesStore.setState({ sidebarVisible: false })}
+            />
+          )}
           <div
             style={{
-              width: sidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",
-              transition: "width 150ms ease-out",
-              overflow: "hidden",
-              flexShrink: 0,
+              ...(showSidebarOverlay
+                ? {
+                    position: "absolute" as const,
+                    zIndex: 46,
+                    top: 0,
+                    [position === "right" ? "right" : "left"]: 0,
+                    height: "100%",
+                    width: `${SIDEBAR_WIDTH_PX}px`,
+                  }
+                : {
+                    width: effectiveSidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",
+                    transition: "width 150ms ease-out",
+                    overflow: "hidden",
+                    flexShrink: 0,
+                  }),
             }}
           >
             <Sidebar onExportNetwork={exportFlow.requestExport} />

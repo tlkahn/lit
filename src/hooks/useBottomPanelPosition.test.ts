@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useBottomPanelPosition } from "./useBottomPanelPosition";
 import { usePreferencesStore } from "../stores/preferences";
+import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 
 describe("useBottomPanelPosition", () => {
   beforeEach(() => {
@@ -10,6 +11,7 @@ describe("useBottomPanelPosition", () => {
       bottomPanelPosition: "bottom",
       loaded: true,
     });
+    useResponsiveLayoutStore.setState({ bottomPanelForceBottom: false });
   });
 
   it("returns mode 'bottom' and effectiveSide 'right' by default", () => {
@@ -66,5 +68,46 @@ describe("useBottomPanelPosition", () => {
     });
 
     expect(result.current.effectiveSide).toBe("left");
+  });
+
+  describe("responsive force-bottom override", () => {
+    it("overrides 'side' to 'bottom' when forceBottom is true", () => {
+      usePreferencesStore.setState({ bottomPanelPosition: "side" });
+      useResponsiveLayoutStore.setState({ bottomPanelForceBottom: true });
+      const { result } = renderHook(() => useBottomPanelPosition());
+      expect(result.current.mode).toBe("bottom");
+    });
+
+    it("does not override 'bottom' preference when forceBottom is true", () => {
+      usePreferencesStore.setState({ bottomPanelPosition: "bottom" });
+      useResponsiveLayoutStore.setState({ bottomPanelForceBottom: true });
+      const { result } = renderHook(() => useBottomPanelPosition());
+      expect(result.current.mode).toBe("bottom");
+    });
+
+    it("returns 'side' when forceBottom is false", () => {
+      usePreferencesStore.setState({ bottomPanelPosition: "side" });
+      useResponsiveLayoutStore.setState({ bottomPanelForceBottom: false });
+      const { result } = renderHook(() => useBottomPanelPosition());
+      expect(result.current.mode).toBe("side");
+    });
+
+    it("reacts when forceBottom changes", () => {
+      usePreferencesStore.setState({ bottomPanelPosition: "side" });
+      const { result } = renderHook(() => useBottomPanelPosition());
+      expect(result.current.mode).toBe("side");
+
+      act(() => {
+        useResponsiveLayoutStore.setState({ bottomPanelForceBottom: true });
+      });
+
+      expect(result.current.mode).toBe("bottom");
+
+      act(() => {
+        useResponsiveLayoutStore.setState({ bottomPanelForceBottom: false });
+      });
+
+      expect(result.current.mode).toBe("side");
+    });
   });
 });
