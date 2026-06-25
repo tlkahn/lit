@@ -38,8 +38,11 @@ export function SearchComboBar({
   });
 
   useEffect(() => {
-    if (open && menuRef.current) {
-      menuRef.current.focus();
+    if (open) {
+      const id = requestAnimationFrame(() => {
+        menuRef.current?.focus();
+      });
+      return () => cancelAnimationFrame(id);
     }
   }, [open]);
 
