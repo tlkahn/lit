@@ -22,6 +22,7 @@ function CardNoteEditor({
   const [draft, setDraft] = useState(note ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelingRef = useRef(false);
+  const initializedRef = useRef(false);
 
   const autoResize = useCallback(() => {
     const ta = textareaRef.current;
@@ -32,7 +33,9 @@ function CardNoteEditor({
 
   // Entering edit mode: reset draft, auto-focus + resize after mount.
   useEffect(() => {
-    if (!editing) return;
+    if (!editing) { initializedRef.current = false; return; }
+    if (initializedRef.current) return;
+    initializedRef.current = true;
     cancelingRef.current = false;
     setDraft(note ?? "");
     requestAnimationFrame(() => {
@@ -100,7 +103,7 @@ function CardNoteEditor({
       />
       <div className="pt-1 flex gap-2">
         <button
-          className="text-[10px] text-text-faint hover:text-text-muted"
+          className="text-[10px] text-text-muted hover:text-text-normal"
           data-testid="card-note-edit"
           onClick={onStartEditing}
         >
@@ -108,7 +111,7 @@ function CardNoteEditor({
         </button>
         {onExportNote && (
           <button
-            className="text-[10px] text-text-faint hover:text-text-muted"
+            className="text-[10px] text-text-muted hover:text-text-normal"
             data-testid="card-note-export"
             onClick={onExportNote}
           >
@@ -249,7 +252,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           opacity: expanded ? 1 : 0,
         }}
       >
-        <div className="overflow-hidden">
+        <div className="overflow-hidden" {...(!expanded ? { inert: "" as unknown as boolean } : {})}>
           <div className="mt-3 space-y-2">
             {annotation.date && (
               <div className="text-xs text-text-faint" data-testid="card-date">
@@ -258,7 +261,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             )}
             <div className="flex items-center gap-3">
               <button
-                className="flex items-center gap-1 text-xs text-text-faint hover:text-text-muted"
+                className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
                 onClick={(e) => {
                   e.stopPropagation();
                   onNavigate();
@@ -270,7 +273,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               </button>
               {onShowConnections && (
                 <button
-                  className="flex items-center gap-1 text-xs text-text-faint hover:text-text-muted"
+                  className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
                   onClick={(e) => {
                     e.stopPropagation();
                     onShowConnections();
@@ -283,7 +286,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               )}
               {onSetNote && !note && !noteEditing && (
                 <button
-                  className="flex items-center gap-1 text-xs text-text-faint hover:text-text-muted"
+                  className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
                   data-testid="card-note-add"
                   onClick={(e) => {
                     e.stopPropagation();

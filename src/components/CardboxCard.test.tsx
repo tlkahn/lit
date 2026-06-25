@@ -207,6 +207,24 @@ describe("CardboxCard", () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 
+  it("calls onShowConnections when show-connections button is clicked", () => {
+    const onShowConnections = vi.fn();
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+        onShowConnections={onShowConnections}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-show-connections"));
+    expect(onShowConnections).toHaveBeenCalledOnce();
+    // Should not bubble to toggle
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
   it("hides original context when annotation has no original", () => {
     render(
       <CardboxCard
@@ -269,6 +287,36 @@ describe("CardboxCard", () => {
     );
     const body = screen.getByTestId("card-body");
     expect(body.className).not.toContain("line-clamp-3");
+  });
+
+  it("marks expanded-content container inert when collapsed", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onShowConnections={() => {}}
+      />,
+    );
+    const navigateBtn = screen.getByTestId("card-navigate");
+    const expandedContainer = navigateBtn.closest(".overflow-hidden")!;
+    expect(expandedContainer).toHaveAttribute("inert");
+  });
+
+  it("does not mark expanded-content container inert when expanded", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onShowConnections={() => {}}
+      />,
+    );
+    const navigateBtn = screen.getByTestId("card-navigate");
+    const expandedContainer = navigateBtn.closest(".overflow-hidden")!;
+    expect(expandedContainer).not.toHaveAttribute("inert");
   });
 
   it("does not toggle expand when clicking a markdown link", () => {
@@ -425,6 +473,18 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-note-display")).not.toBeInTheDocument();
   });
 
+  it("hides Add note button when onSetNote is not provided", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("card-note-add")).not.toBeInTheDocument();
+  });
+
   it("clicking Add note reveals the textarea below the row", () => {
     render(
       <CardboxCard
@@ -460,6 +520,83 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-note-add")).not.toBeInTheDocument();
   });
 
+  it("clicking card-note-display enters edit mode (click-to-edit)", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="Click me to edit"
+        onSetNote={() => {}}
+      />,
+    );
+    // Display state is showing
+    expect(screen.getByTestId("card-note-display")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-note-textarea")).not.toBeInTheDocument();
+    // Click the display element
+    fireEvent.click(screen.getByTestId("card-note-display"));
+    // Textarea appears (editing mode)
+    expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+    // Display element is gone
+    expect(screen.queryByTestId("card-note-display")).not.toBeInTheDocument();
+  });
+
+  it("calls onExportNote when Export button is clicked", () => {
+    const onExportNote = vi.fn();
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+        note="A note to export"
+        onSetNote={() => {}}
+        onExportNote={onExportNote}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-export"));
+    expect(onExportNote).toHaveBeenCalledOnce();
+    // Should not bubble to toggle
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite user draft when note prop changes mid-edit", () => {
+    const onSetNote = vi.fn();
+    const { rerender } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="original note"
+        onSetNote={onSetNote}
+      />,
+    );
+    // Enter edit mode
+    fireEvent.click(screen.getByTestId("card-note-edit"));
+    const textarea = screen.getByTestId("card-note-textarea");
+    // User types a draft
+    fireEvent.change(textarea, { target: { value: "user draft in progress" } });
+    expect(textarea).toHaveValue("user draft in progress");
+
+    // Simulate note prop changing while still editing (e.g. undo/redo, multi-window sync)
+    rerender(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="externally changed note"
+        onSetNote={onSetNote}
+      />,
+    );
+
+    // Draft must survive -- should NOT be overwritten to "externally changed note"
+    expect(screen.getByTestId("card-note-textarea")).toHaveValue("user draft in progress");
+  });
+
   it("commits a new note via onSetNote on blur", () => {
     const onSetNote = vi.fn();
     render(
@@ -476,5 +613,133 @@ describe("CardboxCard", () => {
     fireEvent.change(textarea, { target: { value: "hello note" } });
     fireEvent.blur(textarea);
     expect(onSetNote).toHaveBeenCalledWith("hello note");
+  });
+
+  it("edits an existing note via Edit button and commits on blur", () => {
+    const onSetNote = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="existing text"
+        onSetNote={onSetNote}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-edit"));
+    const textarea = screen.getByTestId("card-note-textarea");
+    expect(textarea).toHaveValue("existing text");
+    fireEvent.change(textarea, { target: { value: "updated text" } });
+    fireEvent.blur(textarea);
+    expect(onSetNote).toHaveBeenCalledWith("updated text");
+  });
+
+  it("trims whitespace from note draft on commit", () => {
+    const onSetNote = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={onSetNote}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-add"));
+    const textarea = screen.getByTestId("card-note-textarea");
+    fireEvent.change(textarea, { target: { value: "  hello  " } });
+    fireEvent.blur(textarea);
+    expect(onSetNote).toHaveBeenCalledWith("hello");
+  });
+
+  it("does not call onSetNote on blur when text is unchanged", () => {
+    const onSetNote = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="existing text"
+        onSetNote={onSetNote}
+      />,
+    );
+    // Enter edit mode via Edit button
+    fireEvent.click(screen.getByTestId("card-note-edit"));
+    const textarea = screen.getByTestId("card-note-textarea");
+    expect(textarea).toHaveValue("existing text");
+    // Blur WITHOUT changing the text
+    fireEvent.blur(textarea);
+    // commitDraft guards: trimmed !== (note ?? ""), so onSetNote must NOT be called
+    expect(onSetNote).not.toHaveBeenCalled();
+  });
+
+  it("pressing Escape cancels note editing without committing", () => {
+    const onSetNote = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={onSetNote}
+      />,
+    );
+    // Enter note editing mode by clicking "Add note"
+    fireEvent.click(screen.getByTestId("card-note-add"));
+    const textarea = screen.getByTestId("card-note-textarea");
+    // Type something into the textarea
+    fireEvent.change(textarea, { target: { value: "discard this" } });
+    // Press Escape to cancel
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    // onSetNote must NOT have been called — the draft is discarded
+    expect(onSetNote).not.toHaveBeenCalled();
+    // Textarea must be gone (noteEditing is now false, and there's no existing note)
+    expect(screen.queryByTestId("card-note-textarea")).not.toBeInTheDocument();
+    // "Add note" button reappears (noteEditing=false, note is undefined)
+    expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
+  });
+
+  // --- WCAG AA color contrast tests ---
+
+  it("action buttons use WCAG AA compliant text color classes", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="A note"
+        onSetNote={() => {}}
+        onExportNote={() => {}}
+        onShowConnections={() => {}}
+      />,
+    );
+    const interactiveButtons = [
+      screen.getByTestId("card-navigate"),
+      screen.getByTestId("card-show-connections"),
+      screen.getByTestId("card-note-edit"),
+      screen.getByTestId("card-note-export"),
+    ];
+    for (const btn of interactiveButtons) {
+      expect(btn.className).toContain("text-text-muted");
+      expect(btn.className).not.toContain("text-text-faint");
+    }
+  });
+
+  it("Add note button uses WCAG AA compliant text color classes", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    const addBtn = screen.getByTestId("card-note-add");
+    expect(addBtn.className).toContain("text-text-muted");
+    expect(addBtn.className).not.toContain("text-text-faint");
   });
 });
