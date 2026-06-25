@@ -232,7 +232,7 @@ export function AnnotationBuilderModal({
             aria-expanded={showAdvanced}
             aria-label={hasNonDefaultAdvanced ? "Toggle advanced fields (modified)" : "Toggle advanced fields"}
           >
-            {showAdvanced ? "" : ""}
+            <span className="nerd-font" aria-hidden="true">{showAdvanced ? "" : ""}</span>
             {hasNonDefaultAdvanced && !showAdvanced && (
               <span
                 data-testid="annotation-overflow-dot"
