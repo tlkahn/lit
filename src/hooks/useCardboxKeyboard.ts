@@ -7,6 +7,7 @@ interface UseCardboxKeyboardOptions {
   onOpenLinkPicker?: () => void;
   onTogglePin?: (index: number) => void;
   onToggleNote?: () => void;
+  onToggleScope?: () => void;
   onShowConnections?: () => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
@@ -19,7 +20,7 @@ interface UseCardboxKeyboardOptions {
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -157,6 +158,13 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
           onShowConnections?.();
         }
         return;
+      case "s":
+      case "S":
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          onToggleScope?.();
+        }
+        return;
       case "?":
         if (!e.metaKey && !e.ctrlKey && !e.altKey) {
           e.preventDefault();
@@ -171,7 +179,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       cards[nextIndex]?.focus();
     }
-  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onShowConnections, onExitConnections, onShowShortcuts, expandedUuid, connectionsActive]);
+  }, [getColumnCount, itemCount, onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onShowConnections, onExitConnections, onShowShortcuts, expandedUuid, connectionsActive]);
 
   return { gridRef, handleKeyDown };
 }

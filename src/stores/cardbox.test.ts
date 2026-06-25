@@ -160,6 +160,21 @@ describe("cardbox store", () => {
     );
   });
 
+  it("default scope is document", () => {
+    expect(useCardboxStore.getState().scope).toBe("document");
+  });
+
+  it("setScope updates scope to workspace", () => {
+    useCardboxStore.getState().setScope("workspace");
+    expect(useCardboxStore.getState().scope).toBe("workspace");
+  });
+
+  it("resetFilters resets scope to document", () => {
+    useCardboxStore.getState().setScope("workspace");
+    useCardboxStore.getState().resetFilters();
+    expect(useCardboxStore.getState().scope).toBe("document");
+  });
+
   it("resetFilters clears searchQuery and sets activeTypes to all", async () => {
     await useCardboxStore.getState().fetchAnnotations();
     useCardboxStore.getState().setSearchQuery("test");

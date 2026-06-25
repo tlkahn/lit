@@ -55,6 +55,7 @@ export interface CardboxStore {
   searchQuery: string;
   activeTypes: Set<string> | null;
   activeColors: Set<string> | null;
+  scope: "document" | "workspace";
   order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
@@ -94,6 +95,7 @@ export interface CardboxStore {
   setCardColor: (uuid: string, color: string) => Promise<void>;
   clearCardColor: (uuid: string) => Promise<void>;
   toggleColor: (color: string) => void;
+  setScope: (scope: "document" | "workspace") => void;
   batchSetColor: (uuids: string[], color: string) => Promise<void>;
   batchClearColor: (uuids: string[]) => Promise<void>;
   batchPin: (uuids: string[]) => Promise<void>;
@@ -110,6 +112,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   searchQuery: "",
   activeTypes: null,
   activeColors: null,
+  scope: "document",
   order: [],
   links: [],
   groups: {},
@@ -202,11 +205,13 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       }
       return { activeTypes: next };
     }),
+  setScope: (scope) => set({ scope }),
   resetFilters: () =>
     set((s) => ({
       searchQuery: "",
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
       activeColors: null,
+      scope: "document",
       connectionsForUuid: null,
       connectionsSavedFilters: null,
     })),

@@ -48,6 +48,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const searchQuery = useCardboxStore((s) => s.searchQuery);
   const activeTypes = useCardboxStore((s) => s.activeTypes);
   const activeColors = useCardboxStore((s) => s.activeColors);
+  const scope = useCardboxStore((s) => s.scope);
+  const setScope = useCardboxStore((s) => s.setScope);
   const toggleColor = useCardboxStore((s) => s.toggleColor);
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
@@ -132,7 +134,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   useEffect(() => {
     clearSelection();
-  }, [searchQuery, activeTypes, activeColors, clearSelection]);
+  }, [searchQuery, activeTypes, activeColors, scope, clearSelection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,8 +153,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   }, [selectPageAtLine]);
 
   const documentAnnotations = useMemo(
-    () => annotations.filter((a) => a.source_page_id === pagePath),
-    [annotations, pagePath],
+    () => scope === "document"
+      ? annotations.filter((a) => a.source_page_id === pagePath)
+      : annotations,
+    [annotations, pagePath, scope],
   );
 
   // Derive all unique types from annotations (for chips)
@@ -177,7 +181,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const filteredAnnotations = useMemo(() => {
     const query = searchQuery.toLowerCase();
     return annotations.filter((ann) => {
-      if (ann.source_page_id !== pagePath) return false;
+      if (scope === "document" && ann.source_page_id !== pagePath) return false;
       // Type filter (null = not initialized yet, show all; empty set = user deselected all, show none)
       if (activeTypes !== null && activeTypes.size > 0 && !activeTypes.has(ann.annotation_type)) return false;
       if (activeTypes !== null && activeTypes.size === 0) return false;
@@ -198,7 +202,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       }
       return true;
     });
-  }, [annotations, pagePath, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet, notes]);
+  }, [annotations, pagePath, scope, searchQuery, activeTypes, effectiveActiveColors, colors, pinnedSet, notes]);
 
   const linkMap = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -391,6 +395,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onShowShortcuts: () => setShortcutsOpen(true),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
+    onToggleScope: () => setScope(scope === "document" ? "workspace" : "document"),
     onUndo: async () => { await undo(); debouncedSave(); },
     onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
@@ -790,8 +795,13 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   if (documentAnnotations.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-text-faint" data-testid="cardbox-empty">
-        No annotations in this document
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-text-faint" data-testid="cardbox-empty">
+        <span>{scope === "document" ? "No annotations in this document" : "No annotations in this workspace"}</span>
+        {scope === "document" && annotations.length > 0 && (
+          <button onClick={() => setScope("workspace")} className="text-xs text-interactive-accent hover:underline" data-testid="cardbox-show-all">
+            Show all workspace cards
+          </button>
+        )}
       </div>
     );
   }
@@ -824,14 +834,38 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
           </>
         ) : (
           <>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search annotations…"
-              className="w-full rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-faint outline-none focus:ring-1 focus:ring-interactive-accent"
-              data-testid="cardbox-search"
-            />
+            <div className="flex items-center gap-2">
+              <div className="flex gap-0.5 rounded-md border border-border p-0.5" data-testid="cardbox-scope-toggle">
+                <button
+                  aria-pressed={scope === "document"}
+                  className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+                    scope === "document" ? "bg-interactive-accent text-on-accent" : "text-text-faint hover:text-text-normal"
+                  }`}
+                  onClick={() => setScope("document")}
+                  data-testid="scope-document"
+                >
+                  Document
+                </button>
+                <button
+                  aria-pressed={scope === "workspace"}
+                  className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+                    scope === "workspace" ? "bg-interactive-accent text-on-accent" : "text-text-faint hover:text-text-normal"
+                  }`}
+                  onClick={() => setScope("workspace")}
+                  data-testid="scope-workspace"
+                >
+                  Workspace
+                </button>
+              </div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search annotations…"
+                className="w-full rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-normal placeholder:text-text-faint outline-none focus:ring-1 focus:ring-interactive-accent"
+                data-testid="cardbox-search"
+              />
+            </div>
             {allTypes.length > 1 && (
               <div className="flex flex-wrap gap-1" data-testid="cardbox-type-chips">
                 {allTypes.map((type) => (
@@ -868,8 +902,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
             )}
             <div className="text-xs text-text-faint" data-testid="cardbox-count">
               {filteredAnnotations.length === documentAnnotations.length
-                ? `${documentAnnotations.length} annotations`
-                : `${filteredAnnotations.length} of ${documentAnnotations.length} annotations`}
+                ? `${documentAnnotations.length} annotation${documentAnnotations.length !== 1 ? "s" : ""}${scope === "workspace" ? " (all documents)" : ""}`
+                : `${filteredAnnotations.length} of ${documentAnnotations.length} annotation${documentAnnotations.length !== 1 ? "s" : ""}${scope === "workspace" ? " (all documents)" : ""}`}
             </div>
           </>
         )}
