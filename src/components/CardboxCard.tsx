@@ -1,18 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, memo } from "react";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
+interface CardNoteEditorHandle {
+  startEditing(): void;
+}
+
 /** Inline sub-component: slip-note editor for a card. */
-function CardNoteEditor({
-  note,
-  onSetNote,
-  onExportNote,
-}: {
+const CardNoteEditor = forwardRef<CardNoteEditorHandle, {
   note?: string;
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
-}) {
+  onEditingChange?: (editing: boolean) => void;
+}>(function CardNoteEditor({ note, onSetNote, onExportNote, onEditingChange }, ref) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -29,41 +30,32 @@ function CardNoteEditor({
     cancelingRef.current = false;
     setDraft(note ?? "");
     setEditing(true);
-    // Auto-focus + resize after mount
+    onEditingChange?.(true);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       autoResize();
     });
-  }, [note, autoResize]);
+  }, [note, autoResize, onEditingChange]);
+
+  useImperativeHandle(ref, () => ({ startEditing }), [startEditing]);
 
   const commitDraft = useCallback(() => {
     if (cancelingRef.current) return;
     setEditing(false);
+    onEditingChange?.(false);
     const trimmed = draft.trim();
     if (trimmed !== (note ?? "")) {
       onSetNote?.(trimmed);
     }
-  }, [draft, note, onSetNote]);
+  }, [draft, note, onSetNote, onEditingChange]);
 
   const renderedNote = useMemo(
     () => (note ? renderMarkdown(note) : ""),
     [note],
   );
 
-  // Empty state: show placeholder button
   if (!note && !editing) {
-    return (
-      <button
-        className="pt-2 text-xs text-text-faint hover:text-text-muted"
-        data-testid="card-note-add"
-        onClick={(e) => {
-          e.stopPropagation();
-          startEditing();
-        }}
-      >
-        + Add note
-      </button>
-    );
+    return null;
   }
 
   // Editing state: textarea
@@ -86,6 +78,7 @@ function CardNoteEditor({
               e.stopPropagation();
               cancelingRef.current = true;
               setEditing(false);
+              onEditingChange?.(false);
             }
           }}
           rows={3}
@@ -129,7 +122,7 @@ function CardNoteEditor({
       </div>
     </div>
   );
-}
+});
 
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
@@ -150,8 +143,10 @@ interface CardboxCardProps {
 
 export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const noteEditorRef = useRef<CardNoteEditorHandle>(null);
   const prevPinnedRef = useRef(isPinned);
   const [justPinned, setJustPinned] = useState(false);
+  const [isNoteEditing, setIsNoteEditing] = useState(false);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -266,28 +261,39 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 {annotation.date}
               </div>
             )}
-            <button
-              className="text-xs text-text-accent underline hover:no-underline"
-              onClick={(e) => {
-                e.stopPropagation();
-                onNavigate();
-              }}
-              data-testid="card-navigate"
-            >
-              Open in document
-            </button>
-            {onShowConnections && (
+            <div className="flex items-center gap-1">
               <button
-                className="text-xs text-text-accent underline hover:no-underline"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onShowConnections();
-                }}
-                data-testid="card-show-connections"
+                className="inline-flex items-center justify-center rounded p-1 text-sm text-text-muted hover:bg-bg-hover hover:text-text-normal"
+                onClick={(e) => { e.stopPropagation(); onNavigate(); }}
+                data-testid="card-navigate"
+                aria-label="Open in document"
+                title="Open in document"
               >
-                Show connections
+                <span className="nerd-font" aria-hidden="true">{'󰈙'}</span>
               </button>
-            )}
+              {onShowConnections && (
+                <button
+                  className="inline-flex items-center justify-center rounded p-1 text-sm text-text-muted hover:bg-bg-hover hover:text-text-normal"
+                  onClick={(e) => { e.stopPropagation(); onShowConnections(); }}
+                  data-testid="card-show-connections"
+                  aria-label="Show connections"
+                  title="Show connections"
+                >
+                  <span className="nerd-font" aria-hidden="true">{'󱁉'}</span>
+                </button>
+              )}
+              {onSetNote && !note && !isNoteEditing && (
+                <button
+                  className="inline-flex items-center justify-center rounded p-1 text-sm text-text-muted hover:bg-bg-hover hover:text-text-normal"
+                  onClick={(e) => { e.stopPropagation(); noteEditorRef.current?.startEditing(); }}
+                  data-testid="card-note-add"
+                  aria-label="Add note"
+                  title="Add note"
+                >
+                  <span className="nerd-font" aria-hidden="true">{'󰎕'}</span>
+                </button>
+              )}
+            </div>
             {linkedCards && linkedCards.length > 0 && (
               <div
                 data-testid="card-linked-section"
@@ -330,9 +336,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             )}
             {onSetNote && (
               <CardNoteEditor
+                ref={noteEditorRef}
                 note={note}
                 onSetNote={onSetNote}
                 onExportNote={onExportNote}
+                onEditingChange={setIsNoteEditing}
               />
             )}
           </div>
