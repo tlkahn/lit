@@ -395,7 +395,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onShowShortcuts: () => setShortcutsOpen(true),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
-    onToggleScope: () => setScope(scope === "document" ? "workspace" : "document"),
+    onToggleScope: () => { if (!connectionsForUuid) setScope(scope === "document" ? "workspace" : "document"); },
     onUndo: async () => { await undo(); debouncedSave(); },
     onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
