@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, lazy, Suspense } from "react";
+import { createContext, useContext, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import type React from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
@@ -13,6 +13,7 @@ import { MindmapPaneView } from "./MindmapPaneView";
 import { GraphPaneView } from "./GraphPaneView";
 import { CardboxPaneView } from "./CardboxPaneView";
 import { getPaneView } from "../lib/editorViewRef";
+import { usePaneFocus } from "../hooks/usePaneFocus";
 
 const CodeEditorPane = lazy(() => import("./CodeEditorPane"));
 
@@ -32,6 +33,23 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const pages = useWorkspaceStore((s) => s.pages);
   const fileType = getFileType(pagePath, pages);
 
+  const handleFocus = usePaneFocus(paneId);
+
+  /** Suppress browser focus-steal on header clicks and route DOM focus to the
+   *  correct content element (CM editor if available, wrapper div otherwise). */
+  const handleHeaderMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const view = getPaneView(paneId);
+      if (view) {
+        view.focus();
+      } else {
+        (document.querySelector(`[data-pane-id="${paneId}"]`) as HTMLElement | null)?.focus();
+      }
+    },
+    [paneId],
+  );
+
   const prevViewModeRef = useRef(viewMode);
   useEffect(() => {
     const prev = prevViewModeRef.current;
@@ -44,6 +62,10 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
       });
     }
   }, [viewMode, paneId, focusedPaneId]);
+
+  const borderClass = isMultiPane
+    ? focusedPaneId === paneId ? "border-t-2 border-interactive-accent" : "border-t-2 border-transparent"
+    : "";
 
   let content: React.ReactNode;
   if (fileType === "pdf") {
@@ -73,10 +95,15 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   if (!isMultiPane) return content;
 
   return (
-    <>
-      <PaneHeader paneId={paneId} pagePath={pagePath} fileType={fileType} />
+    <div
+      onMouseDownCapture={handleFocus}
+      data-pane-id={paneId}
+      tabIndex={-1}
+      className={`flex min-h-0 flex-1 flex-col ${borderClass}`}
+    >
+      <PaneHeader paneId={paneId} pagePath={pagePath} fileType={fileType} onMouseDown={handleHeaderMouseDown} />
       {content}
-    </>
+    </div>
   );
 }
 

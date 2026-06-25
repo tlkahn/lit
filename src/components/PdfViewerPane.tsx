@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { usePaneFocus } from "../hooks/usePaneFocus";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
@@ -8,6 +9,7 @@ import { getCachedPageMarkers } from "../lib/pageMarkers";
 import { dispatchReverseSync } from "../lib/reverseSync";
 import { PdfViewer } from "./PdfViewer";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
+import { singlePaneFocusBorderClass } from "../lib/paneFocusBorder";
 
 interface PdfViewerPaneProps {
   paneId: string;
@@ -16,12 +18,10 @@ interface PdfViewerPaneProps {
 function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
   const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
   const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
+  const isMultiPane = usePaneStore((s) => s.root.type === "split");
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
 
-  const handleFocus = useCallback(() => {
-    usePaneStore.getState().focusPane(paneId);
-    setFocusedPane(paneId);
-  }, [paneId]);
+  const handleFocus = usePaneFocus(paneId);
 
   // Non-destructive peek during render: safe to repeat across discarded renders
   // in concurrent mode. The value is available synchronously for the first paint
@@ -121,7 +121,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
 
   const emptyContainerRef = useEmptyPaneFocus(isFocused, pagePath);
 
-  const borderClass = isFocused ? "border-interactive-accent" : "border-transparent";
+  const borderClass = singlePaneFocusBorderClass(isMultiPane, isFocused);
 
   if (!pagePath || !workspacePath) {
     return (
@@ -129,8 +129,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         ref={emptyContainerRef}
         data-testid="pdf-viewer-pane"
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center border-t-2 ${borderClass}`}
-        onMouseDownCapture={handleFocus}
+        className={`flex min-h-0 flex-1 items-center justify-center ${borderClass}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -151,8 +150,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
       ref={containerRef}
       data-testid="pdf-viewer-pane"
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col border-t-2 ${borderClass}`}
-      onMouseDownCapture={handleFocus}
+      className={`flex min-h-0 flex-1 flex-col ${borderClass}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { usePaneStore } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
@@ -211,5 +211,19 @@ describe("PaneHeader", () => {
       <PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />,
     );
     expect(screen.getByTestId("pane-header-title").textContent).toBe("note.md");
+  });
+
+  it("calls onMouseDown prop when header div receives mouseDown", () => {
+    useWorkspaceStore.setState({ pages: [meta("note.md", "markdown")] });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "note.md" },
+      focusedPaneId: "p1",
+    });
+    const onMouseDownSpy = vi.fn();
+    render(
+      <PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" onMouseDown={onMouseDownSpy} />,
+    );
+    fireEvent.mouseDown(screen.getByTestId("pane-header"));
+    expect(onMouseDownSpy).toHaveBeenCalledTimes(1);
   });
 });
