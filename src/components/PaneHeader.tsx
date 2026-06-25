@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { usePaneField, type PaneContentEntry } from "../lib/paneContentRegistry";
-import { usePaneStore, findLeaf } from "../stores/panes";
+import { usePaneStore, findLeaf, collectLeaves } from "../stores/panes";
+import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import type { LeafFileType } from "../hooks/useLeafFileType";
 import { basename } from "../lib/pathUtils";
 import { HistoryNavButtons } from "./HistoryNavButtons";
@@ -18,6 +19,10 @@ export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
   const mdTitle = usePaneField(paneId, titleSel);
   const isFocused = usePaneStore((s) => s.focusedPaneId === paneId);
   const viewMode = usePaneStore((s) => findLeaf(s.root, paneId)?.viewMode ?? "editor");
+  const panesCollapsed = useResponsiveLayoutStore((s) => s.panesCollapsed);
+  const root = usePaneStore((s) => s.root);
+  const allLeaves = useMemo(() => collectLeaves(root), [root]);
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
 
   const displayName = useMemo(() => {
     if (!pagePath) return "";
@@ -26,6 +31,8 @@ export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
   }, [pagePath, fileType, mdTitle]);
 
   if (!pagePath) return null;
+
+  const showDots = panesCollapsed && allLeaves.length > 1;
 
   return (
     <div
@@ -36,6 +43,26 @@ export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
       <span className="truncate text-text-muted" data-testid="pane-header-title">
         {displayName}
       </span>
+      {showDots && (
+        <div className="flex items-center gap-1" data-testid="pane-dots">
+          {allLeaves.map((leaf) => (
+            <button
+              key={leaf.id}
+              data-testid={`pane-dot-${leaf.id}`}
+              onClick={() => usePaneStore.getState().focusPane(leaf.id)}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                border: "1.5px solid var(--text-muted)",
+                backgroundColor: leaf.id === focusedPaneId ? "var(--text-muted)" : "transparent",
+                padding: 0,
+                cursor: "pointer",
+              }}
+            />
+          ))}
+        </div>
+      )}
       {isFocused && fileType === "markdown" && (
         <div className="ms-auto">
           <ViewModeToggle paneId={paneId} currentMode={viewMode} />

@@ -247,7 +247,8 @@ pub fn run() {
             let mut builder =
                 WebviewWindowBuilder::new(app.handle(), "main", tauri::WebviewUrl::default())
                     .title("Lit")
-                    .inner_size(1024.0, 768.0);
+                    .inner_size(1024.0, 768.0)
+                    .min_inner_size(400.0, 300.0);
 
             if let Some(script) = cli_init_script(&setup_workspace, &setup_file, &setup_line, &setup_col) {
                 builder = builder.initialization_script(&script);
