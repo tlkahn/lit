@@ -920,13 +920,20 @@ export function ReferenceLibrary() {
   const virtualItems = virtualizer.getVirtualItems();
   const activeLetter = useMemo(() => {
     if (virtualItems.length === 0) return "";
-    const topIndex = virtualItems[0]!.index;
+    const offset = virtualizer.scrollOffset ?? 0;
+    let topIndex = virtualItems[0]!.index;
+    for (const vi of virtualItems) {
+      if (vi.start >= offset) {
+        topIndex = vi.index;
+        break;
+      }
+    }
     for (let i = topIndex; i >= 0; i--) {
       const item = sectionedItems[i];
       if (item?.kind === "header") return item.letter;
     }
     return "";
-  }, [virtualItems[0]?.index, sectionedItems]);
+  }, [virtualItems, sectionedItems, virtualizer.scrollOffset]);
 
   const modeOptions = useMemo(() => [
     { value: "library", label: "Library" },
