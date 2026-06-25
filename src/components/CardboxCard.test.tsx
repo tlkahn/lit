@@ -402,4 +402,79 @@ describe("CardboxCard", () => {
     expect(onRemoveLink).toHaveBeenCalledOnce();
     expect(onToggle).not.toHaveBeenCalled();
   });
+
+  // --- Slip note tests ---
+
+  it("renders Add note trigger in the same action row as navigate", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    const addButton = screen.getByTestId("card-note-add");
+    expect(addButton).toBeInTheDocument();
+    // Add note trigger and navigate button share the same flex row parent.
+    const navigate = screen.getByTestId("card-navigate");
+    expect(addButton.parentElement).toBe(navigate.parentElement);
+    // The note editor body is not mounted yet (no note, not editing).
+    expect(screen.queryByTestId("card-note-textarea")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-note-display")).not.toBeInTheDocument();
+  });
+
+  it("clicking Add note reveals the textarea below the row", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-add"));
+    expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+    // Trigger disappears once editing.
+    expect(screen.queryByTestId("card-note-add")).not.toBeInTheDocument();
+  });
+
+  it("shows display state with Edit/Export for a card with an existing note", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="An existing slip note"
+        onSetNote={() => {}}
+        onExportNote={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-note-display")).toHaveTextContent("An existing slip note");
+    expect(screen.getByTestId("card-note-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("card-note-export")).toBeInTheDocument();
+    // No Add note trigger when a note already exists.
+    expect(screen.queryByTestId("card-note-add")).not.toBeInTheDocument();
+  });
+
+  it("commits a new note via onSetNote on blur", () => {
+    const onSetNote = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={onSetNote}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-add"));
+    const textarea = screen.getByTestId("card-note-textarea");
+    fireEvent.change(textarea, { target: { value: "hello note" } });
+    fireEvent.blur(textarea);
+    expect(onSetNote).toHaveBeenCalledWith("hello note");
+  });
 });

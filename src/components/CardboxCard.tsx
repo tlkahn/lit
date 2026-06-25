@@ -3,17 +3,22 @@ import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/an
 import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
-/** Inline sub-component: slip-note editor for a card. */
+/** Inline sub-component: slip-note editor body (textarea / display states). */
 function CardNoteEditor({
   note,
+  editing,
+  onStartEditing,
+  onStopEditing,
   onSetNote,
   onExportNote,
 }: {
   note?: string;
+  editing: boolean;
+  onStartEditing: () => void;
+  onStopEditing: () => void;
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelingRef = useRef(false);
@@ -25,46 +30,30 @@ function CardNoteEditor({
     ta.style.height = `${ta.scrollHeight}px`;
   }, []);
 
-  const startEditing = useCallback(() => {
+  // Entering edit mode: reset draft, auto-focus + resize after mount.
+  useEffect(() => {
+    if (!editing) return;
     cancelingRef.current = false;
     setDraft(note ?? "");
-    setEditing(true);
-    // Auto-focus + resize after mount
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       autoResize();
     });
-  }, [note, autoResize]);
+  }, [editing, note, autoResize]);
 
   const commitDraft = useCallback(() => {
     if (cancelingRef.current) return;
-    setEditing(false);
+    onStopEditing();
     const trimmed = draft.trim();
     if (trimmed !== (note ?? "")) {
       onSetNote?.(trimmed);
     }
-  }, [draft, note, onSetNote]);
+  }, [draft, note, onSetNote, onStopEditing]);
 
   const renderedNote = useMemo(
     () => (note ? renderMarkdown(note) : ""),
     [note],
   );
-
-  // Empty state: show placeholder button
-  if (!note && !editing) {
-    return (
-      <button
-        className="flex items-center gap-1 pt-2 text-xs text-text-faint hover:text-text-muted"
-        data-testid="card-note-add"
-        onClick={(e) => {
-          e.stopPropagation();
-          startEditing();
-        }}
-      >
-        <span className="nerd-font" aria-hidden="true">{''}</span> Add note
-      </button>
-    );
-  }
 
   // Editing state: textarea
   if (editing) {
@@ -85,7 +74,7 @@ function CardNoteEditor({
             if (e.key === "Escape") {
               e.stopPropagation();
               cancelingRef.current = true;
-              setEditing(false);
+              onStopEditing();
             }
           }}
           rows={3}
@@ -105,7 +94,7 @@ function CardNoteEditor({
         dangerouslySetInnerHTML={{ __html: renderedNote }}
         onClick={(e) => {
           if (!(e.target as HTMLElement).closest("a")) {
-            startEditing();
+            onStartEditing();
           }
         }}
       />
@@ -113,7 +102,7 @@ function CardNoteEditor({
         <button
           className="text-[10px] text-text-faint hover:text-text-muted"
           data-testid="card-note-edit"
-          onClick={startEditing}
+          onClick={onStartEditing}
         >
           Edit
         </button>
@@ -152,6 +141,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   const cardRef = useRef<HTMLDivElement>(null);
   const prevPinnedRef = useRef(isPinned);
   const [justPinned, setJustPinned] = useState(false);
+  const [noteEditing, setNoteEditing] = useState(false);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -268,7 +258,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             )}
             <div className="flex items-center gap-3">
               <button
-                className="flex items-center gap-1 text-xs text-text-accent hover:text-text-normal"
+                className="flex items-center gap-1 text-xs text-text-faint hover:text-text-muted"
                 onClick={(e) => {
                   e.stopPropagation();
                   onNavigate();
@@ -280,7 +270,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               </button>
               {onShowConnections && (
                 <button
-                  className="flex items-center gap-1 text-xs text-text-accent hover:text-text-normal"
+                  className="flex items-center gap-1 text-xs text-text-faint hover:text-text-muted"
                   onClick={(e) => {
                     e.stopPropagation();
                     onShowConnections();
@@ -289,6 +279,18 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 >
                   <span className="nerd-font" aria-hidden="true">{'󰌹'}</span>
                   Show connections
+                </button>
+              )}
+              {onSetNote && !note && !noteEditing && (
+                <button
+                  className="flex items-center gap-1 text-xs text-text-faint hover:text-text-muted"
+                  data-testid="card-note-add"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNoteEditing(true);
+                  }}
+                >
+                  <span className="nerd-font" aria-hidden="true">{''}</span> Add note
                 </button>
               )}
             </div>
@@ -332,9 +334,12 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 </div>
               </div>
             )}
-            {onSetNote && (
+            {onSetNote && (note || noteEditing) && (
               <CardNoteEditor
                 note={note}
+                editing={noteEditing}
+                onStartEditing={() => setNoteEditing(true)}
+                onStopEditing={() => setNoteEditing(false)}
                 onSetNote={onSetNote}
                 onExportNote={onExportNote}
               />
