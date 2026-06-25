@@ -87,12 +87,12 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
 }
 
 function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
+  const panesCollapsed = useResponsiveLayoutStore((s) => s.panesCollapsed);
+  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
+
   if (node.type === "leaf") {
     return <PaneLeafRenderer paneId={node.id} />;
   }
-
-  const panesCollapsed = useResponsiveLayoutStore((s) => s.panesCollapsed);
-  const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
 
   if (panesCollapsed && node.children.length > 1) {
     const focusedIdx = node.children.findIndex((child) =>

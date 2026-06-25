@@ -13,11 +13,13 @@ interface ResponsiveLayoutState {
   setWindowWidth: (width: number) => void;
 }
 
+const _initW = typeof window !== "undefined" ? window.innerWidth : 1024;
+
 export const useResponsiveLayoutStore = create<ResponsiveLayoutState>((set, get) => ({
-  windowWidth: typeof window !== "undefined" ? window.innerWidth : 1024,
-  sidebarAutoCollapsed: false,
-  panesCollapsed: false,
-  bottomPanelForceBottom: false,
+  windowWidth: _initW,
+  sidebarAutoCollapsed: _initW < SIDEBAR_COLLAPSE_PX,
+  panesCollapsed: _initW < PANE_COLLAPSE_PX,
+  bottomPanelForceBottom: _initW < PANEL_FORCE_BOTTOM_PX,
 
   setWindowWidth: (width) => {
     const prev = get();

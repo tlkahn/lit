@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { usePaneStore } from "../stores/panes";
+import type { PaneNode } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import { registerPaneContent, _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
 import type { PageMeta } from "../lib/ipc";
 
@@ -211,5 +213,71 @@ describe("PaneHeader", () => {
       <PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />,
     );
     expect(screen.getByTestId("pane-header-title").textContent).toBe("note.md");
+  });
+});
+
+describe("PaneHeader dot indicators", () => {
+  const splitRoot: PaneNode = {
+    type: "split",
+    id: "s1",
+    direction: "horizontal",
+    children: [
+      { type: "leaf", id: "pane-a", pagePath: "a.md" },
+      { type: "leaf", id: "pane-b", pagePath: "b.md" },
+    ],
+    sizes: [50, 50],
+  };
+
+  beforeEach(() => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: false });
+    useWorkspaceStore.setState({
+      pages: [meta("a.md", "markdown"), meta("b.md", "markdown")],
+    });
+  });
+
+  it("renders dots when panesCollapsed and multiple leaves", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneHeader paneId="pane-a" pagePath="a.md" fileType="markdown" />);
+    expect(screen.getByTestId("pane-dots")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-dot-pane-a")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-dot-pane-b")).toBeInTheDocument();
+  });
+
+  it("does not render dots when panesCollapsed=false", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: false });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneHeader paneId="pane-a" pagePath="a.md" fileType="markdown" />);
+    expect(screen.queryByTestId("pane-dots")).toBeNull();
+  });
+
+  it("does not render dots with a single leaf", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "a.md" },
+      focusedPaneId: "p1",
+    });
+    render(<PaneHeader paneId="p1" pagePath="a.md" fileType="markdown" />);
+    expect(screen.queryByTestId("pane-dots")).toBeNull();
+  });
+
+  it("clicking a dot calls focusPane", async () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    const focusSpy = vi.spyOn(usePaneStore.getState(), "focusPane");
+    render(<PaneHeader paneId="pane-a" pagePath="a.md" fileType="markdown" />);
+
+    await userEvent.click(screen.getByTestId("pane-dot-pane-b"));
+    expect(focusSpy).toHaveBeenCalledWith("pane-b");
+    focusSpy.mockRestore();
+  });
+
+  it("active dot has aria-current='true'", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneHeader paneId="pane-a" pagePath="a.md" fileType="markdown" />);
+
+    expect(screen.getByTestId("pane-dot-pane-a").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTestId("pane-dot-pane-b").getAttribute("aria-current")).toBeNull();
   });
 });

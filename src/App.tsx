@@ -563,11 +563,11 @@ function App() {
   return (
     <LicenseGate entryOpen={licenseEntryOpen} onEntryOpenChange={setLicenseEntryOpen}>
       <div className={`flex h-screen flex-col bg-bg-primary${focusModeActive ? " focus-mode-zen" : ""}`}>
-        <div className={`flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
+        <div className={`relative flex min-h-0 flex-1 ${position === "right" ? "flex-row-reverse" : "flex-row"}`}>
           {showSidebarOverlay && (
             <div
               className="fixed inset-0"
-              style={{ zIndex: 39, backgroundColor: "rgba(0,0,0,0.3)" }}
+              style={{ zIndex: 45, backgroundColor: "rgba(0,0,0,0.3)" }}
               onClick={() => usePreferencesStore.setState({ sidebarVisible: false })}
             />
           )}
@@ -576,12 +576,11 @@ function App() {
               ...(showSidebarOverlay
                 ? {
                     position: "absolute" as const,
-                    zIndex: 40,
+                    zIndex: 46,
                     top: 0,
                     [position === "right" ? "right" : "left"]: 0,
                     height: "100%",
                     width: `${SIDEBAR_WIDTH_PX}px`,
-                    transition: "transform 150ms ease-out",
                   }
                 : {
                     width: effectiveSidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",

@@ -45,21 +45,35 @@ export function PaneHeader({ paneId, pagePath, fileType }: PaneHeaderProps) {
       </span>
       {showDots && (
         <div className="flex items-center gap-1" data-testid="pane-dots">
-          {allLeaves.map((leaf) => (
+          {allLeaves.map((leaf, i) => (
             <button
               key={leaf.id}
               data-testid={`pane-dot-${leaf.id}`}
+              aria-label={`Switch to pane ${i + 1}`}
+              aria-current={leaf.id === focusedPaneId ? "true" : undefined}
               onClick={() => usePaneStore.getState().focusPane(leaf.id)}
               style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                border: "1.5px solid var(--text-muted)",
-                backgroundColor: leaf.id === focusedPaneId ? "var(--text-muted)" : "transparent",
+                minWidth: 24,
+                minHeight: 24,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "none",
+                border: "none",
                 padding: 0,
                 cursor: "pointer",
               }}
-            />
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  border: "1.5px solid var(--text-muted)",
+                  backgroundColor: leaf.id === focusedPaneId ? "var(--text-muted)" : "transparent",
+                }}
+              />
+            </button>
           ))}
         </div>
       )}
