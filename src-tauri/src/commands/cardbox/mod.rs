@@ -503,7 +503,7 @@ pub fn unpin_cardbox_card(
 
 pub(super) fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .map(|c| if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
         .collect()
 }
 
@@ -2878,5 +2878,23 @@ mod tests {
             all_uuids.len(), before_dedup,
             "some card UUIDs appear more than once"
         );
+    }
+
+    #[test]
+    fn sanitize_filename_strips_control_characters() {
+        let input = "hello\0world\x07bell\x1Fescape";
+        let result = super::sanitize_filename(input);
+        assert_eq!(result, "hello_world_bell_escape");
+        assert!(!result.chars().any(|c| c.is_control()));
+    }
+
+    #[test]
+    fn sanitize_filename_strips_newlines_and_tabs() {
+        let input = "line one\nline two\r\nline three\ttabbed";
+        let result = super::sanitize_filename(input);
+        assert_eq!(result, "line one_line two__line three_tabbed");
+        assert!(!result.contains('\n'));
+        assert!(!result.contains('\r'));
+        assert!(!result.contains('\t'));
     }
 }

@@ -272,6 +272,11 @@ pub(crate) fn write_draft_file(
     }
 
     let base = super::sanitize_filename(title);
+    let base = if base.len() > 200 {
+        base[..base.floor_char_boundary(200)].to_string()
+    } else {
+        base
+    };
     let filename = super::dedup_filename(root, &base);
     let file_path = root.join(&filename);
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
@@ -350,7 +355,10 @@ pub async fn merge_cards_to_draft(
     .await
     {
         Ok(t) => t,
-        Err(_) => source_titles.join(" + "),
+        Err(e) => {
+            tracing::warn!("LLM title suggestion failed, using fallback: {e}");
+            source_titles.join(" + ")
+        }
     };
 
     // ── Phase 3: sync file write ──────────────────────────────────────────
@@ -806,5 +814,24 @@ mod tests {
 
         // Exactly one frontmatter source entry.
         assert_eq!(content.matches("  - \"[[").count(), 1);
+    }
+
+    #[test]
+    fn write_draft_file_truncates_long_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let long_title = "A ".repeat(200);
+        assert!(long_title.len() > 300);
+
+        let (filename, _) =
+            write_draft_file(root, &long_title, "body", &["src".to_string()], "2026-01-01")
+                .unwrap();
+        assert!(
+            filename.len() <= 204,
+            "filename should be at most 200 base + .md (4), got {} bytes: {filename}",
+            filename.len()
+        );
+        assert!(filename.ends_with(".md"));
+        assert!(root.join(&filename).exists());
     }
 }
