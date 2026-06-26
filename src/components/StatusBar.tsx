@@ -324,13 +324,13 @@ export function StatusBar() {
             role="status"
             aria-live="polite"
             data-testid="status-bar-message"
-            className={`mr-2 max-w-[40%] truncate ${toast.variant === "error" ? "text-text-error" : "text-text-muted"}${toast.variant === "progress" ? " animate-pulse" : ""}${animClass}`}
+            className={`mr-2 flex max-w-[40%] items-center ${toast.variant === "error" ? "text-text-error" : "text-text-muted"}${toast.variant === "progress" ? " animate-pulse" : ""}${animClass}`}
           >
-            {toast.message}
+            <span className="truncate">{toast.message}</span>
             {toast.action && (
               <button
                 data-testid="status-bar-action"
-                className="ml-1.5 underline hover:text-text-normal"
+                className="ml-1.5 shrink-0 underline hover:text-text-normal"
                 onClick={toast.action.onClick}
               >
                 {toast.action.label}
