@@ -395,3 +395,7 @@ select:disabled {
 }
 .status-toast-enter { animation: status-toast-enter 0.2s ease-out; }
 .status-toast-exit  { animation: status-toast-exit 0.3s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .status-toast-enter,
+  .status-toast-exit { animation: none; }
+}

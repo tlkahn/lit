@@ -232,9 +232,10 @@ function useToastAnimation() {
           setToast(null);
           setPhase("idle");
           exitTimerRef.current = null;
-        }, 300);
+        }, 300); // matches .status-toast-exit duration (0.3s)
       }
     }
+    // toast omitted: including it would re-trigger the effect on every setToast call
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeMessage, storeVariant, storeAction]);
 
@@ -320,6 +321,8 @@ export function StatusBar() {
       <div className="flex items-center">
         {toast && (
           <span
+            role="status"
+            aria-live="polite"
             data-testid="status-bar-message"
             className={`mr-2 max-w-[40%] truncate ${toast.variant === "error" ? "text-text-error" : "text-text-muted"}${toast.variant === "progress" ? " animate-pulse" : ""}${animClass}`}
           >
