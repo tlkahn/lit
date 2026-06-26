@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { PaperSearchResult, BibEntry } from "../lib/ipc";
 import { doiHref } from "../lib/urlUtils";
 import { EntryTypeBadge } from "./EntryTypeBadge";
-import { abbreviateAuthors, distinctPublisher } from "../lib/bibUtils";
+import { abbreviateAuthors, distinctPublisher, entryStableKey } from "../lib/bibUtils";
 
 interface PaperSearchResultsProps {
   results: PaperSearchResult;
@@ -11,10 +11,6 @@ interface PaperSearchResultsProps {
   savingKeys: Set<string>;
   savedKeys: Set<string>;
   duplicateKeys: Map<string, string>;
-}
-
-function entryStableKey(entry: BibEntry): string {
-  return entry.doi ?? entry.key;
 }
 
 
@@ -90,9 +86,7 @@ export function PaperSearchResults({
             const stableKey = entryStableKey(entry);
             const isSaving = savingKeys.has(stableKey);
             const isSaved = savedKeys.has(stableKey);
-            const duplicateOf = entry.doi
-              ? duplicateKeys.get(entry.doi)
-              : undefined;
+            const duplicateOf = duplicateKeys.get(stableKey);
             const isExpanded = expandedIndex === virtualRow.index;
             const pub = distinctPublisher(entry);
 

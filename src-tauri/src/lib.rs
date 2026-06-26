@@ -367,6 +367,7 @@ pub fn run() {
             commands::bib_import::save_bib_entry,
             commands::bib_import::parse_csl_json,
             commands::bib_import::save_bib_entries,
+            commands::bib_import::check_bib_duplicates,
             commands::external_editor::open_in_external_editor,
             commands::graph::rebuild_graph_index,
             commands::graph::get_pagerank,

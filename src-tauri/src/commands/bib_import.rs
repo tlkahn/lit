@@ -3,7 +3,7 @@ use std::sync::{Arc, LazyLock};
 
 use serde::Deserialize;
 use crate::bib::convert::{csl_to_bib_entry, is_valid_doi, normalize_doi, CslItem};
-use crate::bib::db::save_entry_with_generated_key;
+use crate::bib::db::{check_duplicates, save_entry_with_generated_key};
 use crate::bib::types::BibEntry;
 use crate::bib::writer::SaveOutcome;
 use crate::commands::graph::GraphRegistry;
@@ -169,6 +169,20 @@ pub fn save_bib_entries(
 
     crate::commands::graph::notify_bib_changed(&graph_state, &workspace_root, &app_handle);
     Ok(outcomes)
+}
+
+#[tauri::command]
+pub fn check_bib_duplicates(
+    entries: Vec<BibEntry>,
+    workspace_path: String,
+    graph_state: tauri::State<Arc<GraphRegistry>>,
+) -> Result<Vec<Option<String>>, String> {
+    let workspace_root = PathBuf::from(&workspace_path);
+
+    let gi = lookup_graph_index(&graph_state, &workspace_root)
+        .ok_or_else(|| "Graph index not ready".to_string())?;
+    let store = gi.store();
+    check_duplicates(&store.conn, &entries).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -143,20 +143,15 @@ fn find_live_by_field(
     Ok(result)
 }
 
-pub fn upsert_bib_item(
-    conn: &Connection,
-    entry: &BibEntry,
-    source_file: Option<&str>,
-    source_line: Option<usize>,
-    from_scan: bool,
-) -> Result<UpsertOutcome, GraphError> {
+/// Check if a live row already exists that matches this entry's identifiers.
+/// Dedup cascade: DOI > ISBN > OCLC > arXiv > title+year fallback.
+/// Returns `Some(existing_cite_key)` if a duplicate is found, `None` otherwise.
+pub fn find_duplicate(conn: &Connection, entry: &BibEntry) -> Result<Option<String>, GraphError> {
     let doi = entry.doi.as_deref().map(normalize_doi);
     let isbn = entry.isbn.as_deref();
     let oclc = entry.oclc.as_deref();
     let arxiv_id = entry.arxiv_id.as_deref().map(normalize_arxiv_id);
 
-    // Dedup precedence: doi > isbn > oclc > arxiv_id > title+year (live rows only)
-    // Uses sequential checks instead of Option::or() to avoid eager evaluation of DB queries.
     let mut dedup_match: Option<String> = None;
     if dedup_match.is_none() {
         if let Some(ref d) = doi {
@@ -179,27 +174,43 @@ pub fn upsert_bib_item(
         }
     }
 
-    // Title+year fallback dedup: only when the incoming entry has NO identifiers
-    let dedup_match = if dedup_match.is_none()
+    if dedup_match.is_none()
         && doi.is_none()
         && isbn.is_none()
         && oclc.is_none()
         && arxiv_id.is_none()
     {
-        find_live_by_title_year(conn, &entry.title, &entry.year)?
-    } else {
-        dedup_match
-    };
+        dedup_match = find_live_by_title_year(conn, &entry.title, &entry.year)?;
+    }
+
+    Ok(dedup_match)
+}
+
+/// Batch duplicate check: returns a vec of the same length as `entries`,
+/// with `Some(existing_cite_key)` for duplicates and `None` for new entries.
+pub fn check_duplicates(conn: &Connection, entries: &[BibEntry]) -> Result<Vec<Option<String>>, GraphError> {
+    entries.iter().map(|e| find_duplicate(conn, e)).collect()
+}
+
+pub fn upsert_bib_item(
+    conn: &Connection,
+    entry: &BibEntry,
+    source_file: Option<&str>,
+    source_line: Option<usize>,
+    from_scan: bool,
+) -> Result<UpsertOutcome, GraphError> {
+    let dedup_match = find_duplicate(conn, entry)?;
 
     if let Some(ref existing_key) = dedup_match {
         if existing_key != &entry.key {
-            // Duplicate detected under a different key (by identifier or
-            // title+year); always skip. Callers decide cleanup.
             return Ok(UpsertOutcome::DedupSkipped {
                 existing_key: existing_key.clone(),
             });
         }
     }
+
+    let doi = entry.doi.as_deref().map(normalize_doi);
+    let arxiv_id = entry.arxiv_id.as_deref().map(normalize_arxiv_id);
 
     // Cite-key match (including tombstoned)
     let existing: Option<(i64, Option<String>)> = conn
@@ -212,7 +223,6 @@ pub fn upsert_bib_item(
 
     if let Some((_id, _deleted_at)) = existing {
         if from_scan {
-            // Gap-fill: only fill NULL/empty fields, but always refresh source_file, source_line, raw_bibtex
             gap_fill_row(conn, &entry.key, entry, &doi, &arxiv_id, source_file, source_line)?;
         } else {
             update_row_full(conn, &entry.key, entry, &doi, &arxiv_id, source_file, source_line)?;
@@ -1635,6 +1645,46 @@ mod tests {
         upsert_bib_item(&store.conn, &e, None, None, false).unwrap();
         tombstone_bib_item(&store.conn, "smith2024").unwrap();
         assert!(!tombstone_bib_item(&store.conn, "smith2024").unwrap());
+    }
+
+    // ── find_duplicate / check_duplicates tests ───────────────────
+
+    #[test]
+    fn test_find_duplicate_by_doi() {
+        let store = Store::open_memory().unwrap();
+        let a = test_entry_with_doi("entryA", "10.1000/x");
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let b = test_entry_with_doi("entryB", "10.1000/x");
+        assert_eq!(find_duplicate(&store.conn, &b).unwrap(), Some("entryA".to_string()));
+    }
+
+    #[test]
+    fn test_find_duplicate_no_match() {
+        let store = Store::open_memory().unwrap();
+        let a = test_entry_with_doi("entryA", "10.1000/x");
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let b = test_entry_with_doi("entryB", "10.1000/y");
+        assert_eq!(find_duplicate(&store.conn, &b).unwrap(), None);
+    }
+
+    #[test]
+    fn test_check_duplicates_batch() {
+        let store = Store::open_memory().unwrap();
+        let a = test_entry_with_doi("entryA", "10.1000/x");
+        upsert_bib_item(&store.conn, &a, None, None, false).unwrap();
+
+        let queries = vec![
+            test_entry_with_doi("q1", "10.1000/x"),  // duplicate
+            test_entry_with_doi("q2", "10.1000/y"),  // new
+            test_entry("q3"),                         // no identifiers, different title
+        ];
+        let results = check_duplicates(&store.conn, &queries).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], Some("entryA".to_string()));
+        assert_eq!(results[1], None);
+        assert_eq!(results[2], None);
     }
 
     // ── Bulk query tests ──────────────────────────────────────────

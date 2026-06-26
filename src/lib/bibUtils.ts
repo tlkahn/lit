@@ -1,5 +1,9 @@
 import type { BibEntry, BibKeyState } from "./ipc";
 
+export function entryStableKey(entry: BibEntry): string {
+  return entry.doi ?? entry.key;
+}
+
 /**
  * Returns the border className for a bib entry based on its materialization
  * state: accent border when a note page exists, dashed muted border for

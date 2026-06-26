@@ -25,6 +25,7 @@ import {
   linkEntryPdf,
   searchPapers,
   saveBibEntry,
+  checkBibDuplicates,
   isSaved,
   isSavedNoDoi,
   isDuplicateDoi,
@@ -35,7 +36,7 @@ import {
   type PaperSearchResult,
 } from "../lib/ipc";
 import { classifyEnrichResult, dispatchEnrichResult, type EnrichCandidateState } from "../lib/enrichResult";
-import { materializationBorderClass } from "../lib/bibUtils";
+import { materializationBorderClass, entryStableKey } from "../lib/bibUtils";
 import { ensureSidebarVisible } from "../lib/sidebarVisibility";
 import {
   onRevealBibEntry,
@@ -266,20 +267,43 @@ export function ReferenceLibrary() {
     if (!q || searching) return;
     setSearching(true);
     setSearchResults(null);
+    setDuplicateKeys(new Map());
     try {
       const st = searchMode !== "auto" ? searchMode : looksLikeIsbn(q) ? "isbn" : undefined;
       const result = await searchPapers(q, undefined, undefined, st);
       setSearchResults(result);
+      if (workspacePath && result.entries.length > 0) {
+        const id = ++dupCheckIdRef.current;
+        checkBibDuplicates(result.entries, workspacePath)
+          .then((dupes) => {
+            if (id !== dupCheckIdRef.current) return;
+            setDuplicateKeys((prev) => {
+              const next = new Map(prev);
+              dupes.forEach((existingKey, i) => {
+                const entry = result.entries[i];
+                if (!entry) return;
+                const sk = entryStableKey(entry);
+                if (existingKey) {
+                  next.set(sk, existingKey);
+                } else {
+                  next.delete(sk);
+                }
+              });
+              return next;
+            });
+          })
+          .catch((err) => { console.warn("checkBibDuplicates failed:", err); });
+      }
     } catch (err) {
       show(err instanceof Error ? err.message : String(err), "error");
     } finally {
       setSearching(false);
     }
-  }, [searchQuery, searching, show, searchMode]);
+  }, [searchQuery, searching, show, searchMode, workspacePath]);
 
   const handleSaveSearchResult = useCallback(async (entry: BibEntry) => {
     if (!workspacePath) return;
-    const stableKey = entry.doi ?? entry.key;
+    const stableKey = entryStableKey(entry);
     setSavingKeys((prev) => new Set(prev).add(stableKey));
     try {
       const outcomes = await saveBibEntry(entry, workspacePath);
@@ -291,7 +315,7 @@ export function ReferenceLibrary() {
           setSavedKeys((prev) => new Set(prev).add(stableKey));
           show(`Saved @${o.SavedNoDoi.key}`);
         } else if (isDuplicateDoi(o)) {
-          setDuplicateKeys((prev) => new Map(prev).set(o.DuplicateDoi.doi, o.DuplicateDoi.existing_key));
+          setDuplicateKeys((prev) => new Map(prev).set(stableKey, o.DuplicateDoi.existing_key));
           show(`Already in library as @${o.DuplicateDoi.existing_key}`);
         }
       }
@@ -318,6 +342,7 @@ export function ReferenceLibrary() {
   const requestIdRef = useRef(0);
   const bibStatesRequestIdRef = useRef(0);
   const refCountsRequestIdRef = useRef(0);
+  const dupCheckIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadEntries = useCallback(() => {
