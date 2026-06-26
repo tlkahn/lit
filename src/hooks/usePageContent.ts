@@ -22,6 +22,7 @@ import { extractHeadings } from "../lib/headings";
 import { frontmatterLineCount } from "../lib/pathUtils";
 import { onFrontmatterPatch } from "../lib/frontmatterBus";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePaneStore } from "../stores/panes";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 
 export interface PageContentState {
@@ -51,6 +52,14 @@ export function usePageContent(
   const setCurrentPageHeadings = useWorkspaceStore((s) => s.setCurrentPageHeadings);
   const setCurrentFrontmatterLineCount = useWorkspaceStore((s) => s.setCurrentFrontmatterLineCount);
   const setDirty = useWorkspaceStore((s) => s.setDirty);
+
+  const isFocused = () => usePaneStore.getState().focusedPaneId === paneId;
+
+  const syncHeadings = (bodyText: string, yaml: string) => {
+    if (!isFocused()) return;
+    setCurrentPageHeadings(extractHeadings(bodyText));
+    setCurrentFrontmatterLineCount(frontmatterLineCount(yaml));
+  };
 
   useEffect(() => {
     currentPathRef.current = pagePath;
@@ -93,8 +102,7 @@ export function usePageContent(
         frontmatter: content.frontmatter,
         rawYaml: content.rawYaml,
       });
-      setCurrentPageHeadings(extractHeadings(content.body));
-      setCurrentFrontmatterLineCount(frontmatterLineCount(content.rawYaml));
+      syncHeadings(content.body, content.rawYaml);
     });
 
     const unsubFmBus = onFrontmatterPatch(pagePath, (_path, patch) => {
@@ -141,8 +149,7 @@ export function usePageContent(
         frontmatter: doc.frontmatter,
         rawYaml: doc.rawYaml,
       });
-      setCurrentPageHeadings(extractHeadings(doc.body));
-      setCurrentFrontmatterLineCount(frontmatterLineCount(doc.rawYaml));
+      syncHeadings(doc.body, doc.rawYaml);
     } else {
       readPage(pagePath)
         .then((content) => {
@@ -165,8 +172,7 @@ export function usePageContent(
             frontmatter: content.meta.frontmatter,
             rawYaml: content.raw_yaml,
           });
-          setCurrentPageHeadings(extractHeadings(content.body));
-          setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
+          syncHeadings(content.body, content.raw_yaml);
         })
         .catch(() => {
           if (currentPathRef.current !== pagePath) return;
@@ -229,8 +235,7 @@ export function usePageContent(
             frontmatter: content.meta.frontmatter,
             rawYaml: content.raw_yaml,
           });
-          setCurrentPageHeadings(extractHeadings(content.body));
-          setCurrentFrontmatterLineCount(frontmatterLineCount(content.raw_yaml));
+          syncHeadings(content.body, content.raw_yaml);
         })
         .catch(() => {
           cancelReload(pagePath);
@@ -253,6 +258,7 @@ export function usePageContent(
 
     if (headingDebounceRef.current) clearTimeout(headingDebounceRef.current);
     headingDebounceRef.current = setTimeout(() => {
+      if (!isFocused()) return;
       setCurrentPageHeadings(extractHeadings(newBody));
     }, 150);
   }, [paneId, setCurrentPageHeadings, setDirty]);
