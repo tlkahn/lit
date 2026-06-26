@@ -5,6 +5,7 @@ import { CARDBOX_COLORS } from "../lib/ipc";
 
 const defaultProps = {
   selectedCount: 3,
+  onMergeToDraft: vi.fn(),
   onGroup: vi.fn(),
   onLinkAll: vi.fn(),
   onSetColor: vi.fn(),
@@ -31,6 +32,13 @@ describe("BatchToolbar", () => {
   it("shows correct selected count", () => {
     render(<BatchToolbar {...defaultProps} selectedCount={5} />);
     expect(screen.getByTestId("batch-count")).toHaveTextContent("5 selected");
+  });
+
+  it("calls onMergeToDraft when Merge to Draft button clicked", () => {
+    const onMergeToDraft = vi.fn();
+    render(<BatchToolbar {...defaultProps} onMergeToDraft={onMergeToDraft} />);
+    fireEvent.click(screen.getByTestId("batch-merge-to-draft"));
+    expect(onMergeToDraft).toHaveBeenCalledOnce();
   });
 
   it("calls onGroup when Group button clicked", () => {

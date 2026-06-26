@@ -26,6 +26,7 @@ import {
   batchClearCardColor as batchClearCardColorIpc,
   batchPinCards as batchPinCardsIpc,
   batchUnpinCards as batchUnpinCardsIpc,
+  mergeCardsToDraft as mergeCardsToDraftIpc,
 } from "../lib/ipc";
 
 function pushUndo(entry: UndoEntry & { coalesceKey?: string }) {
@@ -92,6 +93,7 @@ export interface CardboxStore {
   setNote: (uuid: string, body: string) => Promise<void>;
   clearNote: (uuid: string) => Promise<void>;
   exportNote: (uuid: string) => Promise<string>;
+  mergeToDraft: (uuids: string[]) => Promise<string>;
   setCardColor: (uuid: string, color: string) => Promise<void>;
   clearCardColor: (uuid: string) => Promise<void>;
   toggleColor: (color: string) => void;
@@ -588,6 +590,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   },
   exportNote: async (uuid) => {
     return exportCardNote(uuid);
+  },
+  mergeToDraft: async (uuids) => {
+    return mergeCardsToDraftIpc(uuids);
   },
   setCardColor: async (uuid, color) => {
     const prevColor = get().colors[uuid];

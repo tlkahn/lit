@@ -1434,6 +1434,10 @@ export async function batchUnpinCards(uuids: string[]): Promise<void> {
   return invoke<void>("batch_unpin_cards", { uuids });
 }
 
+export async function mergeCardsToDraft(uuids: string[]): Promise<string> {
+  return invoke<string>("merge_cards_to_draft", { uuids });
+}
+
 // Merge/Split preview commands
 
 export interface MergeInput {

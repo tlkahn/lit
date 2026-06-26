@@ -78,6 +78,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const notes = useCardboxStore((s) => s.notes);
   const setNote = useCardboxStore((s) => s.setNote);
   const exportNote = useCardboxStore((s) => s.exportNote);
+  const mergeToDraft = useCardboxStore((s) => s.mergeToDraft);
   const colors = useCardboxStore((s) => s.colors);
   const setCardColor = useCardboxStore((s) => s.setCardColor);
   const clearCardColor = useCardboxStore((s) => s.clearCardColor);
@@ -94,6 +95,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const undo = useCardboxUndoStore((s) => s.undo);
   const redo = useCardboxUndoStore((s) => s.redo);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
 
   const { selectedUuids, selectedCount, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
 
@@ -1068,6 +1070,17 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
       <BatchToolbar
         selectedCount={selectedCount}
+        onMergeToDraft={async () => {
+          const uuids = [...selectedUuids];
+          try {
+            const path = await mergeToDraft(uuids);
+            selectPage(path);
+            useStatusMessageStore.getState().show(`Draft created: ${path.split("/").pop()}`);
+            clearSelection();
+          } catch {
+            useStatusMessageStore.getState().show("Failed to create draft", "error");
+          }
+        }}
         onGroup={() => {
           const uuids = [...selectedUuids];
           batchCreateGroup(uuids, "New Group");
