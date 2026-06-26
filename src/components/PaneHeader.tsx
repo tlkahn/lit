@@ -42,7 +42,7 @@ export function PaneHeader({ paneId, pagePath, fileType, onMouseDown }: PaneHead
       onMouseDown={onMouseDown}
     >
       <HistoryNavButtons paneId={paneId} testIdPrefix="pane-history-" />
-      <span className="truncate text-text-muted" data-testid="pane-header-title">
+      <span className="min-w-0 flex-1 truncate text-text-muted" data-testid="pane-header-title">
         {displayName}
       </span>
       {showDots && (
@@ -79,8 +79,8 @@ export function PaneHeader({ paneId, pagePath, fileType, onMouseDown }: PaneHead
           ))}
         </div>
       )}
-      {isFocused && fileType === "markdown" && (
-        <div className="ms-auto">
+      {fileType === "markdown" && (
+        <div className={`ms-auto ${isFocused ? "" : "invisible"}`}>
           <ViewModeToggle paneId={paneId} currentMode={viewMode} />
         </div>
       )}
