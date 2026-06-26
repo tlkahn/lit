@@ -7,6 +7,9 @@ import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/p
 import { writePage, parseRawYaml, isViewMode, type ViewMode } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
 import { getCurrentEditorView } from "../lib/editorViewRef";
+import { getDoc } from "../lib/sharedDocs";
+import { extractHeadings } from "../lib/headings";
+import { frontmatterLineCount } from "../lib/pathUtils";
 import { PaneContainer } from "./PaneContainer";
 import { BottomPanel } from "./BottomPanel";
 import { YamlHighlighter } from "./YamlHighlighter";
@@ -100,6 +103,13 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
       const current = useWorkspaceStore.getState().currentPagePath;
       if (currentPanePage !== current) {
         useWorkspaceStore.setState({ currentPagePath: currentPanePage });
+        const doc = getDoc(currentPanePage);
+        if (doc?.body != null) {
+          useWorkspaceStore.getState().setCurrentPageHeadings(extractHeadings(doc.body));
+          useWorkspaceStore.getState().setCurrentFrontmatterLineCount(
+            frontmatterLineCount(doc.rawYaml ?? ""),
+          );
+        }
       }
     } else if (prevPanePage !== null && useWorkspaceStore.getState().currentPagePath !== null) {
       useWorkspaceStore.setState({ currentPagePath: null });
