@@ -2,6 +2,13 @@
 @plugin "@tailwindcss/typography";
 @import "./themes/variables.css";
 
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 @font-face {
   font-family: "Source Sans 3";
   src: url("./fonts/SourceSans3VF-Roman.woff2") format("woff2");

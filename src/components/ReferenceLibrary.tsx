@@ -1036,7 +1036,7 @@ export function ReferenceLibrary() {
             ref={scrollRef}
             data-testid="reference-library-list"
             data-virtual-scroll
-            className={`flex-1 overflow-y-auto overscroll-contain px-1${showStrip ? " pr-5" : ""}`}
+            className={`scrollbar-hide flex-1 overflow-y-auto overscroll-contain px-1${showStrip ? " pr-5" : ""}`}
           >
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualItems.map((virtualRow) => {
