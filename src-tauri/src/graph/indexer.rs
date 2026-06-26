@@ -1394,15 +1394,9 @@ fn resolve_shadows_tx(
 /// stored). Lets `batch_reindex` widen its affected-key set when a diff page
 /// adds, edits, or removes a `citekey:` declaration.
 fn citekeys_of_pages(store: &Store, pages: &[String]) -> Result<HashSet<String>, GraphError> {
-    use rusqlite::OptionalExtension;
     let mut keys = HashSet::new();
     for page in pages {
-        let citekey: Option<Option<String>> = store.conn.query_row(
-            "SELECT json_extract(frontmatter, '$.citekey') FROM nodes WHERE id = ?1",
-            [page],
-            |row| row.get(0),
-        ).optional().map_err(GraphError::from)?;
-        if let Some(Some(key)) = citekey {
+        if let Some(key) = store.citekey_for_page(page)? {
             keys.insert(key);
         }
     }
