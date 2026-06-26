@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
+pub(crate) mod merge_to_draft;
+
 pub struct CardboxLock(Mutex<()>);
 
 impl CardboxLock {
@@ -519,7 +521,7 @@ fn dedup_filename(root: &std::path::Path, base: &str) -> String {
     unreachable!()
 }
 
-fn escape_yaml_double_quoted(s: &str) -> String {
+pub(super) fn escape_yaml_double_quoted(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
