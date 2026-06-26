@@ -7,17 +7,22 @@
 //!   3. citekey lookup from a page's frontmatter,
 //!   4. markdown draft body / frontmatter construction.
 //!
-//! These are the building blocks for a future `merge_to_draft` Tauri command;
-//! until that command lands they have no non-test caller, hence the
-//! module-level `dead_code` allowance.
-#![allow(dead_code)]
+//! These building blocks are wired into the `merge_cards_to_draft` Tauri
+//! command below, which assembles selected cards into a merged markdown draft,
+//! asks the configured LLM for a title, and writes the file to disk.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::Path;
+use std::sync::Arc;
 
+use tauri::{Emitter, State};
+
+use crate::graph::cardbox_layout::{self, CardboxLayout};
 use crate::graph::store::Store;
 use crate::graph::types::CardboxAnnotation;
 
 use super::escape_yaml_double_quoted;
+use super::CardboxLock;
 
 /// Resolve the requested `uuids` against the pre-fetched annotation list,
 /// returning clones in request order. Errors if any UUID is missing.
@@ -198,6 +203,189 @@ pub(crate) fn build_draft_frontmatter(
     ));
     out.push_str("---\n");
     out
+}
+
+/// Assemble the merged draft body from the selected cards.
+///
+/// Resolves the requested `uuids` against `all_annotations`, orders them by link
+/// topology (BFS over `layout.links`), pairs each with its slip note (from
+/// `layout.notes`) and citekey (from the pre-computed `citekey_map`, keyed by
+/// `source_page_id`), then renders the markdown body. Returns the body plus the
+/// deduplicated source titles in first-seen order (used for frontmatter and as
+/// the LLM-title fallback).
+pub(crate) fn prepare_draft_content(
+    uuids: &[String],
+    all_annotations: &[CardboxAnnotation],
+    layout: &CardboxLayout,
+    citekey_map: &HashMap<String, Option<String>>,
+) -> Result<(String, Vec<String>), String> {
+    // Validate up front so a missing UUID errors with a clear message.
+    let resolved = resolve_annotations_by_uuid(all_annotations, uuids)?;
+    let by_uuid: HashMap<&str, &CardboxAnnotation> =
+        resolved.iter().map(|a| (a.uuid.as_str(), a)).collect();
+
+    let ordered = order_by_links(uuids, &layout.links);
+
+    let mut cards = Vec::with_capacity(ordered.len());
+    let mut source_titles = Vec::new();
+    let mut seen_sources = HashSet::new();
+    for uuid in &ordered {
+        let ann = by_uuid
+            .get(uuid.as_str())
+            .ok_or_else(|| format!("Annotation not found: {}", uuid))?;
+        let slip_note = layout.notes.get(uuid).map(|n| n.body.clone());
+        let citekey = citekey_map
+            .get(&ann.source_page_id)
+            .cloned()
+            .flatten();
+        if seen_sources.insert(ann.source_page_id.clone()) {
+            source_titles.push(ann.source_page_title.clone());
+        }
+        cards.push(ResolvedCard {
+            annotation: (*ann).clone(),
+            slip_note,
+            citekey,
+        });
+    }
+
+    let body = build_draft_body(&cards);
+    Ok((body, source_titles))
+}
+
+/// Assemble frontmatter + body into the final draft content and write it to a
+/// deduplicated filename under `root`. Returns `(filename, content)`.
+pub(crate) fn write_draft_file(
+    root: &Path,
+    title: &str,
+    body: &str,
+    source_titles: &[String],
+    created: &str,
+) -> Result<(String, String), String> {
+    let frontmatter = build_draft_frontmatter(title, source_titles, created);
+
+    let mut content = String::with_capacity(frontmatter.len() + body.len() + 2);
+    content.push_str(&frontmatter);
+    content.push('\n');
+    content.push_str(body);
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+
+    let base = super::sanitize_filename(title);
+    let base = if base.len() > 200 {
+        base[..base.floor_char_boundary(200)].to_string()
+    } else {
+        base
+    };
+    let filename = super::dedup_filename(root, &base);
+    let file_path = root.join(&filename);
+    std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
+
+    Ok((filename, content))
+}
+
+/// Merge the selected cards into a single markdown draft, write it to the
+/// workspace, and return the created filename.
+///
+/// Three phases keep no `MutexGuard` across the `.await`:
+///   1. sync collection — load the layout, fetch annotations + citekeys, build
+///      the draft body via [`prepare_draft_content`];
+///   2. async LLM title — falls back to `source_titles.join(" + ")` on any error;
+///   3. sync write — guarded by [`CardboxLock`], records the write, reindexes,
+///      and emits `workspace://file-created`.
+#[tauri::command]
+pub async fn merge_cards_to_draft(
+    uuids: Vec<String>,
+    window: tauri::Window,
+    workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<'_, Arc<crate::commands::graph::GraphRegistry>>,
+    lock: State<'_, CardboxLock>,
+    registry: State<'_, Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    app_handle: tauri::AppHandle,
+    credential_store: State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
+) -> Result<String, String> {
+    if uuids.is_empty() {
+        return Err("No cards selected".to_string());
+    }
+
+    // ── Phase 1: sync data collection ─────────────────────────────────────
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let layout = cardbox_layout::load_layout(&root);
+
+    let (body, source_titles) = crate::commands::graph::with_graph_index(
+        &workspace_state,
+        &graph_state,
+        window.label(),
+        |gi| {
+            let all = gi.list_all_cardbox_annotations()?;
+            let uuid_set: HashSet<&str> = uuids.iter().map(|s| s.as_str()).collect();
+            let mut citekey_map: HashMap<String, Option<String>> = HashMap::new();
+            {
+                let store = gi.store();
+                for ann in &all {
+                    if uuid_set.contains(ann.uuid.as_str())
+                        && !citekey_map.contains_key(&ann.source_page_id)
+                    {
+                        let key = citekey_for_page(&store, &ann.source_page_id)
+                            .map_err(crate::graph::error::GraphError::Other)?;
+                        citekey_map.insert(ann.source_page_id.clone(), key);
+                    }
+                }
+            }
+            prepare_draft_content(&uuids, &all, &layout, &citekey_map)
+                .map_err(crate::graph::error::GraphError::Other)
+        },
+    )?;
+
+    // ── Phase 2: async LLM title (best-effort) ────────────────────────────
+    let prefs = crate::preferences::read_preferences(&app_handle);
+    let (provider_id, model, base_url, temperature) =
+        crate::commands::merge_split::resolve_llm_settings(&prefs);
+    let api_key = crate::llm::resolve_api_key(&provider_id, credential_store.as_ref());
+
+    let title = match crate::commands::merge_split::suggest_title_inner(
+        &provider_id,
+        &model,
+        api_key.as_deref(),
+        base_url.as_deref(),
+        &source_titles,
+        &body,
+        temperature,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("LLM title suggestion failed, using fallback: {e}");
+            source_titles.join(" + ")
+        }
+    };
+
+    // ── Phase 3: sync file write ──────────────────────────────────────────
+    let created = chrono::Utc::now().to_rfc3339();
+    let filename = {
+        let _guard = lock.0.lock().unwrap();
+        let (filename, content) =
+            write_draft_file(&root, &title, &body, &source_titles, &created)?;
+        registry.record(&root.join(&filename), &content);
+        filename
+    };
+
+    crate::commands::page::reindex_and_emit(
+        &graph_state,
+        &app_handle,
+        &root.to_path_buf(),
+        |gi, ann_flag| gi.add_file(&filename, ann_flag),
+    );
+
+    let _ = window.emit(
+        "workspace://file-created",
+        crate::workspace::watcher::FileEvent {
+            path: filename.clone(),
+        },
+    );
+
+    Ok(filename)
 }
 
 #[cfg(test)]
@@ -483,5 +671,167 @@ mod tests {
         assert!(fm.contains("  - \"[[Page One]]\""));
         assert!(fm.contains("  - \"[[Page Two]]\""));
         assert!(fm.contains("created: \"2026-06-26T12:00:00Z\""));
+    }
+
+    // ── Phase 2.5: prepare_draft_content + write_draft_file integration ────
+
+    use crate::graph::cardbox_layout::CardNote;
+
+    fn slip(body: &str) -> CardNote {
+        CardNote {
+            body: body.to_string(),
+            updated_at: None,
+        }
+    }
+
+    // T2.5.1 — 3 cards from 2 sources, two of them linked (a-b), one unlinked (c).
+    #[test]
+    fn draft_three_cards_two_sources_linked_and_unlinked() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+
+        let all = vec![
+            make_annotation_with_original("a", "p1", "Page One", Some("alpha quote")),
+            make_annotation_with_original("b", "p2", "Page Two", Some("beta quote")),
+            make_annotation_with_original("c", "p1", "Page One", Some("gamma quote")),
+        ];
+        let uuids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+
+        let mut layout = CardboxLayout::default();
+        layout.links = vec![s2("a", "b")];
+        layout
+            .notes
+            .insert("a".to_string(), slip("My thought on alpha."));
+
+        let mut citekey_map: HashMap<String, Option<String>> = HashMap::new();
+        citekey_map.insert("p1".to_string(), Some("smith2024".to_string()));
+        citekey_map.insert("p2".to_string(), None);
+
+        let (body, source_titles) =
+            prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+
+        // Two source headings, Page One before Page Two (BFS from a reaches b first,
+        // and grouping folds c back into the Page One section).
+        assert_eq!(body.matches("## Page One").count(), 1);
+        assert_eq!(body.matches("## Page Two").count(), 1);
+        assert!(body.find("## Page One").unwrap() < body.find("## Page Two").unwrap());
+
+        // A blockquote for every original.
+        assert!(body.contains("> alpha quote"));
+        assert!(body.contains("> beta quote"));
+        assert!(body.contains("> gamma quote"));
+
+        // Citation marker only on p1 cards (p2 has no citekey).
+        assert!(body.contains("> — [[Page One]] [@smith2024]"));
+        assert!(body.contains("> — [[Page Two]]"));
+        assert!(!body.contains("[[Page Two]] [@"), "p2 has no citekey: {body}");
+
+        // Slip note prose present.
+        assert!(body.contains("My thought on alpha."));
+
+        // Deduplicated sources, first-seen order.
+        assert_eq!(
+            source_titles,
+            vec!["Page One".to_string(), "Page Two".to_string()]
+        );
+
+        // File output.
+        let (filename, content) =
+            write_draft_file(root, "My Draft", &body, &source_titles, "2026-06-26T00:00:00Z")
+                .unwrap();
+        assert!(root.join(&filename).exists(), "draft file should exist");
+        assert!(content.contains("title: \"My Draft\""));
+        assert!(content.contains("  - \"[[Page One]]\""));
+        assert!(content.contains("  - \"[[Page Two]]\""));
+        assert!(content.contains("created: \"2026-06-26T00:00:00Z\""));
+        assert!(content.contains("## Page One"));
+    }
+
+    // T2.5.2 — cards with originals but no slip notes: blockquotes only, no prose.
+    #[test]
+    fn draft_cards_no_slip_notes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+
+        let all = vec![
+            make_annotation_with_original("a", "p1", "Page One", Some("first quote")),
+            make_annotation_with_original("b", "p2", "Page Two", Some("second quote")),
+        ];
+        let uuids = vec!["a".to_string(), "b".to_string()];
+        let layout = CardboxLayout::default(); // no notes, no links
+        let citekey_map: HashMap<String, Option<String>> = HashMap::new();
+
+        let (body, source_titles) =
+            prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+
+        assert!(body.contains("> first quote"));
+        assert!(body.contains("> second quote"));
+
+        // Every non-empty line is a heading or a blockquote line — no prose between
+        // sections because no card has a slip note.
+        for line in body.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            assert!(
+                line.starts_with("## ") || line.starts_with('>'),
+                "unexpected prose line: {line:?}"
+            );
+        }
+
+        let (filename, _content) =
+            write_draft_file(root, "Draft", &body, &source_titles, "2026-01-01").unwrap();
+        assert!(root.join(filename).exists());
+    }
+
+    // T2.5.3 — 3 cards from one source: a single heading, one frontmatter source.
+    #[test]
+    fn draft_all_cards_same_source() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+
+        let all = vec![
+            make_annotation_with_original("a", "p1", "Page One", Some("q1")),
+            make_annotation_with_original("b", "p1", "Page One", Some("q2")),
+            make_annotation_with_original("c", "p1", "Page One", Some("q3")),
+        ];
+        let uuids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let layout = CardboxLayout::default();
+        let citekey_map: HashMap<String, Option<String>> = HashMap::new();
+
+        let (body, source_titles) =
+            prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+
+        assert_eq!(body.matches("## Page One").count(), 1);
+        assert!(body.contains("> q1"));
+        assert!(body.contains("> q2"));
+        assert!(body.contains("> q3"));
+        assert_eq!(source_titles, vec!["Page One".to_string()]);
+
+        let (filename, content) =
+            write_draft_file(root, "Draft", &body, &source_titles, "2026-01-01").unwrap();
+        assert!(root.join(filename).exists());
+
+        // Exactly one frontmatter source entry.
+        assert_eq!(content.matches("  - \"[[").count(), 1);
+    }
+
+    #[test]
+    fn write_draft_file_truncates_long_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let long_title = "A ".repeat(200);
+        assert!(long_title.len() > 300);
+
+        let (filename, _) =
+            write_draft_file(root, &long_title, "body", &["src".to_string()], "2026-01-01")
+                .unwrap();
+        assert!(
+            filename.len() <= 204,
+            "filename should be at most 200 base + .md (4), got {} bytes: {filename}",
+            filename.len()
+        );
+        assert!(filename.ends_with(".md"));
+        assert!(root.join(&filename).exists());
     }
 }
