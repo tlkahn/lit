@@ -30,7 +30,7 @@ pub struct WorkspaceRegistry {
 /// position between a markdown note and its companion PDF. `page_offset` is the
 /// number of leading PDF pages trimmed before OCR (0 when none): forward sync
 /// adds it (md page -> pdf page), reverse sync subtracts it (pdf page -> md page).
-#[derive(Debug, serde::Serialize)]
+#[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompanionInfo {
     pub path: String,
@@ -153,40 +153,15 @@ fn truncate_to_utf8_boundary(buf: &[u8]) -> &[u8] {
 fn companion_info_from_frontmatter(root: &Path, relative_path: &str) -> Option<(String, i32)> {
     use std::io::Read;
     let full_path = root.join(relative_path);
-    tracing::debug!(
-        %relative_path,
-        ?root,
-        ?full_path,
-        "companion_info_from_frontmatter: opening md file"
-    );
-    let mut file = match std::fs::File::open(&full_path) {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::debug!(?full_path, %e, "companion_info_from_frontmatter: failed to open md file");
-            return None;
-        }
-    };
+    let mut file = std::fs::File::open(&full_path).ok()?;
     let mut buf = [0u8; 4096];
     let n = file.read(&mut buf).ok()?;
     let header = std::str::from_utf8(truncate_to_utf8_boundary(&buf[..n])).ok()?;
     let parsed = crate::workspace::frontmatter::parse_frontmatter(header);
-    let companion_value = match parsed.map.get("companion").and_then(|v| v.as_str()) {
-        Some(v) => v,
-        None => {
-            tracing::debug!(%relative_path, "companion_info_from_frontmatter: no companion key in frontmatter");
-            return None;
-        }
-    };
+    let companion_value = parsed.map.get("companion")?.as_str()?;
     let candidate = Path::new(companion_value);
     let absolute = root.join(companion_value);
-    let exists = absolute.is_file();
-    tracing::debug!(
-        %companion_value,
-        ?absolute,
-        exists,
-        "companion_info_from_frontmatter: resolved companion path"
-    );
-    if !exists {
+    if !absolute.is_file() {
         return None;
     }
     let resolved = canonicalize_within_root(root, &absolute, candidate);
@@ -196,11 +171,6 @@ fn companion_info_from_frontmatter(root: &Path, relative_path: &str) -> Option<(
         .and_then(|v| v.as_i64())
         .map(|n| n as i32)
         .unwrap_or(0);
-    tracing::debug!(
-        %resolved,
-        offset,
-        "companion_info_from_frontmatter: success"
-    );
     Some((resolved, offset))
 }
 
@@ -263,32 +233,19 @@ fn find_companion_by_sibling(relative_path: &str, root: &Path, search_paths: &[S
     };
     let candidate = rel.with_extension(target_ext);
     let absolute = root.join(&candidate);
-    tracing::debug!(
-        %relative_path,
-        ?candidate,
-        ?absolute,
-        exists = absolute.is_file(),
-        "find_companion_by_sibling: same-dir check"
-    );
     if absolute.is_file() {
         return Some(canonicalize_within_root(root, &absolute, &candidate));
     }
+    // Same-directory sibling missing — search the configured directories for a
+    // file with the same name and the swapped extension.
     let file_name = candidate.file_name()?;
     for entry in search_paths {
         let cand = Path::new(entry).join(file_name);
         let abs = root.join(&cand);
-        tracing::debug!(
-            search_path = %entry,
-            ?cand,
-            ?abs,
-            exists = abs.is_file(),
-            "find_companion_by_sibling: search-path check"
-        );
         if abs.is_file() {
             return Some(canonicalize_within_root(root, &abs, &cand));
         }
     }
-    tracing::debug!(%relative_path, "find_companion_by_sibling: not found");
     None
 }
 
@@ -354,28 +311,8 @@ fn reverse_companion_lookup(
     pdf_relative_path: &str,
     map: &HashMap<PathBuf, String>,
 ) -> Option<String> {
-    let abs = root.join(pdf_relative_path);
-    let canon = match abs.canonicalize() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::debug!(
-                %pdf_relative_path,
-                ?abs,
-                %e,
-                "reverse_companion_lookup: canonicalize failed"
-            );
-            return None;
-        }
-    };
-    let found = map.get(&canon);
-    tracing::debug!(
-        %pdf_relative_path,
-        ?canon,
-        ?found,
-        map_keys = ?map.keys().collect::<Vec<_>>(),
-        "reverse_companion_lookup: map lookup"
-    );
-    let md_rel = found?;
+    let canon = root.join(pdf_relative_path).canonicalize().ok()?;
+    let md_rel = map.get(&canon)?;
     Some(canonicalize_within_root(root, &root.join(md_rel), Path::new(md_rel)))
 }
 
@@ -417,35 +354,18 @@ fn annotate_companions(
     // claims each PDF; enforce that here rather than relying on callers.
     pages.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
-    tracing::debug!(?root, ?search_paths, page_count = pages.len(), "annotate_companions: start");
-
     // Phase 1: forward companion detection + reverse-map construction.
+    // For markdown pages, call companion_from_frontmatter once and reuse the
+    // result for both has_companion and the reverse-map insertion, falling
+    // through to the sibling-only helper when frontmatter returns None.
     for page in pages.iter_mut() {
         if page.relative_path.to_ascii_lowercase().ends_with(".md") {
             if let Some(companion) = companion_from_frontmatter(root, &page.relative_path) {
                 page.has_companion = true;
-                let abs = root.join(&companion);
-                match abs.canonicalize() {
-                    Ok(canon) => {
-                        tracing::debug!(
-                            md = %page.relative_path,
-                            %companion,
-                            ?canon,
-                            "annotate_companions: inserting into reverse map"
-                        );
-                        reverse_map
-                            .entry(canon)
-                            .or_insert_with(|| page.relative_path.clone());
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            md = %page.relative_path,
-                            %companion,
-                            ?abs,
-                            %e,
-                            "annotate_companions: canonicalize failed for reverse map"
-                        );
-                    }
+                if let Ok(canon) = root.join(&companion).canonicalize() {
+                    reverse_map
+                        .entry(canon)
+                        .or_insert_with(|| page.relative_path.clone());
                 }
                 continue;
             }
@@ -458,23 +378,12 @@ fn annotate_companions(
     for page in pages.iter_mut() {
         if !page.has_companion
             && page.relative_path.to_ascii_lowercase().ends_with(".pdf")
+            && reverse_map_contains_pdf(root, &page.relative_path, &reverse_map)
         {
-            let hit = reverse_map_contains_pdf(root, &page.relative_path, &reverse_map);
-            tracing::debug!(
-                pdf = %page.relative_path,
-                hit,
-                "annotate_companions: phase 2 reverse check"
-            );
-            if hit {
-                page.has_companion = true;
-            }
+            page.has_companion = true;
         }
     }
 
-    tracing::debug!(
-        reverse_map_entries = ?reverse_map.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>(),
-        "annotate_companions: done"
-    );
     reverse_map
 }
 
@@ -632,40 +541,27 @@ pub fn find_companion_file(
     let search_paths = crate::preferences::companion_search_paths(&prefs);
     let is_pdf = relative_path.to_ascii_lowercase().ends_with(".pdf");
 
-    tracing::debug!(
-        %relative_path,
-        is_pdf,
-        ?search_paths,
-        label = window.label(),
-        "find_companion_file: called"
-    );
-
     if is_pdf {
+        // PDF input: snapshot root + reverse_map under a single lock so they
+        // cannot come from different workspace versions (TOCTOU safety).
         let (root, reverse_map) =
             get_workspace_root_and_reverse_map(&state, window.label())?;
-        tracing::debug!(?root, reverse_map_size = reverse_map.len(), "find_companion_file: PDF branch");
         if let Some(found) = find_companion(&relative_path, &root, &search_paths) {
             let page_offset = companion_page_offset(&root, &relative_path, &found);
-            tracing::debug!(%found, page_offset, "find_companion_file: PDF forward hit");
             return Ok(Some(CompanionInfo { path: found, page_offset }));
         }
-        tracing::debug!("find_companion_file: PDF forward miss, trying reverse map");
-        let result = reverse_companion_lookup(&root, &relative_path, &reverse_map).map(|found| {
+        // Forward lookup missed — fall back to the reverse map.
+        Ok(reverse_companion_lookup(&root, &relative_path, &reverse_map).map(|found| {
             let page_offset = companion_page_offset(&root, &relative_path, &found);
-            tracing::debug!(%found, page_offset, "find_companion_file: PDF reverse hit");
             CompanionInfo { path: found, page_offset }
-        });
-        if result.is_none() {
-            tracing::debug!("find_companion_file: PDF reverse miss — no companion found");
-        }
-        Ok(result)
+        }))
     } else {
+        // Non-PDF input (e.g. markdown): only the root is needed.
+        // The reverse map is keyed by canonical PDF paths so it can never
+        // match a non-PDF input — skip cloning it entirely.
         let root = get_workspace_root(&state, window.label())?;
-        tracing::debug!(?root, "find_companion_file: non-PDF branch");
-        let result = find_companion_non_pdf(&root, &relative_path, &search_paths)
-            .map(|(path, page_offset)| CompanionInfo { path, page_offset });
-        tracing::debug!(?result, "find_companion_file: non-PDF result");
-        Ok(result)
+        Ok(find_companion_non_pdf(&root, &relative_path, &search_paths)
+            .map(|(path, page_offset)| CompanionInfo { path, page_offset }))
     }
 }
 

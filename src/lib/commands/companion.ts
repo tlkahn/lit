@@ -72,10 +72,8 @@ export function initCompanionCommands(): void {
         const pagePath = findLeaf(pane.root, sourceId)?.pagePath;
         if (pagePath == null) return;
 
-        console.debug("[companion.open] pagePath:", pagePath);
         findCompanionFile(pagePath)
           .then((info) => {
-            console.debug("[companion.open] result:", info);
             if (info == null) {
               useStatusMessageStore
                 .getState()
