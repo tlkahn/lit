@@ -140,6 +140,7 @@ import {
   setCardNote,
   clearCardNote,
   exportCardNote,
+  mergeCardsToDraft,
   setCardColor,
   clearCardColor,
   listSearchProviders,
@@ -851,6 +852,8 @@ describe("ipc", () => {
           return null;
         case "export_card_note":
           return "Note on Test.md";
+        case "merge_cards_to_draft":
+          return "Drafts/Merged Draft.md";
         case "set_card_color":
           return null;
         case "clear_card_color":
@@ -2647,6 +2650,13 @@ describe("ipc", () => {
     expect(result).toBe("Note on Test.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_card_note", { uuid: "u1" });
+  });
+
+  it("mergeCardsToDraft calls merge_cards_to_draft", async () => {
+    const result = await mergeCardsToDraft(["u1", "u2"]);
+    expect(result).toBe("Drafts/Merged Draft.md");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("merge_cards_to_draft", { uuids: ["u1", "u2"] });
   });
 
   // ── Color tag IPC wrappers ────────────────────────────────────

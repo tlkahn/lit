@@ -5,6 +5,7 @@ import { CARDBOX_COLORS } from "../lib/ipc";
 
 const defaultProps = {
   selectedCount: 3,
+  onMergeToDraft: vi.fn(),
   onGroup: vi.fn(),
   onLinkAll: vi.fn(),
   onSetColor: vi.fn(),
@@ -31,6 +32,13 @@ describe("BatchToolbar", () => {
   it("shows correct selected count", () => {
     render(<BatchToolbar {...defaultProps} selectedCount={5} />);
     expect(screen.getByTestId("batch-count")).toHaveTextContent("5 selected");
+  });
+
+  it("calls onMergeToDraft when Merge to Draft button clicked", () => {
+    const onMergeToDraft = vi.fn();
+    render(<BatchToolbar {...defaultProps} onMergeToDraft={onMergeToDraft} />);
+    fireEvent.click(screen.getByTestId("batch-merge-to-draft"));
+    expect(onMergeToDraft).toHaveBeenCalledOnce();
   });
 
   it("calls onGroup when Group button clicked", () => {
@@ -93,5 +101,24 @@ describe("BatchToolbar", () => {
     for (const color of CARDBOX_COLORS) {
       expect(screen.getByTestId(`batch-color-${color}`)).toBeInTheDocument();
     }
+  });
+
+  it("disables Merge to Draft button when mergingToDraft is true", () => {
+    render(<BatchToolbar {...defaultProps} mergingToDraft={true} />);
+    const btn = screen.getByTestId("batch-merge-to-draft");
+    expect(btn).toBeDisabled();
+  });
+
+  it("does not disable Merge to Draft button when mergingToDraft is false", () => {
+    render(<BatchToolbar {...defaultProps} mergingToDraft={false} />);
+    const btn = screen.getByTestId("batch-merge-to-draft");
+    expect(btn).not.toBeDisabled();
+  });
+
+  it("does not call onMergeToDraft when button is disabled", () => {
+    const onMergeToDraft = vi.fn();
+    render(<BatchToolbar {...defaultProps} onMergeToDraft={onMergeToDraft} mergingToDraft={true} />);
+    fireEvent.click(screen.getByTestId("batch-merge-to-draft"));
+    expect(onMergeToDraft).not.toHaveBeenCalled();
   });
 });

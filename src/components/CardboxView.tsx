@@ -12,6 +12,8 @@ import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortab
 import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { useCardboxStore } from "../stores/cardbox";
 import type { BatchMoveTarget } from "../stores/cardbox";
+import { usePaneLoadingStore } from "../stores/paneLoading";
+import { usePaneStore } from "../stores/panes";
 import { useCardboxUndoStore } from "../stores/cardboxUndo";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -78,6 +80,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const notes = useCardboxStore((s) => s.notes);
   const setNote = useCardboxStore((s) => s.setNote);
   const exportNote = useCardboxStore((s) => s.exportNote);
+  const mergeToDraft = useCardboxStore((s) => s.mergeToDraft);
   const colors = useCardboxStore((s) => s.colors);
   const setCardColor = useCardboxStore((s) => s.setCardColor);
   const clearCardColor = useCardboxStore((s) => s.clearCardColor);
@@ -94,6 +97,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const undo = useCardboxUndoStore((s) => s.undo);
   const redo = useCardboxUndoStore((s) => s.redo);
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
+  const selectPage = useWorkspaceStore((s) => s.selectPage);
 
   const { selectedUuids, selectedCount, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
 
@@ -101,6 +105,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   const [groupPickerCardUuid, setGroupPickerCardUuid] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [mergingToDraft, setMergingToDraft] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1068,6 +1073,25 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
       <BatchToolbar
         selectedCount={selectedCount}
+        mergingToDraft={mergingToDraft}
+        onMergeToDraft={async () => {
+          const uuids = [...selectedUuids];
+          const paneId = usePaneStore.getState().focusedPaneId;
+          setMergingToDraft(true);
+          usePaneLoadingStore.getState().startLoading(paneId);
+          try {
+            const path = await mergeToDraft(uuids);
+            selectPage(path);
+            usePaneStore.getState().setPaneViewMode(paneId, "editor");
+            useStatusMessageStore.getState().show(`Draft created: ${path.split("/").pop()}`);
+            clearSelection();
+          } catch {
+            useStatusMessageStore.getState().show("Failed to create draft", "error");
+          } finally {
+            usePaneLoadingStore.getState().stopLoading(paneId);
+            setMergingToDraft(false);
+          }
+        }}
         onGroup={() => {
           const uuids = [...selectedUuids];
           batchCreateGroup(uuids, "New Group");

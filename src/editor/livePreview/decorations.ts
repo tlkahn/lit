@@ -414,6 +414,7 @@ function addLinkDecos(
 
   const url = state.doc.sliceString(urlNode.from, urlNode.to);
 
+  if (openBracket.to >= closeBracket.from) return;
   decos.push({ from: openBracket.from, to: openBracket.to, deco: Decoration.replace({}) });
   decos.push({ from: closeBracket.from, to: closeParen.to, deco: Decoration.replace({}) });
   decos.push({
@@ -486,10 +487,13 @@ function addWikilinkDecos(
 
   if (pipeIndex >= 0) {
     const pipePos = openMark.to + pipeIndex;
-    decos.push({ from: openMark.from, to: pipePos + 1, deco: Decoration.replace({}) });
-    decos.push({ from: pipePos + 1, to: closeMark.from, deco: Decoration.mark({ class: "cm-preview-wikilink" }) });
+    const displayFrom = pipePos + 1;
+    if (displayFrom >= closeMark.from) return;
+    decos.push({ from: openMark.from, to: displayFrom, deco: Decoration.replace({}) });
+    decos.push({ from: displayFrom, to: closeMark.from, deco: Decoration.mark({ class: "cm-preview-wikilink" }) });
     decos.push({ from: closeMark.from, to: closeMark.to, deco: Decoration.replace({}) });
   } else {
+    if (openMark.to >= closeMark.from) return;
     decos.push({ from: openMark.from, to: openMark.to, deco: Decoration.replace({}) });
     decos.push({ from: openMark.to, to: closeMark.from, deco: Decoration.mark({ class: "cm-preview-wikilink" }) });
     decos.push({ from: closeMark.from, to: closeMark.to, deco: Decoration.replace({}) });

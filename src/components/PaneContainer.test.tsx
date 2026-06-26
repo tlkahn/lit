@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, cleanup, act, fireEvent, screen } from "@testing-library/react";
 import { usePaneStore } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
+import { usePaneLoadingStore } from "../stores/paneLoading";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import type { PageMeta } from "../lib/ipc";
@@ -60,6 +61,7 @@ beforeEach(() => {
     root: { type: "leaf", id: "solo", pagePath: null },
     focusedPaneId: "solo",
   });
+  usePaneLoadingStore.setState({ loadingPaneIds: new Set() });
   useWorkspaceStore.setState({ pages: [] });
   return () => {
     cleanup();
@@ -998,5 +1000,89 @@ describe("PaneLeafRenderer focus border in multi-pane mode", () => {
     const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
     expect(wrapperA).toBeTruthy();
     expect(wrapperA.className).toContain("border-interactive-accent");
+  });
+});
+
+describe("PaneContainer loading overlay", () => {
+  it("shows overlay when pane is loading in single-pane mode", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "solo", pagePath: null },
+      focusedPaneId: "solo",
+    });
+    usePaneLoadingStore.setState({ loadingPaneIds: new Set(["solo"]) });
+    render(<PaneContainer />);
+    expect(screen.getByTestId("pane-loading-overlay")).toBeInTheDocument();
+    expect(screen.getByText("Generating title…")).toBeInTheDocument();
+  });
+
+  it("hides overlay when pane is not loading in single-pane mode", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "solo", pagePath: null },
+      focusedPaneId: "solo",
+    });
+    render(<PaneContainer />);
+    expect(screen.queryByTestId("pane-loading-overlay")).toBeNull();
+  });
+
+  it("shows overlay on correct pane in multi-pane mode", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    usePaneLoadingStore.setState({ loadingPaneIds: new Set(["pane-a"]) });
+    render(<PaneContainer />);
+
+    const overlays = screen.getAllByTestId("pane-loading-overlay");
+    expect(overlays).toHaveLength(1);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    expect(wrapperA.contains(overlays[0]!)).toBe(true);
+  });
+
+  it("does not show overlay on non-loading pane in multi-pane mode", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+    usePaneLoadingStore.setState({ loadingPaneIds: new Set(["pane-b"]) });
+    render(<PaneContainer />);
+
+    const wrapperA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    const wrapperB = document.querySelector('[data-pane-id="pane-b"]') as HTMLElement;
+    expect(wrapperA.querySelector('[data-testid="pane-loading-overlay"]')).toBeNull();
+    expect(wrapperB.querySelector('[data-testid="pane-loading-overlay"]')).toBeTruthy();
+  });
+
+  it("overlay appears and disappears reactively", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "solo", pagePath: null },
+      focusedPaneId: "solo",
+    });
+    render(<PaneContainer />);
+    expect(screen.queryByTestId("pane-loading-overlay")).toBeNull();
+
+    act(() => {
+      usePaneLoadingStore.getState().startLoading("solo");
+    });
+    expect(screen.getByTestId("pane-loading-overlay")).toBeInTheDocument();
+
+    act(() => {
+      usePaneLoadingStore.getState().stopLoading("solo");
+    });
+    expect(screen.queryByTestId("pane-loading-overlay")).toBeNull();
   });
 });
