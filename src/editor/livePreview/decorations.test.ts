@@ -589,6 +589,22 @@ describe("buildDecorations — wikilinks", () => {
     expect(wlDecos[0]!.to).toBe(20);
     view.destroy();
   });
+
+  it("does not crash on empty wikilink [[]]", () => {
+    const doc = "[[]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    expect(() => collectDecos(view)).not.toThrow();
+    const decos = collectDecos(view);
+    expect(decos.filter((d) => d.class === "cm-preview-wikilink")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("does not crash on wikilink with empty display [[Target|]]", () => {
+    const doc = "[[Target|]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    expect(() => collectDecos(view)).not.toThrow();
+    view.destroy();
+  });
 });
 
 describe("buildDecorations — callouts", () => {
