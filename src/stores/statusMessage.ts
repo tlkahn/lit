@@ -2,10 +2,16 @@ import { create } from "zustand";
 
 export type StatusVariant = "success" | "error" | "progress";
 
+export interface StatusAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface StatusMessageState {
   message: string | null;
   variant: StatusVariant;
-  show: (message: string, variant?: StatusVariant, durationMs?: number) => void;
+  action: StatusAction | null;
+  show: (message: string, variant?: StatusVariant, durationMs?: number, action?: StatusAction) => void;
 }
 
 let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -13,11 +19,12 @@ let timerId: ReturnType<typeof setTimeout> | null = null;
 export const useStatusMessageStore = create<StatusMessageState>((set) => ({
   message: null,
   variant: "success",
-  show: (message, variant = "success", durationMs = 4000) => {
+  action: null,
+  show: (message, variant = "success", durationMs = 4000, action) => {
     if (timerId != null) clearTimeout(timerId);
-    set({ message, variant });
+    set({ message, variant, action: action ?? null });
     timerId = setTimeout(() => {
-      set({ message: null });
+      set({ message: null, action: null });
       timerId = null;
     }, durationMs);
   },

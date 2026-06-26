@@ -42,6 +42,7 @@ import {
   onRevealBibEntry,
   onRevealBibEntryForPage,
   dispatchSetSidebarTab,
+  dispatchRevealBibEntry,
 } from "../lib/sidebarEvents";
 import { useMaterializeCitation } from "../hooks/useMaterializeCitation";
 import { useDropPdf } from "../hooks/useDropPdf";
@@ -309,14 +310,26 @@ export function ReferenceLibrary() {
       const outcomes = await saveBibEntry(entry, workspacePath);
       for (const o of outcomes) {
         if (isSaved(o)) {
+          const key = o.Saved.key;
           setSavedKeys((prev) => new Set(prev).add(stableKey));
-          show(`Saved @${o.Saved.key}`);
+          show(`Saved @${key}`, "success", 4000, {
+            label: "Go to",
+            onClick: () => dispatchRevealBibEntry(key),
+          });
         } else if (isSavedNoDoi(o)) {
+          const key = o.SavedNoDoi.key;
           setSavedKeys((prev) => new Set(prev).add(stableKey));
-          show(`Saved @${o.SavedNoDoi.key}`);
+          show(`Saved @${key}`, "success", 4000, {
+            label: "Go to",
+            onClick: () => dispatchRevealBibEntry(key),
+          });
         } else if (isDuplicateDoi(o)) {
-          setDuplicateKeys((prev) => new Map(prev).set(stableKey, o.DuplicateDoi.existing_key));
-          show(`Already in library as @${o.DuplicateDoi.existing_key}`);
+          const key = o.DuplicateDoi.existing_key;
+          setDuplicateKeys((prev) => new Map(prev).set(stableKey, key));
+          show(`Already in library as @${key}`, "success", 4000, {
+            label: "Go to",
+            onClick: () => dispatchRevealBibEntry(key),
+          });
         }
       }
     } catch (err) {
@@ -818,6 +831,7 @@ export function ReferenceLibrary() {
 
     navReset(PANE_ID);
     setSearch("");
+    setMode("library");
 
     const items = buildSectionedList(sortedRef.current).items;
     let idx = -1;

@@ -70,7 +70,7 @@ beforeEach(() => {
     experimentalUnlinkedReferences: true,
     annotationEnabled: true,
   });
-  useStatusMessageStore.setState({ message: null, variant: "success" });
+  useStatusMessageStore.setState({ message: null, variant: "success", action: null });
   usePanePdfLinkStore.setState({ links: new Map(), currentPage: new Map(), pageCount: new Map() });
   pdfPaneRef._resetForTesting();
 });
@@ -960,7 +960,7 @@ describe("StatusBar", () => {
 
     it("does not show status message when message is null", () => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
-      useStatusMessageStore.setState({ message: null, variant: "success" });
+      useStatusMessageStore.setState({ message: null, variant: "success", action: null });
       render(<StatusBar />);
       expect(screen.queryByTestId("status-bar-message")).toBeNull();
     });
@@ -996,6 +996,77 @@ describe("StatusBar", () => {
       render(<StatusBar />);
       const el = screen.getByTestId("status-bar-message");
       expect(el.className).not.toContain("animate-pulse");
+    });
+
+    it("renders action button when action is set", () => {
+      const onClick = vi.fn();
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({
+        message: "Saved @key",
+        variant: "success",
+        action: { label: "Go to", onClick },
+      });
+      render(<StatusBar />);
+      const btn = screen.getByTestId("status-bar-action");
+      expect(btn).toBeInTheDocument();
+      expect(btn).toHaveTextContent("Go to");
+    });
+
+    it("action button click calls onClick handler", async () => {
+      const onClick = vi.fn();
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({
+        message: "Saved @key",
+        variant: "success",
+        action: { label: "Go to", onClick },
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByTestId("status-bar-action"));
+      expect(onClick).toHaveBeenCalledOnce();
+    });
+
+    it("does not render action button when action is null", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Done", variant: "success", action: null });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-message")).toBeInTheDocument();
+      expect(screen.queryByTestId("status-bar-action")).toBeNull();
+    });
+
+    it("toast stays visible during exit animation before clearing", () => {
+      vi.useFakeTimers();
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Saved @key", variant: "success" });
+      render(<StatusBar />);
+      expect(screen.getByTestId("status-bar-message")).toBeInTheDocument();
+
+      act(() => {
+        useStatusMessageStore.setState({ message: null, action: null });
+      });
+      expect(screen.getByTestId("status-bar-message")).toBeInTheDocument();
+      expect(screen.getByTestId("status-bar-message").className).toContain("status-toast-exit");
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(screen.queryByTestId("status-bar-message")).toBeNull();
+      vi.useRealTimers();
+    });
+
+    it("enter animation class is applied for success variant", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Saved", variant: "success" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el.className).toContain("status-toast-enter");
+    });
+
+    it("enter animation class is not applied for progress variant", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      useStatusMessageStore.setState({ message: "Exporting…", variant: "progress" });
+      render(<StatusBar />);
+      const el = screen.getByTestId("status-bar-message");
+      expect(el.className).not.toContain("status-toast-enter");
     });
   });
 });

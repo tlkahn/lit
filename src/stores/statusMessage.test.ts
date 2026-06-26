@@ -4,7 +4,7 @@ import { useStatusMessageStore } from "./statusMessage";
 describe("useStatusMessageStore", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    useStatusMessageStore.setState({ message: null, variant: "success" });
+    useStatusMessageStore.setState({ message: null, variant: "success", action: null });
   });
 
   afterEach(() => {
@@ -13,6 +13,10 @@ describe("useStatusMessageStore", () => {
 
   it("message is null initially", () => {
     expect(useStatusMessageStore.getState().message).toBeNull();
+  });
+
+  it("action is null initially", () => {
+    expect(useStatusMessageStore.getState().action).toBeNull();
   });
 
   it("show() sets the message", () => {
@@ -59,5 +63,38 @@ describe("useStatusMessageStore", () => {
     expect(useStatusMessageStore.getState().message).toBe("second");
     vi.advanceTimersByTime(500);
     expect(useStatusMessageStore.getState().message).toBeNull();
+  });
+
+  it("show() with action stores the action", () => {
+    const onClick = vi.fn();
+    useStatusMessageStore.getState().show("Saved @key", "success", 4000, {
+      label: "Go to",
+      onClick,
+    });
+    const state = useStatusMessageStore.getState();
+    expect(state.action).toEqual({ label: "Go to", onClick });
+  });
+
+  it("action clears alongside message after timeout", () => {
+    const onClick = vi.fn();
+    useStatusMessageStore.getState().show("Saved @key", "success", 2000, {
+      label: "Go to",
+      onClick,
+    });
+    expect(useStatusMessageStore.getState().action).not.toBeNull();
+    vi.advanceTimersByTime(2000);
+    expect(useStatusMessageStore.getState().message).toBeNull();
+    expect(useStatusMessageStore.getState().action).toBeNull();
+  });
+
+  it("show() without action defaults action to null", () => {
+    const onClick = vi.fn();
+    useStatusMessageStore.getState().show("first", "success", 4000, {
+      label: "Go to",
+      onClick,
+    });
+    expect(useStatusMessageStore.getState().action).not.toBeNull();
+    useStatusMessageStore.getState().show("second");
+    expect(useStatusMessageStore.getState().action).toBeNull();
   });
 });

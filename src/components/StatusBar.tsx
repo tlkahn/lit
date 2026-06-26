@@ -1,9 +1,10 @@
+import { useEffect, useState, useRef } from "react";
 import type { IndexPhase } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import { useBottomPanelStore } from "../stores/bottomPanel";
 import { usePreferencesStore } from "../stores/preferences";
-import { useStatusMessageStore } from "../stores/statusMessage";
+import { useStatusMessageStore, type StatusAction, type StatusVariant } from "../stores/statusMessage";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { useLeafFileType } from "../hooks/useLeafFileType";
@@ -202,6 +203,50 @@ function SwapPanesButton() {
   );
 }
 
+interface ToastSnapshot {
+  message: string;
+  variant: StatusVariant;
+  action: StatusAction | null;
+}
+
+function useToastAnimation() {
+  const storeMessage = useStatusMessageStore((s) => s.message);
+  const storeVariant = useStatusMessageStore((s) => s.variant);
+  const storeAction = useStatusMessageStore((s) => s.action);
+  const [toast, setToast] = useState<ToastSnapshot | null>(null);
+  const [phase, setPhase] = useState<"enter" | "exit" | "idle">("idle");
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (storeMessage != null) {
+      if (exitTimerRef.current != null) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+      setToast({ message: storeMessage, variant: storeVariant, action: storeAction });
+      setPhase("enter");
+    } else {
+      if (toast != null) {
+        setPhase("exit");
+        exitTimerRef.current = setTimeout(() => {
+          setToast(null);
+          setPhase("idle");
+          exitTimerRef.current = null;
+        }, 300);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeMessage, storeVariant, storeAction]);
+
+  useEffect(() => {
+    return () => {
+      if (exitTimerRef.current != null) clearTimeout(exitTimerRef.current);
+    };
+  }, []);
+
+  return { toast, phase };
+}
+
 export function StatusBar() {
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
@@ -210,8 +255,7 @@ export function StatusBar() {
   const createPage = useWorkspaceStore((s) => s.createPage);
   const line = useCursorInfoStore((s) => s.line);
   const col = useCursorInfoStore((s) => s.col);
-  const statusMessage = useStatusMessageStore((s) => s.message);
-  const statusVariant = useStatusMessageStore((s) => s.variant);
+  const { toast, phase } = useToastAnimation();
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const focusedFileType = useLeafFileType(focusedPaneId);
   const focusedPagePath = usePaneStore(
@@ -261,6 +305,11 @@ export function StatusBar() {
     );
   }
 
+  const animClass =
+    toast?.variant === "progress" ? "" :
+    phase === "enter" ? " status-toast-enter" :
+    phase === "exit" ? " status-toast-exit" : "";
+
   return (
     <div data-testid="status-bar" className="flex h-6 items-center justify-between bg-bg-primary-alt px-3 text-xs text-text-faint">
       <div className="flex items-center">
@@ -269,12 +318,21 @@ export function StatusBar() {
         <SwapPanesButton />
       </div>
       <div className="flex items-center">
-        {statusMessage && (
+        {toast && (
           <span
             data-testid="status-bar-message"
-            className={`mr-2 max-w-[40%] truncate ${statusVariant === "error" ? "text-text-error" : "text-text-muted"}${statusVariant === "progress" ? " animate-pulse" : ""}`}
+            className={`mr-2 max-w-[40%] truncate ${toast.variant === "error" ? "text-text-error" : "text-text-muted"}${toast.variant === "progress" ? " animate-pulse" : ""}${animClass}`}
           >
-            {statusMessage}
+            {toast.message}
+            {toast.action && (
+              <button
+                data-testid="status-bar-action"
+                className="ml-1.5 underline hover:text-text-normal"
+                onClick={toast.action.onClick}
+              >
+                {toast.action.label}
+              </button>
+            )}
           </span>
         )}
         <BottomPanelTabs />
