@@ -1218,6 +1218,20 @@ impl Store {
         Ok(page_id)
     }
 
+    /// Returns the citekey declared in the frontmatter of the given page, or
+    /// `None` when the page has no citekey or the page row is absent.
+    pub fn citekey_for_page(&self, page_id: &str) -> Result<Option<String>, GraphError> {
+        let citekey: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT json_extract(frontmatter, '$.citekey') FROM nodes WHERE id = ?1",
+                [page_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(citekey.flatten())
+    }
+
     /// Returns the page id that declares the given citekey AND has a
     /// `companion` field in its frontmatter (i.e. an OCR companion page).
     /// Returns `None` if no such page exists.
@@ -6076,5 +6090,32 @@ mod tests {
         let store = Store::open_memory().unwrap();
         let map = store.get_node_ids_for_uuids(&["nonexistent"]).unwrap();
         assert!(map.is_empty());
+    }
+
+    // ── citekey_for_page on Store ────────────────────────────────────────
+
+    #[test]
+    fn citekey_for_page_returns_some_when_present() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("p1", "Page One", &[], json!({"citekey": "smith2024"}));
+        store.upsert_node(&node, 0).unwrap();
+        assert_eq!(
+            store.citekey_for_page("p1").unwrap(),
+            Some("smith2024".to_string())
+        );
+    }
+
+    #[test]
+    fn citekey_for_page_returns_none_when_absent() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("p1", "Page One", &[], json!({}));
+        store.upsert_node(&node, 0).unwrap();
+        assert_eq!(store.citekey_for_page("p1").unwrap(), None);
+    }
+
+    #[test]
+    fn citekey_for_page_returns_none_for_missing_row() {
+        let store = Store::open_memory().unwrap();
+        assert_eq!(store.citekey_for_page("nonexistent").unwrap(), None);
     }
 }

@@ -59,6 +59,9 @@ pub(crate) fn order_by_links(uuids: &[String], links: &[[String; 2]]) -> Vec<Str
             adj.entry(b).or_default().push(a);
         }
     }
+    for v in adj.values_mut() {
+        v.sort();
+    }
 
     let mut visited: HashSet<&str> = HashSet::new();
     let mut result: Vec<String> = Vec::with_capacity(uuids.len());
@@ -91,21 +94,26 @@ pub(crate) fn order_by_links(uuids: &[String], links: &[[String; 2]]) -> Vec<Str
 /// Look up a page's `citekey` from its frontmatter. Returns `Ok(None)` when the
 /// page exists without a citekey or when the page row is absent.
 ///
-/// Mirrors the `citekeys_of_pages` pattern in `indexer.rs` — the
-/// `json_extract` yields `NULL` (outer `None`) for a missing row and a JSON
-/// `null` (inner `None`) for a missing key, both flattened away.
+/// Thin wrapper around [`Store::citekey_for_page`] that maps the error to
+/// `String` for the command layer.
 pub(crate) fn citekey_for_page(store: &Store, page_id: &str) -> Result<Option<String>, String> {
-    use rusqlite::OptionalExtension;
-    let citekey: Option<Option<String>> = store
-        .conn
-        .query_row(
-            "SELECT json_extract(frontmatter, '$.citekey') FROM nodes WHERE id = ?1",
-            [page_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-    Ok(citekey.flatten())
+    store.citekey_for_page(page_id).map_err(|e| e.to_string())
+}
+
+/// Produce a safe `[[…]]` wikilink string from a page title.
+///
+/// Brackets inside the title break wikilink syntax (the inner regex is
+/// `[^\[\]]+`), so we replace `[` → `(` and `]` → `)` before wrapping.
+pub(super) fn wikilink(title: &str) -> String {
+    let safe: String = title
+        .chars()
+        .map(|c| match c {
+            '[' => '(',
+            ']' => ')',
+            _ => c,
+        })
+        .collect();
+    format!("[[{}]]", safe)
 }
 
 /// A selected annotation paired with its (optional) slip note and citekey,
@@ -141,16 +149,12 @@ pub(crate) fn build_draft_body(cards: &[ResolvedCard]) -> String {
 
         for card in group {
             if let Some(ref original) = card.annotation.original {
-                let blockquoted: String = original
-                    .lines()
-                    .map(|line| format!("> {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let blockquoted = super::blockquote(original);
                 out.push_str(&blockquoted);
                 out.push('\n');
 
                 let mut attribution =
-                    format!("> — [[{}]]", card.annotation.source_page_title);
+                    format!("> — {}", wikilink(&card.annotation.source_page_title));
                 if let Some(ref key) = card.citekey {
                     attribution.push_str(&format!(" [@{}]", key));
                 }
@@ -184,8 +188,8 @@ pub(crate) fn build_draft_frontmatter(
     out.push_str("sources:\n");
     for src in source_titles {
         out.push_str(&format!(
-            "  - \"[[{}]]\"\n",
-            escape_yaml_double_quoted(src)
+            "  - \"{}\"\n",
+            escape_yaml_double_quoted(&wikilink(src))
         ));
     }
     out.push_str(&format!(
@@ -306,6 +310,26 @@ mod tests {
         assert_eq!(order_by_links(&uuids, &links), vec!["A"]);
     }
 
+    #[test]
+    fn order_by_links_deterministic_regardless_of_link_order() {
+        // Star topology: A connected to B, C, D.
+        let uuids = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "D".to_string(),
+        ];
+        let links_v1 = vec![s2("A", "B"), s2("A", "C"), s2("A", "D")];
+        let links_v2 = vec![s2("A", "D"), s2("A", "C"), s2("A", "B")];
+        let result_v1 = order_by_links(&uuids, &links_v1);
+        let result_v2 = order_by_links(&uuids, &links_v2);
+        assert_eq!(
+            result_v1, result_v2,
+            "BFS order must be independent of link input order: v1={result_v1:?}, v2={result_v2:?}"
+        );
+        assert_eq!(result_v1, vec!["A", "B", "C", "D"]);
+    }
+
     // ── Phase 1.3: citekey_for_page ───────────────────────────────────────
 
     #[test]
@@ -402,6 +426,51 @@ mod tests {
         let cards = vec![card("a", "p1", "Page One", Some("quote"), None, None)];
         let body = build_draft_body(&cards);
         assert!(!body.contains("[@"), "no citekey marker expected: {body}");
+    }
+
+    // ── Wikilink sanitization ──────────────────────────────────────────
+
+    #[test]
+    fn wikilink_plain_title() {
+        assert_eq!(wikilink("Page One"), "[[Page One]]");
+    }
+
+    #[test]
+    fn wikilink_title_with_double_brackets() {
+        assert_eq!(wikilink("Array[[0]]"), "[[Array((0))]]");
+    }
+
+    #[test]
+    fn wikilink_title_with_single_bracket() {
+        assert_eq!(wikilink("foo]bar"), "[[foo)bar]]");
+    }
+
+    #[test]
+    fn body_title_with_brackets() {
+        let cards = vec![card("a", "p1", "Array[[0]]", Some("quote"), None, None)];
+        let body = build_draft_body(&cards);
+        assert!(
+            body.contains("> — [[Array((0))]]"),
+            "attribution should contain sanitized wikilink: {body}"
+        );
+        assert!(
+            !body.contains("[[Array[["),
+            "raw brackets must not appear in wikilink: {body}"
+        );
+    }
+
+    #[test]
+    fn frontmatter_title_with_brackets() {
+        let sources = vec!["Array[[0]]".to_string()];
+        let fm = build_draft_frontmatter("Draft", &sources, "2026-01-01");
+        assert!(
+            fm.contains("[[Array((0))]]"),
+            "frontmatter should contain sanitized wikilink: {fm}"
+        );
+        assert!(
+            !fm.contains("[[Array[["),
+            "raw brackets must not appear in wikilink: {fm}"
+        );
     }
 
     #[test]

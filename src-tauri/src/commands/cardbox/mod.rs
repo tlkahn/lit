@@ -522,7 +522,26 @@ fn dedup_filename(root: &std::path::Path, base: &str) -> String {
 }
 
 pub(super) fn escape_yaml_double_quoted(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"'  => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            _    => out.push(c),
+        }
+    }
+    out
+}
+
+pub(super) fn blockquote(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("> {}", line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[tauri::command]
@@ -565,11 +584,7 @@ pub fn export_card_note(
     content.push_str("---\n\n");
 
     if let Some(ref original) = ann.original {
-        let blockquoted: String = original
-            .lines()
-            .map(|line| format!("> {}", line))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let blockquoted = blockquote(original);
         content.push_str(&blockquoted);
         content.push_str("\n\n");
     }
@@ -2129,13 +2144,9 @@ mod tests {
 
     #[test]
     fn multiline_blockquote_all_lines_prefixed() {
-        // The blockquote formatting logic extracted from export_card_note
+        // Test the shared blockquote helper
         let original = "First line\nSecond line\nThird line";
-        let blockquoted: String = original
-            .lines()
-            .map(|line| format!("> {}", line))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let blockquoted = super::blockquote(original);
         let content = format!("{}\n\n", blockquoted);
         // Every non-empty line must start with "> "
         for line in content.trim().lines() {
@@ -2194,14 +2205,63 @@ mod tests {
     }
 
     #[test]
+    fn escape_yaml_newline_is_escaped() {
+        let input = "line one\nline two";
+        let escaped = super::escape_yaml_double_quoted(input);
+        assert_eq!(escaped, "line one\\nline two");
+        assert!(!escaped.contains('\n'), "literal newline must not survive escaping");
+    }
+
+    #[test]
+    fn escape_yaml_cr_tab_null_escaped() {
+        assert_eq!(super::escape_yaml_double_quoted("a\rb"), "a\\rb");
+        assert_eq!(super::escape_yaml_double_quoted("a\tb"), "a\\tb");
+        assert_eq!(super::escape_yaml_double_quoted("a\0b"), "a\\0b");
+    }
+
+    #[test]
+    fn escape_yaml_mixed_special_chars() {
+        let input = "He said \"hello\"\npath\\to\\file\ttab\0end";
+        let escaped = super::escape_yaml_double_quoted(input);
+        assert_eq!(
+            escaped,
+            "He said \\\"hello\\\"\\npath\\\\to\\\\file\\ttab\\0end"
+        );
+    }
+
+    #[test]
     fn blockquote_prefixes_every_line() {
         let original = "First line\nSecond line\nThird line";
-        let blockquoted: String = original
-            .lines()
-            .map(|line| format!("> {}", line))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let blockquoted = super::blockquote(original);
         assert_eq!(blockquoted, "> First line\n> Second line\n> Third line");
+    }
+
+    #[test]
+    fn blockquote_helper_single_line() {
+        assert_eq!(super::blockquote("hello"), "> hello");
+    }
+
+    #[test]
+    fn blockquote_helper_multiline() {
+        assert_eq!(
+            super::blockquote("First line\nSecond line\nThird line"),
+            "> First line\n> Second line\n> Third line"
+        );
+    }
+
+    #[test]
+    fn blockquote_helper_empty_string() {
+        // "".lines() yields zero items, so collect+join = ""
+        assert_eq!(super::blockquote(""), "");
+    }
+
+    #[test]
+    fn blockquote_helper_blank_lines_preserved() {
+        // Lines with only whitespace should still get the "> " prefix
+        assert_eq!(
+            super::blockquote("a\n\nb"),
+            "> a\n> \n> b"
+        );
     }
 
     // ---- Color tag tests ----
