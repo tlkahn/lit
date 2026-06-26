@@ -467,6 +467,16 @@ export async function saveBibEntries(
   return invoke<SaveOutcome[]>("save_bib_entries", { entries, workspacePath });
 }
 
+export async function checkBibDuplicates(
+  entries: BibEntry[],
+  workspacePath: string,
+): Promise<Array<string | null>> {
+  return invoke<Array<string | null>>("check_bib_duplicates", {
+    entries,
+    workspacePath,
+  });
+}
+
 export async function materializeCitation(bibKey: string): Promise<PageMeta> {
   return invoke<PageMeta>("materialize_citation", { bibKey });
 }

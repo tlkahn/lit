@@ -90,9 +90,7 @@ export function PaperSearchResults({
             const stableKey = entryStableKey(entry);
             const isSaving = savingKeys.has(stableKey);
             const isSaved = savedKeys.has(stableKey);
-            const duplicateOf = entry.doi
-              ? duplicateKeys.get(entry.doi)
-              : undefined;
+            const duplicateOf = duplicateKeys.get(stableKey);
             const isExpanded = expandedIndex === virtualRow.index;
             const pub = distinctPublisher(entry);
 

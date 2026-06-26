@@ -25,6 +25,7 @@ import {
   linkEntryPdf,
   searchPapers,
   saveBibEntry,
+  checkBibDuplicates,
   isSaved,
   isSavedNoDoi,
   isDuplicateDoi,
@@ -270,12 +271,28 @@ export function ReferenceLibrary() {
       const st = searchMode !== "auto" ? searchMode : looksLikeIsbn(q) ? "isbn" : undefined;
       const result = await searchPapers(q, undefined, undefined, st);
       setSearchResults(result);
+      if (workspacePath && result.entries.length > 0) {
+        checkBibDuplicates(result.entries, workspacePath)
+          .then((dupes) => {
+            setDuplicateKeys((prev) => {
+              const next = new Map(prev);
+              dupes.forEach((existingKey, i) => {
+                if (existingKey) {
+                  const entry = result.entries[i];
+                  if (entry) next.set(entry.doi ?? entry.key, existingKey);
+                }
+              });
+              return next;
+            });
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       show(err instanceof Error ? err.message : String(err), "error");
     } finally {
       setSearching(false);
     }
-  }, [searchQuery, searching, show, searchMode]);
+  }, [searchQuery, searching, show, searchMode, workspacePath]);
 
   const handleSaveSearchResult = useCallback(async (entry: BibEntry) => {
     if (!workspacePath) return;
@@ -291,7 +308,7 @@ export function ReferenceLibrary() {
           setSavedKeys((prev) => new Set(prev).add(stableKey));
           show(`Saved @${o.SavedNoDoi.key}`);
         } else if (isDuplicateDoi(o)) {
-          setDuplicateKeys((prev) => new Map(prev).set(o.DuplicateDoi.doi, o.DuplicateDoi.existing_key));
+          setDuplicateKeys((prev) => new Map(prev).set(stableKey, o.DuplicateDoi.existing_key));
           show(`Already in library as @${o.DuplicateDoi.existing_key}`);
         }
       }
