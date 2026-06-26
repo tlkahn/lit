@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useCallback, lazy, Suspen
 import type React from "react";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import type { PaneNode } from "../stores/panes";
+import { usePaneLoadingStore } from "../stores/paneLoading";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useResponsiveLayoutStore } from "../stores/responsiveLayout";
 import { EditorPane } from "./EditorPane";
@@ -13,6 +14,7 @@ import { PaneHeader } from "./PaneHeader";
 import { MindmapPaneView } from "./MindmapPaneView";
 import { GraphPaneView } from "./GraphPaneView";
 import { CardboxPaneView } from "./CardboxPaneView";
+import { SpinnerSvg } from "./SpinnerSvg";
 import { getPaneView } from "../lib/editorViewRef";
 import { usePaneFocus } from "../hooks/usePaneFocus";
 
@@ -38,6 +40,8 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
   const focusedPaneId = usePaneStore((s) => s.focusedPaneId);
   const pages = useWorkspaceStore((s) => s.pages);
   const fileType = getFileType(pagePath, pages);
+
+  const isLoading = usePaneLoadingStore((s) => s.loadingPaneIds.has(paneId));
 
   const handleFocus = usePaneFocus(paneId);
 
@@ -98,17 +102,35 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
     content = <EditorPane paneId={paneId} />;
   }
 
-  if (!isMultiPane) return content;
+  const loadingOverlay = isLoading ? (
+    <div data-testid="pane-loading-overlay"
+         className="absolute inset-0 z-10 flex items-center justify-center bg-bg-primary-alt/50">
+      <div className="flex flex-col items-center gap-2 rounded-xl bg-bg-primary-alt/80 px-5 py-4 shadow">
+        <SpinnerSvg className="h-6 w-6 text-text-faint" />
+        <span className="text-sm text-text-muted">Generating title…</span>
+      </div>
+    </div>
+  ) : null;
+
+  if (!isMultiPane) {
+    return (
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {content}
+        {loadingOverlay}
+      </div>
+    );
+  }
 
   return (
     <div
       onMouseDownCapture={handleFocus}
       data-pane-id={paneId}
       tabIndex={-1}
-      className={`flex min-h-0 flex-1 flex-col ${borderClass}`}
+      className={`relative flex min-h-0 flex-1 flex-col ${borderClass}`}
     >
       <PaneHeader paneId={paneId} pagePath={pagePath} fileType={fileType} onMouseDown={handleHeaderMouseDown} />
       {content}
+      {loadingOverlay}
     </div>
   );
 }

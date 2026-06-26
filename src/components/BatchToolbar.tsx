@@ -3,6 +3,7 @@ import { CARDBOX_COLORS } from "../lib/ipc";
 
 interface BatchToolbarProps {
   selectedCount: number;
+  mergingToDraft?: boolean;
   onMergeToDraft: () => void;
   onGroup: () => void;
   onLinkAll: () => void;
@@ -15,6 +16,7 @@ interface BatchToolbarProps {
 
 export const BatchToolbar = memo(function BatchToolbar({
   selectedCount,
+  mergingToDraft,
   onMergeToDraft,
   onGroup,
   onLinkAll,
@@ -51,8 +53,9 @@ export const BatchToolbar = memo(function BatchToolbar({
       </span>
 
       <button
-        className="rounded px-2 py-1 text-xs text-text-normal hover:bg-bg-hover"
+        className="rounded px-2 py-1 text-xs text-text-normal hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
         onClick={onMergeToDraft}
+        disabled={mergingToDraft}
         data-testid="batch-merge-to-draft"
       >
         Merge to Draft

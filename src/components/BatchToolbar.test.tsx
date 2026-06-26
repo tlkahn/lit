@@ -102,4 +102,23 @@ describe("BatchToolbar", () => {
       expect(screen.getByTestId(`batch-color-${color}`)).toBeInTheDocument();
     }
   });
+
+  it("disables Merge to Draft button when mergingToDraft is true", () => {
+    render(<BatchToolbar {...defaultProps} mergingToDraft={true} />);
+    const btn = screen.getByTestId("batch-merge-to-draft");
+    expect(btn).toBeDisabled();
+  });
+
+  it("does not disable Merge to Draft button when mergingToDraft is false", () => {
+    render(<BatchToolbar {...defaultProps} mergingToDraft={false} />);
+    const btn = screen.getByTestId("batch-merge-to-draft");
+    expect(btn).not.toBeDisabled();
+  });
+
+  it("does not call onMergeToDraft when button is disabled", () => {
+    const onMergeToDraft = vi.fn();
+    render(<BatchToolbar {...defaultProps} onMergeToDraft={onMergeToDraft} mergingToDraft={true} />);
+    fireEvent.click(screen.getByTestId("batch-merge-to-draft"));
+    expect(onMergeToDraft).not.toHaveBeenCalled();
+  });
 });
