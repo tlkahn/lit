@@ -501,13 +501,13 @@ pub fn unpin_cardbox_card(
     })
 }
 
-fn sanitize_filename(name: &str) -> String {
+pub(super) fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
         .collect()
 }
 
-fn dedup_filename(root: &std::path::Path, base: &str) -> String {
+pub(super) fn dedup_filename(root: &std::path::Path, base: &str) -> String {
     let candidate = format!("{}.md", base);
     if !root.join(&candidate).exists() {
         return candidate;
