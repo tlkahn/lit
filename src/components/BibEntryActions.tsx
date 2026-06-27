@@ -83,7 +83,7 @@ export function BibEntryActions(props: BibEntryActionProps) {
         : "Fetch details";
       list.push({
         key: "enrich",
-        icon: "󰇚",
+        icon: "󰑐",
         label: enrichLabel,
         onClick: () => onEnrich(entry),
         disabled: isEnriching,
