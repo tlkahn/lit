@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use futures::StreamExt;
+use regex::Regex;
 use tauri::Emitter;
 
 use crate::bib::semantic_scholar;
@@ -36,6 +37,20 @@ pub(crate) static DOWNLOAD_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| 
         .expect("failed to build download client")
 });
 
+/// Rewrite PMC PDF URLs to use Europe PMC's programmatic API.
+///
+/// PMC (pmc.ncbi.nlm.nih.gov) added a JavaScript Proof-of-Work challenge that
+/// blocks programmatic PDF access. Europe PMC serves the same PDFs via a stable
+/// API endpoint without bot challenges.
+fn rewrite_pmc_url(url: &str) -> Option<String> {
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"https?://(?:www\.ncbi\.nlm\.nih\.gov/pmc|pmc\.ncbi\.nlm\.nih\.gov)/articles/(PMC\d+)")
+            .unwrap()
+    });
+    RE.captures(url)
+        .map(|caps| format!("https://europepmc.org/api/getPdf?pmcid={}", &caps[1]))
+}
+
 pub async fn download_pdf<F>(
     client: &reqwest::Client,
     url: &str,
@@ -46,8 +61,10 @@ pub async fn download_pdf<F>(
 where
     F: Fn(u64, Option<u64>),
 {
+    let effective_url = rewrite_pmc_url(url).unwrap_or_else(|| url.to_string());
+
     let resp = client
-        .get(url)
+        .get(&effective_url)
         .send()
         .await
         .map_err(|e| DownloadError::Http(e.to_string()))?;
@@ -108,7 +125,7 @@ pub async fn resolve_pdf_url(
     if let Some(ref arxiv_id) = entry.arxiv_id {
         let id = arxiv_id.trim();
         if !id.is_empty() {
-            return Ok(Some(format!("https://arxiv.org/pdf/{}.pdf", id)));
+            return Ok(Some(format!("https://arxiv.org/pdf/{}", id)));
         }
     }
 
@@ -266,7 +283,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Some("https://arxiv.org/pdf/2301.07041.pdf".to_string())
+            Some("https://arxiv.org/pdf/2301.07041".to_string())
         );
     }
 
@@ -673,5 +690,38 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(DownloadError::InvalidContent)));
+    }
+
+    // ── rewrite_pmc_url tests ─────────────────────────────────────
+
+    #[test]
+    fn rewrite_pmc_new_domain() {
+        assert_eq!(
+            rewrite_pmc_url("https://pmc.ncbi.nlm.nih.gov/articles/PMC11071153/pdf/nihms-1980113.pdf"),
+            Some("https://europepmc.org/api/getPdf?pmcid=PMC11071153".to_string()),
+        );
+    }
+
+    #[test]
+    fn rewrite_pmc_old_domain() {
+        assert_eq!(
+            rewrite_pmc_url("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7029158/pdf/main.pdf"),
+            Some("https://europepmc.org/api/getPdf?pmcid=PMC7029158".to_string()),
+        );
+    }
+
+    #[test]
+    fn rewrite_pmc_ignores_non_pmc_urls() {
+        assert_eq!(rewrite_pmc_url("https://arxiv.org/pdf/2301.07041"), None);
+        assert_eq!(rewrite_pmc_url("https://europepmc.org/api/getPdf?pmcid=PMC123"), None);
+        assert_eq!(rewrite_pmc_url("https://www.nature.com/articles/s41586-024-07421-0.pdf"), None);
+    }
+
+    #[test]
+    fn rewrite_pmc_http_scheme() {
+        assert_eq!(
+            rewrite_pmc_url("http://pmc.ncbi.nlm.nih.gov/articles/PMC999/pdf/main.pdf"),
+            Some("https://europepmc.org/api/getPdf?pmcid=PMC999".to_string()),
+        );
     }
 }
