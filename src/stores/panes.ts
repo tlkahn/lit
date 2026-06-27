@@ -251,6 +251,10 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     const { root } = get();
     const leaf = findLeaf(root, paneId);
     if (!leaf || leaf.pagePath === pagePath) return;
+    const linkStore = usePanePdfLinkStore.getState();
+    if (linkStore.links.has(paneId)) {
+      linkStore.unlinkPane(paneId);
+    }
     const newLeaf: PaneLeaf = leaf.viewMode
       ? { type: "leaf", id: paneId, pagePath, viewMode: leaf.viewMode }
       : { type: "leaf", id: paneId, pagePath };

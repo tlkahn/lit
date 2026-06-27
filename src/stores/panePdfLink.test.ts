@@ -173,6 +173,128 @@ describe("usePanePdfLinkStore", () => {
     });
   });
 
+  describe("link invalidation on navigate", () => {
+    it("setPanePage on a linked pane breaks the link", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("a", "unrelated.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
+
+    it("navigating the PDF pane away also breaks the link", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "b" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("b", "other.pdf");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
+
+    it("navigating to null breaks the link", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("a", null);
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
+
+    it("navigating an unlinked pane does not disturb an independent link pair", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const c: PaneLeaf = { type: "leaf", id: "c", pagePath: "notes.md" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b, c],
+        sizes: [33, 34, 33],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "c" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("c", "other.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBe("b");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBe("a");
+    });
+
+    it("same-page setPanePage (no-op) does not break the link", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("a", "paper.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBe("b");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBe("a");
+    });
+
+    it("only the navigated pair breaks when two independent pairs exist", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const c: PaneLeaf = { type: "leaf", id: "c", pagePath: "thesis.md" };
+      const d: PaneLeaf = { type: "leaf", id: "d", pagePath: "thesis.pdf" };
+      const split: PaneSplit = {
+        type: "split",
+        id: "split-1",
+        direction: "horizontal",
+        children: [a, b, c, d],
+        sizes: [25, 25, 25, 25],
+      };
+      usePaneStore.setState({ root: split, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+      usePanePdfLinkStore.getState().linkPanes("c", "d");
+
+      usePaneStore.getState().setPanePage("a", "unrelated.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("c")).toBe("d");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("d")).toBe("c");
+    });
+  });
+
   describe("pendingPdfSync", () => {
     it("starts empty", () => {
       expect(usePanePdfLinkStore.getState().pendingPdfSync.size).toBe(0);
