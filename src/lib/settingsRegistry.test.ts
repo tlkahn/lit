@@ -85,7 +85,7 @@ describe("CATEGORIES", () => {
 });
 
 describe("groupByCategory", () => {
-  it("returns Map with 8 keys and correct counts", () => {
+  it("returns Map with 9 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(9);
     expect(grouped.get("Appearance")).toHaveLength(7);

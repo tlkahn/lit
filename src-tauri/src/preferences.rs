@@ -112,10 +112,14 @@ pub fn read_preferences_from_path(path: &PathBuf) -> Preferences {
         Ok(c) => c,
         Err(_) => return Preferences::default(),
     };
-    serde_json::from_str(&content).unwrap_or_else(|e| {
+    let mut prefs: Preferences = serde_json::from_str(&content).unwrap_or_else(|e| {
         eprintln!("[preferences] invalid JSON, using defaults: {e}");
         Preferences::default()
-    })
+    });
+    // Strip legacy key removed in PR #834. It lands in `extra` via
+    // serde(flatten) and would be round-tripped on every save.
+    prefs.extra.remove("workbench.colorTheme");
+    prefs
 }
 
 pub fn read_preferences(app_handle: &AppHandle) -> Preferences {
@@ -993,5 +997,29 @@ mod tests {
         let json = r#"{"citation.notesDir": "   "}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert_eq!(super::citation_notes_dir(&prefs), "references");
+    }
+
+    #[test]
+    fn legacy_color_theme_key_stripped_on_load() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        let json = r#"{
+            "workbench.darkMode": "dark",
+            "workbench.colorTheme": "leuvburn",
+            "custom.key": "value"
+        }"#;
+        fs::write(&path, json).unwrap();
+
+        let prefs = read_preferences_from_path(&path);
+        assert_eq!(prefs.dark_mode, "dark");
+        assert!(
+            prefs.extra.get("workbench.colorTheme").is_none(),
+            "legacy workbench.colorTheme should be stripped from extra"
+        );
+        assert_eq!(
+            prefs.extra.get("custom.key"),
+            Some(&serde_json::json!("value")),
+            "other extra keys must be preserved"
+        );
     }
 }

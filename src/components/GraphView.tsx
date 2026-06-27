@@ -15,7 +15,6 @@ import { MergePreviewDialog } from "./MergePreviewDialog";
 import { SplitPreviewDialog } from "./SplitPreviewDialog";
 import { useGraphLasso } from "../hooks/useGraphLasso";
 import { GraphDeleteDialog } from "./GraphDeleteDialog";
-import { useGraphTheme } from "../hooks/useGraphTheme";
 import { useGraphSearch } from "../hooks/useGraphSearch";
 import { useGraphData } from "../hooks/useGraphData";
 import { useRecordDeparture } from "../hooks/useRecordDeparture";
@@ -113,7 +112,6 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const graphLikeRef = graphRef as React.RefObject<GraphLike | null>;
   const { lassoState, handleLassoMouseDown, handleLassoMouseMove, handleLassoMouseUp } =
     useGraphLasso(containerRef, sigmaRef, graphLikeRef, hoveredNodeRef);
-  useGraphTheme(graphLikeRef, sigmaRef, dimColorRef);
   const {
     searchOpen, setSearchOpen, searchOpenRef,
     searchQuery, searchMatches,
