@@ -197,6 +197,10 @@ pub fn set_preference_at_path(
     let mut obj: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {e}"))?;
     obj[key] = value;
+    // Strip legacy key removed in PR #834 so it doesn't persist on disk forever.
+    if let Some(o) = obj.as_object_mut() {
+        o.remove("workbench.colorTheme");
+    }
     let pretty = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create dir failed: {e}"))?;
@@ -997,6 +1001,46 @@ mod tests {
         let json = r#"{"citation.notesDir": "   "}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert_eq!(super::citation_notes_dir(&prefs), "references");
+    }
+
+    #[test]
+    fn set_preference_strips_legacy_color_theme_from_disk() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("preferences.json");
+        let json = r#"{
+            "workbench.darkMode": "dark",
+            "workbench.colorTheme": "leuvburn",
+            "custom.key": "value"
+        }"#;
+        fs::write(&path, json).unwrap();
+
+        // Write an unrelated key -- the strip should be a side-effect of any write.
+        set_preference_at_path(&path, "editor.fontSize", serde_json::json!(14)).unwrap();
+
+        // Read the raw file back (NOT through read_preferences_from_path, which
+        // strips in-memory and would mask the bug).
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(
+            parsed.get("workbench.colorTheme").is_none(),
+            "legacy workbench.colorTheme should be stripped from the persisted file"
+        );
+        assert_eq!(
+            parsed["workbench.darkMode"],
+            serde_json::json!("dark"),
+            "pre-existing keys must survive"
+        );
+        assert_eq!(
+            parsed["custom.key"],
+            serde_json::json!("value"),
+            "other extra keys must survive"
+        );
+        assert_eq!(
+            parsed["editor.fontSize"],
+            serde_json::json!(14),
+            "the caller's new key must be written"
+        );
     }
 
     #[test]
