@@ -9,6 +9,49 @@ export const Annotation: MarkdownConfig = {
   ],
   parseInline: [
     {
+      name: "AnnotationBacktickGuard",
+      before: "InlineCode",
+      parse(cx, next, pos) {
+        if (next !== 96) return -1;
+        if (pos && cx.char(pos - 1) === 96) return -1;
+
+        let fenceEnd = pos + 1;
+        while (fenceEnd < cx.end && cx.char(fenceEnd) === 96) fenceEnd++;
+        const size = fenceEnd - pos;
+
+        let closeEnd = -1;
+        let curSize = 0;
+        for (let i = fenceEnd; i < cx.end; i++) {
+          if (cx.char(i) === 96) {
+            curSize++;
+            if (curSize === size && cx.char(i + 1) !== 96) {
+              closeEnd = i + 1;
+              break;
+            }
+          } else {
+            curSize = 0;
+          }
+        }
+
+        if (closeEnd === -1) return -1;
+
+        const closeStart = closeEnd - size;
+        if (closeStart - fenceEnd < 5) return -1;
+
+        const content = cx.slice(fenceEnd, closeStart);
+        let searchFrom = 0;
+        while (true) {
+          const openIdx = content.indexOf("<!---", searchFrom);
+          if (openIdx === -1) break;
+          const closeIdx = content.indexOf("--->", openIdx + 5);
+          if (closeIdx === -1) return fenceEnd;
+          searchFrom = closeIdx + 4;
+        }
+
+        return -1;
+      },
+    },
+    {
       name: "InlineAnnotation",
       before: "HTMLTag",
       parse(cx, next, pos) {
