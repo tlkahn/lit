@@ -280,6 +280,29 @@ describe("BlockAnnotation parser", () => {
     expect(block).toHaveLength(4);
   });
 
+  it("block annotation body with backticks parses correctly", () => {
+    const allExtensions = [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment, Annotation, Footnote];
+    const doc = [
+      "<!---",
+      "n",
+      "---",
+      "body with `code` here",
+      "--->",
+    ].join("\n");
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: allExtensions })],
+    });
+    const nodes: { name: string; from: number; to: number }[] = [];
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        nodes.push({ name: node.name, from: node.from, to: node.to });
+      },
+    });
+    const ba = nodes.find((n) => n.name === "BlockAnnotation");
+    expect(ba).toBeDefined();
+  });
+
   it("block annotation after paragraph renders with full extension set (GFM, Frontmatter, etc.)", () => {
     const allExtensions = [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment, Annotation, Footnote];
     const doc = [
@@ -318,5 +341,87 @@ describe("BlockAnnotation parser", () => {
     });
     const blocks = nodes.filter((n) => n.name === "BlockAnnotation");
     expect(blocks).toHaveLength(2);
+  });
+});
+
+describe("AnnotationBacktickGuard", () => {
+  it("paired backticks before inline annotation do not interfere", () => {
+    const doc = "some `code` text<!---[id]n!---body--->";
+    const nodes = parseNodes(doc);
+    const ia = nodes.find((n) => n.name === "InlineAnnotation");
+    expect(ia).toBeDefined();
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(true);
+  });
+
+  it("unpaired backtick before annotation is neutralized by guard", () => {
+    const doc = "concept of `scaling and abilities<!---[id]n!---body--->more";
+    const nodes = parseNodes(doc);
+    const ia = nodes.find((n) => n.name === "InlineAnnotation");
+    expect(ia).toBeDefined();
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(false);
+  });
+
+  it("backtick pairing with backtick inside annotation body is prevented", () => {
+    const doc = "concept of `scaling and abilities<!---[id]n!---body with code` here--->more";
+    const nodes = parseNodes(doc);
+    const ia = nodes.find((n) => n.name === "InlineAnnotation");
+    expect(ia).toBeDefined();
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(false);
+  });
+
+  it("annotation fully enclosed in backticks is left for InlineCode", () => {
+    const doc = "show syntax: `<!---[id]n!---body--->` rest";
+    const nodes = parseNodes(doc);
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(true);
+    expect(nodes.some((n) => n.name === "InlineAnnotation")).toBe(false);
+  });
+
+  it("exact issue reproducer: backtick pairs with backtick inside body", () => {
+    const doc =
+      "concept of `scaling and abilities<!---[uuid]n!---body with code` here--->more";
+    const nodes = parseNodes(doc);
+    const ia = nodes.find((n) => n.name === "InlineAnnotation");
+    expect(ia).toBeDefined();
+    expect(ia!.from).toBe(doc.indexOf("<!---"));
+    expect(ia!.to).toBe(doc.indexOf("--->") + 4);
+  });
+
+  it("multiple annotations after an unpaired backtick", () => {
+    const doc = "a `b<!---x--->c<!---y--->d";
+    const nodes = parseNodes(doc);
+    const annotations = nodes.filter((n) => n.name === "InlineAnnotation");
+    expect(annotations).toHaveLength(2);
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(false);
+  });
+
+  it("double-backtick fence pairing across annotation is prevented", () => {
+    const doc = "text ``code<!---[id]n!---body`` rest--->more";
+    const nodes = parseNodes(doc);
+    const ia = nodes.find((n) => n.name === "InlineAnnotation");
+    expect(ia).toBeDefined();
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(false);
+  });
+
+  it("backtick after closed annotation does not trigger guard", () => {
+    const doc = "text<!---[id]n!---body--->rest `code` end";
+    const nodes = parseNodes(doc);
+    expect(nodes.some((n) => n.name === "InlineAnnotation")).toBe(true);
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(true);
+  });
+
+  it("two backticks pair with each other, enclosing first annotation in InlineCode", () => {
+    const doc = "a `b<!---x--->c `d<!---y--->e";
+    const nodes = parseNodes(doc);
+    const annotations = nodes.filter((n) => n.name === "InlineAnnotation");
+    expect(annotations).toHaveLength(1);
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(true);
+  });
+
+  it("mismatched fence sizes leave both backticks unpaired, both annotations survive", () => {
+    const doc = "a `b<!---x--->c ``d<!---y--->e";
+    const nodes = parseNodes(doc);
+    const annotations = nodes.filter((n) => n.name === "InlineAnnotation");
+    expect(annotations).toHaveLength(2);
+    expect(nodes.some((n) => n.name === "InlineCode")).toBe(false);
   });
 });
