@@ -818,6 +818,86 @@ describe("Section B: Store", () => {
       usePaneStore.getState().setPanePage("test-root", "same.md");
       expect(usePaneStore.getState().root).toBe(before);
     });
+
+    it("breaks pdf link when navigating a linked pane to a different page", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("a", "other.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
+
+    it("breaks pdf link when the PDF pane navigates away", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "b" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("b", "different.pdf");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
+
+    it("does not break link when setPanePage is a no-op (same path)", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("a", "paper.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBe("b");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBe("a");
+    });
+
+    it("panes can be re-linked after a navigate breaks the link", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().setPanePage("a", "other.md");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+
+      usePaneStore.getState().setPanePage("a", "thesis.md");
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBe("b");
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBe("a");
+    });
   });
 
   describe("setPaneViewMode", () => {
@@ -989,6 +1069,25 @@ describe("Section B: Store", () => {
       const newRoot = usePaneStore.getState().root as PaneSplit;
       expect((newRoot.children[0] as PaneLeaf).pagePath).toBeNull();
       expect((newRoot.children[1] as PaneLeaf).pagePath).toBe("keep.md");
+    });
+
+    it("breaks pdf link when the cleared page has a linked pane", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().clearPageFromPanes("paper.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
     });
   });
 
@@ -1815,7 +1914,7 @@ describe("Section F: Layout Persistence", () => {
       usePanePdfLinkStore.getState().linkPanes(a, b);
 
       startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
-      usePaneStore.getState().setPanePage(a, "note.md");
+      usePaneStore.getState().resize([], [30, 70]);
 
       const stored = JSON.parse(localStorage.getItem(key)!);
       expect(stored.pdfLinks).toHaveLength(1);
@@ -1830,7 +1929,7 @@ describe("Section F: Layout Persistence", () => {
       usePanePdfLinkStore.getState().linkPanes(a, b);
 
       startLayoutSync(WS, () => useWorkspaceStore.getState().paneViewStates);
-      usePaneStore.getState().setPanePage(a, "note.md");
+      usePaneStore.getState().resize([], [30, 70]);
       localStorage.removeItem(key);
 
       // Unlink with no accompanying pane-tree mutation.
