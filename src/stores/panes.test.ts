@@ -1070,6 +1070,25 @@ describe("Section B: Store", () => {
       expect((newRoot.children[0] as PaneLeaf).pagePath).toBeNull();
       expect((newRoot.children[1] as PaneLeaf).pagePath).toBe("keep.md");
     });
+
+    it("breaks pdf link when the cleared page has a linked pane", () => {
+      const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "paper.md" };
+      const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "paper.pdf" };
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [a, b],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "a" });
+      usePanePdfLinkStore.getState().linkPanes("a", "b");
+
+      usePaneStore.getState().clearPageFromPanes("paper.md");
+
+      expect(usePanePdfLinkStore.getState().getLinkedPane("a")).toBeUndefined();
+      expect(usePanePdfLinkStore.getState().getLinkedPane("b")).toBeUndefined();
+    });
   });
 
   describe("swapLayout", () => {

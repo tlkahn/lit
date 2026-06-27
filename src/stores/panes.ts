@@ -285,6 +285,12 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
 
   clearPageFromPanes: (pagePath) => {
     const { root } = get();
+    const linkStore = usePanePdfLinkStore.getState();
+    for (const leaf of collectLeaves(root)) {
+      if (leaf.pagePath === pagePath && linkStore.links.has(leaf.id)) {
+        linkStore.unlinkPane(leaf.id);
+      }
+    }
     const newRoot = clearPagePath(root, pagePath);
     if (newRoot !== root) set({ root: newRoot });
   },
