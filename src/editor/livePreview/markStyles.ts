@@ -71,7 +71,7 @@ export function buildMarkStylesCss(config: MarkConfig): string {
 }
 
 // Idempotently create-or-update the single <style id="lit-mark-styles"> in
-// <head> with CSS generated from `config`. Mirrors themeInjector.injectThemeCss.
+// <head> with CSS generated from `config`.
 export function injectMarkStyles(config: MarkConfig): void {
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) {

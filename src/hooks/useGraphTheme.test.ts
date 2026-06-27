@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useThemeStore } from "../stores/theme";
 import * as graphLayout from "../lib/graphLayout";
 
 describe("useGraphTheme", () => {
@@ -60,27 +59,5 @@ describe("useGraphTheme", () => {
     });
 
     expect(sigmaRef.current!.refresh).not.toHaveBeenCalled();
-  });
-
-  it("effect fires on activeThemeId change", async () => {
-    vi.spyOn(graphLayout, "resolveThemeColors").mockReturnValue({
-      accentColor: "#ff0000",
-      dimColor: "#333",
-      edgeColor: "#aaa",
-      labelColor: "#fff",
-    });
-
-    const { useGraphTheme } = await import("./useGraphTheme");
-    renderHook(() =>
-      useGraphTheme(graphRef, sigmaRef, dimColorRef),
-    );
-
-    sigmaRef.current!.refresh.mockClear();
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "new-theme-id" });
-    });
-
-    expect(sigmaRef.current!.refresh).toHaveBeenCalled();
   });
 });

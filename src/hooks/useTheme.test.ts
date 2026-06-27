@@ -32,7 +32,7 @@ function fireSystemThemeChange(dark: boolean) {
 describe("useTheme", () => {
   beforeEach(() => {
     document.documentElement.classList.remove("dark", "theme-dark", "theme-light");
-    usePreferencesStore.setState({ darkMode: "auto", colorTheme: null, sidebarLocation: "left", loaded: true });
+    usePreferencesStore.setState({ darkMode: "auto", sidebarLocation: "left", loaded: true });
   });
 
   it("applies light theme when darkMode is 'light'", () => {

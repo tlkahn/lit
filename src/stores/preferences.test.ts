@@ -16,7 +16,6 @@ describe("PreferencesStore", () => {
   beforeEach(() => {
     usePreferencesStore.setState({
       darkMode: "auto",
-      colorTheme: null,
       sidebarVisible: true,
       sidebarLocation: "left",
       bottomPanelPosition: "bottom",
@@ -35,7 +34,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": "lit-nordic",
           "workbench.darkMode": "dark",
           "workbench.sideBar.location": "right",
         };
@@ -48,7 +46,6 @@ describe("PreferencesStore", () => {
 
     const state = usePreferencesStore.getState();
     expect(state.darkMode).toBe("dark");
-    expect(state.colorTheme).toBe("lit-nordic");
     expect(state.sidebarLocation).toBe("right");
     expect(state.loaded).toBe(true);
   });
@@ -57,7 +54,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "light",
           "workbench.sideBar.location": "left",
         };
@@ -70,7 +66,6 @@ describe("PreferencesStore", () => {
 
     const state = usePreferencesStore.getState();
     expect(state.darkMode).toBe("light");
-    expect(state.colorTheme).toBeNull();
     expect(state.sidebarLocation).toBe("left");
   });
 
@@ -78,7 +73,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": true,
           "workbench.sideBar.location": "left",
         };
@@ -95,7 +89,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": false,
           "workbench.sideBar.location": "left",
         };
@@ -112,7 +105,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "light",
           "workbench.sideBar.location": "left",
         };
@@ -125,14 +117,12 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().darkMode).toBe("light");
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": "monokai",
       "workbench.darkMode": "dark",
       "workbench.sideBar.location": "right",
     });
 
     const state = usePreferencesStore.getState();
     expect(state.darkMode).toBe("dark");
-    expect(state.colorTheme).toBe("monokai");
     expect(state.sidebarLocation).toBe("right");
   });
 
@@ -161,7 +151,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "crossref.enabled": false,
@@ -185,7 +174,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -206,7 +194,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "crossref.enabled": true,
@@ -222,7 +209,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().crossrefLiveRendering).toBe(true);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "crossref.enabled": true,
@@ -240,7 +226,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "invalid",
         };
@@ -262,7 +247,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "editor.mediaThumbnails": false,
@@ -280,7 +264,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -297,7 +280,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -310,7 +292,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().mediaThumbnails).toBe(true);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "editor.mediaThumbnails": false,
@@ -328,7 +309,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "experimental.unlinkedReferences": true,
@@ -346,7 +326,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -368,7 +347,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.defaultLang": "zh",
@@ -386,7 +364,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -408,7 +385,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.displayMode": "footnote",
@@ -426,7 +402,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -443,7 +418,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.displayMode": "bogus",
@@ -461,7 +435,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -474,7 +447,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().annotationDisplayMode).toBe("pill");
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "annotations.displayMode": "footnote",
@@ -492,7 +464,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.enabled": false,
@@ -510,7 +481,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -527,7 +497,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -540,7 +509,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().annotationEnabled).toBe(true);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "annotations.enabled": false,
@@ -558,7 +526,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.scopeHighlight": false,
@@ -576,7 +543,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -593,7 +559,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -606,7 +571,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().annotationScopeHighlight).toBe(true);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "annotations.scopeHighlight": false,
@@ -619,7 +583,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -632,7 +595,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(true);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "experimental.unlinkedReferences": false,
@@ -650,7 +612,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "workbench.sideBar.visible": false,
@@ -668,7 +629,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -685,7 +645,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -698,7 +657,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().sidebarVisible).toBe(true);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "workbench.sideBar.visible": false,
@@ -724,7 +682,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             "llm.prompts.llm": "Custom llm prompt",
@@ -744,7 +701,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
           };
@@ -764,7 +720,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
           };
@@ -776,7 +731,6 @@ describe("PreferencesStore", () => {
       await usePreferencesStore.getState().loadPreferences();
 
       emitMockEvent("preferences://changed", {
-        "workbench.colorTheme": null,
         "workbench.darkMode": "auto",
         "workbench.sideBar.location": "left",
         "llm.prompts.llm": "Updated prompt",
@@ -795,7 +749,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "llm.neighborsDepth": 2,
@@ -813,7 +766,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -830,7 +782,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -843,7 +794,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().neighborsDepth).toBe(1);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "llm.neighborsDepth": 0,
@@ -863,7 +813,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "workbench.graphView.enabled": true,
@@ -881,7 +830,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -898,7 +846,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -911,7 +858,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().graphViewEnabled).toBe(false);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "workbench.graphView.enabled": true,
@@ -957,7 +903,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "companion.searchPath": [".", "pdfs"],
@@ -975,7 +920,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -992,7 +936,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "companion.searchPath": "pdfs",
@@ -1010,7 +953,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -1023,7 +965,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().companionSearchPath).toEqual(["."]);
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "companion.searchPath": ["pdfs", "."],
@@ -1122,7 +1063,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "academic.pandocPath": "/usr/local/bin/pandoc",
@@ -1140,7 +1080,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "academic.crossrefFilterPath": "/usr/local/bin/pandoc-crossref",
@@ -1158,7 +1097,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "academic.defaultCsl": "ieee",
@@ -1176,7 +1114,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "academic.defaultTemplate": "/path/to/template.tex",
@@ -1194,7 +1131,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "academic.defaultReferenceDoc": "/path/to/reference.docx",
@@ -1212,7 +1148,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -1234,7 +1169,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -1247,7 +1181,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().academicPandocPath).toBe("");
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "academic.pandocPath": "/opt/pandoc",
@@ -1266,7 +1199,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "workbench.bottomPanel.position": "side",
@@ -1284,7 +1216,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -1301,7 +1232,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "workbench.bottomPanel.position": "invalid",
@@ -1319,7 +1249,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -1332,7 +1261,6 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().bottomPanelPosition).toBe("bottom");
 
     emitMockEvent("preferences://changed", {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "workbench.bottomPanel.position": "side",
@@ -1357,7 +1285,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.prefillLastUsed": true,
@@ -1383,7 +1310,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.builderDefaults": defaults,
@@ -1399,7 +1325,6 @@ describe("PreferencesStore", () => {
 
   describe("migrateLlmProvider", () => {
     const base: Preferences = {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
       "editor.folding.enabled": true,
@@ -1495,7 +1420,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "llm.model": "gpt-4o",
@@ -1518,7 +1442,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "llm.model": "claude-sonnet-4-6",
@@ -1544,7 +1467,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "llm.model": "claude-sonnet-4-6",
@@ -1571,7 +1493,6 @@ describe("PreferencesStore", () => {
       calls.push({ cmd, args });
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "llm.model": "gpt-4o",
@@ -1604,7 +1525,6 @@ describe("PreferencesStore", () => {
       calls.push({ cmd, args });
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "llm.provider": {
@@ -1632,7 +1552,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
           "annotations.builderDefaults": { type: 123, bogus: true },
@@ -1650,7 +1569,6 @@ describe("PreferencesStore", () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {
         return {
-          "workbench.colorTheme": null,
           "workbench.darkMode": "auto",
           "workbench.sideBar.location": "left",
         };
@@ -1674,7 +1592,6 @@ describe("PreferencesStore", () => {
     };
 
     const baseGet = {
-      "workbench.colorTheme": null,
       "workbench.darkMode": "auto",
       "workbench.sideBar.location": "left",
     };
@@ -1882,7 +1799,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             // No "search.enabledProviders" key — simulates fresh install
@@ -1900,7 +1816,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             "search.enabledProviders": ["crossref", "arxiv"],
@@ -1928,7 +1843,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             "search.enabledProviders": OLD_PROVIDERS,
@@ -1962,7 +1876,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             "search.enabledProviders": PARTIAL,
@@ -1988,7 +1901,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             "search.enabledProviders": [],
@@ -2009,7 +1921,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
           };
@@ -2022,7 +1933,6 @@ describe("PreferencesStore", () => {
 
       // Fire a changed event without the key
       emitMockEvent("preferences://changed", {
-        "workbench.colorTheme": null,
         "workbench.darkMode": "auto",
         "workbench.sideBar.location": "left",
       });
@@ -2109,7 +2019,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             // No "search.enabledProviders" -- fresh install
@@ -2137,7 +2046,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             "search.enabledProviders": ["crossref", "arxiv"],
@@ -2163,7 +2071,6 @@ describe("PreferencesStore", () => {
       mockInvoke((cmd) => {
         if (cmd === "get_preferences") {
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "auto",
             "workbench.sideBar.location": "left",
             // No "search.enabledProviders" -- triggers IPC fetch

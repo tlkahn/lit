@@ -63,7 +63,6 @@ describe("App", () => {
 
     usePreferencesStore.setState({
       darkMode: "light",
-      colorTheme: null,
       sidebarVisible: true,
       sidebarLocation: "left",
       loaded: true,
@@ -89,11 +88,8 @@ describe("App", () => {
           return samplePages;
         case "get_startup_context":
           return { workspace: null, file: null, line: null, col: null };
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -268,11 +264,8 @@ describe("App", () => {
           return { workspace: "/cli/workspace", file: "notes.md", line: null, col: null };
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -310,11 +303,8 @@ describe("App", () => {
           return { workspace: "/cli/workspace", file: null, line: null, col: null };
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -346,11 +336,8 @@ describe("App", () => {
           return { workspace: "/pending/workspace", file: "readme.md", line: null, col: null };
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -440,11 +427,8 @@ describe("App", () => {
       switch (cmd) {
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -485,11 +469,8 @@ describe("App", () => {
       switch (cmd) {
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -528,11 +509,8 @@ describe("App", () => {
           return { workspace: "/pending/workspace", file: "readme.md", line: 20, col: 3 };
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -573,11 +551,8 @@ describe("App", () => {
           return { workspace: "/cli/workspace", file: "notes.md", line: 15, col: null };
         case "open_workspace":
           return samplePages;
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };
@@ -946,11 +921,8 @@ describe("App", () => {
             return { name: "Lit", version: "0.0.0" };
           case "get_startup_context":
             return { workspace: null, file: null, line: null, col: null };
-          case "list_themes":
-            return [];
           case "get_preferences":
             return {
-              "workbench.colorTheme": null,
               "workbench.darkMode": "light",
               "workbench.sideBar.location": "left",
             };
@@ -1096,11 +1068,8 @@ describe("App", () => {
           return samplePages;
         case "get_startup_context":
           return { workspace: null, file: null, line: null, col: null };
-        case "list_themes":
-          return [];
         case "get_preferences":
           return {
-            "workbench.colorTheme": null,
             "workbench.darkMode": "light",
             "workbench.sideBar.location": "left",
           };

@@ -671,34 +671,6 @@ describe("GraphView", () => {
     expect(onExit).not.toHaveBeenCalled();
   });
 
-  // --- Theme reactivity ---
-
-  it("when activeThemeId changes, sigma.refresh is called to update colors", async () => {
-    const { useThemeStore } = await import("../stores/theme");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-    mockSigmaRefresh.mockClear();
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "new-theme" });
-    });
-
-    expect(mockSigmaRefresh).toHaveBeenCalled();
-  });
-
-  it("theme change during loading state is a no-op (no crash)", async () => {
-    const { useThemeStore } = await import("../stores/theme");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "test-theme" });
-    });
-
-    expect(screen.getByTestId("graph-view")).toBeTruthy();
-  });
-
   // --- Accessibility aria-label ---
 
   it("after loading, container has aria-label with node and edge counts", async () => {
@@ -767,29 +739,6 @@ describe("GraphView", () => {
     expect(dimmed.color).toBe("#3d444d");
 
     document.documentElement.style.removeProperty("--background-modifier-border");
-  });
-
-  // --- Full theme reactivity (edge + label colors) ---
-
-  it("theme change updates sigma defaultEdgeColor and labelColor settings", async () => {
-    document.documentElement.style.setProperty("--text-faint", "#656c76");
-    document.documentElement.style.setProperty("--text-normal", "#f0f6fc");
-
-    const { useThemeStore } = await import("../stores/theme");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-    mockSigmaSetSetting.mockClear();
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "dark-theme" });
-    });
-
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("defaultEdgeColor", "#656c76");
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("labelColor", { color: "#f0f6fc" });
-
-    document.documentElement.style.removeProperty("--text-faint");
-    document.documentElement.style.removeProperty("--text-normal");
   });
 
   // --- Adaptive Quality Tiers ---
@@ -1604,65 +1553,6 @@ describe("GraphView", () => {
     });
 
     expect(screen.queryByTestId("confirm-delete-dialog")).toBeNull();
-  });
-
-  // --- Theme reactivity (immediate, no deferred path) ---
-
-  it("theme change while mounted applies immediately", async () => {
-    const { useThemeStore } = await import("../stores/theme");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    mockSigmaRefresh.mockClear();
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "hidden-theme" });
-    });
-
-    expect(mockSigmaRefresh).toHaveBeenCalled();
-  });
-
-  it("theme change applies edge and label colors immediately", async () => {
-    document.documentElement.style.setProperty("--text-faint", "#aabbcc");
-    document.documentElement.style.setProperty("--text-normal", "#ddeeff");
-
-    const { useThemeStore } = await import("../stores/theme");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    mockSigmaRefresh.mockClear();
-    mockSigmaSetSetting.mockClear();
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "immediate-theme" });
-    });
-
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("defaultEdgeColor", "#aabbcc");
-    expect(mockSigmaSetSetting).toHaveBeenCalledWith("labelColor", { color: "#ddeeff" });
-    expect(mockSigmaRefresh).toHaveBeenCalled();
-
-    document.documentElement.style.removeProperty("--text-faint");
-    document.documentElement.style.removeProperty("--text-normal");
-  });
-
-  it("each theme change while mounted produces its own update", async () => {
-    const { useThemeStore } = await import("../stores/theme");
-    const GraphView = (await import("./GraphView")).default;
-    render(<GraphView />);
-    await waitFor(() => { expect(mockSigmaOn).toHaveBeenCalled(); });
-
-    mockSigmaRefresh.mockClear();
-
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "theme-a" });
-    });
-    await act(async () => {
-      useThemeStore.setState({ activeThemeId: "theme-b" });
-    });
-
-    expect(mockSigmaRefresh.mock.calls.length).toBe(2);
   });
 
   // --- Phase 2B: Click Selection (plain=toggle, Cmd/Ctrl=navigate) ---

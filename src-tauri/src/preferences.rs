@@ -62,8 +62,6 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Preferences {
-    #[serde(rename = "workbench.colorTheme", default)]
-    pub color_theme: Option<String>,
     #[serde(
         rename = "workbench.darkMode",
         default = "default_dark_mode",
@@ -94,7 +92,6 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            color_theme: None,
             dark_mode: "auto".to_string(),
             sidebar_location: "left".to_string(),
             folding_enabled: true,
@@ -439,7 +436,6 @@ mod tests {
     #[test]
     fn defaults() {
         let prefs = Preferences::default();
-        assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
@@ -451,7 +447,6 @@ mod tests {
     #[test]
     fn parse_empty_json() {
         let prefs: Preferences = serde_json::from_str("{}").unwrap();
-        assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
@@ -464,7 +459,6 @@ mod tests {
         let prefs: Preferences =
             serde_json::from_str(r#"{"workbench.darkMode": true}"#).unwrap();
         assert_eq!(prefs.dark_mode, "dark");
-        assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.sidebar_location, "left");
     }
 
@@ -506,14 +500,12 @@ mod tests {
     #[test]
     fn parse_full_json() {
         let json = r#"{
-            "workbench.colorTheme": "lit-nordic",
             "workbench.darkMode": "dark",
             "workbench.sideBar.location": "right",
             "editor.folding.enabled": false,
             "editor.folding.showFoldingControls": "always"
         }"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
-        assert_eq!(prefs.color_theme, Some("lit-nordic".to_string()));
         assert_eq!(prefs.dark_mode, "dark");
         assert_eq!(prefs.sidebar_location, "right");
         assert!(!prefs.folding_enabled);
@@ -552,7 +544,6 @@ mod tests {
 
         let mut prefs = Preferences::default();
         prefs.dark_mode = "dark".to_string();
-        prefs.color_theme = Some("nord".to_string());
         prefs.sidebar_location = "right".to_string();
         prefs.extra.insert("custom.key".to_string(), serde_json::json!("value"));
 
@@ -614,7 +605,6 @@ mod tests {
     fn serialization_uses_dot_notation_keys() {
         let prefs = Preferences::default();
         let json = serde_json::to_string(&prefs).unwrap();
-        assert!(json.contains("workbench.colorTheme"));
         assert!(json.contains("workbench.darkMode"));
         assert!(json.contains("workbench.sideBar.location"));
         assert!(json.contains("editor.folding.enabled"));

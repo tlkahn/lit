@@ -107,27 +107,6 @@ export async function isCliInstalled(): Promise<boolean> {
   return invoke<boolean>("is_cli_installed");
 }
 
-// Theme commands
-
-export interface ThemeInfo {
-  name: string;
-  version: string;
-  author: string;
-  directory_name: string;
-}
-
-export async function listThemes(): Promise<ThemeInfo[]> {
-  return invoke<ThemeInfo[]>("list_themes");
-}
-
-export async function readThemeCss(directoryName: string): Promise<string> {
-  return invoke<string>("read_theme_css", { directoryName });
-}
-
-export async function getThemesDirectory(): Promise<string> {
-  return invoke<string>("get_themes_directory");
-}
-
 // Keymap commands
 
 export type KeyBindingSource = "default" | "user" | "menu";
@@ -171,7 +150,6 @@ export function isViewMode(value: unknown): value is ViewMode {
 }
 
 export interface Preferences {
-  "workbench.colorTheme": string | null;
   "workbench.darkMode": DarkModePref;
   "workbench.sideBar.location": string;
   "editor.folding.enabled": boolean;

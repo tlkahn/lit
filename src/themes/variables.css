@@ -1,54 +1,53 @@
 /* Obsidian-compatible CSS variable contract.
-   Default values sourced from github-markdown-css 5.8.1.
-   Community themes override these. */
+   Leuvburn — dark mode from Zenburn (base16-eighties), light mode from Leuven. */
 
 .theme-light {
   /* Backgrounds */
-  --background-primary: #fdfcfa;
-  --background-primary-alt: #f7f5f2;
-  --background-secondary: #f4f1ec;
-  --background-secondary-alt: #eae6e0;
-  --background-modifier-border: #e0dbd5;
+  --background-primary: #ffffff;
+  --background-primary-alt: #f0f0f0;
+  --background-secondary: #f0f0f0;
+  --background-secondary-alt: #e4e4e3;
+  --background-modifier-border: #d5d5d5;
   --background-modifier-border-subtle: transparent;
-  --background-modifier-hover: #eee9e3;
-  --background-modifier-error: #ffebe9;
+  --background-modifier-hover: #e4e4e3;
+  --background-modifier-error: #fee8e9;
 
   /* Text */
-  --text-normal: #2c2825;
-  --text-muted: #7a7068;
-  --text-faint: #a09688;
-  --text-accent: #9a7b6a;
-  --text-accent-hover: #8a6b5a;
+  --text-normal: #333333;
+  --text-muted: #7f7f7f;
+  --text-faint: #a0a1a7;
+  --text-accent: #006daf;
+  --text-accent-hover: #005a9e;
   --text-error: #d1242f;
   --text-on-accent: #ffffff;
-  --text-selection: #e8e0d6;
-  --text-section-header: #c17a50;
+  --text-selection: #8ed3ff;
+  --text-section-header: #ea6300;
 
   /* Interactive */
-  --interactive-normal: #f4f1ec;
-  --interactive-hover: #eae6e0;
-  --interactive-accent: #9a7b6a;
-  --interactive-accent-hover: #8a6b5a;
+  --interactive-normal: #f0f0f0;
+  --interactive-hover: #e4e4e3;
+  --interactive-accent: #335ea8;
+  --interactive-accent-hover: #2a489e;
 
   /* Nav */
-  --nav-item-color-active: #5a4a3e;
-  --nav-item-background-active: #ece8e3;
-  --nav-item-color-hover: #3a3028;
-  --nav-item-background-hover: #f0ece7;
+  --nav-item-color-active: #335ea8;
+  --nav-item-background-active: #e5f4fb;
+  --nav-item-color-hover: #333333;
+  --nav-item-background-hover: #e4e4e3;
 
   /* Code */
-  --code-background: #f4f1ec;
-  --code-background-translucent: color-mix(in srgb, #f4f1ec 70%, transparent);
-  --code-normal: #2c2825;
+  --code-background: #ffffe0;
+  --code-background-translucent: color-mix(in srgb, #ffffe0 70%, transparent);
+  --code-normal: #000088;
 
   /* Extended colors (callouts) */
-  --color-red: #cf222e;
-  --color-green: #1a7f37;
-  --color-blue: #0969da;
-  --color-orange: #bc4c00;
+  --color-red: #d1242f;
+  --color-green: #008000;
+  --color-blue: #006daf;
+  --color-orange: #ea6300;
   --color-yellow: #9a6700;
-  --color-purple: #8250df;
-  --color-cyan: #0550ae;
+  --color-purple: #6434a3;
+  --color-cyan: #0077cc;
 
   /* Crossref */
   --crossref-citation-color: var(--text-accent);
@@ -63,68 +62,68 @@
   --font-serif-theme: "Junicode", ui-serif, Georgia, "Times New Roman", serif;
   --font-monospace-theme: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, "Noto Sans Mono", monospace;
 
-  /* Color base scale */
+  /* Color base scale — Leuven neutrals */
   --color-base-00: #ffffff;
-  --color-base-05: #f7f5f2;
-  --color-base-10: #eae6e0;
-  --color-base-20: #ddd8d2;
-  --color-base-25: #b8b0a6;
-  --color-base-30: #8a8278;
-  --color-base-35: #7a7068;
-  --color-base-40: #6a6258;
-  --color-base-50: #4d5561;
-  --color-base-60: #32383f;
-  --color-base-70: #24292f;
-  --color-base-100: #1f2328;
+  --color-base-05: #f7f7f7;
+  --color-base-10: #f0f0f0;
+  --color-base-20: #d5d5d5;
+  --color-base-25: #c0c0c0;
+  --color-base-30: #a0a1a7;
+  --color-base-35: #8d8d84;
+  --color-base-40: #7f7f7f;
+  --color-base-50: #59636e;
+  --color-base-60: #4e4e4e;
+  --color-base-70: #3c3c3c;
+  --color-base-100: #333333;
 }
 
 .theme-dark {
   /* Backgrounds */
-  --background-primary: #1a1816;
-  --background-primary-alt: #22201d;
-  --background-secondary: #201e1b;
-  --background-secondary-alt: #2a2724;
-  --background-modifier-border: #3a3632;
+  --background-primary: #333333;
+  --background-primary-alt: #393939;
+  --background-secondary: #2d2d2d;
+  --background-secondary-alt: #2d2d2d;
+  --background-modifier-border: #515151;
   --background-modifier-border-subtle: transparent;
-  --background-modifier-hover: #2e2b27;
-  --background-modifier-error: #3d1117;
+  --background-modifier-hover: #393939;
+  --background-modifier-error: #4d2a2a;
 
   /* Text */
-  --text-normal: #e8e0d6;
-  --text-muted: #9a9088;
-  --text-faint: #6a6258;
-  --text-accent: #c9a87c;
-  --text-accent-hover: #ddc09a;
-  --text-error: #f85149;
-  --text-on-accent: #ffffff;
-  --text-selection: #3d3528;
-  --text-section-header: #d4956a;
+  --text-normal: #f8f5ed;
+  --text-muted: #a09f93;
+  --text-faint: #747369;
+  --text-accent: #f2777a;
+  --text-accent-hover: #e4b3b2;
+  --text-error: #f2777a;
+  --text-on-accent: #2d2d2d;
+  --text-selection: #4d6680;
+  --text-section-header: #f99157;
 
   /* Interactive */
-  --interactive-normal: #201e1b;
-  --interactive-hover: #3a3632;
-  --interactive-accent: #b8956e;
-  --interactive-accent-hover: #caa882;
+  --interactive-normal: #393939;
+  --interactive-hover: #515151;
+  --interactive-accent: #ffcc66;
+  --interactive-accent-hover: #eff0a5;
 
   /* Nav */
-  --nav-item-color-active: #d4b896;
-  --nav-item-background-active: #302c28;
-  --nav-item-color-hover: #e8e0d6;
-  --nav-item-background-hover: #2e2b27;
+  --nav-item-color-active: #f2777a;
+  --nav-item-background-active: #393939;
+  --nav-item-color-hover: #f8f5ed;
+  --nav-item-background-hover: #515151;
 
   /* Code */
-  --code-background: #201e1b;
-  --code-background-translucent: color-mix(in srgb, #201e1b 40%, transparent);
-  --code-normal: #e8e0d6;
+  --code-background: #2d2d2d;
+  --code-background-translucent: color-mix(in srgb, #2d2d2d 40%, transparent);
+  --code-normal: #99cc99;
 
   /* Extended colors (callouts) */
-  --color-red: #f85149;
-  --color-green: #3fb950;
-  --color-blue: #4493f8;
-  --color-orange: #d29922;
-  --color-yellow: #d29922;
-  --color-purple: #ab7df8;
-  --color-cyan: #79c0ff;
+  --color-red: #f2777a;
+  --color-green: #99cc99;
+  --color-blue: #6699cc;
+  --color-orange: #f99157;
+  --color-yellow: #ffcc66;
+  --color-purple: #cc99cc;
+  --color-cyan: #66cccc;
 
   /* Crossref */
   --crossref-citation-color: var(--text-accent);
@@ -139,17 +138,17 @@
   --font-serif-theme: "Junicode", ui-serif, Georgia, "Times New Roman", serif;
   --font-monospace-theme: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, "Noto Sans Mono", monospace;
 
-  /* Color base scale */
-  --color-base-00: #1a1816;
-  --color-base-05: #201e1b;
-  --color-base-10: #2a2724;
-  --color-base-20: #3a3632;
-  --color-base-25: #4a4440;
-  --color-base-30: #6a6258;
-  --color-base-35: #9a9088;
-  --color-base-40: #9a9088;
-  --color-base-50: #b8b0a6;
-  --color-base-60: #d0c8be;
-  --color-base-70: #e8e0d6;
-  --color-base-100: #e8e0d6;
+  /* Color base scale — base16-eighties base00→07 */
+  --color-base-00: #2d2d2d;
+  --color-base-05: #333333;
+  --color-base-10: #393939;
+  --color-base-20: #515151;
+  --color-base-25: #636259;
+  --color-base-30: #747369;
+  --color-base-35: #8a8980;
+  --color-base-40: #a09f93;
+  --color-base-50: #d3d0c8;
+  --color-base-60: #e8e6df;
+  --color-base-70: #f2f0ec;
+  --color-base-100: #f8f5ed;
 }

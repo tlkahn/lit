@@ -14,7 +14,6 @@ pub mod license;
 pub mod lkg;
 pub mod page;
 pub mod preferences;
-pub mod theme;
 pub mod trash;
 pub mod llm;
 pub mod oplog;

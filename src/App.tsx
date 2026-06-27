@@ -12,7 +12,6 @@ import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
-import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
 import { providerNeedsApiKey } from "./lib/providerRegistry";
 import { useMarkConfigStore } from "./stores/markConfig";
@@ -71,11 +70,8 @@ function App() {
   const selectPageAtLine = useWorkspaceStore((s) => s.selectPageAtLine);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
-  const initThemes = useThemeStore((s) => s.loadThemes);
   const loadMarkConfig = useMarkConfigStore((s) => s.loadConfig);
   const loadPreferences = usePreferencesStore((s) => s.loadPreferences);
-  const colorTheme = usePreferencesStore((s) => s.colorTheme);
-  const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
   const sidebarVisible = usePreferencesStore((s) => s.sidebarVisible);
   const llmEnabled = usePreferencesStore((s) =>
     s.llmProvider.apiKeySet ||
@@ -99,12 +95,8 @@ function App() {
   const currentPanePage = focusedLeaf?.pagePath ?? null;
 
   useEffect(() => {
-    Promise.all([loadPreferences(), initThemes()]);
-  }, [loadPreferences, initThemes]);
-
-  useEffect(() => {
-    syncFromPreferences();
-  }, [colorTheme, syncFromPreferences]);
+    loadPreferences();
+  }, [loadPreferences]);
 
   // Mark config is workspace-scoped (reads .lit/marks.toml and requires a
   // registered workspace), so load it on open and reload on workspace switch.

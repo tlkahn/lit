@@ -7,8 +7,8 @@ import {
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
-  it("has 44 entries", () => {
-    expect(SETTINGS_REGISTRY).toHaveLength(44);
+  it("has 43 entries", () => {
+    expect(SETTINGS_REGISTRY).toHaveLength(43);
   });
 
   it("every entry has required fields defined", () => {
@@ -20,12 +20,6 @@ describe("SETTINGS_REGISTRY", () => {
       expect(entry.controlType).toBeDefined();
       expect(entry.testId).toBeDefined();
     }
-  });
-
-  it("colorTheme entry has controlType 'dropdown'", () => {
-    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "colorTheme");
-    expect(entry).toBeDefined();
-    expect(entry!.controlType).toBe("dropdown");
   });
 
   it("llmTemperature entry has controlType 'slider'", () => {
@@ -94,7 +88,7 @@ describe("groupByCategory", () => {
   it("returns Map with 8 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(9);
-    expect(grouped.get("Appearance")).toHaveLength(8);
+    expect(grouped.get("Appearance")).toHaveLength(7);
     expect(grouped.get("Editor")).toHaveLength(5);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
@@ -124,7 +118,7 @@ describe("filterSettings", () => {
 
   it("returns all entries with empty indices for empty query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "");
-    expect(results).toHaveLength(44);
+    expect(results).toHaveLength(43);
     for (const r of results) {
       expect(r.indices).toEqual([]);
     }

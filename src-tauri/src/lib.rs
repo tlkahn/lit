@@ -192,7 +192,6 @@ pub fn run() {
                 app.state::<Arc<seed::SeedState>>().inner().clone();
             let seed_handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
-                let _ = commands::theme::seed_bundled_themes(&seed_handle);
                 commands::keymap::seed_default_keymaps(&seed_handle);
                 preferences::seed_default_if_missing(&seed_handle);
                 seed_state.mark_ready();
@@ -335,9 +334,6 @@ pub fn run() {
             commands::page::read_code_file,
             commands::page::write_code_file,
             commands::page::parse_raw_yaml,
-            commands::theme::list_themes,
-            commands::theme::read_theme_css,
-            commands::theme::get_themes_directory,
             commands::keymap::get_keymaps,
             commands::keymap::get_default_keymaps,
             commands::keymap::get_user_keymaps_path,
