@@ -7,6 +7,7 @@ import { WorkspaceChooser } from "./components/WorkspaceChooser";
 import { StatusBar } from "./components/StatusBar";
 import { LicenseGate } from "./components/LicenseGate";
 import { LicenseInfoDialog } from "./components/LicenseInfoDialog";
+import { AcknowledgementsDialog } from "./components/AcknowledgementsDialog";
 import { useTheme } from "./hooks/useTheme";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
@@ -163,6 +164,7 @@ function App() {
   const [settingsInitialCategory, setSettingsInitialCategory] = useState<"Keyboard Shortcuts" | undefined>();
   const [licenseEntryOpen, setLicenseEntryOpen] = useState(false);
   const [licenseInfoOpen, setLicenseInfoOpen] = useState(false);
+  const [acknowledgementsOpen, setAcknowledgementsOpen] = useState(false);
   const licenseState = useLicenseStore((s) => s.state);
   const licensedTo = useLicenseStore((s) => s.licensedTo);
 
@@ -201,6 +203,12 @@ function App() {
       });
       if (cancelled) { unInfo(); return; }
       unlisteners.push(unInfo);
+
+      const unAck = await listen("menu://acknowledgements", () => {
+        setAcknowledgementsOpen(true);
+      });
+      if (cancelled) { unAck(); return; }
+      unlisteners.push(unAck);
 
       const unPrefs = await win.listen("menu://open-preferences", () => {
         setSettingsInitialCategory(undefined);
@@ -627,6 +635,7 @@ function App() {
         <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
         <PassphraseModal />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} onClose={() => setLicenseInfoOpen(false)} />
+        <AcknowledgementsDialog open={acknowledgementsOpen} onClose={() => setAcknowledgementsOpen(false)} />
         <SubgraphExportPicker
           open={exportFlow.pickerOpen}
           onExport={exportFlow.handlePickerExport}

@@ -15,6 +15,7 @@ pub const MENU_ID_EXPORT_DOCX: &str = "export_docx";
 pub const MENU_ID_EXPORT_LKG: &str = "export_lkg";
 pub const MENU_ID_IMPORT_LKG: &str = "import_lkg";
 pub const MENU_ID_CLOSE: &str = "close-pane";
+pub const MENU_ID_ACKNOWLEDGEMENTS: &str = "acknowledgements";
 pub const MENU_ID_ABOUT: &str = "show_about";
 pub const MENU_ID_CHECK_FOR_UPDATES: &str = "check_for_updates";
 
@@ -44,6 +45,7 @@ pub const EVENT_EXPORT_HTML: &str = "menu://export-html";
 pub const EVENT_EXPORT_DOCX: &str = "menu://export-docx";
 pub const EVENT_EXPORT_LKG: &str = "menu://export-lkg";
 pub const EVENT_IMPORT_LKG: &str = "menu://import-lkg";
+pub const EVENT_ACKNOWLEDGEMENTS: &str = "menu://acknowledgements";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
@@ -60,6 +62,7 @@ pub(crate) enum MenuAction {
     ExportLkg,
     ImportLkg,
     LicenseInfo,
+    Acknowledgements,
     ShowAbout,
     CheckForUpdates,
 }
@@ -74,6 +77,7 @@ impl MenuAction {
             MENU_ID_BUY_LICENSE => Some(Self::BuyLicense),
             MENU_ID_ENTER_LICENSE_KEY => Some(Self::EnterLicenseKey),
             MENU_ID_LICENSE_INFO => Some(Self::LicenseInfo),
+            MENU_ID_ACKNOWLEDGEMENTS => Some(Self::Acknowledgements),
             MENU_ID_EXPORT_MARKDOWN => Some(Self::ExportMarkdown),
             MENU_ID_EXPORT_LATEX => Some(Self::ExportLatex),
             MENU_ID_EXPORT_HTML => Some(Self::ExportHtml),
@@ -228,6 +232,9 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
         MenuAction::LicenseInfo => {
             let _ = app.emit(EVENT_LICENSE_INFO, ());
         }
+        MenuAction::Acknowledgements => {
+            let _ = app.emit(EVENT_ACKNOWLEDGEMENTS, ());
+        }
         MenuAction::CheckForUpdates => {
             #[cfg(not(debug_assertions))]
             {
@@ -330,6 +337,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     help_menu.append(&MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", true, None::<&str>)?)?;
     help_menu.append(&MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", true, None::<&str>)?)?;
     help_menu.append(&PredefinedMenuItem::separator(app)?)?;
+    help_menu.append(&MenuItem::with_id(app, MENU_ID_ACKNOWLEDGEMENTS, "Acknowledgements\u{2026}", true, None::<&str>)?)?;
     help_menu.append(&MenuItem::with_id(app, MENU_ID_ABOUT, "About Lit\u{2026}", true, None::<&str>)?)?;
 
     Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &window_menu, &help_menu])
@@ -345,6 +353,7 @@ mod tests {
         assert_eq!(MENU_ID_ENTER_LICENSE_KEY, "enter_license_key");
         assert_eq!(MENU_ID_LICENSE_INFO, "license_info");
         assert_eq!(MENU_ID_ABOUT, "show_about");
+        assert_eq!(MENU_ID_ACKNOWLEDGEMENTS, "acknowledgements");
     }
 
     #[test]
@@ -409,6 +418,7 @@ mod tests {
             MENU_ID_BUY_LICENSE,
             MENU_ID_ENTER_LICENSE_KEY,
             MENU_ID_LICENSE_INFO,
+            MENU_ID_ACKNOWLEDGEMENTS,
             MENU_ID_ABOUT,
             MENU_ID_CHECK_FOR_UPDATES,
         ];
@@ -433,6 +443,7 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_BUY_LICENSE), Some(MenuAction::BuyLicense));
         assert_eq!(MenuAction::from_id(MENU_ID_ENTER_LICENSE_KEY), Some(MenuAction::EnterLicenseKey));
         assert_eq!(MenuAction::from_id(MENU_ID_LICENSE_INFO), Some(MenuAction::LicenseInfo));
+        assert_eq!(MenuAction::from_id(MENU_ID_ACKNOWLEDGEMENTS), Some(MenuAction::Acknowledgements));
         assert_eq!(MenuAction::from_id(MENU_ID_ABOUT), Some(MenuAction::ShowAbout));
         assert_eq!(MenuAction::from_id(MENU_ID_CHECK_FOR_UPDATES), Some(MenuAction::CheckForUpdates));
     }
@@ -450,6 +461,7 @@ mod tests {
         assert_eq!(EVENT_BUY_LICENSE, "menu://buy-license");
         assert_eq!(EVENT_ENTER_LICENSE_KEY, "menu://enter-license-key");
         assert_eq!(EVENT_LICENSE_INFO, "menu://license-info");
+        assert_eq!(EVENT_ACKNOWLEDGEMENTS, "menu://acknowledgements");
     }
 
     #[test]
