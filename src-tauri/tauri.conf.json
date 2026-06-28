@@ -22,6 +22,8 @@
     "resources": {
       "../themes/lit-nordic/*": "bundled-themes/lit-nordic/",
       "../themes/leuvburn/*": "bundled-themes/leuvburn/",
+      "../themes/book/*": "bundled-themes/book/",
+      "../src/themes/licenses/*": "licenses/",
       "../keymaps/default.json": "bundled-keymaps/default.json",
       "libs/libpdfium.dylib": "libpdfium.dylib",
       "resources/academic/*": "academic/",
