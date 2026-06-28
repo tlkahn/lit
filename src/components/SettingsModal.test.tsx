@@ -3,13 +3,12 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { SettingsModal } from "./SettingsModal";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
-import { useThemeStore } from "../stores/theme";
 import { CATEGORIES, SETTINGS_REGISTRY } from "../lib/settingsRegistry";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 const defaults = {
   darkMode: "auto" as const,
-  colorTheme: null,
+  colorTheme: "book",
   sidebarVisible: true,
   sidebarLocation: "left" as const,
   bottomPanelPosition: "bottom" as const,
@@ -53,12 +52,6 @@ beforeEach(() => {
   usePreferencesStore.setState(defaults);
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, migrationPromptOpen: false });
-  useThemeStore.setState({
-    availableThemes: [
-      { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
-      { name: "Nord", version: "1.0", author: "Arctic Ice Studio", directory_name: "nord" },
-    ],
-  });
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -174,105 +167,7 @@ describe("SettingsModal", () => {
     });
   });
 
-  // --- colorTheme (SettingsDropdown) ---
-
-  describe("colorTheme", () => {
-    it("renders a <select> element", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-colorTheme']");
-      expect(select).toBeTruthy();
-      expect(select!.tagName).toBe("SELECT");
-    });
-
-    it("shows Default + available theme names as options", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
-      const opts = select.querySelectorAll("option");
-      expect(opts).toHaveLength(3);
-      expect(opts[0]!.value).toBe("");
-      expect(opts[0]!.textContent).toBe("Default");
-      expect(opts[1]!.value).toBe("dracula");
-      expect(opts[1]!.textContent).toBe("Dracula");
-      expect(opts[2]!.value).toBe("nord");
-      expect(opts[2]!.textContent).toBe("Nord");
-    });
-
-    it("null store value selects Default", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
-      expect(select.value).toBe("");
-    });
-
-    it("non-null store value selects that theme", () => {
-      usePreferencesStore.setState({ colorTheme: "nord" });
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
-      expect(select.value).toBe("nord");
-    });
-
-    it("selecting a theme commits immediately via setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
-      fireEvent.change(select, { target: { value: "dracula" } });
-      expect(usePreferencesStore.getState().colorTheme).toBe("dracula");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "workbench.colorTheme", value: "dracula" },
-        });
-      });
-    });
-
-    it("auto-clears stale colorTheme not in availableThemes", async () => {
-      usePreferencesStore.setState({ colorTheme: "deleted-theme" });
-      render(<SettingsModal open={true} onClose={vi.fn()} />);
-      await vi.waitFor(() => {
-        expect(usePreferencesStore.getState().colorTheme).toBeNull();
-      });
-      expect(invokeCalls).toContainEqual({
-        cmd: "set_preference",
-        args: { key: "workbench.colorTheme", value: null },
-      });
-    });
-
-    it("does not auto-clear valid colorTheme", () => {
-      usePreferencesStore.setState({ colorTheme: "dracula" });
-      render(<SettingsModal open={true} onClose={vi.fn()} />);
-      expect(usePreferencesStore.getState().colorTheme).toBe("dracula");
-    });
-
-    it("does not fire IPC when colorTheme is already null", () => {
-      render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const colorThemeCalls = invokeCalls.filter(
-        (c) => c.cmd === "set_preference" && c.args.key === "workbench.colorTheme",
-      );
-      expect(colorThemeCalls).toHaveLength(0);
-    });
-
-    it("dropdown shows Default after stale theme is auto-cleared", async () => {
-      usePreferencesStore.setState({ colorTheme: "deleted-theme" });
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      await vi.waitFor(() => {
-        expect(usePreferencesStore.getState().colorTheme).toBeNull();
-      });
-      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
-      expect(select.value).toBe("");
-    });
-
-    it("selecting Default commits null", async () => {
-      usePreferencesStore.setState({ colorTheme: "dracula" });
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
-      fireEvent.change(select, { target: { value: "" } });
-      expect(usePreferencesStore.getState().colorTheme).toBeNull();
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "workbench.colorTheme", value: null },
-        });
-      });
-    });
-  });
+  // colorTheme is hidden from the preferences UI (see #839)
 
   // --- sidebarVisible (ToggleSwitch) ---
 
@@ -949,11 +844,10 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 27 control data-testid values exist", () => {
+  it("all 26 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
-      "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
       "settings-bottomPanelPosition-bottom",
@@ -1026,18 +920,6 @@ describe("SettingsModal", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("syncs colorTheme when store changes externally", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
-    expect(select.value).toBe("");
-
-    act(() => {
-      usePreferencesStore.setState({ colorTheme: "nord" });
-    });
-
-    expect(select.value).toBe("nord");
-  });
-
   // --- Phase 6: Search Filtering ---
 
   // Cycle 6.1 — Typing filters settings to matches only
@@ -1052,7 +934,6 @@ describe("SettingsModal", () => {
 
     expect(container.querySelector("[data-testid^='settings-darkMode']")).toBeNull();
     expect(container.querySelector("[data-testid='settings-sidebarVisible']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
     expect(container.querySelector("[data-testid='settings-mediaThumbnails']")).toBeNull();
     expect(container.querySelector("[data-testid='settings-crossrefEnabled']")).toBeNull();
     expect(container.querySelector("[data-testid='settings-annotationEnabled']")).toBeNull();
@@ -1068,7 +949,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 27 controls", () => {
+  it("empty search shows all 26 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -1076,7 +957,6 @@ describe("SettingsModal", () => {
 
     const expectedIds = [
       "settings-darkMode-auto",
-      "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
       "settings-bottomPanelPosition-bottom",
@@ -1185,7 +1065,6 @@ describe("SettingsModal", () => {
 
     const expectedIds = [
       "settings-darkMode-auto",
-      "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
       "settings-bottomPanelPosition-bottom",
@@ -1569,35 +1448,6 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
     const darkBtn = container.querySelector("[data-testid='settings-darkMode-dark']")!;
     expect(darkBtn.getAttribute("aria-pressed")).toBe("true");
-  });
-
-  // --- Phase 4: Edge Cases ---
-
-  it("empty theme list shows only Default option", () => {
-    useThemeStore.setState({ availableThemes: [] });
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const select = container.querySelector("[data-testid='settings-colorTheme']")!;
-    const opts = select.querySelectorAll("option");
-    expect(opts).toHaveLength(1);
-    expect(opts[0]!.textContent).toBe("Default");
-  });
-
-  it("dynamic theme list update reflects in dropdown", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const select = container.querySelector("[data-testid='settings-colorTheme']")!;
-    expect(select.querySelectorAll("option")).toHaveLength(3);
-
-    act(() => {
-      useThemeStore.setState({
-        availableThemes: [
-          { name: "Dracula", version: "1.0", author: "Dracula Team", directory_name: "dracula" },
-          { name: "Nord", version: "1.0", author: "Arctic Ice Studio", directory_name: "nord" },
-          { name: "Solarized", version: "1.0", author: "Ethan Schoonover", directory_name: "solarized" },
-        ],
-      });
-    });
-
-    expect(select.querySelectorAll("option")).toHaveLength(4);
   });
 
   // --- hasApiKey effect ---

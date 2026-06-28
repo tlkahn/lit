@@ -14,7 +14,6 @@ import { SettingsSlider } from "./SettingsSlider";
 import { HighlightedText } from "./HighlightedText";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField, type PasswordEntry } from "../lib/settingsRegistry";
-import { useThemeStore } from "../stores/theme";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
 import { AcademicExportSettings } from "./AcademicExportSettings";
 import { LlmProviderSettings } from "./LlmProviderSettings";
@@ -42,12 +41,11 @@ interface RenderControlParams {
   localTextValues: Record<string, string>;
   setLocalTextValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   matchIndices: number[];
-  dynamicOptions: Record<string, { value: string; label: string }[]>;
   ensureUnlocked: () => Promise<void>;
 }
 
 function renderControl(params: RenderControlParams) {
-  const { entry, prefs, localTextValues, setLocalTextValues, matchIndices, dynamicOptions } = params;
+  const { entry, prefs, localTextValues, setLocalTextValues, matchIndices } = params;
   const label = matchIndices.length > 0
     ? <HighlightedText text={entry.label} indices={matchIndices} />
     : entry.label;
@@ -90,7 +88,7 @@ function renderControl(params: RenderControlParams) {
         />
       );
     case "dropdown": {
-      const opts = dynamicOptions[entry.storeField] ?? entry.options ?? [];
+      const opts = entry.options ?? [];
       const raw = prefs[entry.storeField];
       const value = raw == null ? "" : String(raw);
       return (
@@ -100,10 +98,8 @@ function renderControl(params: RenderControlParams) {
           testId={entry.testId}
           options={opts}
           value={value}
-          nullable={entry.nullable}
           onChange={(v) => {
-            const val = entry.nullable && v === "" ? null : v;
-            setRegistryPref(entry.storeField, entry.jsonKey, val);
+            setRegistryPref(entry.storeField, entry.jsonKey, v);
           }}
         />
       );
@@ -173,9 +169,6 @@ function renderControl(params: RenderControlParams) {
 }
 
 const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text" || e.controlType === "textarea");
-const nullableDropdownEntries = SETTINGS_REGISTRY.filter(
-  (e) => e.controlType === "dropdown" && e.nullable,
-);
 
 export function SettingsModal({ open, onClose, initialCategory }: SettingsModalProps) {
   const prefs = usePreferencesStore(useShallow((s) => {
@@ -183,21 +176,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     for (const f of STORE_FIELDS) obj[f] = s[f];
     return obj;
   }));
-  const availableThemes = useThemeStore((s) => s.availableThemes);
-  const dynamicOptions: Record<string, { value: string; label: string }[]> = useMemo(() => ({
-    colorTheme: availableThemes.map((t) => ({ value: t.directory_name, label: t.name })),
-  }), [availableThemes]);
-
-  useEffect(() => {
-    for (const entry of nullableDropdownEntries) {
-      const raw = prefs[entry.storeField];
-      if (raw == null) continue;
-      const opts = dynamicOptions[entry.storeField] ?? [];
-      if (!opts.some((o) => o.value === String(raw))) {
-        setRegistryPref(entry.storeField, entry.jsonKey, null);
-      }
-    }
-  }, [prefs, dynamicOptions]);
 
   const ensureUnlocked = useSecretStoreStore((s) => s.ensureUnlocked);
   const exists = useSecretStoreStore((s) => s.exists);
@@ -496,7 +474,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                             </div>
                           )}
                           <div className="space-y-3">
-                            {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions, ensureUnlocked }))}
+                            {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, ensureUnlocked }))}
                           </div>
                           {cat === "Academic Export" && (
                             <div className="mt-3">
@@ -518,7 +496,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                               </button>
                               {expandedGroups[groupName] && (
                                 <div className="space-y-3 mt-2">
-                                  {groupResults.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, dynamicOptions, ensureUnlocked }))}
+                                  {groupResults.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, ensureUnlocked }))}
                                 </div>
                               )}
                             </div>
