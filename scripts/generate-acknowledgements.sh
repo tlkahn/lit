@@ -10,9 +10,45 @@ OUT="$REPO_ROOT/src/data/acknowledgements.json"
 mkdir -p "$(dirname "$OUT")"
 
 python3 -c "
-import json, subprocess, os, sys
+import json, subprocess, os, sys, re
 
 repo = sys.argv[1]
+
+def normalize_repo(raw):
+    if not raw or raw.startswith('http'):
+        return raw
+    # ssh://git@github.com/owner/name or git@github.com:owner/name
+    if raw.startswith('ssh://'):
+        raw = raw[len('ssh://'):]
+    m = re.match(r'git@([^:/]+)[:/](.*)', raw)
+    if m:
+        return f'https://{m.group(1)}/{m.group(2)}'
+    # github:owner/name, gitlab:owner/name, bitbucket:owner/name, gist:id
+    for prefix, host in [('github:', 'github.com'), ('gitlab:', 'gitlab.com'), ('bitbucket:', 'bitbucket.org'), ('gist:', 'gist.github.com')]:
+        if raw.startswith(prefix):
+            return f'https://{host}/{raw[len(prefix):]}'
+    # bare owner/name (npm convention: defaults to GitHub)
+    if re.match(r'^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$', raw):
+        return f'https://github.com/{raw}'
+    return raw
+
+def parse_pkg(p, fallback_name):
+    if isinstance(p.get('license'), str):
+        lic = p.get('license', 'Unknown')
+    elif isinstance(p.get('license'), dict):
+        lic = p.get('license', {}).get('type', 'Unknown')
+    else:
+        lic = 'Unknown'
+    raw_repo = p.get('repository', '')
+    if isinstance(raw_repo, dict):
+        raw_repo = raw_repo.get('url', '')
+    raw_repo = (raw_repo or '').replace('git+', '').replace('git://', 'https://').removesuffix('.git')
+    return {
+        'name': p.get('name', fallback_name),
+        'version': p.get('version', ''),
+        'license': lic,
+        'repository': normalize_repo(raw_repo),
+    }
 
 # ── Rust dependencies ──────────────────────────────────────────────
 meta = json.loads(subprocess.check_output(
@@ -64,12 +100,7 @@ if os.path.isdir(nm):
                     try:
                         with open(pkg_json) as f:
                             p = json.load(f)
-                        js.append({
-                            'name': p.get('name', f'{entry}/{sub}'),
-                            'version': p.get('version', ''),
-                            'license': p.get('license', 'Unknown') if isinstance(p.get('license'), str) else (p.get('license', {}).get('type', 'Unknown') if isinstance(p.get('license'), dict) else 'Unknown'),
-                            'repository': (p.get('repository', {}).get('url', '') if isinstance(p.get('repository'), dict) else (p.get('repository') or '')).replace('git+', '').replace('git://', 'https://').rstrip('.git'),
-                        })
+                        js.append(parse_pkg(p, f'{entry}/{sub}'))
                     except (json.JSONDecodeError, OSError):
                         pass
             continue
@@ -77,12 +108,7 @@ if os.path.isdir(nm):
             try:
                 with open(pkg_json) as f:
                     p = json.load(f)
-                js.append({
-                    'name': p.get('name', entry),
-                    'version': p.get('version', ''),
-                    'license': p.get('license', 'Unknown') if isinstance(p.get('license'), str) else (p.get('license', {}).get('type', 'Unknown') if isinstance(p.get('license'), dict) else 'Unknown'),
-                    'repository': (p.get('repository', {}).get('url', '') if isinstance(p.get('repository'), dict) else (p.get('repository') or '')).replace('git+', '').replace('git://', 'https://').rstrip('.git'),
-                })
+                js.append(parse_pkg(p, entry))
             except (json.JSONDecodeError, OSError):
                 pass
 

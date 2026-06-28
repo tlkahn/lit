@@ -233,7 +233,9 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
             let _ = app.emit(EVENT_LICENSE_INFO, ());
         }
         MenuAction::Acknowledgements => {
-            let _ = app.emit(EVENT_ACKNOWLEDGEMENTS, ());
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit_to(window.label(), EVENT_ACKNOWLEDGEMENTS, ());
+            }
         }
         MenuAction::CheckForUpdates => {
             #[cfg(not(debug_assertions))]
@@ -495,6 +497,35 @@ mod tests {
     fn pick_focused_label_empty_is_none() {
         let candidates: Vec<(String, bool)> = vec![];
         assert_eq!(pick_focused_label(&candidates), None);
+    }
+
+    #[test]
+    fn acknowledgements_handler_is_window_scoped() {
+        // The Acknowledgements handler must use find_focused_window + emit_to
+        // (window-scoped), not app.emit (global broadcast), to avoid opening the
+        // dialog in every window in a multi-window setup.
+        let src = include_str!("menu.rs");
+        // Find the Acknowledgements match arm
+        let ack_pos = src
+            .find("MenuAction::Acknowledgements =>")
+            .expect("MenuAction::Acknowledgements arm not found");
+        // Extract the handler body (until the next MenuAction:: arm or closing brace)
+        let rest = &src[ack_pos..];
+        let arm_end = rest
+            .find("\n        MenuAction::")
+            .or_else(|| rest.find("\n    }"))
+            .unwrap_or(rest.len());
+        let arm_body = &rest[..arm_end];
+        assert!(
+            arm_body.contains("find_focused_window"),
+            "Acknowledgements handler must use find_focused_window, not app.emit. Got:\n{}",
+            arm_body,
+        );
+        assert!(
+            arm_body.contains("emit_to"),
+            "Acknowledgements handler must use emit_to (window-scoped), not app.emit. Got:\n{}",
+            arm_body,
+        );
     }
 
     #[test]
