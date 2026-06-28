@@ -1,0 +1,136 @@
+/* Book — light mode from hugo-book browser defaults, dark mode from hugo-book Nord variant */
+/* Palette: MIT-licensed hugo-book by Alex Shpak (https://github.com/alex-shpak/hugo-book) */
+
+.theme-dark {
+  /* Backgrounds — Nord */
+  --background-primary: #2e3440;
+  --background-primary-alt: #3b4252;
+  --background-secondary: #3b4252;
+  --background-secondary-alt: #2e3440;
+  --background-modifier-border: #434c5e;
+  --background-modifier-border-subtle: transparent;
+  --background-modifier-hover: #434c5e;
+  --background-modifier-error: #3d2a2e;
+
+  /* Text */
+  --text-normal: #eceff4;
+  --text-muted: #d8dee9;
+  --text-faint: #7b88a1;
+  --text-accent: #81a1c1;
+  --text-accent-hover: #a3beda;
+  --text-error: #bf616a;
+  --text-on-accent: #2e3440;
+  --text-selection: #3b5070;
+  --text-section-header: #d08770;
+
+  /* Interactive */
+  --interactive-normal: #3b4252;
+  --interactive-hover: #434c5e;
+  --interactive-accent: #81a1c1;
+  --interactive-accent-hover: #a3beda;
+
+  /* Nav */
+  --nav-item-color-active: #81a1c1;
+  --nav-item-background-active: #434c5e;
+  --nav-item-color-hover: #eceff4;
+  --nav-item-background-hover: #434c5e;
+
+  /* Code */
+  --code-background: #3b4252;
+  --code-normal: #a3be8c;
+
+  /* Extended colors */
+  --color-red: #bf616a;
+  --color-green: #a3be8c;
+  --color-blue: #5e81ac;
+  --color-orange: #d08770;
+  --color-yellow: #ebcb8b;
+  --color-purple: #b48ead;
+  --color-cyan: #88c0d0;
+
+  /* Fonts */
+  --font-text-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-interface-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-monospace-theme: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+
+  /* Color base scale — Nord 0→6 */
+  --color-base-00: #2e3440;
+  --color-base-05: #333a47;
+  --color-base-10: #3b4252;
+  --color-base-20: #434c5e;
+  --color-base-25: #4c566a;
+  --color-base-30: #616e88;
+  --color-base-35: #7b88a1;
+  --color-base-40: #939aab;
+  --color-base-50: #b0b7c4;
+  --color-base-60: #c8ced9;
+  --color-base-70: #d8dee9;
+  --color-base-100: #eceff4;
+}
+
+.theme-light {
+  /* Backgrounds — hugo-book browser defaults */
+  --background-primary: #ffffff;
+  --background-primary-alt: #f8f9fa;
+  --background-secondary: #f8f9fa;
+  --background-secondary-alt: #e9ecef;
+  --background-modifier-border: #e9ecef;
+  --background-modifier-border-subtle: transparent;
+  --background-modifier-hover: #e9ecef;
+  --background-modifier-error: #fce8e8;
+
+  /* Text */
+  --text-normal: #000000;
+  --text-muted: #6c757d;
+  --text-faint: #adb5bd;
+  --text-accent: #0055bb;
+  --text-accent-hover: #003d87;
+  --text-error: #d84747;
+  --text-on-accent: #ffffff;
+  --text-selection: #cce2f4;
+  --text-section-header: #8144dd;
+
+  /* Interactive */
+  --interactive-normal: #f8f9fa;
+  --interactive-hover: #e9ecef;
+  --interactive-accent: #0055bb;
+  --interactive-accent-hover: #003d87;
+
+  /* Nav */
+  --nav-item-color-active: #0055bb;
+  --nav-item-background-active: #e8f0fe;
+  --nav-item-color-hover: #000000;
+  --nav-item-background-hover: #e9ecef;
+
+  /* Code */
+  --code-background: #f8f9fa;
+  --code-normal: #0055bb;
+
+  /* Extended colors */
+  --color-red: #d84747;
+  --color-green: #3bad3b;
+  --color-blue: #4486dd;
+  --color-orange: #f59e42;
+  --color-yellow: #c68a00;
+  --color-purple: #8144dd;
+  --color-cyan: #0099cc;
+
+  /* Fonts */
+  --font-text-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-interface-theme: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-monospace-theme: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+
+  /* Color base scale — white→black with hugo-book grays as anchors */
+  --color-base-00: #ffffff;
+  --color-base-05: #f8f9fa;
+  --color-base-10: #e9ecef;
+  --color-base-20: #dee2e6;
+  --color-base-25: #ced4da;
+  --color-base-30: #adb5bd;
+  --color-base-35: #868e96;
+  --color-base-40: #6c757d;
+  --color-base-50: #495057;
+  --color-base-60: #343a40;
+  --color-base-70: #212529;
+  --color-base-100: #000000;
+}
