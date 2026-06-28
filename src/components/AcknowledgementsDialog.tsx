@@ -88,7 +88,7 @@ export function AcknowledgementsDialog({ open, onClose }: AcknowledgementsDialog
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => (rows[index]!.kind === "header" ? 32 : 28),
-    initialRect: { width: 500, height: 600 },
+    initialRect: { width: 512, height: 600 },
   });
 
   if (!open) return null;

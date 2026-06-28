@@ -11,6 +11,7 @@ mkdir -p "$(dirname "$OUT")"
 
 python3 -c "
 import json, subprocess, os, sys, re
+from collections import deque
 
 repo = sys.argv[1]
 
@@ -50,28 +51,51 @@ def parse_pkg(p, fallback_name):
         'repository': normalize_repo(raw_repo),
     }
 
-# ── Rust dependencies ──────────────────────────────────────────────
+# ── Rust dependencies (normal-dep closure only) ──────────────────
+# Get host triple so we can prune platform-specific crates
+host_triple = None
+for line in subprocess.check_output(['rustc', '-vV']).decode().splitlines():
+    if line.startswith('host:'):
+        host_triple = line.split(':', 1)[1].strip()
+        break
+
+meta_cmd = ['cargo', 'metadata', '--format-version', '1']
+if host_triple:
+    meta_cmd += ['--filter-platform', host_triple]
 meta = json.loads(subprocess.check_output(
-    ['cargo', 'metadata', '--format-version', '1'],
+    meta_cmd,
     cwd=os.path.join(repo, 'src-tauri'),
     stderr=subprocess.DEVNULL,
 ))
 
 workspace_ids = set(meta.get('workspace_members', []))
-workspace_names = set()
-for wid in workspace_ids:
-    # IDs look like 'path+file:///...#name@version' or 'name version (source)'
-    if '#' in wid:
-        tail = wid.split('#')[-1]
-        workspace_names.add(tail.split('@')[0])
-    else:
-        workspace_names.add(wid.split(' ')[0])
+pkg_map = {p['id']: p for p in meta['packages']}
+node_map = {n['id']: n for n in meta['resolve']['nodes']}
+
+# BFS from workspace members, following only normal (kind=None) edges
+visited = set()
+queue = deque(workspace_ids)
+while queue:
+    nid = queue.popleft()
+    if nid in visited:
+        continue
+    visited.add(nid)
+    node = node_map.get(nid)
+    if not node:
+        continue
+    for dep in node['deps']:
+        has_normal = any(dk.get('kind') is None for dk in dep.get('dep_kinds', []))
+        if has_normal and dep['pkg'] not in visited:
+            queue.append(dep['pkg'])
 
 rust = []
-for pkg in sorted(meta['packages'], key=lambda p: p['name'].lower()):
-    if pkg['name'] in workspace_names:
+for pid in sorted(visited):
+    if pid in workspace_ids:
         continue
-    # Also skip local path-only deps that aren't published
+    pkg = pkg_map.get(pid)
+    if not pkg:
+        continue
+    # Skip local path-only deps that aren't published
     if pkg.get('source') is None:
         continue
     rust.append({
@@ -81,36 +105,47 @@ for pkg in sorted(meta['packages'], key=lambda p: p['name'].lower()):
         'repository': pkg.get('repository') or '',
     })
 
-# ── JavaScript dependencies ───────────────────────────────────────
+# ── JavaScript dependencies (runtime closure only) ───────────────
 nm = os.path.join(repo, 'node_modules')
 js = []
 if os.path.isdir(nm):
-    for entry in sorted(os.listdir(nm)):
-        pkg_json = os.path.join(nm, entry, 'package.json')
-        if entry.startswith('.') or entry.startswith('_'):
+    # Read root package.json to get runtime dependencies
+    with open(os.path.join(repo, 'package.json')) as f:
+        root_pkg = json.load(f)
+    runtime_seeds = set(root_pkg.get('dependencies', {}).keys())
+
+    # BFS: walk dependencies + optionalDependencies of each reached package
+    js_visited = set()
+    js_queue = deque(runtime_seeds)
+    while js_queue:
+        pkg_name = js_queue.popleft()
+        if pkg_name in js_visited:
             continue
-        # Handle scoped packages (@org/pkg)
-        if entry.startswith('@'):
-            scope_dir = os.path.join(nm, entry)
-            if not os.path.isdir(scope_dir):
-                continue
-            for sub in sorted(os.listdir(scope_dir)):
-                pkg_json = os.path.join(scope_dir, sub, 'package.json')
-                if os.path.isfile(pkg_json):
-                    try:
-                        with open(pkg_json) as f:
-                            p = json.load(f)
-                        js.append(parse_pkg(p, f'{entry}/{sub}'))
-                    except (json.JSONDecodeError, OSError):
-                        pass
+        js_visited.add(pkg_name)
+        pkg_json = os.path.join(nm, pkg_name, 'package.json')
+        if not os.path.isfile(pkg_json):
             continue
-        if os.path.isfile(pkg_json):
-            try:
-                with open(pkg_json) as f:
-                    p = json.load(f)
-                js.append(parse_pkg(p, entry))
-            except (json.JSONDecodeError, OSError):
-                pass
+        try:
+            with open(pkg_json) as f:
+                p = json.load(f)
+            for dep_key in ('dependencies', 'optionalDependencies'):
+                for dep_name in p.get(dep_key, {}):
+                    if dep_name not in js_visited:
+                        js_queue.append(dep_name)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Emit only reached packages, using the existing parse_pkg
+    for pkg_name in sorted(js_visited):
+        pkg_json = os.path.join(nm, pkg_name, 'package.json')
+        if not os.path.isfile(pkg_json):
+            continue
+        try:
+            with open(pkg_json) as f:
+                p = json.load(f)
+            js.append(parse_pkg(p, pkg_name))
+        except (json.JSONDecodeError, OSError):
+            pass
 
 # ── Bundled fonts ─────────────────────────────────────────────────
 fonts = [
