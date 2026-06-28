@@ -60,15 +60,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
-    label: "Color Theme",
-    storeField: "colorTheme",
-    jsonKey: "workbench.colorTheme",
-    controlType: "dropdown",
-    testId: "settings-colorTheme",
-    nullable: true,
-  },
-  {
-    category: "Appearance",
     label: "Sidebar Visible",
     storeField: "sidebarVisible",
     jsonKey: "workbench.sideBar.visible",

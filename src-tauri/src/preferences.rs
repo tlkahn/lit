@@ -94,7 +94,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            color_theme: None,
+            color_theme: Some("book".to_string()),
             dark_mode: "auto".to_string(),
             sidebar_location: "left".to_string(),
             folding_enabled: true,
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn defaults() {
         let prefs = Preferences::default();
-        assert_eq!(prefs.color_theme, None);
+        assert_eq!(prefs.color_theme, Some("book".to_string()));
         assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
