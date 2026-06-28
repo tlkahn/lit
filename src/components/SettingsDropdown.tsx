@@ -4,10 +4,9 @@ interface SettingsDropdownProps {
   onChange: (value: string) => void;
   testId: string;
   label?: React.ReactNode;
-  nullable?: boolean;
 }
 
-export function SettingsDropdown({ options, value, onChange, testId, label, nullable }: SettingsDropdownProps) {
+export function SettingsDropdown({ options, value, onChange, testId, label }: SettingsDropdownProps) {
   return (
     <div className="flex items-center justify-between gap-2 min-w-0 flex-wrap">
       {label && <span className="text-sm text-text-normal">{label}</span>}
@@ -16,7 +15,6 @@ export function SettingsDropdown({ options, value, onChange, testId, label, null
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
-        {nullable && <option value="">Default</option>}
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>
             {opt.label}

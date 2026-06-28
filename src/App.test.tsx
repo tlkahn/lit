@@ -63,7 +63,7 @@ describe("App", () => {
 
     usePreferencesStore.setState({
       darkMode: "light",
-      colorTheme: null,
+      colorTheme: "book",
       sidebarVisible: true,
       sidebarLocation: "left",
       loaded: true,

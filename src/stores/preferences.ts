@@ -22,7 +22,7 @@ export interface LlmProviderConfig {
 
 export interface PreferencesState {
   darkMode: DarkModePref;
-  colorTheme: string | null;
+  colorTheme: string;
   sidebarVisible: boolean;
   sidebarLocation: "left" | "right";
   foldingEnabled: boolean;

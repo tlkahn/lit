@@ -98,10 +98,8 @@ function renderControl(params: RenderControlParams) {
           testId={entry.testId}
           options={opts}
           value={value}
-          nullable={entry.nullable}
           onChange={(v) => {
-            const val = entry.nullable && v === "" ? null : v;
-            setRegistryPref(entry.storeField, entry.jsonKey, val);
+            setRegistryPref(entry.storeField, entry.jsonKey, v);
           }}
         />
       );
