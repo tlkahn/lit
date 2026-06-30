@@ -32,7 +32,7 @@ import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
-import { resolvePendingFocus } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
@@ -423,7 +423,25 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       setTimeout(() => {
         const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
         if (!el) return;
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Scroll ONLY the cardbox grid's own scroll container — never any
+        // ancestor. Element.scrollIntoView centers the target in every scrollable
+        // ancestor (overflow:hidden elements are still programmatically
+        // scrollable), which for a near-bottom card moves an outer pane container
+        // and carries the PaneHeader out of view. Centering within #cardbox-grid
+        // alone keeps the header pinned.
+        const scroller = el.closest<HTMLElement>("[data-testid='cardbox-grid']");
+        if (scroller) {
+          const cardRect = el.getBoundingClientRect();
+          const scRect = scroller.getBoundingClientRect();
+          const top = computeCenteredScrollTop({
+            scrollTop: scroller.scrollTop,
+            clientHeight: scroller.clientHeight,
+            scrollHeight: scroller.scrollHeight,
+            cardOffsetTop: cardRect.top - scRect.top,
+            cardHeight: cardRect.height,
+          });
+          scroller.scrollTo({ top, behavior: "smooth" });
+        }
         el.classList.remove("card-focus-highlight");
         void (el as HTMLElement).offsetWidth;
         el.classList.add("card-focus-highlight");

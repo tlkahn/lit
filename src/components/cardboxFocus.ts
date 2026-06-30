@@ -63,3 +63,20 @@ export function resolvePendingFocus(input: {
   // 5. The card is present and visible — focus it.
   return { kind: "focus", uuid: pendingFocusUuid, clearFilters: false };
 }
+
+// Distance to scroll the cardbox grid container so the target card is vertically
+// centered *within that container only* — never touching ancestor scrollers
+// (which would carry the pane header out of view). Result is clamped to the
+// container's scroll range.
+export function computeCenteredScrollTop(input: {
+  scrollTop: number; // container.scrollTop
+  clientHeight: number; // container.clientHeight
+  scrollHeight: number; // container.scrollHeight
+  cardOffsetTop: number; // cardRect.top - containerRect.top  (card top relative to viewport-aligned container top)
+  cardHeight: number; // cardRect.height
+}): number {
+  const { scrollTop, clientHeight, scrollHeight, cardOffsetTop, cardHeight } = input;
+  const desired = scrollTop + cardOffsetTop - (clientHeight - cardHeight) / 2;
+  const max = Math.max(0, scrollHeight - clientHeight);
+  return Math.min(Math.max(desired, 0), max);
+}

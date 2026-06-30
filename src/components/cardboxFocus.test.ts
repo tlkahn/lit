@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolvePendingFocus } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
 
 // Lightweight fixtures: plain Set/Map satisfy the UuidCollection structural
 // type, so the resolver can be tested without rendering the heavy CardboxView.
@@ -132,5 +132,61 @@ describe("resolvePendingFocus", () => {
         filteredUuids: new Set(["x"]),
       }),
     ).toEqual({ kind: "focus", uuid: "x", clearFilters: false });
+  });
+});
+
+describe("computeCenteredScrollTop", () => {
+  // C1: a mid-list card centers within the container — no clamping in play.
+  it("centers a mid-list card", () => {
+    expect(
+      computeCenteredScrollTop({
+        scrollTop: 0,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 400,
+        cardHeight: 100,
+      }),
+    ).toBe(150); // 0 + 400 - (600 - 100) / 2
+  });
+
+  // C2: a near-bottom card whose centered target exceeds the scroll range is
+  // clamped to scrollHeight - clientHeight. This is the regression case that
+  // used to make an ancestor scroll instead (carrying the pane header away).
+  it("clamps at the bottom to scrollHeight - clientHeight", () => {
+    expect(
+      computeCenteredScrollTop({
+        scrollTop: 1400,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 500,
+        cardHeight: 100,
+      }),
+    ).toBe(1400); // desired 1850 clamped to 2000 - 600
+  });
+
+  // C3: a near-top card whose centered target is negative clamps to 0.
+  it("clamps at the top and never returns a negative value", () => {
+    expect(
+      computeCenteredScrollTop({
+        scrollTop: 0,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 0,
+        cardHeight: 100,
+      }),
+    ).toBe(0); // desired -250 clamped to 0
+  });
+
+  // C4: a card already centered yields a value equal to the current scrollTop.
+  it("is a no-op for an already-centered card", () => {
+    expect(
+      computeCenteredScrollTop({
+        scrollTop: 300,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 250,
+        cardHeight: 100,
+      }),
+    ).toBe(300); // 300 + 250 - (600 - 100) / 2
   });
 });
