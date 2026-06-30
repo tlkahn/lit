@@ -423,6 +423,50 @@ describe("EditorPane", () => {
         expect(screen.getByTestId("mock-editor")).toHaveAttribute("data-has-on-doc-replaced", "true");
       });
     });
+
+    it("claims focus on doc replace when the focused pane and no editable/tree holds focus", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).toHaveBeenCalled();
+    });
+
+    it("does not claim focus on doc replace when the file tree holds focus", async () => {
+      const tree = document.createElement("div");
+      tree.setAttribute("role", "tree");
+      tree.tabIndex = 0;
+      document.body.appendChild(tree);
+      tree.focus();
+      expect(document.activeElement).toBe(tree);
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).not.toHaveBeenCalled();
+      tree.remove();
+    });
   });
 
   describe("onSelectionChange", () => {

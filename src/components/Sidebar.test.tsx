@@ -337,6 +337,40 @@ describe("Sidebar virtualization", () => {
   });
 });
 
+describe("Sidebar row focus", () => {
+  it("clicking a page row moves DOM focus to the tree container", async () => {
+    const user = userEvent.setup();
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+    });
+
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("Notes"));
+
+    expect(document.activeElement).toBe(screen.getByTestId("sidebar-file-list"));
+  });
+
+  it("clicking the inline rename input keeps focus in the input", async () => {
+    const user = userEvent.setup();
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+    });
+
+    render(<Sidebar />);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/rename", { relative_path: "Notes.md" });
+    });
+
+    const input = screen.getByDisplayValue("Notes");
+    await user.click(input);
+
+    expect(document.activeElement).toBe(input);
+    expect(document.activeElement).not.toBe(screen.getByTestId("sidebar-file-list"));
+  });
+});
+
 describe("Sidebar context menu events", () => {
   it("rename event triggers inline rename mode", async () => {
     useWorkspaceStore.setState({
@@ -639,6 +673,86 @@ describe("Sidebar companion indicator", () => {
 
     await user.click(screen.getByLabelText("Has companion"));
     expect(selectPage).toHaveBeenCalledWith("paper.md");
+  });
+});
+
+describe("Sidebar ARIA tree attributes", () => {
+  it("tree container has role=tree, aria-label, and tabIndex=0", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+    const tree = screen.getByRole("tree", { name: "File tree" });
+    expect(tree).toBeInTheDocument();
+    expect(tree.tabIndex).toBe(0);
+  });
+
+  it("folder rows have role=treeitem and aria-expanded", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Inside", "docs/inside.md")],
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    const folderItem = treeItems.find((el) => el.getAttribute("aria-expanded") !== null);
+    expect(folderItem).toBeTruthy();
+    expect(folderItem!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("page items have role=treeitem with aria-level and aria-selected", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta")],
+      currentPagePath: "Alpha.md",
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    expect(treeItems.length).toBe(2);
+    const selected = treeItems.filter((el) => el.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    expect(treeItems[0]!.getAttribute("aria-level")).toBe("1");
+  });
+
+  it("nested page has aria-level=2", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Inside", "docs/inside.md")],
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    const folder = treeItems.find((el) => el.getAttribute("aria-expanded") !== null);
+    expect(folder!.getAttribute("aria-level")).toBe("1");
+  });
+
+  it("all rendered treeitems have an id starting with tree-item-", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta")],
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    for (const item of treeItems) {
+      expect(item.id).toMatch(/^tree-item-/);
+    }
+  });
+
+  it("tree container has no aria-activedescendant before any interaction", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha")],
+    });
+    render(<Sidebar />);
+    const tree = screen.getByRole("tree", { name: "File tree" });
+    expect(tree.hasAttribute("aria-activedescendant")).toBe(false);
+  });
+
+  it("clicking a row sets aria-activedescendant to the clicked treeitem id", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta")],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("Beta"));
+
+    const tree = screen.getByRole("tree", { name: "File tree" });
+    const betaItem = screen.getAllByRole("treeitem").find((el) => el.textContent === "Beta");
+    expect(tree.getAttribute("aria-activedescendant")).toBe(betaItem!.id);
   });
 });
 

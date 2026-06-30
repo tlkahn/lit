@@ -21,6 +21,7 @@ import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { bibFileLinkExtension } from "../editor/bibFileLink";
 import { basename } from "../lib/pathUtils";
+import { shouldEditorClaimFocus } from "../lib/editorFocus";
 
 function CodeEditorPaneInner({ paneId }: { paneId: string }) {
   const pagePath = usePaneStore((s) => findLeaf(s.root, paneId)?.pagePath ?? null);
@@ -83,11 +84,8 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
         useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
       }
       const focusedPaneId = usePaneStore.getState().focusedPaneId;
-      if (focusedPaneId === paneId) {
-        const active = document.activeElement;
-        if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
-          view.focus();
-        }
+      if (focusedPaneId === paneId && shouldEditorClaimFocus(document.activeElement)) {
+        view.focus();
       }
     });
   }, [paneId]);
