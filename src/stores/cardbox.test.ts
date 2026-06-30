@@ -54,6 +54,7 @@ describe("cardbox store", () => {
       colors: {},
       connectionsForUuid: null,
       connectionsSavedFilters: null,
+      pendingFocusUuid: null,
       scope: "document",
     });
     mockInvoke((cmd) => {
@@ -935,6 +936,23 @@ describe("cardbox store", () => {
 
       const stack = useCardboxUndoStore.getState().undoStack;
       expect(stack.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("pendingFocusUuid", () => {
+    it("initializes as null", () => {
+      expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+    });
+
+    it("setPendingFocusUuid sets the uuid", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1");
+      expect(useCardboxStore.getState().pendingFocusUuid).toBe("u1");
+    });
+
+    it("setPendingFocusUuid(null) clears the uuid", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1");
+      useCardboxStore.getState().setPendingFocusUuid(null);
+      expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
     });
   });
 });

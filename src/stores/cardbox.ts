@@ -66,6 +66,8 @@ export interface CardboxStore {
   colors: Record<string, string>;
   connectionsForUuid: string | null;
   connectionsSavedFilters: { searchQuery: string; activeTypes: Set<string> | null } | null;
+  pendingFocusUuid: string | null;
+  setPendingFocusUuid: (uuid: string | null) => void;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   collapseAll: () => void;
@@ -124,6 +126,8 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   colors: {},
   connectionsForUuid: null,
   connectionsSavedFilters: null,
+  pendingFocusUuid: null,
+  setPendingFocusUuid: (uuid) => set({ pendingFocusUuid: uuid }),
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });

@@ -285,6 +285,24 @@
   pointer-events: none;
 }
 
+/* Cardbox link button — jumps to the matching card in cardbox view. Mirrors
+   the fire button's inline-flex sizing; uses the NerdFont mono glyph. */
+.cm-annotation-cardbox-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-family: "Symbols Nerd Font Mono";
+  font-size: 0.8em;
+  opacity: 0.6;
+  padding: 0 2px;
+  transition: opacity 0.15s ease;
+}
+
+.cm-annotation-cardbox-link:hover {
+  opacity: 1;
+}
+
 /* Proximity reveal — hidden by default, shown on parent hover */
 .cm-annotation-fire-proximity {
   opacity: 0;

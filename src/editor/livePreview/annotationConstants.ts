@@ -19,6 +19,8 @@ export const CLS = {
   FIRE_DISABLED: "cm-annotation-fire-disabled",
   FIRE_PROXIMITY: "cm-annotation-fire-proximity",
 
+  CARDBOX_LINK: "cm-annotation-cardbox-link",
+
   DATE: "cm-annotation-date",
   SPINNER: "cm-annotation-spinner",
   STOP_ICON: "cm-annotation-stop-icon",

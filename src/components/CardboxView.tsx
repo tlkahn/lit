@@ -32,6 +32,7 @@ import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
@@ -57,6 +58,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const collapseAll = useCardboxStore((s) => s.collapseAll);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
+  const resetFilters = useCardboxStore((s) => s.resetFilters);
   const toggleType = useCardboxStore((s) => s.toggleType);
   const order = useCardboxStore((s) => s.order);
   const setOrder = useCardboxStore((s) => s.setOrder);
@@ -85,6 +87,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const setCardColor = useCardboxStore((s) => s.setCardColor);
   const clearCardColor = useCardboxStore((s) => s.clearCardColor);
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
+  const pendingFocusUuid = useCardboxStore((s) => s.pendingFocusUuid);
+  const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
   const batchSetColor = useCardboxStore((s) => s.batchSetColor);
@@ -419,7 +423,25 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       setTimeout(() => {
         const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
         if (!el) return;
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Scroll ONLY the cardbox grid's own scroll container — never any
+        // ancestor. Element.scrollIntoView centers the target in every scrollable
+        // ancestor (overflow:hidden elements are still programmatically
+        // scrollable), which for a near-bottom card moves an outer pane container
+        // and carries the PaneHeader out of view. Centering within #cardbox-grid
+        // alone keeps the header pinned.
+        const scroller = el.closest<HTMLElement>("[data-testid='cardbox-grid']");
+        if (scroller) {
+          const cardRect = el.getBoundingClientRect();
+          const scRect = scroller.getBoundingClientRect();
+          const top = computeCenteredScrollTop({
+            scrollTop: scroller.scrollTop,
+            clientHeight: scroller.clientHeight,
+            scrollHeight: scroller.scrollHeight,
+            cardOffsetTop: cardRect.top - scRect.top,
+            cardHeight: cardRect.height,
+          });
+          scroller.scrollTo({ top, behavior: "smooth" });
+        }
         el.classList.remove("card-focus-highlight");
         void (el as HTMLElement).offsetWidth;
         el.classList.add("card-focus-highlight");
@@ -428,6 +450,30 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     },
     [toggleExpand, gridRef],
   );
+
+  // Consume a pending focus request (set when the cardbox icon in an expanded
+  // annotation is clicked). resolvePendingFocus decides the action: `wait` while
+  // the target isn't in the current annotations yet (stale data, fetch in
+  // flight); `clear` when annotations settled empty (drop the stale request);
+  // or `focus` (optionally resetting filters first when the card is hidden).
+  // Handles both a fresh mount and an already-open cardbox.
+  useEffect(() => {
+    const action = resolvePendingFocus({
+      loading,
+      pendingFocusUuid,
+      annotationUuids: annotationMap,
+      filteredUuids: filteredUuidSet,
+    });
+    if (action.kind === "wait") return;
+    setPendingFocusUuid(null);
+    if (action.kind === "focus") {
+      // F2: the card is present but hidden by an active filter; reset filters so
+      // it re-renders into the DOM before handleFocusCard's scroll/highlight.
+      if (action.clearFilters) resetFilters();
+      handleFocusCard(action.uuid);
+    }
+    // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
+  }, [loading, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
 
   // ---------- Context menu handlers ----------
 
