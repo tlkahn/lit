@@ -434,9 +434,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   );
 
   // Consume a pending focus request (set when the cardbox icon in an expanded
-  // annotation is clicked). Waits until annotations have loaded so the target
-  // card exists, then clears the request and scrolls/highlights it. Handles
-  // both a fresh mount and an already-open cardbox (selector fires immediately).
+  // annotation is clicked). resolvePendingFocus decides the action: `wait` while
+  // the target isn't in the current annotations yet (stale data, fetch in
+  // flight); `clear` when annotations settled empty (drop the stale request);
+  // or `focus` (optionally resetting filters first when the card is hidden).
+  // Handles both a fresh mount and an already-open cardbox.
   useEffect(() => {
     const action = resolvePendingFocus({
       loading,
