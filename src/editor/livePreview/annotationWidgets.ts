@@ -236,11 +236,14 @@ export class PillWidget extends WidgetType {
     pill.onmouseenter = (e) => handleAnnotationHover(view, this.annotation, { altKey: e.altKey });
     pill.onmouseleave = () => handleAnnotationLeave(view);
     pill.onclick = (e) => {
+      if ((e.target as HTMLElement).closest(`.${CLS.CARDBOX_LINK}`)) return;
       e.preventDefault();
       dispatchEditEvent(this.annotation);
     };
     const fireBtn = createFireButton(this.annotation, this.isFiring, this.llmLocked);
     if (fireBtn) pill.appendChild(fireBtn);
+    const cardboxLink = createCardboxLinkButton(this.annotation);
+    if (cardboxLink) pill.appendChild(cardboxLink);
     return pill;
   }
 
@@ -250,6 +253,7 @@ export class PillWidget extends WidgetType {
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
+      this.annotation.uuid === other.annotation.uuid &&
       this.isFiring === other.isFiring &&
       this.llmLocked === other.llmLocked
     );
@@ -286,7 +290,8 @@ export class MarkerWidget extends WidgetType {
         : (TYPE_ICON[ann.annotation_type] ?? "…")) + certaintyMark(ann.certainty);
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
-    if (!fireBtn) {
+    const cardboxLink = createCardboxLinkButton(ann);
+    if (!fireBtn && !cardboxLink) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       sup.onmouseleave = () => handleAnnotationLeave(view);
       sup.onclick = (e) => {
@@ -306,11 +311,12 @@ export class MarkerWidget extends WidgetType {
     wrap.className = CLS.MARKER_WRAP;
     wrap.appendChild(sup);
     if (fireBtn) wrap.appendChild(fireBtn);
+    if (cardboxLink) wrap.appendChild(cardboxLink);
 
     wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     wrap.onmouseleave = () => handleAnnotationLeave(view);
     wrap.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(`.${CLS.FIRE_BTN}`)) return;
+      if ((e.target as HTMLElement).closest(`.${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`)) return;
       e.preventDefault();
       if (e.metaKey || e.ctrlKey) {
         dispatchEditEvent(ann);
@@ -329,6 +335,7 @@ export class MarkerWidget extends WidgetType {
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
+      this.annotation.uuid === other.annotation.uuid &&
       this.isFiring === other.isFiring &&
       this.llmLocked === other.llmLocked
     );

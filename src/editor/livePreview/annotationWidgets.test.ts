@@ -1112,6 +1112,115 @@ describe("CalloutWidget cardbox link", () => {
   });
 });
 
+describe("PillWidget cardbox link", () => {
+  it("renders the cardbox link in the pill when uuid is set", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ body: "body", uuid: "abc" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("does NOT render the cardbox link when uuid is missing", () => {
+    const view = makeEditorView();
+    const w = new PillWidget(makeAnnotation({ body: "body" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeNull();
+    view.destroy();
+  });
+
+  it("click on cardbox link does NOT dispatch edit event", () => {
+    const view = makeEditorView("hello <!---n | test---> world");
+    const ann = makeAnnotation({ char_start: 6, char_end: 23, original: "<!---n | test--->", uuid: "abc" });
+    const w = new PillWidget(ann);
+    const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+    const btn = dom.querySelector(".cm-annotation-cardbox-link")! as HTMLElement;
+    btn.click();
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
+  });
+
+  it("eq returns false when uuid differs", () => {
+    const a = new PillWidget(makeAnnotation({ uuid: "abc" }));
+    const b = new PillWidget(makeAnnotation({ uuid: "xyz" }));
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns true when uuid matches", () => {
+    const a = new PillWidget(makeAnnotation({ uuid: "abc" }));
+    const b = new PillWidget(makeAnnotation({ uuid: "abc" }));
+    expect(a.eq(b)).toBe(true);
+  });
+});
+
+describe("MarkerWidget cardbox link", () => {
+  it("renders the cardbox link in the wrap for a fireable type when uuid is set", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm", uuid: "abc" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-marker-wrap")).toBe(true);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("renders the cardbox link inside a wrap for a non-fireable note type when uuid is set", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note", uuid: "abc" }));
+    const dom = w.toDOM(view);
+    expect(dom.classList.contains("cm-annotation-marker-wrap")).toBe(true);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeTruthy();
+    expect(dom.querySelector("sup.cm-annotation-marker")).toBeTruthy();
+    view.destroy();
+  });
+
+  it("renders a bare sup for a non-fireable note type without uuid", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
+    const dom = w.toDOM(view);
+    expect(dom.tagName).toBe("SUP");
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeNull();
+    view.destroy();
+  });
+
+  it("does NOT render the cardbox link when uuid is missing (fireable type)", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }));
+    const dom = w.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeNull();
+    view.destroy();
+  });
+
+  it("click on cardbox link does NOT dispatch lit:show-annotation", () => {
+    const view = makeEditorView();
+    const w = new MarkerWidget(makeAnnotation({ annotation_type: "note", uuid: "abc" }));
+    const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:show-annotation", spy);
+    const btn = dom.querySelector(".cm-annotation-cardbox-link")! as HTMLElement;
+    btn.click();
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:show-annotation", spy);
+    view.destroy();
+  });
+
+  it("eq returns false when uuid differs", () => {
+    const a = new MarkerWidget(makeAnnotation({ uuid: "abc" }));
+    const b = new MarkerWidget(makeAnnotation({ uuid: "xyz" }));
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns true when uuid matches", () => {
+    const a = new MarkerWidget(makeAnnotation({ uuid: "abc" }));
+    const b = new MarkerWidget(makeAnnotation({ uuid: "abc" }));
+    expect(a.eq(b)).toBe(true);
+  });
+});
+
 describe("CalloutWidget body markdown rendering", () => {
   it("renders body as HTML via renderMarkdown when expanded", () => {
     const ann = makeAnnotation({
