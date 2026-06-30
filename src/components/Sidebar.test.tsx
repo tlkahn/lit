@@ -642,6 +642,52 @@ describe("Sidebar companion indicator", () => {
   });
 });
 
+describe("Sidebar ARIA tree attributes", () => {
+  it("tree container has role=tree, aria-label, and tabIndex=0", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+    });
+    render(<Sidebar />);
+    const tree = screen.getByRole("tree", { name: "File tree" });
+    expect(tree).toBeInTheDocument();
+    expect(tree.tabIndex).toBe(0);
+  });
+
+  it("folder rows have role=treeitem and aria-expanded", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Inside", "docs/inside.md")],
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    const folderItem = treeItems.find((el) => el.getAttribute("aria-expanded") !== null);
+    expect(folderItem).toBeTruthy();
+    expect(folderItem!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("page items have role=treeitem with aria-level and aria-selected", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta")],
+      currentPagePath: "Alpha.md",
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    expect(treeItems.length).toBe(2);
+    const selected = treeItems.filter((el) => el.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    expect(treeItems[0]!.getAttribute("aria-level")).toBe("1");
+  });
+
+  it("nested page has aria-level=2", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Inside", "docs/inside.md")],
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    const folder = treeItems.find((el) => el.getAttribute("aria-expanded") !== null);
+    expect(folder!.getAttribute("aria-level")).toBe("1");
+  });
+});
+
 describe("Sidebar reveal and search interaction", () => {
   it("auto-reveal does not clear the search filter when the active page matches the filter", async () => {
     const { usePreferencesStore } = await import("../stores/preferences");

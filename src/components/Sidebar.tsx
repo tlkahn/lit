@@ -18,6 +18,7 @@ import { useSidebarTab } from "../hooks/useSidebarTab";
 import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { useRevealFlash } from "../hooks/useRevealFlash";
+import { useTreeKeyboard } from "../hooks/useTreeKeyboard";
 import { Outline } from "./Outline";
 import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SortDropdown } from "./SortDropdown";
@@ -45,6 +46,7 @@ const PageItem = memo(function PageItem({
   isActive,
   isRenaming,
   isRevealed,
+  isFocused,
   onSelect,
   onRenameCommit,
   onRenameCancel,
@@ -54,6 +56,7 @@ const PageItem = memo(function PageItem({
   isActive: boolean;
   isRenaming: boolean;
   isRevealed: boolean;
+  isFocused: boolean;
   onSelect: (path: string) => void;
   onRenameCommit: (path: string, newName: string) => void;
   onRenameCancel: () => void;
@@ -84,6 +87,9 @@ const PageItem = memo(function PageItem({
   return (
     <div
       className="group relative"
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-selected={isActive}
       onContextMenu={(e) => {
         e.preventDefault();
         if (!isRenaming) {
@@ -107,11 +113,12 @@ const PageItem = memo(function PageItem({
       ) : (
         <button
           onClick={() => onSelect(page.relative_path)}
+          tabIndex={-1}
           className={`w-full select-none truncate rounded-md px-2 py-1 text-start text-xs ${
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
               : "text-text-normal hover:bg-bg-hover"
-          }${isRevealed ? " sidebar-item-revealed" : ""}`}
+          }${isRevealed ? " sidebar-item-revealed" : ""}${isFocused ? " ring-1 ring-interactive-accent" : ""}`}
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
         >
@@ -173,6 +180,13 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const virtualizerRef = useRef(virtualizer);
   virtualizerRef.current = virtualizer;
 
+  const { focusedIndex, setFocusedIndex, handleKeyDown: handleTreeKeyDown, handleContainerFocus } = useTreeKeyboard({
+    rows,
+    toggleCollapse,
+    selectPage,
+    scrollToIndex: (index: number) => virtualizer.scrollToIndex(index, { align: "auto" }),
+  });
+
   const { revealedKey: revealedPath, triggerReveal } = useRevealFlash(virtualizerRef);
 
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
@@ -205,13 +219,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
       if (idx >= 0) {
         triggerReveal(relativePath, idx);
+        setFocusedIndex(idx);
       } else {
         // Target is filtered out — clear search and defer.
         setSearch("");
         pendingRevealRef.current = relativePath;
       }
     });
-  }, [setTab, revealPath, triggerReveal]);
+  }, [setTab, revealPath, triggerReveal, setFocusedIndex]);
 
   // Deferred reveal: when rows update after clearing search, complete the
   // pending reveal. `rows` gets a new reference whenever `root`/`expanded`/
@@ -224,7 +239,8 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
     const idx = revealPath(target);
     triggerReveal(target, idx);
-  }, [rows, revealPath, triggerReveal]);
+    if (idx >= 0) setFocusedIndex(idx);
+  }, [rows, revealPath, triggerReveal, setFocusedIndex]);
 
   const autoRevealInSidebar = usePreferencesStore((s) => s.autoRevealInSidebar);
   useEffect(() => {
@@ -240,8 +256,9 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     const idx = revealPath(currentPagePath);
     if (idx >= 0) {
       triggerReveal(currentPagePath, idx);
+      setFocusedIndex(idx);
     }
-  }, [autoRevealInSidebar, currentPagePath, setTab, revealPath, triggerReveal]);
+  }, [autoRevealInSidebar, currentPagePath, setTab, revealPath, triggerReveal, setFocusedIndex]);
 
   const dispatchRevealLibrary = useCallback((relativePath: string) => {
     dispatchRevealBibEntryForPage(relativePath);
@@ -317,7 +334,12 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
             ref={scrollRef}
             data-testid="sidebar-file-list"
             data-virtual-scroll
-            className="flex-1 overflow-y-auto overscroll-contain px-1"
+            role="tree"
+            aria-label="File tree"
+            tabIndex={0}
+            onKeyDown={handleTreeKeyDown}
+            onFocus={handleContainerFocus}
+            className="flex-1 overflow-y-auto overscroll-contain px-1 outline-none"
           >
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -326,6 +348,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                   <div
                     key={row.key}
                     data-index={virtualRow.index}
+                    onClick={() => setFocusedIndex(virtualRow.index)}
                     style={{
                       position: "absolute",
                       top: 0,
@@ -337,7 +360,13 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                     {row.type === "folder" ? (
                       <button
                         onClick={() => toggleCollapse(row.folderPath)}
-                        className="flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 text-start text-xs text-text-muted hover:bg-bg-hover"
+                        role="treeitem"
+                        aria-expanded={!row.isCollapsed}
+                        aria-level={row.depth + 1}
+                        tabIndex={-1}
+                        className={`flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 text-start text-xs text-text-muted hover:bg-bg-hover${
+                          focusedIndex === virtualRow.index ? " ring-1 ring-interactive-accent" : ""
+                        }`}
                         style={{ paddingInlineStart: `${row.depth * 12 + 8}px` }}
                       >
                         <span className="text-xs">{row.isCollapsed ? "▸" : "▾"}</span>
@@ -349,6 +378,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                         isActive={currentPagePath === row.page.relative_path}
                         isRenaming={renamingPath === row.page.relative_path}
                         isRevealed={revealedPath === row.page.relative_path}
+                        isFocused={focusedIndex === virtualRow.index}
                         onSelect={selectPage}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
