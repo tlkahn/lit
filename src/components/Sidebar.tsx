@@ -42,6 +42,7 @@ function buildTree(pages: PageMeta[]): FolderNode {
 }
 
 const PageItem = memo(function PageItem({
+  id,
   page,
   isActive,
   isRenaming,
@@ -52,6 +53,7 @@ const PageItem = memo(function PageItem({
   onRenameCancel,
   depth,
 }: {
+  id?: string;
   page: PageMeta;
   isActive: boolean;
   isRenaming: boolean;
@@ -86,6 +88,7 @@ const PageItem = memo(function PageItem({
 
   return (
     <div
+      id={id}
       className="group relative"
       role="treeitem"
       aria-level={depth + 1}
@@ -336,6 +339,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
             data-virtual-scroll
             role="tree"
             aria-label="File tree"
+            aria-activedescendant={focusedIndex >= 0 && rows[focusedIndex] ? "tree-item-" + rows[focusedIndex].key : undefined}
             tabIndex={0}
             onKeyDown={handleTreeKeyDown}
             onFocus={handleContainerFocus}
@@ -365,6 +369,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                   >
                     {row.type === "folder" ? (
                       <button
+                        id={"tree-item-" + row.key}
                         onClick={() => toggleCollapse(row.folderPath)}
                         role="treeitem"
                         aria-expanded={!row.isCollapsed}
@@ -380,6 +385,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                       </button>
                     ) : (
                       <PageItem
+                        id={"tree-item-" + row.key}
                         page={row.page}
                         isActive={currentPagePath === row.page.relative_path}
                         isRenaming={renamingPath === row.page.relative_path}

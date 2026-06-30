@@ -720,6 +720,40 @@ describe("Sidebar ARIA tree attributes", () => {
     const folder = treeItems.find((el) => el.getAttribute("aria-expanded") !== null);
     expect(folder!.getAttribute("aria-level")).toBe("1");
   });
+
+  it("all rendered treeitems have an id starting with tree-item-", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta")],
+    });
+    render(<Sidebar />);
+    const treeItems = screen.getAllByRole("treeitem");
+    for (const item of treeItems) {
+      expect(item.id).toMatch(/^tree-item-/);
+    }
+  });
+
+  it("tree container has no aria-activedescendant before any interaction", () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha")],
+    });
+    render(<Sidebar />);
+    const tree = screen.getByRole("tree", { name: "File tree" });
+    expect(tree.hasAttribute("aria-activedescendant")).toBe(false);
+  });
+
+  it("clicking a row sets aria-activedescendant to the clicked treeitem id", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha"), makePage("Beta")],
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("Beta"));
+
+    const tree = screen.getByRole("tree", { name: "File tree" });
+    const betaItem = screen.getAllByRole("treeitem").find((el) => el.textContent === "Beta");
+    expect(tree.getAttribute("aria-activedescendant")).toBe(betaItem!.id);
+  });
 });
 
 describe("Sidebar reveal and search interaction", () => {
