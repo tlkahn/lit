@@ -348,7 +348,13 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                   <div
                     key={row.key}
                     data-index={virtualRow.index}
-                    onClick={() => setFocusedIndex(virtualRow.index)}
+                    onClick={(e) => {
+                      setFocusedIndex(virtualRow.index);
+                      // Don't steal focus from the inline rename <input>.
+                      if (!(e.target instanceof HTMLInputElement)) {
+                        scrollRef.current?.focus({ preventScroll: true });
+                      }
+                    }}
                     style={{
                       position: "absolute",
                       top: 0,

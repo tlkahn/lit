@@ -15,6 +15,7 @@ import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
 import { extractHeadings } from "../lib/headings";
 import { globalJumpTracker } from "../editor/jumpTracker";
+import { shouldEditorClaimFocus } from "../lib/editorFocus";
 import {
   registerPaneView,
   unregisterPaneView,
@@ -263,11 +264,8 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         view.dispatch({ selection: EditorSelection.cursor(cursor) });
       }
       }
-      if (isFocusedRef.current) {
-        const active = document.activeElement;
-        if (!(active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) {
-          view.focus();
-        }
+      if (isFocusedRef.current && shouldEditorClaimFocus(document.activeElement)) {
+        view.focus();
       }
       globalJumpTracker.isNavigating = false;
     });

@@ -265,6 +265,13 @@ describe("useTreeKeyboard", () => {
     const { result } = setup(sampleRows);
     expect(result.current.focusedIndex).toBe(-1);
     act(() => fireKey(result.current.handleKeyDown, "ArrowDown"));
-    expect(result.current.focusedIndex).toBe(1);
+    expect(result.current.focusedIndex).toBe(0);
+  });
+
+  it("ArrowUp from -1 focuses first row", () => {
+    const { result } = setup(sampleRows);
+    expect(result.current.focusedIndex).toBe(-1);
+    act(() => fireKey(result.current.handleKeyDown, "ArrowUp"));
+    expect(result.current.focusedIndex).toBe(0);
   });
 });

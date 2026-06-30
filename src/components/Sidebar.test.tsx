@@ -337,6 +337,40 @@ describe("Sidebar virtualization", () => {
   });
 });
 
+describe("Sidebar row focus", () => {
+  it("clicking a page row moves DOM focus to the tree container", async () => {
+    const user = userEvent.setup();
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+    });
+
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("Notes"));
+
+    expect(document.activeElement).toBe(screen.getByTestId("sidebar-file-list"));
+  });
+
+  it("clicking the inline rename input keeps focus in the input", async () => {
+    const user = userEvent.setup();
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+    });
+
+    render(<Sidebar />);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/rename", { relative_path: "Notes.md" });
+    });
+
+    const input = screen.getByDisplayValue("Notes");
+    await user.click(input);
+
+    expect(document.activeElement).toBe(input);
+    expect(document.activeElement).not.toBe(screen.getByTestId("sidebar-file-list"));
+  });
+});
+
 describe("Sidebar context menu events", () => {
   it("rename event triggers inline rename mode", async () => {
     useWorkspaceStore.setState({

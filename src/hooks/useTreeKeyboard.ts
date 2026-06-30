@@ -45,9 +45,12 @@ export function useTreeKeyboard({
 
   useEffect(() => {
     setFocusedIndexState((prev) => {
-      if (rows.length === 0) return -1;
-      if (prev >= rows.length) return rows.length - 1;
-      return prev;
+      let next;
+      if (rows.length === 0) next = -1;
+      else if (prev >= rows.length) next = rows.length - 1;
+      else next = prev;
+      focusedIndexRef.current = next;
+      return next;
     });
   }, [rows]);
 
@@ -68,7 +71,11 @@ export function useTreeKeyboard({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        setFocusedIndex(Math.min(idx + 1, r.length - 1));
+        if (focusedIndexRef.current < 0) {
+          setFocusedIndex(0);
+        } else {
+          setFocusedIndex(Math.min(idx + 1, r.length - 1));
+        }
         break;
       case "ArrowUp":
         e.preventDefault();
