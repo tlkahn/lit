@@ -32,6 +32,7 @@ import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { resolvePendingFocus } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
@@ -57,6 +58,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const collapseAll = useCardboxStore((s) => s.collapseAll);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
+  const resetFilters = useCardboxStore((s) => s.resetFilters);
   const toggleType = useCardboxStore((s) => s.toggleType);
   const order = useCardboxStore((s) => s.order);
   const setOrder = useCardboxStore((s) => s.setOrder);
@@ -436,11 +438,22 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   // card exists, then clears the request and scrolls/highlights it. Handles
   // both a fresh mount and an already-open cardbox (selector fires immediately).
   useEffect(() => {
-    if (loading || annotations.length === 0 || !pendingFocusUuid) return;
-    const uuid = pendingFocusUuid;
+    const action = resolvePendingFocus({
+      loading,
+      pendingFocusUuid,
+      annotationUuids: annotationMap,
+      filteredUuids: filteredUuidSet,
+    });
+    if (action.kind === "wait") return;
     setPendingFocusUuid(null);
-    handleFocusCard(uuid);
-  }, [loading, annotations.length, pendingFocusUuid, setPendingFocusUuid, handleFocusCard]);
+    if (action.kind === "focus") {
+      // F2: the card is present but hidden by an active filter; reset filters so
+      // it re-renders into the DOM before handleFocusCard's scroll/highlight.
+      if (action.clearFilters) resetFilters();
+      handleFocusCard(action.uuid);
+    }
+    // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
+  }, [loading, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
 
   // ---------- Context menu handlers ----------
 
