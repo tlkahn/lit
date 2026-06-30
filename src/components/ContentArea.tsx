@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
+import { useCardboxStore } from "../stores/cardbox";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
 import { writePage, parseRawYaml, isViewMode, type ViewMode } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
@@ -264,13 +265,21 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     const toggleFrontmatterHandler = () => {
       setShowFrontmatter((prev) => !prev);
     };
+    const focusCardboxCardHandler = (e: Event) => {
+      const uuid = (e as CustomEvent<{ uuid: string }>).detail?.uuid;
+      if (!uuid) return;
+      useCardboxStore.getState().setPendingFocusUuid(uuid);
+      setPaneViewMode(usePaneStore.getState().focusedPaneId, "cardbox");
+    };
     window.addEventListener("lit:set-view-mode", setModeHandler);
     window.addEventListener("lit:toggle-graph-view", toggleGraphHandler);
     window.addEventListener("lit:toggle-frontmatter", toggleFrontmatterHandler);
+    window.addEventListener("lit:focus-cardbox-card", focusCardboxCardHandler);
     return () => {
       window.removeEventListener("lit:set-view-mode", setModeHandler);
       window.removeEventListener("lit:toggle-graph-view", toggleGraphHandler);
       window.removeEventListener("lit:toggle-frontmatter", toggleFrontmatterHandler);
+      window.removeEventListener("lit:focus-cardbox-card", focusCardboxCardHandler);
     };
   }, [setPaneViewMode]);
 

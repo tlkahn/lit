@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
@@ -1028,6 +1028,87 @@ describe("fire button proximity reveal", () => {
     expect(btn).toBeTruthy();
     expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
     view.destroy();
+  });
+});
+
+describe("createCardboxLinkButton", () => {
+  it("returns null when uuid is missing", () => {
+    expect(createCardboxLinkButton(makeAnnotation({ uuid: null }))).toBeNull();
+    expect(createCardboxLinkButton(makeAnnotation({ uuid: undefined }))).toBeNull();
+    expect(createCardboxLinkButton(makeAnnotation({ uuid: "" }))).toBeNull();
+  });
+
+  it("returns a span with cardbox-link + proximity classes when uuid is set", () => {
+    const btn = createCardboxLinkButton(makeAnnotation({ uuid: "abc" }));
+    expect(btn).toBeTruthy();
+    expect(btn!.tagName).toBe("SPAN");
+    expect(btn!.classList.contains("cm-annotation-cardbox-link")).toBe(true);
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
+    expect(btn!.title).toBe("Show in cardbox");
+  });
+
+  it("mousedown dispatches lit:focus-cardbox-card with the uuid", () => {
+    const btn = createCardboxLinkButton(makeAnnotation({ uuid: "abc" }))!;
+    const spy = vi.fn();
+    window.addEventListener("lit:focus-cardbox-card", spy);
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.uuid).toBe("abc");
+    window.removeEventListener("lit:focus-cardbox-card", spy);
+  });
+
+  it("mousedown calls preventDefault and stopPropagation", () => {
+    const btn = createCardboxLinkButton(makeAnnotation({ uuid: "abc" }))!;
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    const stopSpy = vi.spyOn(event, "stopPropagation");
+    btn.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(stopSpy).toHaveBeenCalled();
+  });
+});
+
+describe("CalloutWidget cardbox link", () => {
+  it("renders the cardbox link in the header when uuid is set", () => {
+    const ann = makeAnnotation({ form: "block", body: "body", uuid: "abc" });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const btn = dom.querySelector(".cm-annotation-callout-header .cm-annotation-cardbox-link");
+    expect(btn).toBeTruthy();
+  });
+
+  it("does NOT render the cardbox link when uuid is missing", () => {
+    const ann = makeAnnotation({ form: "block", body: "body", uuid: null });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeNull();
+  });
+
+  it("header click on cardbox link does NOT dispatch edit event", () => {
+    const view = makeEditorView("hello <!---n\n---\nbody\n---> world");
+    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 26, uuid: "abc" });
+    const w = new CalloutWidget(ann, false, 6);
+    const dom = w.toDOM(view);
+
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+    const btn = dom.querySelector(".cm-annotation-cardbox-link")! as HTMLElement;
+    btn.click();
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
+  });
+
+  it("eq returns false when uuid differs", () => {
+    const a = new CalloutWidget(makeAnnotation({ uuid: "abc" }), false, 0);
+    const b = new CalloutWidget(makeAnnotation({ uuid: "xyz" }), false, 0);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns true when uuid matches", () => {
+    const a = new CalloutWidget(makeAnnotation({ uuid: "abc" }), false, 0);
+    const b = new CalloutWidget(makeAnnotation({ uuid: "abc" }), false, 0);
+    expect(a.eq(b)).toBe(true);
   });
 });
 

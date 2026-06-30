@@ -85,6 +85,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const setCardColor = useCardboxStore((s) => s.setCardColor);
   const clearCardColor = useCardboxStore((s) => s.clearCardColor);
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
+  const pendingFocusUuid = useCardboxStore((s) => s.pendingFocusUuid);
+  const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
   const batchSetColor = useCardboxStore((s) => s.batchSetColor);
@@ -428,6 +430,17 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     },
     [toggleExpand, gridRef],
   );
+
+  // Consume a pending focus request (set when the cardbox icon in an expanded
+  // annotation is clicked). Waits until annotations have loaded so the target
+  // card exists, then clears the request and scrolls/highlights it. Handles
+  // both a fresh mount and an already-open cardbox (selector fires immediately).
+  useEffect(() => {
+    if (loading || annotations.length === 0 || !pendingFocusUuid) return;
+    const uuid = pendingFocusUuid;
+    setPendingFocusUuid(null);
+    handleFocusCard(uuid);
+  }, [loading, annotations.length, pendingFocusUuid, setPendingFocusUuid, handleFocusCard]);
 
   // ---------- Context menu handlers ----------
 

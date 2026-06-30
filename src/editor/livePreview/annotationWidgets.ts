@@ -16,6 +16,10 @@ export interface FireAnnotationEventDetail {
   annotation: Annotation;
 }
 
+export interface FocusCardboxCardEventDetail {
+  uuid: string;
+}
+
 // --- Firing annotations state (Cycle 11) ---
 
 export const setFiringAnnotation = StateEffect.define<number>();
@@ -126,6 +130,31 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
     window.dispatchEvent(
       new CustomEvent<FireAnnotationEventDetail>("lit:fire-annotation", {
         detail: { annotation: ann },
+      }),
+    );
+  };
+  return btn;
+}
+
+// --- Cardbox link button ---
+
+// Small NerdFont icon shown in expanded annotation headers that switches to
+// cardbox view and focuses the matching card. Only rendered once the
+// annotation's UUID has been enriched (freshly typed annotations have none).
+export function createCardboxLinkButton(ann: Annotation): HTMLSpanElement | null {
+  if (!ann.uuid) return null;
+  const uuid = ann.uuid;
+
+  const btn = document.createElement("span");
+  btn.className = `${CLS.CARDBOX_LINK} ${CLS.FIRE_PROXIMITY}`;
+  btn.textContent = "\u{f01bc}"; // nerdfont nf-md-cards (󰆼)
+  btn.title = "Show in cardbox";
+  btn.onmousedown = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    window.dispatchEvent(
+      new CustomEvent<FocusCardboxCardEventDetail>("lit:focus-cardbox-card", {
+        detail: { uuid },
       }),
     );
   };
@@ -408,7 +437,7 @@ export class CalloutWidget extends WidgetType {
     const header = document.createElement("div");
     header.className = CLS.CALLOUT_HEADER;
     header.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.FIRE_BTN}`)) return;
+      if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`)) return;
       e.preventDefault();
       dispatchEditEvent(ann);
     };
@@ -435,6 +464,9 @@ export class CalloutWidget extends WidgetType {
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     if (fireBtn) header.appendChild(fireBtn);
+
+    const cardboxLink = createCardboxLinkButton(ann);
+    if (cardboxLink) header.appendChild(cardboxLink);
 
     const arrow = document.createElement("span");
     arrow.className = CLS.FOLD_ICON;
@@ -464,6 +496,7 @@ export class CalloutWidget extends WidgetType {
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
+      this.annotation.uuid === other.annotation.uuid &&
       this.isCollapsed === other.isCollapsed &&
       this.isFiring === other.isFiring &&
       this.llmLocked === other.llmLocked
@@ -552,7 +585,7 @@ export class ThreadWidget extends WidgetType {
     header.onclick = (e) => {
       if (
         (e.target as HTMLElement).closest(
-          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}`,
+          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`,
         )
       )
         return;
@@ -611,6 +644,9 @@ export class ThreadWidget extends WidgetType {
       spinner.className = CLS.SPINNER;
       header.appendChild(spinner);
     }
+
+    const cardboxLink = createCardboxLinkButton(ann);
+    if (cardboxLink) header.appendChild(cardboxLink);
 
     // Overflow menu (⋮) — Export thread / Export turn / Delete.
     const overflow = document.createElement("span");
@@ -765,6 +801,7 @@ export class ThreadWidget extends WidgetType {
       this.annotation.original === other.annotation.original &&
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
+      this.annotation.uuid === other.annotation.uuid &&
       this.turn === other.turn &&
       this.isCollapsed === other.isCollapsed &&
       this.isFiring === other.isFiring
