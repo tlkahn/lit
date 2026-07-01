@@ -1271,5 +1271,89 @@ describe("EditorPane", () => {
       expect(useWorkspaceStore.getState().pendingCursorLine).toBeNull();
       expect(useWorkspaceStore.getState().pendingCursorCol).toBeNull();
     });
+
+    it("pendingJumpLine takes priority over pendingCursorLine on viewMode switch", async () => {
+      const body = "# Heading 1\n## Heading 2\nContent";
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "cardbox" },
+        focusedPaneId: "pane-1",
+      });
+
+      usePaneStore.getState().setPendingJumpLine("pane-1", 3);
+      useWorkspaceStore.setState({ pendingCursorLine: 1, pendingCursorCol: 0, pendingCursorFileAbsolute: false });
+
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+
+      act(() => {
+        usePaneStore.getState().setPaneViewMode("pane-1", "editor");
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(3).from;
+      expect(tx.selection.head).toBe(expectedPos);
+
+      // pendingCursorLine is NOT consumed (pendingJumpLine won)
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBe(1);
+    });
+
+    it("adjusts pendingCursorLine for frontmatter on viewMode switch", async () => {
+      const body = "body line 1\nbody line 2\nbody line 3";
+
+      // Override IPC to return a page with frontmatter so rawYamlRef is populated
+      mockInvoke((cmd) => {
+        if (cmd === "read_page") return {
+          body,
+          raw_yaml: "title: X",
+          meta: { ...samplePage.meta },
+        };
+        if (cmd === "write_page") return null;
+        if (cmd === "resolve_wikilink") return { node_id: "target.md" };
+        if (cmd === "create_page") return samplePage.meta;
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "cardbox" },
+        focusedPaneId: "pane-1",
+      });
+
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+
+      // "title: X" → 3 frontmatter lines; absolute line 5 → body line 2
+      useWorkspaceStore.setState({
+        pendingCursorLine: 5,
+        pendingCursorCol: 0,
+        pendingCursorFileAbsolute: true,
+      });
+
+      act(() => {
+        usePaneStore.getState().setPaneViewMode("pane-1", "editor");
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedPos = Text.of(body.split("\n")).line(2).from;
+      expect(tx.selection.head).toBe(expectedPos);
+
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBeNull();
+    });
   });
 });

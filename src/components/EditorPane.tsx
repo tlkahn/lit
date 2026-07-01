@@ -10,12 +10,13 @@ import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
-import { resolveRelativePath, getFileDir, frontmatterLineCount } from "../lib/pathUtils";
+import { resolveRelativePath, getFileDir } from "../lib/pathUtils";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
 import { extractHeadings } from "../lib/headings";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { shouldEditorClaimFocus } from "../lib/editorFocus";
+import { applyJumpLine, applyPendingCursorLine } from "../lib/editorScroll";
 import {
   registerPaneView,
   unregisterPaneView,
@@ -214,12 +215,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       if (!view) return;
       const pendingJumpLine = usePaneStore.getState().consumePendingJumpLine(paneId);
       if (pendingJumpLine != null) {
-        const lineNum = Math.min(pendingJumpLine, view.state.doc.lines);
-        const pos = view.state.doc.line(lineNum).from;
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: "start" }),
-        });
+        applyJumpLine(view, pendingJumpLine);
       } else {
       const pendingSync = usePanePdfLinkStore.getState().consumePendingEditorSync(paneId);
       if (pendingSync !== null) {
@@ -229,18 +225,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
           clampIndex: true,
         });
       } else if (storeState.pendingCursorLine != null) {
-        let adjustedLine = storeState.pendingCursorLine;
-        if (storeState.pendingCursorFileAbsolute && rawYamlRef.current) {
-          adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));
-        }
-        const lineNum = Math.min(adjustedLine, view.state.doc.lines);
-        const line = view.state.doc.line(lineNum);
-        const col = storeState.pendingCursorCol ?? 0;
-        const pos = line.from + Math.min(col, line.length);
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: "center" }),
-        });
+        applyPendingCursorLine(view, storeState.pendingCursorLine, storeState.pendingCursorCol, storeState.pendingCursorFileAbsolute, rawYamlRef.current);
         useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
       } else if (storeState.pendingSection != null) {
         const section = storeState.pendingSection;
@@ -288,28 +273,12 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       if (!view) return;
       const pendingJumpLine = usePaneStore.getState().consumePendingJumpLine(paneId);
       if (pendingJumpLine != null) {
-        const lineNum = Math.min(pendingJumpLine, view.state.doc.lines);
-        const pos = view.state.doc.line(lineNum).from;
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: "start" }),
-        });
+        applyJumpLine(view, pendingJumpLine);
         return;
       }
       const wsState = useWorkspaceStore.getState();
       if (wsState.pendingCursorLine != null) {
-        let adjustedLine = wsState.pendingCursorLine;
-        if (wsState.pendingCursorFileAbsolute && rawYamlRef.current) {
-          adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));
-        }
-        const lineNum = Math.min(adjustedLine, view.state.doc.lines);
-        const line = view.state.doc.line(lineNum);
-        const col = wsState.pendingCursorCol ?? 0;
-        const pos = line.from + Math.min(col, line.length);
-        view.dispatch({
-          selection: EditorSelection.cursor(pos),
-          effects: EditorView.scrollIntoView(pos, { y: "center" }),
-        });
+        applyPendingCursorLine(view, wsState.pendingCursorLine, wsState.pendingCursorCol, wsState.pendingCursorFileAbsolute, rawYamlRef.current);
         useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
       }
     });
