@@ -31,6 +31,7 @@ import { parseActiveId, parseOverId } from "../lib/dndIds";
 import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { DraggedUuidsContext } from "./DraggedUuidsContext";
+import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
 import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
@@ -972,6 +973,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
             No matching annotations
           </div>
         ) : (
+          <MasonryObserverProvider>
           <DraggedUuidsContext.Provider value={draggedUuidsSet}>
           <DndContext
             sensors={sensors}
@@ -1006,16 +1008,16 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
                       colorTag={colors[entry.annotation.uuid]}
-                      onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
-                      onNavigate={() => handleNavigate(entry.annotation)}
+                      onToggleExpand={toggleExpand}
+                      onNavigate={handleNavigate}
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
                       onFocusCard={handleFocusCard}
                       onRemoveLink={handleRemoveLink}
                       note={notesMap[entry.annotation.uuid]}
-                      onSetNote={(body: string) => handleSetNote(entry.annotation.uuid, body)}
-                      onExportNote={() => handleExportNote(entry.annotation.uuid)}
-                      onShowConnections={() => enterConnections(entry.annotation.uuid)}
-                      onContextMenu={(e) => handleCardContextMenu(entry.annotation.uuid, e)}
+                      onSetNote={handleSetNote}
+                      onExportNote={handleExportNote}
+                      onShowConnections={enterConnections}
+                      onContextMenu={handleCardContextMenu}
                       onSelect={handleSelect}
                     />
                   ) : (
@@ -1035,11 +1037,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                       notesMap={notes}
                       onSetNote={handleSetNote}
                       onExportNote={handleExportNote}
-                      onShowConnections={(uuid: string) => enterConnections(uuid)}
-                      onToggleCollapse={() => toggleGroupCollapse(entry.groupId)}
-                      onRename={(name: string) => renameGroup(entry.groupId, name)}
-                      onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
-                      onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
+                      onShowConnections={enterConnections}
+                      onToggleCollapse={toggleGroupCollapse}
+                      onRename={renameGroup}
+                      onCardContextMenu={handleGroupCardContextMenu}
+                      onHeaderContextMenu={handleGroupHeaderContextMenu}
                       colors={colors}
                       onCardSelect={handleSelect}
                     />
@@ -1093,6 +1095,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
             </DragOverlay>
           </DndContext>
           </DraggedUuidsContext.Provider>
+          </MasonryObserverProvider>
         )}
       </div>
 

@@ -1,8 +1,8 @@
-import { memo } from "react";
+import { memo, useCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CardboxCard } from "./CardboxCard";
-import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { useMasonryRef } from "../hooks/useMasonryObserver";
 import { useSelectionClickCapture } from "../hooks/useSelectionClickCapture";
 import { useDraggedUuids } from "./DraggedUuidsContext";
 import { makeGroupCardId } from "../lib/dndIds";
@@ -14,16 +14,16 @@ interface SortableGroupCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
   colorTag?: string;
-  onToggleExpand: () => void;
-  onNavigate: () => void;
+  onToggleExpand: (uuid: string) => void;
+  onNavigate: (ann: CardboxAnnotation) => void;
   linkedCards?: CardboxAnnotation[];
   onFocusCard?: (uuid: string) => void;
   onRemoveLink?: (targetUuid: string) => void;
-  onShowConnections?: () => void;
-  onContextMenu?: (e: React.MouseEvent) => void;
+  onShowConnections?: (uuid: string) => void;
+  onContextMenu?: (uuid: string, e: React.MouseEvent) => void;
   note?: string;
-  onSetNote?: (body: string) => void;
-  onExportNote?: () => void;
+  onSetNote?: (uuid: string, body: string) => void;
+  onExportNote?: (uuid: string) => void;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
 
@@ -57,15 +57,22 @@ export const SortableGroupCard = memo(function SortableGroupCard({
 
   const isGhostDragged = draggedUuids.has(annotation.uuid) && !isDragging;
 
-  const { contentRef, span } = useMasonrySpan();
+  const masonryRef = useMasonryRef();
 
   const handleClickCapture = useSelectionClickCapture(annotation.uuid, onSelect);
+
+  const handleToggleExpand = useCallback(() => onToggleExpand(annotation.uuid), [onToggleExpand, annotation.uuid]);
+  const handleNavigate = useCallback(() => onNavigate(annotation), [onNavigate, annotation]);
+  const handleShowConnections = useCallback(() => onShowConnections?.(annotation.uuid), [onShowConnections, annotation.uuid]);
+  const handleContextMenu = useCallback((e: React.MouseEvent) => onContextMenu?.(annotation.uuid, e), [onContextMenu, annotation.uuid]);
+  const handleSetNote = useCallback((body: string) => onSetNote?.(annotation.uuid, body), [onSetNote, annotation.uuid]);
+  const handleExportNote = useCallback(() => onExportNote?.(annotation.uuid), [onExportNote, annotation.uuid]);
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : isGhostDragged ? 0.3 : 1,
-    gridRowEnd: `span ${span}`,
+    gridRowEnd: "span 1",
     zIndex: expanded ? 10 : undefined,
     position: expanded ? "relative" : undefined,
   };
@@ -81,24 +88,24 @@ export const SortableGroupCard = memo(function SortableGroupCard({
       }
       {...attributes}
       {...listeners}
-      onContextMenu={onContextMenu}
+      onContextMenu={handleContextMenu}
       onClickCapture={handleClickCapture}
     >
-      <div ref={contentRef} data-masonry-content="">
+      <div ref={masonryRef} data-masonry-content="">
         <CardboxCard
           annotation={annotation}
           expanded={expanded}
           isSelected={isSelected}
           colorTag={colorTag}
-          onToggleExpand={onToggleExpand}
-          onNavigate={onNavigate}
+          onToggleExpand={handleToggleExpand}
+          onNavigate={handleNavigate}
           linkedCards={linkedCards}
           onFocusCard={onFocusCard}
           onRemoveLink={onRemoveLink}
           note={note}
-          onSetNote={onSetNote}
-          onExportNote={onExportNote}
-          onShowConnections={onShowConnections}
+          onSetNote={handleSetNote}
+          onExportNote={handleExportNote}
+          onShowConnections={handleShowConnections}
         />
       </div>
     </div>

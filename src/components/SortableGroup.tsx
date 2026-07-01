@@ -6,7 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { GroupHeader } from "./GroupHeader";
 import { SortableGroupCard } from "./SortableGroupCard";
-import { useMasonrySpan } from "../hooks/useMasonrySpan";
+import { useMasonryRef } from "../hooks/useMasonryObserver";
 import { makeGroupCardId, makeDroppableGroupId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import type { GroupInfo, CardNote } from "../lib/ipc";
@@ -28,11 +28,11 @@ interface SortableGroupProps {
   onRemoveLink: (targetUuid: string) => void;
   onSetNote?: (uuid: string, body: string) => void;
   onExportNote?: (uuid: string) => void;
-  onToggleCollapse: () => void;
-  onRename: (name: string) => void;
+  onToggleCollapse: (groupId: string) => void;
+  onRename: (groupId: string, name: string) => void;
   onShowConnections?: (uuid: string) => void;
-  onCardContextMenu?: (cardUuid: string, e: React.MouseEvent) => void;
-  onHeaderContextMenu?: (e: React.MouseEvent) => void;
+  onCardContextMenu?: (groupId: string, cardUuid: string, e: React.MouseEvent) => void;
+  onHeaderContextMenu?: (groupId: string, e: React.MouseEvent) => void;
   colors?: Record<string, string>;
   onCardSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
@@ -82,14 +82,25 @@ export const SortableGroup = memo(function SortableGroup({
     [setSortableRef, setDroppableRef],
   );
 
-  const { contentRef, span } = useMasonrySpan();
+  const masonryRef = useMasonryRef();
+
+  const handleToggleCollapse = useCallback(() => onToggleCollapse(groupId), [onToggleCollapse, groupId]);
+  const handleRename = useCallback((name: string) => onRename(groupId, name), [onRename, groupId]);
+  const handleCardContextMenu = useCallback(
+    (cardUuid: string, e: React.MouseEvent) => onCardContextMenu?.(groupId, cardUuid, e),
+    [onCardContextMenu, groupId],
+  );
+  const handleHeaderContextMenu = useCallback(
+    (e: React.MouseEvent) => onHeaderContextMenu?.(groupId, e),
+    [onHeaderContextMenu, groupId],
+  );
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition ?? undefined,
     opacity: isDragging ? 0.4 : 1,
     gridColumn: "1 / -1",
-    gridRowEnd: `span ${span}`,
+    gridRowEnd: "span 1",
   };
 
   const groupCardIds = cards.map((ann) => makeGroupCardId(groupId, ann.uuid));
@@ -103,7 +114,7 @@ export const SortableGroup = memo(function SortableGroup({
       {...attributes}
       {...listeners}
     >
-      <div ref={contentRef} data-masonry-content="">
+      <div ref={masonryRef} data-masonry-content="">
         <div
           className="cardbox-group-container"
           data-drag-over={isDropTarget ? "true" : undefined}
@@ -113,9 +124,9 @@ export const SortableGroup = memo(function SortableGroup({
             cardCount={cards.length}
             totalCount={allFilteredCount}
             collapsed={info.collapsed}
-            onToggleCollapse={onToggleCollapse}
-            onRename={onRename}
-            onContextMenu={onHeaderContextMenu}
+            onToggleCollapse={handleToggleCollapse}
+            onRename={handleRename}
+            onContextMenu={handleHeaderContextMenu}
           />
 
           <LazyMotion features={domAnimation}>
@@ -150,16 +161,16 @@ export const SortableGroup = memo(function SortableGroup({
                           annotation={ann}
                           expanded={expandedUuid === ann.uuid}
                           colorTag={colors?.[ann.uuid]}
-                          onToggleExpand={() => onToggleExpand(ann.uuid)}
-                          onNavigate={() => onNavigate(ann)}
+                          onToggleExpand={onToggleExpand}
+                          onNavigate={onNavigate}
                           linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
                           onFocusCard={onFocusCard}
                           onRemoveLink={onRemoveLink}
                           note={notesMap?.[ann.uuid]?.body}
-                          onSetNote={onSetNote ? (body: string) => onSetNote(ann.uuid, body) : undefined}
-                          onExportNote={onExportNote ? () => onExportNote(ann.uuid) : undefined}
-                          onShowConnections={() => onShowConnections?.(ann.uuid)}
-                          onContextMenu={(e) => onCardContextMenu?.(ann.uuid, e)}
+                          onSetNote={onSetNote}
+                          onExportNote={onExportNote}
+                          onShowConnections={onShowConnections}
+                          onContextMenu={handleCardContextMenu}
                           onSelect={onCardSelect}
                         />
                       ))}
