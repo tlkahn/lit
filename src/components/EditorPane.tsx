@@ -284,16 +284,34 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     prevViewModeRef.current = viewMode;
     if (viewMode !== "editor" || prev === "editor") return;
     requestAnimationFrame(() => {
-      const pendingJumpLine = usePaneStore.getState().consumePendingJumpLine(paneId);
-      if (pendingJumpLine == null) return;
       const view = getPaneView(paneId);
       if (!view) return;
-      const lineNum = Math.min(pendingJumpLine, view.state.doc.lines);
-      const pos = view.state.doc.line(lineNum).from;
-      view.dispatch({
-        selection: EditorSelection.cursor(pos),
-        effects: EditorView.scrollIntoView(pos, { y: "start" }),
-      });
+      const pendingJumpLine = usePaneStore.getState().consumePendingJumpLine(paneId);
+      if (pendingJumpLine != null) {
+        const lineNum = Math.min(pendingJumpLine, view.state.doc.lines);
+        const pos = view.state.doc.line(lineNum).from;
+        view.dispatch({
+          selection: EditorSelection.cursor(pos),
+          effects: EditorView.scrollIntoView(pos, { y: "start" }),
+        });
+        return;
+      }
+      const wsState = useWorkspaceStore.getState();
+      if (wsState.pendingCursorLine != null) {
+        let adjustedLine = wsState.pendingCursorLine;
+        if (wsState.pendingCursorFileAbsolute && rawYamlRef.current) {
+          adjustedLine = Math.max(1, adjustedLine - frontmatterLineCount(rawYamlRef.current));
+        }
+        const lineNum = Math.min(adjustedLine, view.state.doc.lines);
+        const line = view.state.doc.line(lineNum);
+        const col = wsState.pendingCursorCol ?? 0;
+        const pos = line.from + Math.min(col, line.length);
+        view.dispatch({
+          selection: EditorSelection.cursor(pos),
+          effects: EditorView.scrollIntoView(pos, { y: "center" }),
+        });
+        useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
+      }
     });
   }, [viewMode, paneId]);
 

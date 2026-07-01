@@ -78,6 +78,9 @@ beforeEach(() => {
     workspacePath: "/ws",
     pages: [],
     currentPagePath: null,
+    pendingCursorLine: null,
+    pendingCursorCol: null,
+    pendingCursorFileAbsolute: false,
   });
   editorViewRef._resetForTesting();
   pdfPaneRef._resetForTesting();
@@ -1234,6 +1237,39 @@ describe("EditorPane", () => {
 
       // No additional dispatch — consumePendingJumpLine returns null
       expect(view.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("consumes pendingCursorLine when viewMode switches to editor without pendingJumpLine", async () => {
+      const body = "# Heading 1\n## Heading 2\nContent";
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "cardbox" },
+        focusedPaneId: "pane-1",
+      });
+
+      useWorkspaceStore.setState({ pendingCursorLine: 2, pendingCursorCol: 5, pendingCursorFileAbsolute: false });
+
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+
+      act(() => {
+        usePaneStore.getState().setPaneViewMode("pane-1", "editor");
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+      const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      const expectedLine = Text.of(body.split("\n")).line(2);
+      expect(tx.selection.head).toBe(expectedLine.from + 5);
+
+      expect(useWorkspaceStore.getState().pendingCursorLine).toBeNull();
+      expect(useWorkspaceStore.getState().pendingCursorCol).toBeNull();
     });
   });
 });
