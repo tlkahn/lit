@@ -285,8 +285,8 @@ pub fn read_cardbox_layout(
 
     // Prune stale UUIDs and reconcile groups
     super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let all_anns = gi.list_all_cardbox_annotations()?;
-        let valid_uuids: HashSet<&str> = all_anns.iter().map(|a| a.uuid.as_str()).collect();
+        let all_uuids = gi.list_all_cardbox_annotation_uuids()?;
+        let valid_uuids: HashSet<&str> = all_uuids.iter().map(|s| s.as_str()).collect();
         prune_layout(&mut layout, &valid_uuids);
         layout.pinned.retain(|uuid| valid_uuids.contains(uuid.as_str()));
         let mut seen = HashSet::new();
