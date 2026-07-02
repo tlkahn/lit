@@ -51,8 +51,10 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   const currentPathRef = useRef<string | null>(pagePath);
   const rawYamlRef = useRef(rawYaml);
   const isFocusedRef = useRef(isFocused);
+  const docLoadedForPathRef = useRef<string | null>(null);
 
   useEffect(() => { currentPathRef.current = pagePath; }, [pagePath]);
+  useEffect(() => { docLoadedForPathRef.current = null; }, [pagePath]);
   useEffect(() => {
     if (isFocused) {
       useCursorInfoStore.getState().setCursorInfo(0, 0);
@@ -249,6 +251,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         view.dispatch({ selection: EditorSelection.cursor(cursor) });
       }
       }
+      docLoadedForPathRef.current = currentPathRef.current;
       if (isFocusedRef.current && shouldEditorClaimFocus(document.activeElement)) {
         view.focus();
       }
@@ -277,7 +280,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         return;
       }
       const wsState = useWorkspaceStore.getState();
-      if (wsState.pendingCursorLine != null) {
+      if (wsState.pendingCursorLine != null && docLoadedForPathRef.current === currentPathRef.current) {
         applyPendingCursorLine(view, wsState.pendingCursorLine, wsState.pendingCursorCol, wsState.pendingCursorFileAbsolute, rawYamlRef.current);
         useWorkspaceStore.setState({ pendingCursorLine: null, pendingCursorCol: null, pendingCursorFileAbsolute: false });
       }

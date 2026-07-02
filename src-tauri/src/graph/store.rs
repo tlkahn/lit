@@ -577,12 +577,21 @@ impl Store {
                 [],
                 |r| r.get(0),
             )?;
+            self.conn.execute_batch("BEGIN;")?;
             if has_annotations {
-                self.conn.execute_batch("ALTER TABLE annotations ADD COLUMN original TEXT;")?;
+                let has_original: bool = self.conn.query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('annotations') WHERE name='original'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if !has_original {
+                    self.conn.execute_batch("ALTER TABLE annotations ADD COLUMN original TEXT;")?;
+                }
             }
             self.conn.execute_batch(
                 "UPDATE sync SET mtime = 0;
-                 UPDATE meta SET value = '23' WHERE key = 'schema_version';"
+                 UPDATE meta SET value = '23' WHERE key = 'schema_version';
+                 COMMIT;"
             )?;
         }
 
@@ -3678,6 +3687,53 @@ mod tests {
             .prepare("SELECT original FROM annotations LIMIT 0")
             .is_ok();
         assert!(has_original, "annotations table should have original column");
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "sync mtimes should be reset to force reindex");
+    }
+
+    #[test]
+    fn migration_v23_interrupted_is_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Simulate a partially-applied v23 migration:
+        // - annotations.original column already added
+        // - schema_version still at 22
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE annotations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                     certainty TEXT NOT NULL, body TEXT, date TEXT,
+                     source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                     scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                     uuid TEXT NOT NULL,
+                     original TEXT
+                 );
+                 CREATE UNIQUE INDEX idx_annotations_uuid ON annotations(uuid);
+                 INSERT INTO meta(key, value) VALUES ('schema_version', '22');
+                 INSERT INTO sync(path, mtime) VALUES ('a.md', 111);",
+            ).unwrap();
+        }
+
+        // This must not fail with "duplicate column name: original"
+        let store = Store::open(&db_path).expect(
+            "Store::open should recover from interrupted v23 migration"
+        );
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // The original column should still exist
+        let has_original: bool = store.conn
+            .prepare("SELECT original FROM annotations LIMIT 0")
+            .is_ok();
+        assert!(has_original, "annotations table should have original column");
+
+        // Sync mtimes should be reset
         let max_mtime: i64 = store.conn
             .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
             .unwrap();
