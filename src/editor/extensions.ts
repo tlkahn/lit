@@ -19,6 +19,7 @@ import { Math } from "./markdown/math";
 import { Comment } from "./markdown/comment";
 import { Annotation } from "./markdown/annotation";
 import { Footnote } from "./markdown/footnote";
+import { pairWrapExtension } from "./pairWrap";
 
 export interface ExtensionConfig {
   theme: "light" | "dark";
@@ -51,6 +52,7 @@ export interface ExtensionConfig {
 
 export function createExtensions(config: ExtensionConfig): Extension[] {
   return [
+    pairWrapExtension(),
     markdown({
       extensions: [GFM, WikiLink, Frontmatter, FrontmatterYamlWrap, Math, Comment, Annotation, Footnote],
       codeLanguages: languages,
