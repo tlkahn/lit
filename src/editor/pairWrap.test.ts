@@ -159,6 +159,16 @@ describe("applyPairWrap", () => {
   });
 });
 
+describe("IME / dead-key composition guard", () => {
+  it("returns false during an active composition (compositionStarted)", () => {
+    const view = makeView("hello world", 6, 11);
+    Object.defineProperty(view, "compositionStarted", { value: true, configurable: true });
+    const intercepted = simulateInput(view, "`");
+    expect(intercepted).toBe(false);
+    expect(getText(view)).toBe("hello world");
+  });
+});
+
 describe("interop with closeBrackets", () => {
   it("intercepts wrapping before closeBrackets when text is selected", () => {
     const view = makeView("hello", 0, 5, [closeBrackets()]);

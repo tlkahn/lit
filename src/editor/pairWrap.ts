@@ -57,6 +57,7 @@ export function applyPairWrap(state: EditorState, insert: string): TransactionSp
 export function pairWrapExtension(): Extension {
   return Prec.high(
     EditorView.inputHandler.of((view, _from, _to, insert) => {
+      if (view.compositionStarted) return false;
       const spec = applyPairWrap(view.state, insert);
       if (!spec) return false;
       view.dispatch({ ...spec, userEvent: "input.type" });
