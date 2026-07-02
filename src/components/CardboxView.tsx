@@ -303,11 +303,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [renderEntries],
   );
 
+  // Read the ordering through a ref so handleSelect stays referentially stable
+  // across reorders/filtering — otherwise every recompute of renderEntries
+  // defeats memo() on all cards. The ref is current at event time (effects
+  // flush before user events can fire).
+  const orderedUuidsRef = useRef(orderedUuids);
+  useEffect(() => {
+    orderedUuidsRef.current = orderedUuids;
+  });
+
   const handleSelect = useCallback(
     (uuid: string, event: React.MouseEvent) => {
-      handleCardClick(uuid, event, orderedUuids);
+      handleCardClick(uuid, event, orderedUuidsRef.current);
     },
-    [handleCardClick, orderedUuids],
+    [handleCardClick],
   );
 
   const linkedCardsMap = useMemo(() => {
@@ -350,9 +359,14 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const handleRemoveLink = useCallback(
     (targetUuid: string) => {
+      // getState() instead of the subscribed expandedUuid: depending on it
+      // would give this callback a new identity on every expand/collapse,
+      // defeating memo() on all cards. Store state at event time is what
+      // matters — the click always comes from inside the expanded card.
+      const { expandedUuid } = useCardboxStore.getState();
       if (expandedUuid) removeLink(expandedUuid, targetUuid);
     },
-    [expandedUuid, removeLink],
+    [removeLink],
   );
 
   const handleLinkSelect = useCallback(
