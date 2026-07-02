@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { CardboxAnnotation, GroupInfo, CardNote } from "../lib/ipc";
+import { perfMark, perfMeasure } from "../lib/perf";
 import { useCardboxUndoStore } from "./cardboxUndo";
 import type { UndoEntry } from "./cardboxUndo";
 import {
@@ -132,7 +133,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     if (get().loading) return;
     set({ loading: true });
     try {
+      perfMark("cardbox:ipc-start");
       const annotations = await listAllAnnotations();
+      perfMeasure("cardbox:ipc", "cardbox:ipc-start");
       const types = new Set(annotations.map((a) => a.annotation_type));
       set((s) => {
         const newUuids = new Set(annotations.map((a) => a.uuid));

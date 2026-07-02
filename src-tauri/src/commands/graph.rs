@@ -241,6 +241,15 @@ pub(crate) fn load_or_build_graph_sync(
     annotations_enabled: bool,
     on_progress: impl Fn(crate::graph::progress::IndexProgress),
 ) -> Result<Arc<GraphIndex>, String> {
+    // Reuse an already-registered index instead of opening a second DB
+    // connection: a concurrent init (e.g. app-level early-workspace init
+    // running a long background sync) may hold the write lock, and
+    // Store::open would hit "database is locked" and brick this window.
+    if let Some(gi) = graph_reg.indices.lock().unwrap().get(&root).cloned() {
+        build_state.mark_ready(&root);
+        return Ok(gi);
+    }
+
     match GraphIndex::load_from_store(root.clone()) {
         Ok(Some(gi)) => {
             let gi = Arc::new(gi);
@@ -1188,6 +1197,27 @@ mod tests {
         assert!(!build_state.is_in_progress(&dir.path().to_path_buf()));
         let indices = graph_reg.indices.lock().unwrap();
         assert!(indices.contains_key(&dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn load_or_build_graph_sync_reuses_registered_index() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "content").unwrap();
+        let root = dir.path().to_path_buf();
+
+        let registered = Arc::new(GraphIndex::build(root.clone(), true).unwrap());
+        let build_state = GraphBuildState::new();
+        let graph_reg = GraphRegistry::new();
+        graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&registered));
+
+        build_state.start_build(root.clone());
+        let gi = load_or_build_graph_sync(root.clone(), &build_state, &graph_reg, true, |_| {}).unwrap();
+
+        assert!(
+            Arc::ptr_eq(&gi, &registered),
+            "must return the registered index instead of opening a second store connection"
+        );
+        assert!(!build_state.is_in_progress(&root), "reuse must mark the build ready");
     }
 
     #[test]

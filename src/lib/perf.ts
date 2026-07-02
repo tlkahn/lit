@@ -21,7 +21,13 @@ export function perfMark(name: string) {
 
 export function perfMeasure(name: string, startMark: string) {
   if (!enabled) return undefined;
-  const m = performance.measure(name, startMark);
+  let m: PerformanceMeasure;
+  try {
+    m = performance.measure(name, startMark);
+  } catch {
+    // start mark absent — perf was enabled after the mark point was passed
+    return undefined;
+  }
   if (m.duration > THRESHOLD_MS) {
     console.warn(`[perf] ${name}: ${m.duration.toFixed(1)}ms (>${THRESHOLD_MS}ms target)`);
   }

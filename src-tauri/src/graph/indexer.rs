@@ -59,6 +59,29 @@ pub fn parse_md_file(
     Ok((node, links, body, blanked))
 }
 
+/// Resolves each annotation's `original` text against the body it was
+/// extracted from, so cardbox loads read it straight from the DB instead of
+/// re-reading and re-segmenting every annotated file. Offsets align by
+/// construction: `body` is the exact string the annotations were extracted
+/// from. Unresolvable scopes and empty extractions leave `original` as None.
+/// One `ScopeResolveCtx` is shared across the file's annotations so sentence
+/// segmentation and the UTF-16 offset map are computed once per body.
+fn resolve_annotation_originals(body: &str, anns: &mut [super::types::IndexableAnnotation]) {
+    let ctx = crate::annotation::scope_resolver::ScopeResolveCtx::new(body, "en");
+    for ann in anns.iter_mut() {
+        let scope = match crate::annotation::types::Scope::from_db(&ann.scope_kind, &ann.scope_value) {
+            Some(s) => s,
+            None => continue,
+        };
+        if let Some(range) = ctx.resolve_scope_range(ann.char_start, &scope) {
+            let text = ctx.extract_text_for_range(&range);
+            if !text.is_empty() {
+                ann.original = Some(text);
+            }
+        }
+    }
+}
+
 fn title_from_relative_path(relative_path: &str) -> String {
     let basename = relative_path.rsplit('/').next().unwrap_or(relative_path);
     filename_to_page_name(basename)
@@ -284,7 +307,11 @@ pub fn index_workspace_with_progress(
         {
             let anns = if annotations_enabled {
                 bodies.get(&node.id)
-                    .map(|b| super::extract::extract_annotations(b, &mark_codes))
+                    .map(|b| {
+                        let mut anns = super::extract::extract_annotations(b, &mark_codes);
+                        resolve_annotation_originals(b, &mut anns);
+                        anns
+                    })
                     .unwrap_or_default()
             } else {
                 vec![]
@@ -526,7 +553,9 @@ pub fn incremental_reindex(
                 // Always call upsert even with empty vec so orphaned annotations get cleaned up.
                 {
                     let anns = if annotations_enabled {
-                        super::extract::extract_annotations(&body, &mark_codes)
+                        let mut anns = super::extract::extract_annotations(&body, &mark_codes);
+                        resolve_annotation_originals(&body, &mut anns);
+                        anns
                     } else {
                         vec![]
                     };
@@ -1224,42 +1253,14 @@ impl GraphIndex {
         store.find_annotation_uuid(node_id, annotation_type, body, char_start_hint)
     }
 
+    pub fn list_all_cardbox_annotation_uuids(&self) -> Result<Vec<String>, GraphError> {
+        let store = self.store.lock().unwrap();
+        store.list_all_cardbox_annotation_uuids()
+    }
+
     pub fn list_all_cardbox_annotations(&self) -> Result<Vec<super::types::CardboxAnnotation>, GraphError> {
-        let mut annotations = {
-            let store = self.store.lock().unwrap();
-            store.list_all_cardbox_annotations()?
-        };
-
-        let mut pages: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, ann) in annotations.iter().enumerate() {
-            pages.entry(ann.source_page_id.clone()).or_default().push(i);
-        }
-
-        for (page_id, indices) in &pages {
-            let abs = self.workspace_root.join(page_id);
-            let raw = match std::fs::read_to_string(&abs) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let parsed = parse_frontmatter(&raw);
-            let body = parsed.body;
-
-            for &idx in indices {
-                let ann = &annotations[idx];
-                let scope = match crate::annotation::types::Scope::from_db(&ann.scope_kind, &ann.scope_value) {
-                    Some(s) => s,
-                    None => continue,
-                };
-                if let Some(range) = crate::annotation::scope_resolver::resolve_scope_range(body, ann.char_start, &scope, "en") {
-                    let text = crate::annotation::scope_resolver::extract_text_for_range(body, &range);
-                    if !text.is_empty() {
-                        annotations[idx].original = Some(text);
-                    }
-                }
-            }
-        }
-
-        Ok(annotations)
+        let store = self.store.lock().unwrap();
+        store.list_all_cardbox_annotations()
     }
 
     pub fn top_by_pagerank(&self, n: usize) -> Result<Vec<(String, f64)>, GraphError> {
@@ -1731,6 +1732,114 @@ mod tests {
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "bare");
+    }
+
+    // --- index-time original resolution ---
+
+    #[test]
+    fn build_persists_resolved_original_in_store() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Some text <!--- n: _ | a note ---> more.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let original: Option<String> = gi.store().conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(original.as_deref(), Some("text"), "original must be resolved and persisted at index time");
+    }
+
+    #[test]
+    fn build_persists_resolved_sentence_original_in_store() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "The dog ran. The cat sat.<!--- n: \\s | a note ---> tail.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let original: Option<String> = gi.store().conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(
+            original.as_deref(),
+            Some("The cat sat."),
+            "sentence-scoped original must be resolved and persisted at index time"
+        );
+    }
+
+    /// Timing smoke for the shared-segmentation fast path: many sentence-scoped
+    /// annotations against one large body must not re-segment per annotation.
+    /// Self-calibrating so it holds in both debug and release profiles: the
+    /// dominant cost must be the one-time per-body segmentation, so 100x the
+    /// annotations may cost at most a small multiple of 5 annotations.
+    /// Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn resolve_originals_sentence_perf_smoke() {
+        let body: String = (0..5000)
+            .map(|i| format!("Sentence number {i} is right here in the body. "))
+            .collect();
+        let make_anns = |count: usize| -> Vec<crate::graph::types::IndexableAnnotation> {
+            (1..=count)
+                .map(|i| {
+                    let char_start = i * body.len() / (count + 1);
+                    crate::graph::types::IndexableAnnotation {
+                        annotation_type: "note".to_string(),
+                        certainty: "certain".to_string(),
+                        body: Some("a note".to_string()),
+                        date: None,
+                        source_line: 1,
+                        char_start,
+                        char_end: char_start,
+                        scope_kind: "sentence".to_string(),
+                        scope_value: "1".to_string(),
+                        uuid: None,
+                        original: None,
+                    }
+                })
+                .collect()
+        };
+
+        let mut few = make_anns(5);
+        let start = std::time::Instant::now();
+        resolve_annotation_originals(&body, &mut few);
+        let t_few = start.elapsed();
+
+        let mut many = make_anns(500);
+        let start = std::time::Instant::now();
+        resolve_annotation_originals(&body, &mut many);
+        let t_many = start.elapsed();
+
+        let resolved = many.iter().filter(|a| a.original.is_some()).count();
+        assert!(resolved > 450, "most annotations should resolve, got {resolved}");
+        assert!(
+            t_many < t_few * 10 + std::time::Duration::from_millis(500),
+            "500 sentence scopes took {t_many:?} vs {t_few:?} for 5 against the same \
+             ~240KB body; per-annotation re-segmentation regression?"
+        );
+    }
+
+    #[test]
+    fn incremental_reindex_refreshes_original_when_surrounding_text_changes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Alpha text <!--- n: _ | a note ---> tail.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let uuid_before: String = gi.store().conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        // Change only the text the annotation's scope covers — the annotation
+        // itself keeps its (type, body) identity, so the diff UPDATEs in place.
+        write_md(dir.path(), "a.md", "Alpha revised <!--- n: _ | a note ---> tail.");
+        gi.reindex_file("a.md", true).unwrap();
+
+        let (uuid_after, original): (String, Option<String>) = gi.store().conn.query_row(
+            "SELECT uuid, original FROM annotations WHERE node_id = 'a.md'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(uuid_after, uuid_before, "annotation identity must survive the reindex");
+        assert_eq!(original.as_deref(), Some("revised"), "original must refresh on reindex even when the annotation itself is unchanged");
     }
 
     // --- get_first_paragraphs ---

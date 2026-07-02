@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 22;
+pub const CURRENT_SCHEMA_VERSION: i64 = 23;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -566,6 +566,31 @@ impl Store {
             }
             self.conn.execute_batch(
                 "UPDATE meta SET value = '22' WHERE key = 'schema_version';
+                 COMMIT;"
+            )?;
+        }
+
+        if version < 23 {
+            info!(from = version, to = 23, "migrating schema: adding annotations.original + forcing reindex");
+            let has_annotations: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotations')",
+                [],
+                |r| r.get(0),
+            )?;
+            self.conn.execute_batch("BEGIN;")?;
+            if has_annotations {
+                let has_original: bool = self.conn.query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('annotations') WHERE name='original'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if !has_original {
+                    self.conn.execute_batch("ALTER TABLE annotations ADD COLUMN original TEXT;")?;
+                }
+            }
+            self.conn.execute_batch(
+                "UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '23' WHERE key = 'schema_version';
                  COMMIT;"
             )?;
         }
@@ -1474,7 +1499,7 @@ impl Store {
         let diff = match_annotations(&existing, annotations);
 
         let mut update_stmt = self.conn.prepare(
-            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7, uuid=COALESCE(?8, uuid) WHERE id=?9",
+            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7, uuid=COALESCE(?8, uuid), original=?9 WHERE id=?10",
         )?;
         for &(new_idx, old_idx) in &diff.updates {
             let ann = &annotations[new_idx];
@@ -1487,13 +1512,14 @@ impl Store {
                 ann.scope_kind,
                 ann.scope_value,
                 ann.uuid,
+                ann.original,
                 existing[old_idx].id,
             ])?;
         }
 
         let mut insert_stmt = self.conn.prepare(
-            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid, original)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
         let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
         for &new_idx in &diff.inserts {
@@ -1511,6 +1537,7 @@ impl Store {
                 ann.scope_kind,
                 ann.scope_value,
                 uuid_val,
+                ann.original,
             ])?;
             inserted_rowids.push(self.conn.last_insert_rowid());
         }
@@ -1659,11 +1686,21 @@ impl Store {
         Ok(rows)
     }
 
+    pub fn list_all_cardbox_annotation_uuids(&self) -> Result<Vec<String>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.uuid FROM annotations a JOIN nodes n ON n.id = a.node_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn list_all_cardbox_annotations(&self) -> Result<Vec<CardboxAnnotation>, GraphError> {
         let mut stmt = self.conn.prepare(
             "SELECT a.uuid, a.annotation_type, a.certainty, a.body, a.date,
                     a.node_id, n.title, a.source_line, a.char_start, a.char_end,
-                    a.scope_kind, a.scope_value
+                    a.scope_kind, a.scope_value, a.original
              FROM annotations a
              JOIN nodes n ON n.id = a.node_id
              ORDER BY a.node_id, a.char_start",
@@ -1683,7 +1720,7 @@ impl Store {
                     char_end: row.get(9)?,
                     scope_kind: row.get(10)?,
                     scope_value: row.get(11)?,
-                    original: None,
+                    original: row.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1976,6 +2013,7 @@ mod tests {
                 scope_kind: "file".into(),
                 scope_value: "a.md".into(),
                 uuid: None,
+                original: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -3572,8 +3610,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_two() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+    fn schema_version_is_twenty_three() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
     }
 
     #[test]
@@ -3616,6 +3654,90 @@ mod tests {
             .prepare("SELECT uuid FROM annotations LIMIT 0")
             .is_ok();
         assert!(has_uuid, "annotations table should have uuid column");
+    }
+
+    #[test]
+    fn migration_v23_adds_original_and_resets_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE annotations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                     certainty TEXT NOT NULL, body TEXT, date TEXT,
+                     source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                     scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                     uuid TEXT NOT NULL
+                 );
+                 CREATE UNIQUE INDEX idx_annotations_uuid ON annotations(uuid);
+                 INSERT INTO meta(key, value) VALUES ('schema_version', '22');
+                 INSERT INTO sync(path, mtime) VALUES ('a.md', 111), ('b.md', 222);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        let has_original: bool = store.conn
+            .prepare("SELECT original FROM annotations LIMIT 0")
+            .is_ok();
+        assert!(has_original, "annotations table should have original column");
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "sync mtimes should be reset to force reindex");
+    }
+
+    #[test]
+    fn migration_v23_interrupted_is_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Simulate a partially-applied v23 migration:
+        // - annotations.original column already added
+        // - schema_version still at 22
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE annotations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                     certainty TEXT NOT NULL, body TEXT, date TEXT,
+                     source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                     scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                     uuid TEXT NOT NULL,
+                     original TEXT
+                 );
+                 CREATE UNIQUE INDEX idx_annotations_uuid ON annotations(uuid);
+                 INSERT INTO meta(key, value) VALUES ('schema_version', '22');
+                 INSERT INTO sync(path, mtime) VALUES ('a.md', 111);",
+            ).unwrap();
+        }
+
+        // This must not fail with "duplicate column name: original"
+        let store = Store::open(&db_path).expect(
+            "Store::open should recover from interrupted v23 migration"
+        );
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // The original column should still exist
+        let has_original: bool = store.conn
+            .prepare("SELECT original FROM annotations LIMIT 0")
+            .is_ok();
+        assert!(has_original, "annotations table should have original column");
+
+        // Sync mtimes should be reset
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "sync mtimes should be reset to force reindex");
     }
 
     #[test]
@@ -3911,7 +4033,40 @@ mod tests {
             scope_kind: "words".into(),
             scope_value: "1".into(),
             uuid: None,
+            original: None,
         }
+    }
+
+    #[test]
+    fn upsert_annotations_persists_and_refreshes_original() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+
+        let ann = super::IndexableAnnotation {
+            original: Some("first sentence".into()),
+            ..make_annotation("note", Some("body"))
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+        let original: Option<String> = store.conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(original.as_deref(), Some("first sentence"));
+
+        // Same (type, body) pairs as an UPDATE — original must refresh anyway,
+        // since the surrounding text may have changed without touching the mark.
+        let ann2 = super::IndexableAnnotation {
+            original: Some("edited sentence".into()),
+            ..make_annotation("note", Some("body"))
+        };
+        store.upsert_annotations("a.md", &[ann2]).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "re-upsert with same (type, body) should update in place");
+        let original: Option<String> = store.conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(original.as_deref(), Some("edited sentence"));
     }
 
     #[test]
@@ -4378,6 +4533,7 @@ mod tests {
             scope_kind: "words".into(),
             scope_value: "2".into(),
             uuid: None,
+            original: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
@@ -5931,10 +6087,12 @@ mod tests {
         let anns_a = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
             date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
             date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
@@ -5956,6 +6114,7 @@ mod tests {
         let anns = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns).unwrap();
         // Insert an orphan annotation directly via SQL (node "orphan.md" doesn't exist in nodes)
@@ -5966,6 +6125,49 @@ mod tests {
         let results = store.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1, "orphan annotation should be excluded by JOIN");
         assert_eq!(results[0].uuid, "u1");
+    }
+
+    #[test]
+    fn list_all_cardbox_annotation_uuids_returns_only_uuids() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("b.md", "Beta", &[], json!({})), 1).unwrap();
+        let anns_a = vec![IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
+        }];
+        let anns_b = vec![IndexableAnnotation {
+            annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
+            date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
+            original: None,
+        }];
+        store.upsert_annotations("a.md", &anns_a).unwrap();
+        store.upsert_annotations("b.md", &anns_b).unwrap();
+
+        let uuids = store.list_all_cardbox_annotation_uuids().unwrap();
+        assert_eq!(uuids.len(), 2);
+        assert!(uuids.contains(&"u1".to_string()));
+        assert!(uuids.contains(&"u2".to_string()));
+    }
+
+    #[test]
+    fn list_all_cardbox_annotation_uuids_excludes_orphans() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let anns = vec![IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
+        }];
+        store.upsert_annotations("a.md", &anns).unwrap();
+        store.conn.execute(
+            "INSERT INTO annotations (node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            rusqlite::params!["orphan.md", "note", "neutral", "orphan body", rusqlite::types::Null, 1, 0, 5, "words", "1", "u-orphan"],
+        ).unwrap();
+        let uuids = store.list_all_cardbox_annotation_uuids().unwrap();
+        assert_eq!(uuids.len(), 1);
+        assert_eq!(uuids[0], "u1");
     }
 
     #[test]
@@ -6065,10 +6267,12 @@ mod tests {
         let anns_a = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("x".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-a".into()),
+            original: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("y".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-b".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();

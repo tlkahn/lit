@@ -423,6 +423,7 @@ pub fn extract_annotations(
                 scope_kind,
                 scope_value,
                 uuid: ann.uuid,
+                original: None,
             }
         })
         .collect()

@@ -4,7 +4,9 @@ use tauri::State;
 
 use crate::annotation::marks::{sorted_mark_codes, MarkConfig, MarkConfigCache};
 use crate::annotation::parser::parse_annotations as do_parse;
-use crate::annotation::scope_resolver::{resolve_scope_range, resolve_scope_range_with_mode};
+use crate::annotation::scope_resolver::{
+    resolve_scope_range, resolve_scope_range_with_mode, ScopeResolveCtx,
+};
 use crate::annotation::types::{Annotation, ResolutionMode, Scope, ScopeRange};
 
 #[tauri::command]
@@ -50,15 +52,18 @@ pub struct MarkScopeRequest {
 
 /// Batched scope resolution: resolves every mark in `marks` in a single IPC call,
 /// returning results index-aligned with the input (`None` for unresolvable marks).
+/// One `ScopeResolveCtx` is shared across the batch so sentence segmentation and
+/// the UTF-16 offset map are computed once per content.
 #[tauri::command]
 pub fn resolve_mark_scopes(
     content: String,
     marks: Vec<MarkScopeRequest>,
     lang: String,
 ) -> Vec<Option<ScopeRange>> {
+    let ctx = ScopeResolveCtx::new(&content, &lang);
     marks
         .iter()
-        .map(|m| resolve_scope_range(&content, m.char_start, &m.scope, &lang))
+        .map(|m| ctx.resolve_scope_range(m.char_start, &m.scope))
         .collect()
 }
 
@@ -241,6 +246,28 @@ mod tests {
     fn cmd_resolve_mark_scopes_empty() {
         let result = resolve_mark_scopes("anything".to_string(), vec![], "en".to_string());
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_mixed_scope_kinds() {
+        // One batch mixing sentence and word scopes against the same content
+        // must agree with resolving each mark independently.
+        let content = "The dog ran. The cat sat. <!--- n ---> tail".to_string();
+        let cs = 26; // annotation marker start
+        let marks = vec![
+            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(1) },
+            MarkScopeRequest { char_start: cs, scope: Scope::Words(2) },
+            MarkScopeRequest { char_start: 0, scope: Scope::Sentence(1) },
+            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(2) },
+        ];
+        let batched = resolve_mark_scopes(content.clone(), marks.clone(), "en".to_string());
+        let single: Vec<Option<ScopeRange>> = marks
+            .iter()
+            .map(|m| resolve_annotation_scope(content.clone(), m.char_start, m.scope.clone(), "en".to_string()))
+            .collect();
+        assert_eq!(batched, single);
+        assert_eq!(batched[0], Some(ScopeRange { start: 13, end: 25 }));
+        assert_eq!(batched[2], None, "no text before offset 0");
     }
 
     #[test]

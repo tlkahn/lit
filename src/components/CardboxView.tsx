@@ -31,7 +31,9 @@ import { parseActiveId, parseOverId } from "../lib/dndIds";
 import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { DraggedUuidsContext } from "./DraggedUuidsContext";
+import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { perfMark, perfMeasure, perfTable } from "../lib/perf";
 import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
@@ -126,7 +128,15 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
 
   useEffect(() => {
-    fetchAnnotations().then(() => loadLayout());
+    perfMark("cardbox:mount");
+    fetchAnnotations()
+      .then(() => {
+        perfMeasure("cardbox:fetch", "cardbox:mount");
+        return loadLayout();
+      })
+      .then(() => {
+        perfMeasure("cardbox:load", "cardbox:mount");
+      });
     useCardboxUndoStore.getState().clear();
   }, [fetchAnnotations, loadLayout]);
 
@@ -302,11 +312,32 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [renderEntries],
   );
 
+  // lit-perf observability: measure mount → first non-empty card render once.
+  const firstPaintRef = useRef(false);
+  useEffect(() => {
+    if (firstPaintRef.current || renderEntries.length === 0) return;
+    firstPaintRef.current = true;
+    perfMeasure("cardbox:first-paint", "cardbox:mount");
+    perfTable("cardbox", [
+      { label: "annotations", value: annotations.length, unit: "count" },
+      { label: "render entries", value: renderEntries.length, unit: "count" },
+    ]);
+  }, [renderEntries, annotations.length]);
+
+  // Read the ordering through a ref so handleSelect stays referentially stable
+  // across reorders/filtering — otherwise every recompute of renderEntries
+  // defeats memo() on all cards. The ref is current at event time (effects
+  // flush before user events can fire).
+  const orderedUuidsRef = useRef(orderedUuids);
+  useEffect(() => {
+    orderedUuidsRef.current = orderedUuids;
+  });
+
   const handleSelect = useCallback(
     (uuid: string, event: React.MouseEvent) => {
-      handleCardClick(uuid, event, orderedUuids);
+      handleCardClick(uuid, event, orderedUuidsRef.current);
     },
-    [handleCardClick, orderedUuids],
+    [handleCardClick],
   );
 
   const linkedCardsMap = useMemo(() => {
@@ -349,9 +380,14 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const handleRemoveLink = useCallback(
     (targetUuid: string) => {
+      // getState() instead of the subscribed expandedUuid: depending on it
+      // would give this callback a new identity on every expand/collapse,
+      // defeating memo() on all cards. Store state at event time is what
+      // matters — the click always comes from inside the expanded card.
+      const { expandedUuid } = useCardboxStore.getState();
       if (expandedUuid) removeLink(expandedUuid, targetUuid);
     },
-    [expandedUuid, removeLink],
+    [removeLink],
   );
 
   const handleLinkSelect = useCallback(
@@ -972,6 +1008,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
             No matching annotations
           </div>
         ) : (
+          <MasonryObserverProvider>
           <DraggedUuidsContext.Provider value={draggedUuidsSet}>
           <DndContext
             sensors={sensors}
@@ -1006,16 +1043,16 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
                       colorTag={colors[entry.annotation.uuid]}
-                      onToggleExpand={() => toggleExpand(entry.annotation.uuid)}
-                      onNavigate={() => handleNavigate(entry.annotation)}
+                      onToggleExpand={toggleExpand}
+                      onNavigate={handleNavigate}
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
                       onFocusCard={handleFocusCard}
                       onRemoveLink={handleRemoveLink}
                       note={notesMap[entry.annotation.uuid]}
-                      onSetNote={(body: string) => handleSetNote(entry.annotation.uuid, body)}
-                      onExportNote={() => handleExportNote(entry.annotation.uuid)}
-                      onShowConnections={() => enterConnections(entry.annotation.uuid)}
-                      onContextMenu={(e) => handleCardContextMenu(entry.annotation.uuid, e)}
+                      onSetNote={handleSetNote}
+                      onExportNote={handleExportNote}
+                      onShowConnections={enterConnections}
+                      onContextMenu={handleCardContextMenu}
                       onSelect={handleSelect}
                     />
                   ) : (
@@ -1035,11 +1072,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                       notesMap={notes}
                       onSetNote={handleSetNote}
                       onExportNote={handleExportNote}
-                      onShowConnections={(uuid: string) => enterConnections(uuid)}
-                      onToggleCollapse={() => toggleGroupCollapse(entry.groupId)}
-                      onRename={(name: string) => renameGroup(entry.groupId, name)}
-                      onCardContextMenu={(cardUuid, e) => handleGroupCardContextMenu(entry.groupId, cardUuid, e)}
-                      onHeaderContextMenu={(e) => handleGroupHeaderContextMenu(entry.groupId, e)}
+                      onShowConnections={enterConnections}
+                      onToggleCollapse={toggleGroupCollapse}
+                      onRename={renameGroup}
+                      onCardContextMenu={handleGroupCardContextMenu}
+                      onHeaderContextMenu={handleGroupHeaderContextMenu}
                       colors={colors}
                       onCardSelect={handleSelect}
                     />
@@ -1093,6 +1130,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
             </DragOverlay>
           </DndContext>
           </DraggedUuidsContext.Provider>
+          </MasonryObserverProvider>
         )}
       </div>
 
