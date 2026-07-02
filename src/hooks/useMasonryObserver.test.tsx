@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, act } from "@testing-library/react";
 import { MasonryObserverProvider, useMasonryRef } from "./useMasonryObserver";
@@ -47,6 +48,21 @@ describe("useMasonryObserver", () => {
 
     expect(constructorSpy).toHaveBeenCalledTimes(1);
     globalThis.ResizeObserver = OriginalRO;
+  });
+
+  it("still applies spans under StrictMode (refs are not re-invoked on the simulated remount)", async () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(
+      <StrictMode>
+        <MasonryObserverProvider>
+          <TestCard />
+        </MasonryObserverProvider>
+      </StrictMode>,
+    );
+    await act(() => { vi.advanceTimersByTime(16); });
+    const wrapper = getByTestId("card-wrapper");
+    expect(wrapper.style.gridRowEnd).toBe("span 627");
+    vi.useRealTimers();
   });
 
   it("disconnects observer on unmount", () => {
