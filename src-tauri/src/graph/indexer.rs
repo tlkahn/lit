@@ -1256,41 +1256,8 @@ impl GraphIndex {
     }
 
     pub fn list_all_cardbox_annotations(&self) -> Result<Vec<super::types::CardboxAnnotation>, GraphError> {
-        let mut annotations = {
-            let store = self.store.lock().unwrap();
-            store.list_all_cardbox_annotations()?
-        };
-
-        let mut pages: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, ann) in annotations.iter().enumerate() {
-            pages.entry(ann.source_page_id.clone()).or_default().push(i);
-        }
-
-        for (page_id, indices) in &pages {
-            let abs = self.workspace_root.join(page_id);
-            let raw = match std::fs::read_to_string(&abs) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let parsed = parse_frontmatter(&raw);
-            let body = parsed.body;
-
-            for &idx in indices {
-                let ann = &annotations[idx];
-                let scope = match crate::annotation::types::Scope::from_db(&ann.scope_kind, &ann.scope_value) {
-                    Some(s) => s,
-                    None => continue,
-                };
-                if let Some(range) = crate::annotation::scope_resolver::resolve_scope_range(body, ann.char_start, &scope, "en") {
-                    let text = crate::annotation::scope_resolver::extract_text_for_range(body, &range);
-                    if !text.is_empty() {
-                        annotations[idx].original = Some(text);
-                    }
-                }
-            }
-        }
-
-        Ok(annotations)
+        let store = self.store.lock().unwrap();
+        store.list_all_cardbox_annotations()
     }
 
     pub fn top_by_pagerank(&self, n: usize) -> Result<Vec<(String, f64)>, GraphError> {

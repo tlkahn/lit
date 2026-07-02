@@ -947,15 +947,22 @@ mod tests {
     }
 
     #[test]
-    fn cmd_original_none_when_file_deleted() {
+    fn cmd_original_survives_file_deletion_until_reindex() {
         let dir = create_workspace();
         let file_path = dir.path().join("a.md");
         std::fs::write(&file_path, "Some text <!--- n: _ | note --->").unwrap();
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         std::fs::remove_file(&file_path).unwrap();
+
+        // original is resolved at index time, so the DB snapshot survives the
+        // on-disk deletion until the watcher-driven reindex removes the file.
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].original.is_none());
+        assert_eq!(results[0].original.as_deref(), Some("text"));
+
+        gi.remove_file("a.md", true).unwrap();
+        let results = gi.list_all_cardbox_annotations().unwrap();
+        assert!(results.is_empty(), "reindex after deletion should drop the annotation entirely");
     }
 
     #[test]
