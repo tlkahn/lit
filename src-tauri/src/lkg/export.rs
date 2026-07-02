@@ -339,6 +339,7 @@ mod tests {
             scope_kind: "char".into(),
             scope_value: "x".into(),
             uuid: None,
+            original: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 

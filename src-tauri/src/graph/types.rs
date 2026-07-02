@@ -146,6 +146,8 @@ pub struct IndexableAnnotation {
     pub scope_value: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub original: Option<String>,
 }
 
 impl From<FullAnnotationRecord> for IndexableAnnotation {
@@ -161,6 +163,7 @@ impl From<FullAnnotationRecord> for IndexableAnnotation {
             scope_kind: r.scope_kind,
             scope_value: r.scope_value,
             uuid: Some(r.uuid),
+            original: None,
         }
     }
 }
@@ -526,6 +529,7 @@ mod tests {
             scope_kind: "words".into(),
             scope_value: "2".into(),
             uuid: None,
+            original: None,
         };
         let json_str = serde_json::to_string(&ia).expect("serialize");
         let back: IndexableAnnotation = serde_json::from_str(&json_str).expect("deserialize");

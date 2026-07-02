@@ -1490,7 +1490,7 @@ impl Store {
         let diff = match_annotations(&existing, annotations);
 
         let mut update_stmt = self.conn.prepare(
-            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7, uuid=COALESCE(?8, uuid) WHERE id=?9",
+            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7, uuid=COALESCE(?8, uuid), original=?9 WHERE id=?10",
         )?;
         for &(new_idx, old_idx) in &diff.updates {
             let ann = &annotations[new_idx];
@@ -1503,13 +1503,14 @@ impl Store {
                 ann.scope_kind,
                 ann.scope_value,
                 ann.uuid,
+                ann.original,
                 existing[old_idx].id,
             ])?;
         }
 
         let mut insert_stmt = self.conn.prepare(
-            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid, original)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
         let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
         for &new_idx in &diff.inserts {
@@ -1527,6 +1528,7 @@ impl Store {
                 ann.scope_kind,
                 ann.scope_value,
                 uuid_val,
+                ann.original,
             ])?;
             inserted_rowids.push(self.conn.last_insert_rowid());
         }
@@ -2002,6 +2004,7 @@ mod tests {
                 scope_kind: "file".into(),
                 scope_value: "a.md".into(),
                 uuid: None,
+                original: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -3974,7 +3977,40 @@ mod tests {
             scope_kind: "words".into(),
             scope_value: "1".into(),
             uuid: None,
+            original: None,
         }
+    }
+
+    #[test]
+    fn upsert_annotations_persists_and_refreshes_original() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+
+        let ann = super::IndexableAnnotation {
+            original: Some("first sentence".into()),
+            ..make_annotation("note", Some("body"))
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+        let original: Option<String> = store.conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(original.as_deref(), Some("first sentence"));
+
+        // Same (type, body) pairs as an UPDATE — original must refresh anyway,
+        // since the surrounding text may have changed without touching the mark.
+        let ann2 = super::IndexableAnnotation {
+            original: Some("edited sentence".into()),
+            ..make_annotation("note", Some("body"))
+        };
+        store.upsert_annotations("a.md", &[ann2]).unwrap();
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "re-upsert with same (type, body) should update in place");
+        let original: Option<String> = store.conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(original.as_deref(), Some("edited sentence"));
     }
 
     #[test]
@@ -4441,6 +4477,7 @@ mod tests {
             scope_kind: "words".into(),
             scope_value: "2".into(),
             uuid: None,
+            original: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
@@ -5994,10 +6031,12 @@ mod tests {
         let anns_a = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
             date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
             date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
@@ -6019,6 +6058,7 @@ mod tests {
         let anns = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns).unwrap();
         // Insert an orphan annotation directly via SQL (node "orphan.md" doesn't exist in nodes)
@@ -6039,10 +6079,12 @@ mod tests {
         let anns_a = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
             date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
             date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
@@ -6060,6 +6102,7 @@ mod tests {
         let anns = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns).unwrap();
         store.conn.execute(
@@ -6168,10 +6211,12 @@ mod tests {
         let anns_a = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("x".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-a".into()),
+            original: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("y".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-b".into()),
+            original: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
