@@ -494,8 +494,13 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   // or `focus` (optionally resetting filters first when the card is hidden).
   // Handles both a fresh mount and an already-open cardbox.
   useEffect(() => {
+    // Read loading from the live store, not the render closure: the mount
+    // effect's fetchAnnotations() synchronously sets loading=true, but effects
+    // from the same commit still capture the pre-effect value (false).  Reading
+    // getState() sees the update and correctly returns "wait" until the fetch
+    // resolves with fresh annotations.
     const action = resolvePendingFocus({
-      loading,
+      loading: useCardboxStore.getState().loading,
       pendingFocusUuid,
       annotationUuids: annotationMap,
       filteredUuids: filteredUuidSet,
