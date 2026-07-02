@@ -25,14 +25,14 @@ export const PAIRS: Record<string, string> = {
 export function applyPairWrap(state: EditorState, insert: string): TransactionSpec | null {
   const close = PAIRS[insert];
   if (close === undefined) return null;
-  if (state.selection.main.empty) return null;
+  if (state.selection.ranges.every(r => r.empty)) return null;
   if (state.readOnly) return null;
 
   return state.changeByRange((range) => {
     // Multi-cursor can mix empty and non-empty ranges; empty ones just insert.
     if (range.empty) {
       return {
-        changes: { from: range.from, insert },
+        changes: { from: range.from, insert: insert + close },
         range: EditorSelection.cursor(range.from + insert.length),
       };
     }

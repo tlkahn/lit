@@ -118,6 +118,36 @@ describe("applyPairWrap", () => {
     expect(getText(view)).toBe("(foo) (bar)");
   });
 
+  it("wraps when main selection is empty but secondary has selection", () => {
+    const state = EditorState.create({
+      doc: "foo bar",
+      selection: EditorSelection.create([
+        EditorSelection.cursor(0),
+        EditorSelection.range(4, 7),
+      ]),
+      extensions: [EditorState.allowMultipleSelections.of(true), pairWrapExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    views.push(view);
+    simulateInput(view, "(");
+    expect(getText(view)).toBe("()foo (bar)");
+  });
+
+  it("inserts full pair at empty cursor when main selection is non-empty", () => {
+    const state = EditorState.create({
+      doc: "foo bar",
+      selection: EditorSelection.create([
+        EditorSelection.range(0, 3),
+        EditorSelection.cursor(4),
+      ]),
+      extensions: [EditorState.allowMultipleSelections.of(true), pairWrapExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    views.push(view);
+    simulateInput(view, "(");
+    expect(getText(view)).toBe("(foo) ()bar");
+  });
+
   it("preserves a reversed selection (anchor > head)", () => {
     // anchor at 11, head at 6 -> reversed selection over "world".
     const view = makeView("hello world", 11, 6);
