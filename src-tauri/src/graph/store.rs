@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 22;
+pub const CURRENT_SCHEMA_VERSION: i64 = 23;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -567,6 +567,22 @@ impl Store {
             self.conn.execute_batch(
                 "UPDATE meta SET value = '22' WHERE key = 'schema_version';
                  COMMIT;"
+            )?;
+        }
+
+        if version < 23 {
+            info!(from = version, to = 23, "migrating schema: adding annotations.original + forcing reindex");
+            let has_annotations: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotations')",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_annotations {
+                self.conn.execute_batch("ALTER TABLE annotations ADD COLUMN original TEXT;")?;
+            }
+            self.conn.execute_batch(
+                "UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '23' WHERE key = 'schema_version';"
             )?;
         }
 
@@ -3582,8 +3598,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_two() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+    fn schema_version_is_twenty_three() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 23);
     }
 
     #[test]
@@ -3626,6 +3642,43 @@ mod tests {
             .prepare("SELECT uuid FROM annotations LIMIT 0")
             .is_ok();
         assert!(has_uuid, "annotations table should have uuid column");
+    }
+
+    #[test]
+    fn migration_v23_adds_original_and_resets_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE annotations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                     certainty TEXT NOT NULL, body TEXT, date TEXT,
+                     source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                     scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                     uuid TEXT NOT NULL
+                 );
+                 CREATE UNIQUE INDEX idx_annotations_uuid ON annotations(uuid);
+                 INSERT INTO meta(key, value) VALUES ('schema_version', '22');
+                 INSERT INTO sync(path, mtime) VALUES ('a.md', 111), ('b.md', 222);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        let has_original: bool = store.conn
+            .prepare("SELECT original FROM annotations LIMIT 0")
+            .is_ok();
+        assert!(has_original, "annotations table should have original column");
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(max_mtime, 0, "sync mtimes should be reset to force reindex");
     }
 
     #[test]
