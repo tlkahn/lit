@@ -18,6 +18,7 @@ import {
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
+import { pairWrapExtension } from "./pairWrap";
 
 export interface CodeExtensionConfig {
   theme: "light" | "dark";
@@ -40,6 +41,7 @@ export interface CodeExtensionConfig {
  */
 export function createCodeExtensions(config: CodeExtensionConfig): Extension[] {
   return [
+    pairWrapExtension(),
     config.languageCompartment.of(config.language ?? []),
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
