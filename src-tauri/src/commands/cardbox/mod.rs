@@ -2904,4 +2904,107 @@ mod tests {
         assert!(!result.contains('\r'));
         assert!(!result.contains('\t'));
     }
+
+    // ---- cardbox load perf guards (#849 / PR #848) ----
+
+    /// 仁学-style classical Chinese document with `count` inline annotations.
+    /// Each annotation is preceded by a distinct CJK run so index-time
+    /// `original` resolution yields distinct, non-empty text per annotation.
+    fn generate_renxue_md(count: usize) -> String {
+        const CLAUSES: [&str; 10] = [
+            "仁以通为第一义。",
+            "以太也，电也，心力也，皆指出所以通之具。",
+            "通之义，以道通为一最浑括。",
+            "通有四义：中外通，多取其义于《春秋》。",
+            "上下通，男女内外通，多取其义于《易》。",
+            "人我通，多取其义于《佛书》。",
+            "仁为天地万物之源，故唯心，故唯识。",
+            "智慧生于仁，不仁则不智。",
+            "平等生万化，代数之方程是也。",
+            "仁不仁之辨，于其通与塞。",
+        ];
+        const CODES: [char; 3] = ['n', 'q', 't'];
+        let mut md = String::from("# 仁学\n\n");
+        for i in 0..count {
+            let clause = CLAUSES[i % CLAUSES.len()];
+            let code = CODES[i % CODES.len()];
+            md.push_str(&format!(
+                "{}第{}节 <!--- {}: _ | 第{}条批注 --->。{}\n\n",
+                clause,
+                i,
+                code,
+                i,
+                CLAUSES[(i + 1) % CLAUSES.len()],
+            ));
+        }
+        md
+    }
+
+    /// The #849 fix made cardbox load a pure SQL query. Deleting the source
+    /// file after indexing and loading again on the SAME GraphIndex (no
+    /// rebuild — a rebuild would diff the rows away and invert this test's
+    /// meaning) proves the load path performs zero file reads and zero
+    /// re-segmentation.
+    #[test]
+    fn cardbox_load_does_no_file_io_after_files_deleted() {
+        let dir = create_workspace();
+        write_md(dir.path(), "renxue.md", &generate_renxue_md(60));
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let before = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(before.len(), 60);
+        for a in &before {
+            let original = a.original.as_deref().unwrap_or("");
+            assert!(!original.is_empty(), "annotation {} has empty original", a.uuid);
+        }
+
+        std::fs::remove_file(dir.path().join("renxue.md")).unwrap();
+
+        let after = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(after.len(), before.len());
+        for (b, a) in before.iter().zip(after.iter()) {
+            assert_eq!(b.uuid, a.uuid);
+            assert_eq!(b.original, a.original);
+            assert_eq!(b.body, a.body);
+        }
+    }
+
+    /// Gross-regression tripwire: a pure indexed SELECT of 200 rows costs
+    /// well under 1ms; 100ms only trips if per-annotation file reads or
+    /// re-segmentation is reintroduced on the load path.
+    #[test]
+    fn cardbox_load_time_under_budget_200_annotations() {
+        let dir = create_workspace();
+        write_md(dir.path(), "renxue.md", &generate_renxue_md(200));
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let t = std::time::Instant::now();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        let elapsed = t.elapsed();
+
+        assert_eq!(anns.len(), 200);
+        assert!(anns.iter().all(|a| a.original.is_some()));
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "cardbox load took {elapsed:?} (budget 100ms)"
+        );
+    }
+
+    /// #851 baseline: index-time original resolution is still
+    /// O(annotations × doc size) per file reindex. Prints the cost for a
+    /// 200-annotation CJK document; the only assertion is an absurd ceiling
+    /// to catch a hang. Run with `cargo test cardbox -- --nocapture` to see it.
+    #[test]
+    fn cardbox_index_build_baseline_renxue() {
+        let dir = create_workspace();
+        write_md(dir.path(), "renxue.md", &generate_renxue_md(200));
+
+        let t = std::time::Instant::now();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let elapsed = t.elapsed();
+
+        assert_eq!(gi.list_all_cardbox_annotations().unwrap().len(), 200);
+        eprintln!("[perf][#851] index build, 200 CJK annotations in one file: {elapsed:?}");
+        assert!(elapsed < std::time::Duration::from_secs(30));
+    }
 }

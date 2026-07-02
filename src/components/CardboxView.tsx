@@ -33,6 +33,7 @@ import type { CardboxAnnotation } from "../lib/ipc";
 import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { perfMark, perfMeasure, perfTable } from "../lib/perf";
 import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
@@ -127,7 +128,15 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
 
   useEffect(() => {
-    fetchAnnotations().then(() => loadLayout());
+    perfMark("cardbox:mount");
+    fetchAnnotations()
+      .then(() => {
+        perfMeasure("cardbox:fetch", "cardbox:mount");
+        return loadLayout();
+      })
+      .then(() => {
+        perfMeasure("cardbox:load", "cardbox:mount");
+      });
     useCardboxUndoStore.getState().clear();
   }, [fetchAnnotations, loadLayout]);
 
@@ -302,6 +311,18 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     ),
     [renderEntries],
   );
+
+  // lit-perf observability: measure mount → first non-empty card render once.
+  const firstPaintRef = useRef(false);
+  useEffect(() => {
+    if (firstPaintRef.current || renderEntries.length === 0) return;
+    firstPaintRef.current = true;
+    perfMeasure("cardbox:first-paint", "cardbox:mount");
+    perfTable("cardbox", [
+      { label: "annotations", value: annotations.length, unit: "count" },
+      { label: "render entries", value: renderEntries.length, unit: "count" },
+    ]);
+  }, [renderEntries, annotations.length]);
 
   // Read the ordering through a ref so handleSelect stays referentially stable
   // across reorders/filtering — otherwise every recompute of renderEntries
