@@ -541,6 +541,92 @@ describe("PdfViewer", () => {
     expect(onPageChange).not.toHaveBeenCalled();
   });
 
+  it("Home key jumps to first page from a middle page", async () => {
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    goToPage!(1);
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(1);
+    });
+
+    onPageChange.mockClear();
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "Home" });
+
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(0);
+    });
+  });
+
+  it("End key jumps to last page from a middle page", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "End" });
+
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(2);
+    });
+  });
+
+  it("Home is a no-op on the first page", async () => {
+    const onPageChange = vi.fn();
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+
+    const getPageCallsBefore = mockGetPage.mock.calls.length;
+
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "Home" });
+
+    await Promise.resolve();
+    expect(mockGetPage.mock.calls.length).toBe(getPageCallsBefore);
+  });
+
+  it("End is a no-op on the last page", async () => {
+    const onPageChange = vi.fn();
+    let goToPage: ((i: number) => void) | null = null;
+    render(
+      <PdfViewer
+        filePath="/test/doc.pdf"
+        paneId="pane-1"
+        onPageChange={onPageChange}
+        registerGoToPage={(fn) => { goToPage = fn; }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("pdf-page-canvas")).toBeInTheDocument();
+    });
+    expect(goToPage).not.toBeNull();
+
+    goToPage!(2);
+    await waitFor(() => {
+      expect(onPageChange).toHaveBeenCalledWith(2);
+    });
+
+    onPageChange.mockClear();
+    fireEvent.keyDown(screen.getByTestId("pdf-viewer"), { key: "End" });
+
+    await Promise.resolve();
+    expect(onPageChange).not.toHaveBeenCalled();
+  });
+
   it("fires onPageChange(0) exactly once after the initial page renders", async () => {
     const onPageChange = vi.fn();
     render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" onPageChange={onPageChange} />);

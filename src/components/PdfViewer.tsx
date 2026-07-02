@@ -564,6 +564,16 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
           e.preventDefault();
           goToPage(current - 1);
         }
+      } else if (e.key === "Home") {
+        if (current > 0) {
+          e.preventDefault();
+          goToPage(0);
+        }
+      } else if (e.key === "End") {
+        if (current < pageCount - 1) {
+          e.preventDefault();
+          goToPage(pageCount - 1);
+        }
       }
     },
     [pageCount, goToPage, reRenderAtZoom],
