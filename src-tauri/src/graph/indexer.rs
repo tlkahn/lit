@@ -59,6 +59,26 @@ pub fn parse_md_file(
     Ok((node, links, body, blanked))
 }
 
+/// Resolves each annotation's `original` text against the body it was
+/// extracted from, so cardbox loads read it straight from the DB instead of
+/// re-reading and re-segmenting every annotated file. Offsets align by
+/// construction: `body` is the exact string the annotations were extracted
+/// from. Unresolvable scopes and empty extractions leave `original` as None.
+fn resolve_annotation_originals(body: &str, anns: &mut [super::types::IndexableAnnotation]) {
+    for ann in anns.iter_mut() {
+        let scope = match crate::annotation::types::Scope::from_db(&ann.scope_kind, &ann.scope_value) {
+            Some(s) => s,
+            None => continue,
+        };
+        if let Some(range) = crate::annotation::scope_resolver::resolve_scope_range(body, ann.char_start, &scope, "en") {
+            let text = crate::annotation::scope_resolver::extract_text_for_range(body, &range);
+            if !text.is_empty() {
+                ann.original = Some(text);
+            }
+        }
+    }
+}
+
 fn title_from_relative_path(relative_path: &str) -> String {
     let basename = relative_path.rsplit('/').next().unwrap_or(relative_path);
     filename_to_page_name(basename)
@@ -284,7 +304,11 @@ pub fn index_workspace_with_progress(
         {
             let anns = if annotations_enabled {
                 bodies.get(&node.id)
-                    .map(|b| super::extract::extract_annotations(b, &mark_codes))
+                    .map(|b| {
+                        let mut anns = super::extract::extract_annotations(b, &mark_codes);
+                        resolve_annotation_originals(b, &mut anns);
+                        anns
+                    })
                     .unwrap_or_default()
             } else {
                 vec![]
@@ -526,7 +550,9 @@ pub fn incremental_reindex(
                 // Always call upsert even with empty vec so orphaned annotations get cleaned up.
                 {
                     let anns = if annotations_enabled {
-                        super::extract::extract_annotations(&body, &mark_codes)
+                        let mut anns = super::extract::extract_annotations(&body, &mark_codes);
+                        resolve_annotation_originals(&body, &mut anns);
+                        anns
                     } else {
                         vec![]
                     };
@@ -1736,6 +1762,45 @@ mod tests {
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "bare");
+    }
+
+    // --- index-time original resolution ---
+
+    #[test]
+    fn build_persists_resolved_original_in_store() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Some text <!--- n: _ | a note ---> more.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let original: Option<String> = gi.store().conn.query_row(
+            "SELECT original FROM annotations WHERE node_id = 'a.md'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(original.as_deref(), Some("text"), "original must be resolved and persisted at index time");
+    }
+
+    #[test]
+    fn incremental_reindex_refreshes_original_when_surrounding_text_changes() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Alpha text <!--- n: _ | a note ---> tail.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let uuid_before: String = gi.store().conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+
+        // Change only the text the annotation's scope covers — the annotation
+        // itself keeps its (type, body) identity, so the diff UPDATEs in place.
+        write_md(dir.path(), "a.md", "Alpha revised <!--- n: _ | a note ---> tail.");
+        gi.reindex_file("a.md", true).unwrap();
+
+        let (uuid_after, original): (String, Option<String>) = gi.store().conn.query_row(
+            "SELECT uuid, original FROM annotations WHERE node_id = 'a.md'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(uuid_after, uuid_before, "annotation identity must survive the reindex");
+        assert_eq!(original.as_deref(), Some("revised"), "original must refresh on reindex even when the annotation itself is unchanged");
     }
 
     // --- get_first_paragraphs ---
