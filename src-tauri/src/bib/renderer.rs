@@ -84,6 +84,11 @@ fn extract_last_name(authors: &[String]) -> Option<String> {
 }
 
 fn strip_braces(s: &str) -> String {
+    // Braces that follow a backslash belong to TeX accent commands
+    // (e.g. M{\"u}ller); removing them would mangle the name.
+    if s.contains('\\') {
+        return s.to_string();
+    }
     s.chars().filter(|&c| c != '{' && c != '}').collect()
 }
 
@@ -269,8 +274,20 @@ mod tests {
     }
 
     #[test]
+    fn strip_braces_preserves_tex_accent_commands() {
+        assert_eq!(strip_braces(r#"M{\"u}ller"#), r#"M{\"u}ller"#);
+        assert_eq!(strip_braces(r"Nu{\~n}ez"), r"Nu{\~n}ez");
+    }
+
+    #[test]
     fn corporate_author_braces_stripped() {
         assert_eq!(get_last_name("{Google DeepMind}"), "Google DeepMind");
+    }
+
+    #[test]
+    fn accented_author_last_name_kept_intact() {
+        assert_eq!(get_last_name(r#"M{\"u}ller, Hans"#), r#"M{\"u}ller"#);
+        assert_eq!(get_last_name(r"Rafael Nu{\~n}ez"), r"Nu{\~n}ez");
     }
 
     #[test]
