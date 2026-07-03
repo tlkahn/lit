@@ -92,7 +92,11 @@ pub fn authors_overlap(resolved_authors: &[String], expected_names: &[String]) -
 /// "Given Family" -> "family"
 /// "WHO" -> "who"
 fn extract_last_name(author: &str) -> String {
-    let trimmed = author.trim();
+    // Corporate authors arrive brace-wrapped ({Google DeepMind}); strip
+    // braces first so both sides of authors_overlap tokenize identically.
+    // strip_braces leaves TeX accent commands (M{\"u}ller) untouched.
+    let cleaned = crate::bib::renderer::strip_braces(author.trim());
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return String::new();
     }
@@ -350,6 +354,27 @@ mod tests {
             &["Müller, Hans".to_string()],
             &["Muller".to_string()]
         ));
+    }
+
+    #[test]
+    fn authors_overlap_corporate_braced_author() {
+        assert!(authors_overlap(
+            &["{Google DeepMind}".to_string()],
+            &["Google DeepMind".to_string()]
+        ));
+    }
+
+    #[test]
+    fn extract_last_name_corporate_braced_author() {
+        assert_eq!(extract_last_name("{Google DeepMind}"), "deepmind");
+        assert_eq!(extract_last_name("{ WHO }"), "who");
+    }
+
+    #[test]
+    fn extract_last_name_preserves_tex_accent_commands() {
+        // Names with TeX accent commands keep their braces (strip_braces
+        // is a no-op on backslash-containing strings) — behavior unchanged.
+        assert_eq!(extract_last_name(r#"M{\"u}ller, Hans"#), r#"m{\"u}ller"#);
     }
 
     // ── diacritics tests ────────────────────────────────────────────
