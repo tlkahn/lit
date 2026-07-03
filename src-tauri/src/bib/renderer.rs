@@ -83,12 +83,48 @@ fn extract_last_name(authors: &[String]) -> Option<String> {
     }
 }
 
+pub(crate) fn strip_braces(s: &str) -> String {
+    // Braces that follow a backslash belong to TeX accent commands
+    // (e.g. M{\"u}ller); removing them would mangle the name.
+    if s.contains('\\') {
+        return s.to_string();
+    }
+    s.chars().filter(|&c| c != '{' && c != '}').collect()
+}
+
+// A corporate author is a single brace group spanning the whole string
+// (e.g. {Google DeepMind}). Accented personal names like
+// {\"O}zkan {\"U}lk{\"u} also start with `{` and end with `}`, but their
+// opening group closes early, so a depth scan tells them apart.
+fn is_single_brace_group(s: &str) -> bool {
+    if !s.starts_with('{') || !s.ends_with('}') {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i == s.len() - 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn get_last_name(author: &str) -> String {
     let trimmed = author.trim();
-    if trimmed.contains(',') {
-        return trimmed.split(',').next().unwrap_or("").trim().to_string();
+    if is_single_brace_group(trimmed) {
+        return strip_braces(&trimmed[1..trimmed.len() - 1]);
     }
-    trimmed.split_whitespace().last().unwrap_or("").to_string()
+    if trimmed.contains(',') {
+        return strip_braces(trimmed.split(',').next().unwrap_or("").trim());
+    }
+    strip_braces(trimmed.split_whitespace().last().unwrap_or(""))
 }
 
 #[cfg(test)]
@@ -251,6 +287,76 @@ mod tests {
             parse_citeproc_keys("-@bush1945"),
             vec![CiteprocKeyPart { key: "bush1945".into(), suppress: true, locator: String::new() }]
         );
+    }
+
+    #[test]
+    fn strip_braces_removes_all_braces() {
+        assert_eq!(strip_braces("{Google DeepMind}"), "Google DeepMind");
+        assert_eq!(strip_braces("no braces"), "no braces");
+        assert_eq!(strip_braces("{}"), "");
+        assert_eq!(strip_braces("{nested {braces}}"), "nested braces");
+    }
+
+    #[test]
+    fn strip_braces_preserves_tex_accent_commands() {
+        assert_eq!(strip_braces(r#"M{\"u}ller"#), r#"M{\"u}ller"#);
+        assert_eq!(strip_braces(r"Nu{\~n}ez"), r"Nu{\~n}ez");
+    }
+
+    #[test]
+    fn corporate_author_braces_stripped() {
+        assert_eq!(get_last_name("{Google DeepMind}"), "Google DeepMind");
+    }
+
+    #[test]
+    fn is_single_brace_group_detection() {
+        assert!(is_single_brace_group("{Google DeepMind}"));
+        assert!(is_single_brace_group(r"{Universit{\'e} de Montr{\'e}al}"));
+        assert!(!is_single_brace_group(r#"{\"O}zkan {\"U}lk{\"u}"#));
+        assert!(!is_single_brace_group("{Weird"));
+        assert!(!is_single_brace_group("Weird}"));
+        assert!(!is_single_brace_group("Plain Name"));
+    }
+
+    #[test]
+    fn accent_braced_personal_name_not_treated_as_corporate() {
+        // Starts with `{` and ends with `}`, but the first group closes
+        // early — must take the last-name path, not the corporate path.
+        assert_eq!(
+            get_last_name(r#"{\"O}zkan {\"U}lk{\"u}"#),
+            r#"{\"U}lk{\"u}"#
+        );
+    }
+
+    #[test]
+    fn accented_corporate_author_outer_braces_stripped() {
+        assert_eq!(
+            get_last_name(r"{Universit{\'e} de Montr{\'e}al}"),
+            r"Universit{\'e} de Montr{\'e}al"
+        );
+    }
+
+    #[test]
+    fn unbalanced_braces_fall_through_to_last_token() {
+        assert_eq!(get_last_name("{Weird"), "Weird");
+    }
+
+    #[test]
+    fn accented_author_last_name_kept_intact() {
+        assert_eq!(get_last_name(r#"M{\"u}ller, Hans"#), r#"M{\"u}ller"#);
+        assert_eq!(get_last_name(r"Rafael Nu{\~n}ez"), r"Nu{\~n}ez");
+    }
+
+    #[test]
+    fn corporate_author_full_citation() {
+        let e = entry("deepmind2024", &["{Google DeepMind}"], "2024");
+        assert_eq!(render_bib_citation(&e), "Google DeepMind 2024");
+    }
+
+    #[test]
+    fn normal_authors_unchanged() {
+        assert_eq!(get_last_name("Sanderson, Alexis"), "Sanderson");
+        assert_eq!(get_last_name("John Smith"), "Smith");
     }
 
     #[test]
