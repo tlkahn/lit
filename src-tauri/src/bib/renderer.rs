@@ -83,12 +83,19 @@ fn extract_last_name(authors: &[String]) -> Option<String> {
     }
 }
 
+fn strip_braces(s: &str) -> String {
+    s.chars().filter(|&c| c != '{' && c != '}').collect()
+}
+
 fn get_last_name(author: &str) -> String {
     let trimmed = author.trim();
-    if trimmed.contains(',') {
-        return trimmed.split(',').next().unwrap_or("").trim().to_string();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        return strip_braces(trimmed);
     }
-    trimmed.split_whitespace().last().unwrap_or("").to_string()
+    if trimmed.contains(',') {
+        return strip_braces(trimmed.split(',').next().unwrap_or("").trim());
+    }
+    strip_braces(trimmed.split_whitespace().last().unwrap_or(""))
 }
 
 #[cfg(test)]
@@ -251,6 +258,31 @@ mod tests {
             parse_citeproc_keys("-@bush1945"),
             vec![CiteprocKeyPart { key: "bush1945".into(), suppress: true, locator: String::new() }]
         );
+    }
+
+    #[test]
+    fn strip_braces_removes_all_braces() {
+        assert_eq!(strip_braces("{Google DeepMind}"), "Google DeepMind");
+        assert_eq!(strip_braces("no braces"), "no braces");
+        assert_eq!(strip_braces("{}"), "");
+        assert_eq!(strip_braces("{nested {braces}}"), "nested braces");
+    }
+
+    #[test]
+    fn corporate_author_braces_stripped() {
+        assert_eq!(get_last_name("{Google DeepMind}"), "Google DeepMind");
+    }
+
+    #[test]
+    fn corporate_author_full_citation() {
+        let e = entry("deepmind2024", &["{Google DeepMind}"], "2024");
+        assert_eq!(render_bib_citation(&e), "Google DeepMind 2024");
+    }
+
+    #[test]
+    fn normal_authors_unchanged() {
+        assert_eq!(get_last_name("Sanderson, Alexis"), "Sanderson");
+        assert_eq!(get_last_name("John Smith"), "Smith");
     }
 
     #[test]
