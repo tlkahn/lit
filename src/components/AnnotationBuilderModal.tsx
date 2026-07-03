@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { generateDsl, type AnnotationFields, type EditRawInfo } from "../lib/annotationDsl";
+import { generateDsl, type AnnotationFields, type AnnotationForm, type EditRawInfo } from "../lib/annotationDsl";
+import { SegmentedControl } from "./SegmentedControl";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import type { AnnotationType, Certainty, Scope, ScopeKind as IpcScopeKind } from "../lib/ipc";
 import { setPreference } from "../lib/ipc";
@@ -14,6 +15,10 @@ interface AnnotationBuilderModalProps {
   originalRange?: { from: number; to: number };
   onEditRaw?: (info: EditRawInfo) => void;
   selectedText?: string;
+  /** Create mode: whether the insertion point sits at the end of its line (block form only parses there). */
+  atLineEnd?: boolean;
+  /** Edit mode: the form of the existing annotation — re-serializing must not reformat. */
+  initialForm?: AnnotationForm;
 }
 
 const UNIT_SCOPE_KINDS: BuilderScopeKind[] = ["words", "sentence", "paragraph", "page"];
@@ -36,6 +41,8 @@ export function AnnotationBuilderModal({
   originalRange,
   onEditRaw,
   selectedText,
+  atLineEnd,
+  initialForm,
 }: AnnotationBuilderModalProps) {
   const prefillEnabled = usePreferencesStore(s => s.annotationPrefillLastUsed);
   const savedDefaults = usePreferencesStore(s => s.annotationBuilderDefaults);
@@ -95,11 +102,30 @@ export function AnnotationBuilderModal({
     return "";
   });
   const [mark] = useState<string | undefined>(initialFields?.mark);
+  const [formChoice, setFormChoice] = useState<AnnotationForm>("inline");
+
+  // Edit keeps the annotation's existing form; create only offers block when the
+  // insertion point is at end of line (block form only parses at line start).
+  const effectiveForm: AnnotationForm =
+    mode === "edit"
+      ? (initialForm ?? "inline")
+      : !atLineEnd
+        ? "inline"
+        : body.includes("\n")
+          ? "block"
+          : formChoice;
+
+  const mustStayInline = mode === "edit" ? initialForm !== "block" : !atLineEnd;
+  const showFormToggle = mode !== "edit" && !!atLineEnd;
 
   const [defaultDate] = useState(date);
   const [defaultId] = useState(id);
 
-  const hasNonDefaultAdvanced = certainty !== "neutral" || date !== defaultDate || id !== defaultId;
+  const hasNonDefaultAdvanced =
+    certainty !== "neutral" ||
+    date !== defaultDate ||
+    id !== defaultId ||
+    (showFormToggle && effectiveForm !== "inline");
 
   const [showAdvanced, setShowAdvanced] = useState(() => {
     if (initialFields?.certainty && initialFields.certainty !== "neutral") return true;
@@ -133,7 +159,7 @@ export function AnnotationBuilderModal({
     [id, type, mark, certainty, scope, body, date],
   );
 
-  const preview = useMemo(() => generateDsl(fields), [fields]);
+  const preview = useMemo(() => generateDsl(fields, { form: effectiveForm }), [fields, effectiveForm]);
   const renderedBody = useMemo(() => renderMarkdown(body), [body]);
 
   const handleInsert = useCallback(() => {
@@ -282,6 +308,28 @@ export function AnnotationBuilderModal({
                   placeholder="e.g. my-note-1"
                 />
               </label>
+
+              {showFormToggle && (
+                <div className="col-span-2 flex flex-col gap-1">
+                  <span className="text-xs text-text-muted">Form</span>
+                  <div className="self-start">
+                    <SegmentedControl
+                      testId="annotation-form-toggle"
+                      options={[
+                        {
+                          value: "inline",
+                          label: "Inline",
+                          disabled: body.includes("\n"),
+                          title: body.includes("\n") ? "Multi-line body requires block form" : undefined,
+                        },
+                        { value: "block", label: "Block" },
+                      ]}
+                      value={effectiveForm}
+                      onChange={(v) => setFormChoice(v as AnnotationForm)}
+                    />
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -369,9 +417,19 @@ export function AnnotationBuilderModal({
             className="h-24 resize-y rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
             data-testid="annotation-body-input"
             value={body}
-            onChange={(e) => setBody(e.target.value)}
+            onChange={(e) => setBody(mustStayInline ? e.target.value.replace(/\r?\n/g, " ") : e.target.value)}
+            onKeyDown={(e) => {
+              if (mustStayInline && e.key === "Enter" && !(e.metaKey || e.ctrlKey)) e.preventDefault();
+            }}
             placeholder="Annotation body…"
           />
+          {mustStayInline && (
+            <span className="text-xs text-text-muted" data-testid="annotation-inline-hint">
+              {mode === "edit"
+                ? "This annotation is inline — the body stays on one line."
+                : "Single line only — for a multi-line note, place the cursor at the end of a line."}
+            </span>
+          )}
         </label>
 
         <div className="mb-4 overflow-y-auto min-h-0 rounded border border-border-primary bg-bg-secondary p-2">
