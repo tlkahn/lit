@@ -42,7 +42,7 @@ import { useResponsiveLayoutStore } from "./stores/responsiveLayout";
 
 import { BottomPanel } from "./components/BottomPanel";
 import { getCurrentEditorView } from "./lib/editorViewRef";
-import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type EditRawInfo } from "./lib/annotationDsl";
+import { annotationToFields, getEditCursorOffset, type AnnotationBuilderEventDetail, type AnnotationForm, type EditRawInfo } from "./lib/annotationDsl";
 import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan, UpdateDownloadProgress } from "./lib/ipc";
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { MergePreviewDialog } from "./components/MergePreviewDialog";
@@ -159,6 +159,8 @@ function App() {
   const [editingAnnotation, setEditingAnnotation] = useState<Annotation | undefined>();
   const [editingRange, setEditingRange] = useState<{ from: number; to: number } | undefined>();
   const [selectionText, setSelectionText] = useState<string | undefined>();
+  const [insertAtLineEnd, setInsertAtLineEnd] = useState(false);
+  const [editingForm, setEditingForm] = useState<AnnotationForm | undefined>();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialCategory, setSettingsInitialCategory] = useState<"Keyboard Shortcuts" | undefined>();
@@ -493,11 +495,22 @@ function App() {
         setEditingAnnotation(detail.annotation);
         setEditingRange(detail.originalRange);
         setSelectionText(undefined);
+        // Inline DSL can never contain a newline, so this is exact.
+        setEditingForm(detail.annotation.original.includes("\n") ? "block" : "inline");
       } else {
         setAnnotationBuilderMode("create");
         setEditingAnnotation(undefined);
         setEditingRange(detail?.originalRange);
         setSelectionText(detail?.selectedText);
+        setEditingForm(undefined);
+        const view = getCurrentEditorView();
+        if (view) {
+          const pos = detail?.originalRange?.to ?? view.state.selection.main.head;
+          const doc = view.state.doc;
+          setInsertAtLineEnd(/^\s*$/.test(doc.sliceString(pos, doc.lineAt(pos).to)));
+        } else {
+          setInsertAtLineEnd(false);
+        }
       }
       setAnnotationBuilderOpen(true);
     };
@@ -514,18 +527,23 @@ function App() {
   const handleAnnotationInsert = useCallback((dsl: string) => {
     const view = getCurrentEditorView();
     if (view) {
-      let insertFrom: number;
-      if (editingRange) {
-        insertFrom = annotationBuilderMode === "create" ? editingRange.to : editingRange.from;
+      if (editingRange && annotationBuilderMode === "edit") {
         view.dispatch({
-          changes: { from: insertFrom, to: editingRange.to, insert: dsl },
-          selection: { anchor: insertFrom, head: insertFrom + dsl.length },
+          changes: { from: editingRange.from, to: editingRange.to, insert: dsl },
+          selection: { anchor: editingRange.from, head: editingRange.from + dsl.length },
         });
       } else {
-        insertFrom = view.state.selection.main.head;
+        const insertFrom = editingRange ? editingRange.to : view.state.selection.main.head;
+        // Block form only parses with `<!---` at line start, so open a new line first.
+        const needsOwnLine =
+          dsl.includes("\n") && insertFrom !== view.state.doc.lineAt(insertFrom).from;
+        const prefix = needsOwnLine ? "\n" : "";
         view.dispatch({
-          changes: { from: insertFrom, insert: dsl },
-          selection: { anchor: insertFrom, head: insertFrom + dsl.length },
+          changes: { from: insertFrom, insert: prefix + dsl },
+          selection: {
+            anchor: insertFrom + prefix.length,
+            head: insertFrom + prefix.length + dsl.length,
+          },
         });
       }
       requestAnimationFrame(() => view.focus());
@@ -541,9 +559,12 @@ function App() {
       view.dispatch({ selection: { anchor: editingAnnotation.char_start } });
       view.focus();
     } else {
-      const pos = view.state.selection.main.head;
-      view.dispatch({ changes: { from: pos, insert: info.draftDsl } });
-      const innerPos = pos + getEditCursorOffset(info.draftDsl);
+      const pos = info.originalRange?.to ?? view.state.selection.main.head;
+      const needsOwnLine =
+        info.draftDsl.includes("\n") && pos !== view.state.doc.lineAt(pos).from;
+      const prefix = needsOwnLine ? "\n" : "";
+      view.dispatch({ changes: { from: pos, insert: prefix + info.draftDsl } });
+      const innerPos = pos + prefix.length + getEditCursorOffset(info.draftDsl);
       view.dispatch({ selection: { anchor: innerPos } });
       view.focus();
     }
@@ -629,6 +650,8 @@ function App() {
             originalRange={editingRange}
             selectedText={selectionText}
             initialFields={editingAnnotation ? annotationToFields(editingAnnotation) : undefined}
+            atLineEnd={insertAtLineEnd}
+            initialForm={editingForm}
           />
         )}
         <AcademicExportDialog open={academicExportOpen} onClose={() => setAcademicExportOpen(false)} initialFormat={academicExportFormat} />

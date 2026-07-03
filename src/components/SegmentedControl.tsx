@@ -1,5 +1,5 @@
 interface SegmentedControlProps {
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean; title?: string }[];
   value: string;
   onChange: (value: string) => void;
   testId: string;
@@ -15,9 +15,11 @@ export function SegmentedControl({ options, value, onChange, testId, label }: Se
           <button
             key={option.value}
             aria-pressed={option.value === value}
+            disabled={option.disabled}
+            title={option.title}
             onClick={() => onChange(option.value)}
             data-testid={`${testId}-${option.value}`}
-            className={`rounded px-2.5 py-1 text-sm transition-colors ${option.value === value ? "bg-bg-primary text-text-normal shadow-sm" : "text-text-muted hover:text-text-normal"}`}
+            className={`rounded px-2.5 py-1 text-sm transition-colors ${option.value === value ? "bg-bg-primary text-text-normal shadow-sm" : option.disabled ? "text-text-muted opacity-40" : "text-text-muted hover:text-text-normal"}`}
           >
             {option.label}
           </button>

@@ -868,6 +868,121 @@ describe("AnnotationBuilderModal", () => {
     });
   });
 
+  describe("form toggle and insertion-point rules", () => {
+    it("toggle visible in the advanced group only in create mode at line end", () => {
+      const { unmount } = render(
+        <AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd />,
+      );
+      // Lives in the collapsible advanced group
+      expect(screen.queryByTestId("annotation-form-toggle-inline")).not.toBeInTheDocument();
+      expandOverflow();
+      expect(screen.getByTestId("annotation-form-toggle-inline")).toBeInTheDocument();
+      expect(screen.getByTestId("annotation-form-toggle-block")).toBeInTheDocument();
+      unmount();
+
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd={false} />);
+      expandOverflow();
+      expect(screen.queryByTestId("annotation-form-toggle-inline")).not.toBeInTheDocument();
+    });
+
+    it("no toggle in edit mode even with atLineEnd", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          atLineEnd
+          initialForm="block"
+          initialFields={{ type: "note", body: "a\nb" }}
+        />,
+      );
+      expandOverflow();
+      expect(screen.queryByTestId("annotation-form-toggle-inline")).not.toBeInTheDocument();
+    });
+
+    it("Block choice shows the overflow dot when the group is collapsed", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd />);
+      expandOverflow();
+      fireEvent.click(screen.getByTestId("annotation-form-toggle-block"));
+      expandOverflow();
+      expect(screen.getByTestId("annotation-overflow-dot")).toBeInTheDocument();
+    });
+
+    it("selecting Block produces block-form preview", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "short" } });
+      fireEvent.click(screen.getByTestId("annotation-form-toggle-block"));
+      expect(screen.getByTestId("annotation-preview").textContent).toContain("<!---\n");
+      fireEvent.click(screen.getByTestId("annotation-form-toggle-inline"));
+      expect(screen.getByTestId("annotation-preview").textContent).not.toContain("\n");
+    });
+
+    it("newline body auto-selects Block and disables Inline", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "line one\nline two" } });
+      const inlineBtn = screen.getByTestId("annotation-form-toggle-inline") as HTMLButtonElement;
+      const blockBtn = screen.getByTestId("annotation-form-toggle-block") as HTMLButtonElement;
+      expect(inlineBtn.disabled).toBe(true);
+      expect(blockBtn.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByTestId("annotation-preview").textContent).toContain("\n---\nline one\nline two\n--->");
+    });
+
+    it("mid-line create blocks Enter, strips pasted newlines, and shows hint", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd={false} />);
+      const bodyInput = screen.getByTestId("annotation-body-input");
+      const enterEvent = fireEvent.keyDown(bodyInput, { key: "Enter" });
+      // fireEvent returns false when preventDefault was called
+      expect(enterEvent).toBe(false);
+      fireEvent.change(bodyInput, { target: { value: "pasted\nmulti\nline" } });
+      expect(bodyInput).toHaveValue("pasted multi line");
+      expect(screen.getByTestId("annotation-inline-hint")).toBeInTheDocument();
+      expect(screen.getByTestId("annotation-preview").textContent).not.toContain("\n");
+    });
+
+    it("at line end Enter is not blocked in body", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} atLineEnd />);
+      const bodyInput = screen.getByTestId("annotation-body-input");
+      const enterEvent = fireEvent.keyDown(bodyInput, { key: "Enter" });
+      expect(enterEvent).toBe(true);
+      expect(screen.queryByTestId("annotation-inline-hint")).not.toBeInTheDocument();
+    });
+
+    it("edit of inline annotation stays inline and enforces single line", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialForm="inline"
+          initialFields={{ type: "note", body: "a note that is quite long but still on a single line so it stays compact" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-preview").textContent).not.toContain("\n");
+      expect(screen.getByTestId("annotation-inline-hint")).toBeInTheDocument();
+      const enterEvent = fireEvent.keyDown(screen.getByTestId("annotation-body-input"), { key: "Enter" });
+      expect(enterEvent).toBe(false);
+    });
+
+    it("edit of block annotation stays block even with short single-line body", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialForm="block"
+          initialFields={{ type: "note", body: "short" }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-preview").textContent).toContain("<!---\n");
+      expect(screen.queryByTestId("annotation-inline-hint")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      expect(onInsert).toHaveBeenCalledWith("<!---\nn\n---\nshort\n--->");
+    });
+  });
+
   describe("overflow toggle", () => {
     it("advanced fields are hidden by default in create mode", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);

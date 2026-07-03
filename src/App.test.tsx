@@ -16,6 +16,7 @@ import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
+import type { Annotation } from "./lib/ipc";
 import type { EditorView } from "@codemirror/view";
 
 // Mock pdfjs for PdfViewer (which no longer uses pdfium IPC)
@@ -871,26 +872,43 @@ describe("App", () => {
     expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
   });
 
+  function mockEditorView(text: string, head: number) {
+    const doc = {
+      length: text.length,
+      sliceString: (from: number, to: number) => text.slice(from, to),
+      lineAt: (pos: number) => {
+        const from = text.lastIndexOf("\n", pos - 1) + 1;
+        const nl = text.indexOf("\n", pos);
+        return { from, to: nl === -1 ? text.length : nl };
+      },
+    };
+    const dispatch = vi.fn();
+    const view = {
+      dispatch,
+      state: { selection: { main: { head } }, doc },
+      focus: vi.fn(),
+    };
+    setCurrentEditorView(view as unknown as EditorView);
+    return { view, dispatch };
+  }
+
+  function openAnnotationBuilder(detail: AnnotationBuilderEventDetail) {
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", { detail }),
+      );
+    });
+  }
+
   it("create-mode annotation insert is placed after the original selected range", async () => {
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
 
-    const dispatch = vi.fn();
-    const mockView = {
-      dispatch,
-      state: { selection: { main: { head: 99 } } },
-      focus: vi.fn(),
-    };
-    setCurrentEditorView(mockView as unknown as EditorView);
+    const text = "some words hello and plenty more text following on the same line";
+    const { view, dispatch } = mockEditorView(text, 99);
 
     render(<App />);
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent<AnnotationBuilderEventDetail>("lit:open-annotation-builder", {
-          detail: { mode: "create", selectedText: "hello", originalRange: { from: 10, to: 15 } },
-        }),
-      );
-    });
+    openAnnotationBuilder({ mode: "create", selectedText: "hello", originalRange: { from: 11, to: 16 } });
 
     await waitFor(() => {
       expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
@@ -902,11 +920,127 @@ describe("App", () => {
 
     expect(dispatch).toHaveBeenCalled();
     const arg = dispatch.mock.calls[0]![0];
-    expect(arg.changes.from).toBe(15);
-    expect(arg.changes.to).toBe(15);
-    expect(arg.selection.anchor).toBe(15);
-    expect(arg.selection.head).toBe(15 + arg.changes.insert.length);
-    expect(mockView.focus).toHaveBeenCalled();
+    expect(arg.changes.from).toBe(16);
+    expect(arg.changes.insert).not.toContain("\n");
+    expect(arg.selection.anchor).toBe(16);
+    expect(arg.selection.head).toBe(16 + arg.changes.insert.length);
+    expect(view.focus).toHaveBeenCalled();
+  });
+
+  it("mid-line create shows no form toggle and inserts inline", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+    mockEditorView("first line of text\nsecond line", 5);
+
+    render(<App />);
+    openAnnotationBuilder({ mode: "create" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("annotation-overflow-toggle"));
+    expect(screen.queryByTestId("annotation-form-toggle-block")).not.toBeInTheDocument();
+    expect(screen.getByTestId("annotation-inline-hint")).toBeInTheDocument();
+  });
+
+  it("block-form insert at end of a non-empty line gets a newline prefix", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+    const text = "1. first item\n2. second item";
+    const lineEnd = text.indexOf("\n"); // end of "1. first item"
+    const { dispatch } = mockEditorView(text, lineEnd);
+
+    render(<App />);
+    openAnnotationBuilder({ mode: "create" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
+    });
+
+    // At line end the form toggle is available (in the advanced group); a
+    // multi-line body forces block.
+    fireEvent.click(screen.getByTestId("annotation-overflow-toggle"));
+    expect(screen.getByTestId("annotation-form-toggle-block")).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("annotation-body-input"), {
+      target: { value: "line one\nline two" },
+    });
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { cb(0); return 0; });
+    fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+    const arg = dispatch.mock.calls[0]![0];
+    expect(arg.changes.from).toBe(lineEnd);
+    expect(arg.changes.insert).toMatch(/^\n<!---/);
+    expect(arg.changes.insert).toContain("\n---\nline one\nline two\n--->");
+    expect(arg.selection.anchor).toBe(lineEnd + 1);
+    expect(arg.selection.head).toBe(lineEnd + arg.changes.insert.length);
+  });
+
+  it("block-form insert at the start of an empty line gets no prefix", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+    const text = "first line\n\nthird line";
+    const emptyLinePos = "first line\n".length;
+    const { dispatch } = mockEditorView(text, emptyLinePos);
+
+    render(<App />);
+    openAnnotationBuilder({ mode: "create" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("annotation-body-input"), {
+      target: { value: "line one\nline two" },
+    });
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { cb(0); return 0; });
+    fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+    const arg = dispatch.mock.calls[0]![0];
+    expect(arg.changes.from).toBe(emptyLinePos);
+    expect(arg.changes.insert).toMatch(/^<!---/);
+    expect(arg.changes.insert).toContain("\n---\nline one\nline two\n--->");
+    expect(arg.selection.anchor).toBe(emptyLinePos);
+  });
+
+  it("edit-mode update replaces the original range in place and keeps block form", async () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+
+    const original = "<!---\nn\n---\nline one\nline two\n--->";
+    const text = `prefix text\n${original}\nsuffix`;
+    const range = { from: "prefix text\n".length, to: "prefix text\n".length + original.length };
+    const { dispatch } = mockEditorView(text, 0);
+
+    const annotation: Annotation = {
+      form: "block",
+      annotation_type: "note",
+      certainty: "neutral",
+      scope: { kind: "sentence", value: 1 },
+      body: "line one\nline two",
+      date: null,
+      is_structured: true,
+      char_start: range.from,
+      char_end: range.to,
+      original,
+    };
+
+    render(<App />);
+    openAnnotationBuilder({ mode: "edit", annotation, originalRange: range });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("annotation-builder-backdrop")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("annotation-form-toggle-block")).not.toBeInTheDocument();
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { cb(0); return 0; });
+    fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+
+    const arg = dispatch.mock.calls[0]![0];
+    expect(arg.changes.from).toBe(range.from);
+    expect(arg.changes.to).toBe(range.to);
+    expect(arg.changes.insert).toMatch(/^<!---\n/);
+    expect(arg.selection.anchor).toBe(range.from);
   });
 
   describe("Ctrl-W on last PDF pane (issue #447)", () => {

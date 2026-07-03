@@ -197,12 +197,36 @@ describe("generateDsl", () => {
       );
     });
 
-    it("body >80 chars produces block", () => {
+    it("long single-line body stays compact by default", () => {
       const longBody =
-        "This is a very long annotation body that exceeds the eighty character threshold and should trigger block form output.";
+        "This is a very long annotation body that exceeds eighty characters but has no newline, so it stays compact.";
       expect(
         generateDsl(fields({ type: "note", body: longBody })),
-      ).toBe(`<!---\nn\n---\n${longBody}\n--->`);
+      ).toBe(`<!--- n | ${longBody} --->`);
+    });
+
+    it("explicit block form with short body produces block", () => {
+      expect(
+        generateDsl(fields({ type: "note", body: "short" }), { form: "block" }),
+      ).toBe("<!---\nn\n---\nshort\n--->");
+    });
+
+    it("explicit inline form is overridden to block by a newline body", () => {
+      expect(
+        generateDsl(fields({ type: "note", body: "line one\nline two" }), { form: "inline" }),
+      ).toBe("<!---\nn\n---\nline one\nline two\n--->");
+    });
+
+    it("newline body defaults to block without explicit form", () => {
+      expect(
+        generateDsl(fields({ type: "note", body: "line one\nline two" })),
+      ).toBe("<!---\nn\n---\nline one\nline two\n--->");
+    });
+
+    it("explicit inline form with short body stays compact", () => {
+      expect(
+        generateDsl(fields({ type: "note", body: "short" }), { form: "inline" }),
+      ).toBe("<!--- n | short --->");
     });
 
     it("block with anchor scope", () => {

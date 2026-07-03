@@ -126,11 +126,12 @@ function serializeScope(scope: Scope | null): string {
   }
 }
 
-function isBlockForm(body: string): boolean {
-  return body.includes("\n") || body.length > 80;
-}
+export type AnnotationForm = "inline" | "block";
 
-export function generateDsl(fields: AnnotationFields): string {
+export function generateDsl(
+  fields: AnnotationFields,
+  opts?: { form?: AnnotationForm },
+): string {
   const { id, type, mark, certainty, scope, body, date } = fields;
 
   const idStr = id ? `[${id}]` : "";
@@ -139,7 +140,11 @@ export function generateDsl(fields: AnnotationFields): string {
   const scopeStr = serializeScope(scope);
   const dateStr = date ? `@${date}` : "";
 
-  if (body && isBlockForm(body)) {
+  // A body with a newline can never fit the inline grammar, regardless of caller intent.
+  const form: AnnotationForm =
+    body.includes("\n") ? "block" : (opts?.form ?? "inline");
+
+  if (body && form === "block") {
     return generateBlock(idStr, typeStr, certStr, scopeStr, dateStr, body);
   }
 
