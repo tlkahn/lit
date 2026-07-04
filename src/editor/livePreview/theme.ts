@@ -352,6 +352,11 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     backgroundPosition: "center",
     backgroundRepeat: "no-repeat",
   },
+  ".cm-preview-hr.cm-preview-hr-short": {
+    height: "2lh",
+    backgroundSize: "25% 1px",
+    opacity: "0.6",
+  },
 
   // Page break dividers
   ".cm-preview-page-break": {

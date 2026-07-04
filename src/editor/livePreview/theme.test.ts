@@ -65,6 +65,17 @@ describe("horizontal rule theme spec", () => {
     expect(rule.backgroundSize).toBe("100% 1px");
     expect(rule.backgroundPosition).toBe("center");
   });
+
+  it("livePreviewThemeSpec contains .cm-preview-hr.cm-preview-hr-short key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-hr.cm-preview-hr-short"]).toBeDefined();
+  });
+
+  it(".cm-preview-hr-short uses 2lh height and 25% background width", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-hr.cm-preview-hr-short"] as Record<string, string>;
+    expect(rule.height).toBe("2lh");
+    expect(rule.backgroundSize).toBe("25% 1px");
+    expect(rule.opacity).toBe("0.6");
+  });
 });
 
 describe("page break theme spec", () => {

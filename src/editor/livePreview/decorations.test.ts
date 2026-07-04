@@ -11,7 +11,7 @@ import { Footnote } from "../markdown/footnote";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
-import { ImageWidget, MermaidWidget } from "./widgets";
+import { ImageWidget, MermaidWidget, HorizontalRuleWidget } from "./widgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -50,6 +50,7 @@ type DecoInfo = {
   type: "mark" | "replace";
   class?: string;
   widget?: boolean;
+  widgetVariant?: "short" | "full";
   url?: string;
   style?: string;
 };
@@ -65,7 +66,10 @@ function collectDecos(view: EditorView): DecoInfo[] {
       to: iter.to,
       type: spec.class ? "mark" : spec.widget ? "replace" : "replace",
     };
-    if (spec.widget) info.widget = true;
+    if (spec.widget) {
+      info.widget = true;
+      if (spec.widget instanceof HorizontalRuleWidget) info.widgetVariant = spec.widget.variant;
+    }
     if (spec.class) info.class = spec.class;
     if (spec.attributes?.["data-url"]) info.url = spec.attributes["data-url"];
     if (spec.attributes?.style) info.style = spec.attributes.style;
@@ -1001,12 +1005,13 @@ describe("buildBlockReplacements — mermaid", () => {
 });
 
 describe("buildDecorations — horizontal rules", () => {
-  it("replaces --- with HorizontalRuleWidget when cursor is elsewhere", () => {
+  it("replaces --- with short variant widget when cursor is elsewhere", () => {
     const doc = "text\n\n---\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
     const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 9);
     expect(hr).toBeDefined();
+    expect(hr!.widgetVariant).toBe("short");
     view.destroy();
   });
 
@@ -1019,21 +1024,43 @@ describe("buildDecorations — horizontal rules", () => {
     view.destroy();
   });
 
-  it("replaces *** variant with widget", () => {
+  it("replaces ---- with full variant widget", () => {
+    const doc = "text\n\n----\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 10);
+    expect(hr).toBeDefined();
+    expect(hr!.widgetVariant).toBe("full");
+    view.destroy();
+  });
+
+  it("replaces - - - (spaced three dashes) with short variant", () => {
+    const doc = "text\n\n- - -\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const hr = decos.find((d) => d.widget && d.from === 6);
+    expect(hr).toBeDefined();
+    expect(hr!.widgetVariant).toBe("short");
+    view.destroy();
+  });
+
+  it("replaces *** with full variant widget", () => {
     const doc = "text\n\n***\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
     const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 9);
     expect(hr).toBeDefined();
+    expect(hr!.widgetVariant).toBe("full");
     view.destroy();
   });
 
-  it("replaces ___ variant with widget", () => {
+  it("replaces ___ with full variant widget", () => {
     const doc = "text\n\n___\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
     const hr = decos.find((d) => d.widget && d.from === 6 && d.to === 9);
     expect(hr).toBeDefined();
+    expect(hr!.widgetVariant).toBe("full");
     view.destroy();
   });
 

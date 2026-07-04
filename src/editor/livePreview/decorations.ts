@@ -834,10 +834,12 @@ function addHorizontalRuleDecos(
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
   if (isCursorOnLine(state, from, to)) return;
+  const raw = state.doc.sliceString(from, to).replace(/\s/g, "");
+  const variant = raw === "---" ? "short" : "full";
   decos.push({
     from,
     to,
-    deco: Decoration.replace({ widget: new HorizontalRuleWidget() }),
+    deco: Decoration.replace({ widget: new HorizontalRuleWidget(variant) }),
   });
 }
 
