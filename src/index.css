@@ -399,3 +399,43 @@ select:disabled {
   .status-toast-enter,
   .status-toast-exit { animation: none; }
 }
+
+/* === GFM footnotes in rendered markdown (annotation widgets, cards, previews) === */
+
+sup a[data-footnote-ref],
+sup.footnote-ref {
+  color: var(--text-accent);
+  text-decoration: none;
+}
+
+sup a[data-footnote-ref]:hover {
+  text-decoration: underline;
+}
+
+section.footnotes {
+  margin-top: 0.75em;
+  padding-top: 0.5em;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+section.footnotes ol {
+  margin: 0;
+  padding-left: 1.5em;
+  list-style: decimal;
+}
+
+section.footnotes li {
+  margin: 0.15em 0;
+  padding: 0;
+}
+
+section.footnotes a[data-footnote-backref] {
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+section.footnotes a[data-footnote-backref]:hover {
+  color: var(--text-accent);
+}

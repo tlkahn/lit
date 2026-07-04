@@ -1,19 +1,27 @@
-import { marked, Renderer } from "marked";
+import { marked, Marked } from "marked";
 import DOMPurify from "dompurify";
 import { renderMathToHtml } from "./renderMath";
+import { litFootnoteExtension } from "./markedFootnote";
 
-const renderer = new Renderer();
-renderer.link = ({ href, title, text }) => {
-  const titleAttr = title ? ` title="${title}"` : "";
-  return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
-};
+// Dedicated instance so the footnote extension never leaks into other callers
+// of the global `marked` (e.g. table cell rendering).
+const litMarked = new Marked();
+litMarked.use(litFootnoteExtension());
+litMarked.use({
+  renderer: {
+    link({ href, title, text }) {
+      const titleAttr = title ? ` title="${title}"` : "";
+      return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    },
+  },
+});
 
 interface MathExtraction {
   processed: string;
   placeholders: string[];
 }
 
-function extractAndRenderMath(text: string): MathExtraction {
+function extractAndRenderMath(text: string, stripFootnotes = false): MathExtraction {
   const codePlaceholders: string[] = [];
   const placeholders: string[] = [];
   let working = text;
@@ -48,9 +56,30 @@ function extractAndRenderMath(text: string): MathExtraction {
     return `￰MATHPH${idx}￰`;
   });
 
+  // Must run while code spans are still masked so `[^1]` inside inline code
+  // stays untouched.
+  if (stripFootnotes) working = footnotesToInlineMarkers(working);
+
   working = working.replace(/￰CODEPH(\d+)￰/g, (_, idx) => codePlaceholders[Number(idx)]!);
 
   return { processed: working, placeholders };
+}
+
+// Pill-style footnote handling for inline rendering: drop definition lines
+// (with their indented continuations) and replace refs with plain numbered
+// superscript markers in first-appearance order.
+function footnotesToInlineMarkers(text: string): string {
+  let working = text.replace(/^\[\^[^\]\n]+\]:[^\n]*(?:\n+(?:[ ]{4,}|\t)[^\n]*)*(?:\n|$)/gm, "");
+  const order = new Map<string, number>();
+  working = working.replace(/\[\^([^\]\n]+)\]/g, (_, label: string) => {
+    let n = order.get(label);
+    if (n === undefined) {
+      n = order.size + 1;
+      order.set(label, n);
+    }
+    return `<sup class="footnote-ref">${n}</sup>`;
+  });
+  return working;
 }
 
 function restorePlaceholders(html: string, placeholders: string[]): string {
@@ -60,14 +89,14 @@ function restorePlaceholders(html: string, placeholders: string[]): string {
 export function renderMarkdown(text: string): string {
   if (!text) return "";
   const { processed, placeholders } = extractAndRenderMath(text);
-  const html = marked.parse(processed, { async: false, renderer }) as string;
+  const html = litMarked.parse(processed, { async: false }) as string;
   const sanitized = DOMPurify.sanitize(html, { ADD_ATTR: ["target"] });
   return restorePlaceholders(sanitized, placeholders);
 }
 
 export function renderInlineMarkdown(text: string): string {
   if (!text) return "";
-  const { processed, placeholders } = extractAndRenderMath(text);
+  const { processed, placeholders } = extractAndRenderMath(text, true);
   const html = marked.parseInline(processed, { async: false }) as string;
   const sanitized = DOMPurify.sanitize(html);
   return restorePlaceholders(sanitized, placeholders);
