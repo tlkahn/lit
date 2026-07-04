@@ -668,15 +668,19 @@ export class MermaidWidget extends WidgetType {
 }
 
 export class HorizontalRuleWidget extends WidgetType {
+  constructor(readonly variant: "short" | "full" = "full") {
+    super();
+  }
+
   toDOM(): HTMLElement {
     const hr = document.createElement("hr");
-    hr.className = "cm-preview-hr";
+    hr.className = this.variant === "short" ? "cm-preview-hr cm-preview-hr-short" : "cm-preview-hr";
     hr.style.margin = "0";
     return hr;
   }
 
-  eq(_other: HorizontalRuleWidget): boolean {
-    return true;
+  eq(other: HorizontalRuleWidget): boolean {
+    return this.variant === other.variant;
   }
 
   ignoreEvent(): boolean {
@@ -684,7 +688,7 @@ export class HorizontalRuleWidget extends WidgetType {
   }
 
   get estimatedHeight(): number {
-    return 20;
+    return this.variant === "short" ? 40 : 20;
   }
 }
 

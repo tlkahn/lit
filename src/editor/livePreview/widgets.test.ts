@@ -1074,31 +1074,43 @@ describe("EditableTableWidget", () => {
 });
 
 describe("HorizontalRuleWidget", () => {
-  it("toDOM returns an <hr> with class cm-preview-hr", () => {
-    const widget = new HorizontalRuleWidget();
+  it("full variant toDOM returns an <hr> with class cm-preview-hr only", () => {
+    const widget = new HorizontalRuleWidget("full");
     const el = widget.toDOM();
     expect(el.tagName).toBe("HR");
     expect(el.className).toBe("cm-preview-hr");
   });
 
+  it("short variant toDOM returns an <hr> with both cm-preview-hr and cm-preview-hr-short", () => {
+    const widget = new HorizontalRuleWidget("short");
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("HR");
+    expect(el.classList.contains("cm-preview-hr")).toBe(true);
+    expect(el.classList.contains("cm-preview-hr-short")).toBe(true);
+  });
+
   it("sets margin to 0 to avoid CM6 height-map corruption", () => {
-    const widget = new HorizontalRuleWidget();
+    const widget = new HorizontalRuleWidget("full");
     const el = widget.toDOM();
     expect(el.style.margin).toBe("0px");
   });
 
-  it("eq returns true (all HRs are identical)", () => {
-    const a = new HorizontalRuleWidget();
-    const b = new HorizontalRuleWidget();
-    expect(a.eq(b)).toBe(true);
+  it("eq returns true for same variant", () => {
+    expect(new HorizontalRuleWidget("full").eq(new HorizontalRuleWidget("full"))).toBe(true);
+    expect(new HorizontalRuleWidget("short").eq(new HorizontalRuleWidget("short"))).toBe(true);
+  });
+
+  it("eq returns false for different variants", () => {
+    expect(new HorizontalRuleWidget("short").eq(new HorizontalRuleWidget("full"))).toBe(false);
   });
 
   it("ignoreEvent returns false", () => {
     expect(new HorizontalRuleWidget().ignoreEvent()).toBe(false);
   });
 
-  it("estimatedHeight returns 20", () => {
-    expect(new HorizontalRuleWidget().estimatedHeight).toBe(20);
+  it("estimatedHeight returns 20 for full, 40 for short", () => {
+    expect(new HorizontalRuleWidget("full").estimatedHeight).toBe(20);
+    expect(new HorizontalRuleWidget("short").estimatedHeight).toBe(40);
   });
 });
 
