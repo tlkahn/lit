@@ -137,6 +137,74 @@ describe("renderMarkdown", () => {
   });
 });
 
+describe("renderMarkdown footnotes", () => {
+  it("renders a numbered ref and a footnotes section with backref", () => {
+    const result = renderMarkdown("Hello[^1] world\n\n[^1]: the note");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const ref = div.querySelector("sup a[data-footnote-ref]");
+    expect(ref).not.toBeNull();
+    expect(ref!.textContent).toBe("1");
+    expect(ref!.getAttribute("href")).toMatch(/^#fn-\d+-1$/);
+    const section = div.querySelector("section.footnotes");
+    expect(section).not.toBeNull();
+    const li = section!.querySelector("li");
+    expect(li!.textContent).toContain("the note");
+    expect(section!.querySelector("a[data-footnote-backref]")).not.toBeNull();
+  });
+
+  it("numbers tagged refs and renders markdown in definition bodies", () => {
+    const result = renderMarkdown("text[^svayoginivaha]\n\n[^svayoginivaha]: **bold** note");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const ref = div.querySelector("sup a[data-footnote-ref]");
+    expect(ref!.textContent).toBe("1");
+    const li = div.querySelector("section.footnotes li");
+    expect(li!.innerHTML).toContain("<strong>bold</strong>");
+  });
+
+  it("keeps a ref without a definition as literal text", () => {
+    const result = renderMarkdown("Hello[^1] world");
+    expect(result).toContain("[^1]");
+    expect(result).not.toContain("data-footnote-ref");
+  });
+
+  it("consumes orphan definitions without output", () => {
+    const result = renderMarkdown("Hello world\n\n[^1]: orphan note");
+    expect(result).not.toContain("footnotes");
+    expect(result).not.toContain("orphan note");
+    expect(result).not.toContain("[^1]");
+  });
+
+  it("uses a distinct id prefix per render (no id collisions)", () => {
+    const input = "Hello[^1]\n\n[^1]: note";
+    const first = renderMarkdown(input);
+    const second = renderMarkdown(input);
+    const idOf = (html: string) => /id="(fn-\d+-)ref-1"/.exec(html)?.[1];
+    expect(idOf(first)).toBeDefined();
+    expect(idOf(second)).toBeDefined();
+    expect(idOf(first)).not.toBe(idOf(second));
+  });
+
+  it("leaves refs inside inline code untouched", () => {
+    const result = renderMarkdown("`[^1]` code\n\n[^1]: note");
+    expect(result).toContain("<code>[^1]</code>");
+    expect(result).not.toContain("data-footnote-ref");
+  });
+
+  it("strips script tags in definition bodies", () => {
+    const result = renderMarkdown("x[^1]\n\n[^1]: <script>alert(1)</script>safe");
+    expect(result).not.toContain("<script>");
+    expect(result).toContain("safe");
+  });
+
+  it("does not change output for bodies without footnotes", () => {
+    const result = renderMarkdown("**bold** text");
+    expect(result).toContain("<strong>bold</strong>");
+    expect(result).not.toContain("footnote");
+  });
+});
+
 describe("renderInlineMarkdown", () => {
   it("renders inline math", () => {
     const result = renderInlineMarkdown("$E=mc^2$");
@@ -152,5 +220,31 @@ describe("renderInlineMarkdown", () => {
 
   it("returns empty string for empty input", () => {
     expect(renderInlineMarkdown("")).toBe("");
+  });
+
+  it("replaces footnote refs with non-anchor sup markers", () => {
+    const result = renderInlineMarkdown("see[^alpha] and[^beta] then[^alpha] again");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const sups = div.querySelectorAll("sup.footnote-ref");
+    expect(sups).toHaveLength(3);
+    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["1", "2", "1"]);
+    expect(div.querySelector("a")).toBeNull();
+  });
+
+  it("strips footnote definition lines including continuations", () => {
+    const result = renderInlineMarkdown(
+      "note[^1] here\n[^1]: hidden def\n    continuation line\nvisible tail",
+    );
+    expect(result).toContain('<sup class="footnote-ref">1</sup>');
+    expect(result).not.toContain("hidden def");
+    expect(result).not.toContain("continuation line");
+    expect(result).toContain("visible tail");
+  });
+
+  it("leaves refs inside inline code untouched", () => {
+    const result = renderInlineMarkdown("`[^1]` code");
+    expect(result).toContain("<code>[^1]</code>");
+    expect(result).not.toContain("footnote-ref");
   });
 });

@@ -1292,6 +1292,56 @@ describe("CalloutWidget body markdown rendering", () => {
     expect(bodyEl.innerHTML).toContain("<em>italic</em>");
     view.destroy();
   });
+
+  it("renders footnotes in callout body", () => {
+    const ann = makeAnnotation({
+      form: "block",
+      body: "text[^1] here\n\n[^1]: the footnote",
+      char_start: 0,
+      char_end: 5,
+      original: "block",
+    });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
+    expect(bodyEl.querySelector("sup a[data-footnote-ref]")).toBeTruthy();
+    const section = bodyEl.querySelector("section.footnotes");
+    expect(section).toBeTruthy();
+    expect(section!.textContent).toContain("the footnote");
+  });
+
+  it("pill body shows sup footnote markers and strips definitions", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({ body: "see[^1] end\n[^1]: hidden def" });
+    const w = new PillWidget(ann);
+    const dom = w.toDOM(view);
+    const bodyEl = dom.querySelector(".cm-annotation-pill-body")!;
+    const sup = bodyEl.querySelector("sup.footnote-ref");
+    expect(sup).toBeTruthy();
+    expect(sup!.textContent).toBe("1");
+    expect(bodyEl.querySelector("sup.footnote-ref a")).toBeNull();
+    expect(bodyEl.textContent).not.toContain("hidden def");
+    view.destroy();
+  });
+
+  it("clicking a footnote ref in callout body prevents default navigation", () => {
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    const ann = makeAnnotation({
+      form: "block",
+      body: "text[^1] here\n\n[^1]: the footnote",
+      char_start: 0,
+      char_end: 5,
+      original: "block",
+    });
+    const w = new CalloutWidget(ann, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const ref = dom.querySelector("sup a[data-footnote-ref]")!;
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    ref.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(scrollSpy).toHaveBeenCalled();
+  });
 });
 
 describe("threadTurnField", () => {

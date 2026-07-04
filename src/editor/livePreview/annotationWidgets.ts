@@ -222,6 +222,21 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
   return pill;
 }
 
+// Footnote ref/backref anchors in rendered bodies point at fragment ids.
+// Intercept them so clicking scrolls within the widget instead of changing
+// location.hash and jumping the editor.
+function interceptFootnoteClicks(body: HTMLElement): void {
+  body.addEventListener("click", (e) => {
+    const anchor =
+      e.target instanceof Element ? e.target.closest<HTMLAnchorElement>('a[href^="#"]') : null;
+    if (!anchor || !body.contains(anchor)) return;
+    e.preventDefault();
+    const id = anchor.getAttribute("href")!.slice(1);
+    const target = body.querySelector(`[id="${CSS.escape(id)}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
 export class PillWidget extends WidgetType {
   constructor(
     readonly annotation: Annotation,
@@ -491,6 +506,7 @@ export class CalloutWidget extends WidgetType {
       const body = document.createElement("div");
       body.className = CLS.CALLOUT_BODY;
       body.innerHTML = renderMarkdown(ann.body);
+      interceptFootnoteClicks(body);
       container.appendChild(body);
     }
 
@@ -763,6 +779,7 @@ export class ThreadWidget extends WidgetType {
       const body = document.createElement("div");
       body.className = CLS.CALLOUT_BODY;
       body.innerHTML = renderMarkdown(activeTurn?.response ?? "");
+      interceptFootnoteClicks(body);
       container.appendChild(body);
 
       // Follow-up trigger (proximity-revealed) — suppressed while streaming.
