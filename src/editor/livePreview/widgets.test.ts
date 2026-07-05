@@ -377,9 +377,9 @@ describe("CalloutHeaderWidget", () => {
     view.destroy();
   });
 
-  it("has estimatedHeight of 30", () => {
+  it("has estimatedHeight of 20", () => {
     const widget = new CalloutHeaderWidget("note", "Title", false, true, 0);
-    expect(widget.estimatedHeight).toBe(30);
+    expect(widget.estimatedHeight).toBe(20);
   });
 });
 

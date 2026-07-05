@@ -630,6 +630,27 @@ describe("buildDecorations — callouts", () => {
     view.destroy();
   });
 
+  it("marks header line as first and final body line as last", () => {
+    const doc = "> [!note]\n> One\n> Two\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const first = decos.find((d) => d.class?.includes("cm-callout-first"));
+    expect(first?.from).toBe(0);
+    const lastLine = view.state.doc.line(3);
+    const last = decos.find((d) => d.class?.includes("cm-callout-last"));
+    expect(last?.from).toBe(lastLine.from);
+    view.destroy();
+  });
+
+  it("marks the header line as both first and last for a body-less callout", () => {
+    const doc = "> [!note]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const header = decos.find((d) => d.class?.includes("cm-callout-first"));
+    expect(header?.class).toContain("cm-callout-last");
+    view.destroy();
+  });
+
   it("does not decorate regular blockquotes as callouts", () => {
     const doc = "> Normal quote\n\nother";
     const view = makeView(doc, doc.length - 1);

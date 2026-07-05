@@ -214,6 +214,51 @@ describe("list item continuation theme spec", () => {
     const rule = livePreviewThemeSpec[".cm-callout.cm-list-item-continuation"] as Record<string, string>;
     expect(rule).toBeDefined();
     expect(rule.paddingLeft).toContain("--li-indent");
-    expect(rule.paddingLeft).toContain("8px");
+    expect(rule.paddingLeft).toContain("12px");
+  });
+});
+
+describe("callout theme spec", () => {
+  it(".cm-callout-header matches the annotation callout header (0.9em, weight 600)", () => {
+    const rule = livePreviewThemeSpec[".cm-callout-header"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.padding).toBe("0");
+    expect(rule.fontSize).toBe("0.9em");
+    expect(rule.fontWeight).toBe("600");
+  });
+
+  it(".cm-callout box mirrors .cm-annotation-callout (4px border, 12px inline padding, 5% background)", () => {
+    const rule = livePreviewThemeSpec[".cm-callout"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.borderInlineStart).toContain("4px solid");
+    expect(rule.padding).toBe("0 12px");
+    expect(rule.backgroundColor).toContain("5%");
+    expect(rule.borderRadius).toBeUndefined();
+  });
+
+  it("edge lines carry the block's vertical padding and corner radii", () => {
+    const first = livePreviewThemeSpec[".cm-callout-first"] as Record<string, string>;
+    expect(first.paddingTop).toBe("8px");
+    expect(first.borderStartStartRadius).toBe("4px");
+    const last = livePreviewThemeSpec[".cm-callout-last"] as Record<string, string>;
+    expect(last.paddingBottom).toBe("8px");
+    expect(last.borderEndEndRadius).toBe("4px");
+    // -last must be declared after -first so a collapsed header (both classes)
+    // gets the 8px bottom edge padding.
+    const keys = Object.keys(livePreviewThemeSpec);
+    expect(keys.indexOf(".cm-callout-last")).toBeGreaterThan(keys.indexOf(".cm-callout-first"));
+  });
+
+  it(".cm-callout-icon matches the header font size", () => {
+    const rule = livePreviewThemeSpec[".cm-callout-icon"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.fontSize).toBe("1em");
+  });
+
+  it(".cm-callout-fold-icon .svg-icon is 16px", () => {
+    const rule = livePreviewThemeSpec[".cm-callout-fold-icon .svg-icon"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.width).toBe("16px");
+    expect(rule.height).toBe("16px");
   });
 });

@@ -525,11 +525,15 @@ function addCalloutDecos(
   const lastLine = state.doc.lineAt(to);
   const lastLineNum = lastLine.number;
 
-  // Line decoration for the header line (always applied)
+  // Line decoration for the header line (always applied). The header line is
+  // also the visual bottom edge when collapsed or when the callout has no body.
+  const headerIsLast = isCollapsed || lastLineNum === firstLineNum;
   decos.push({
     from: firstLine.from,
     to: firstLine.from,
-    deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
+    deco: Decoration.line({
+      class: `cm-callout cm-callout-${resolvedType} cm-callout-first${headerIsLast ? " cm-callout-last" : ""}`,
+    }),
   });
 
   // Replace header line content with widget (only when cursor is not on header)
@@ -552,7 +556,9 @@ function addCalloutDecos(
       decos.push({
         from: line.from,
         to: line.from,
-        deco: Decoration.line({ class: `cm-callout cm-callout-${resolvedType}` }),
+        deco: Decoration.line({
+          class: `cm-callout cm-callout-${resolvedType}${lineNum === lastLineNum ? " cm-callout-last" : ""}`,
+        }),
       });
       const quoteMarkMatch = line.text.match(/^(\s*>)\s?/);
       if (quoteMarkMatch) {
