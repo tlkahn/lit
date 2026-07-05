@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView, type DecorationSet } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
-import { ensureSyntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import {
   annotationDataField,
   setAnnotationData,
@@ -27,6 +27,14 @@ vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
   listAnnotations: vi.fn(async () => []),
 }));
+
+// Spy on ensureSyntaxTree (delegating to the real implementation) so the
+// frontier suite can both simulate parse-budget exhaustion and assert the
+// toggle never re-enters the parser.
+vi.mock("@codemirror/language", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@codemirror/language")>();
+  return { ...actual, ensureSyntaxTree: vi.fn(actual.ensureSyntaxTree) };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -206,24 +214,10 @@ describe("toggleAllBlockAnnotationFolds", () => {
     view.destroy();
   });
 
-  it("collapses all block annotations on a fully-parsed doc (tree-reuse path)", () => {
-    // makeView calls ensureSyntaxTree over the whole doc, so syntaxTree(state)
-    // already spans state.doc.length and the ensureSyntaxTree call is skipped.
-    // Behavior must be identical to the parse-push path.
-    const { view, from1, from2 } = makeTwoBlockView();
-    expect(ensureSyntaxTree(view.state, view.state.doc.length, 0)!.length).toBe(view.state.doc.length);
-
-    expect(toggleAllBlockAnnotationFolds(view)).toBe(true);
-    const fold = view.state.field(annotationFoldField);
-    expect(fold.get(from1)).toBe(true);
-    expect(fold.get(from2)).toBe(true);
-
-    view.destroy();
-  });
-
-  it("ignores multiline block nodes with no matching annotation data", () => {
-    // Annotation data exists but its range does not line up with the block
-    // node (stale positions) — the node must not be targeted.
+  it("ignores single-line annotation data even when a multiline block node exists", () => {
+    // The only annotation on record (0..4, "text") spans a single line, so it
+    // is excluded by the line-span filter; the multiline block node in the doc
+    // has no matching data and must not be targeted.
     const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
     const view = makeView(doc, doc.length - 1);
     view.dispatch({
@@ -235,6 +229,115 @@ describe("toggleAllBlockAnnotationFolds", () => {
 
     expect(toggleAllBlockAnnotationFolds(view)).toBe(false);
     expect(dispatchSpy).not.toHaveBeenCalled();
+
+    view.destroy();
+  });
+});
+
+describe("toggleAllBlockAnnotationFolds — parse frontier", () => {
+  // Reproduces the large-doc scenario: the initial parse frontier sits far
+  // before a late block annotation, and the bounded ensureSyntaxTree push
+  // exhausts its budget without finishing (returns null). The annotation data
+  // (Rust-parsed over the full document text) still covers everything, so the
+  // toggle must target the late annotation without touching the parser.
+  const FILLER_LINE = "this is a line of plain filler text to pad the document out\n";
+  const PREFIX = FILLER_LINE.repeat(2000);
+  const BLOCK = "<!---\nn\n---\nlate body\n--->";
+  const DOC = PREFIX + "\n" + BLOCK + "\ntrailer\n";
+  const BLOCK_FROM = PREFIX.length + 1; // after the blank separator line
+  const BLOCK_TO = BLOCK_FROM + BLOCK.length;
+
+  /** makeView minus the full-doc ensureSyntaxTree call — keeps the initial
+   *  parse frontier where EditorView creation left it (well before BLOCK). */
+  function makeFrontierView() {
+    const state = EditorState.create({
+      doc: DOC,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({
+          form: "block",
+          char_start: BLOCK_FROM,
+          char_end: BLOCK_TO,
+          original: BLOCK,
+        }),
+      ]),
+    });
+    return view;
+  }
+
+  afterEach(() => {
+    // mockReset (vitest 3) restores the original implementation passed to
+    // vi.fn — drops any mockReturnValue(null) set by a frontier test.
+    vi.mocked(ensureSyntaxTree).mockReset();
+  });
+
+  it("targets annotations beyond the parse frontier even when the parse budget is exhausted", () => {
+    const view = makeFrontierView();
+    // Precondition: the initial parse genuinely stopped before the block.
+    expect(syntaxTree(view.state).length).toBeLessThan(BLOCK_FROM);
+    // Simulate budget exhaustion on a huge doc: the bounded push gives up.
+    vi.mocked(ensureSyntaxTree).mockReturnValue(null);
+
+    expect(toggleAllBlockAnnotationFolds(view)).toBe(true);
+    expect(view.state.field(annotationFoldField).get(BLOCK_FROM)).toBe(true);
+
+    view.destroy();
+  });
+
+  it("never re-enters the parser (ensureSyntaxTree not called)", () => {
+    const view = makeFrontierView();
+    vi.mocked(ensureSyntaxTree).mockClear();
+
+    toggleAllBlockAnnotationFolds(view);
+    expect(ensureSyntaxTree).not.toHaveBeenCalled();
+
+    view.destroy();
+  });
+
+  it("skips mid-line multiline annotations that render no callout", () => {
+    // The Rust scanner emits a multiline <!---...---> found mid-line, but the
+    // Lezer block parser requires the opener at line start (/^<!---/) and the
+    // inline parser rejects newlines — no node exists and no callout renders.
+    // The line-start parity guard must keep it out of the fold map.
+    const doc = "text <!---\nn | x\n---> more\n\n<!---\nn\n---\nreal body\n--->\nafter";
+    const phantomFrom = doc.indexOf("<!---");
+    const phantomTo = doc.indexOf("--->") + 4;
+    const realFrom = doc.indexOf("<!---", phantomTo);
+    const realTo = doc.indexOf("--->", realFrom) + 4;
+    const view = makeView(doc, 0);
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({
+          char_start: phantomFrom,
+          char_end: phantomTo,
+          original: doc.slice(phantomFrom, phantomTo),
+        }),
+        makeAnnotation({
+          form: "block",
+          char_start: realFrom,
+          char_end: realTo,
+          original: doc.slice(realFrom, realTo),
+        }),
+      ]),
+    });
+
+    expect(toggleAllBlockAnnotationFolds(view)).toBe(true);
+    const fold = view.state.field(annotationFoldField);
+    expect(fold.get(realFrom)).toBe(true);
+    expect(fold.has(phantomFrom)).toBe(false);
 
     view.destroy();
   });
