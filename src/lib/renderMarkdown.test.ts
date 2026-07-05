@@ -128,6 +128,66 @@ describe("renderMarkdown", () => {
     expect(result).not.toContain("cm-preview-math-display");
   });
 
+  it("does not render \\[a\\] text \\[b\\] as display math (first \\] has trailing prose)", () => {
+    const input = "\\[a\\] text \\[b\\]";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("renders \\[a\\] as display math (single-char content, empty tail after first \\])", () => {
+    const input = "\\[a\\]";
+    const result = renderMarkdown(input);
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("renders \\[E=mc^2\\] {#eq:energy} as display math (label after first \\])", () => {
+    const input = "\\[E=mc^2\\] {#eq:energy}";
+    const result = renderMarkdown(input);
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("does not render \\[\\] as display math (empty content fails closeIdx > 2 guard)", () => {
+    const input = "\\[\\]";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("does not render \\[a\\] {#eq:test} extra as display math (afterClose is not purely a label)", () => {
+    const input = "\\[a\\] {#eq:test} extra";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("renders $$E=mc^2$$ {#eq:energy} as display math and strips label", () => {
+    const result = renderMarkdown("$$E=mc^2$$ {#eq:energy}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("renders multi-line $$...$$  with label and strips label", () => {
+    const result = renderMarkdown("$$\nE=mc^2\n$$ {#eq:energy}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("renders multi-line \\[...\\] with label and strips label", () => {
+    const result = renderMarkdown("\\[\nE=mc^2\n\\] {#eq:energy}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("renders $$E=mc^2$${#eq:a} (no space before label) as display math and strips label", () => {
+    const result = renderMarkdown("$$E=mc^2$${#eq:a}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("does not swallow text after a label on $$ display math", () => {
+    const result = renderMarkdown("$$E=mc^2$$ {#eq:a} extra text");
+    // The label is consumed but "extra text" remains as prose
+    expect(result).toContain("extra text");
+  });
+
   // Tradeoff: \( is math, not CommonMark escape — this is intentional.
   // Same precedence as Pandoc, MathJax, KaTeX auto-render, Obsidian, Typora.
   // Users who want literal backslash+paren use \\(.

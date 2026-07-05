@@ -50,21 +50,27 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
     return `￰CODEPH${idx}￰`;
   });
 
-  working = working.replace(/\$\$([\s\S]+?)\$\$/g, (_, latex) => {
+  working = working.replace(/\$\$([\s\S]+?)\$\$[ \t]*(?:\{#[a-z]+:[^}]+\})?/g, (_, latex) => {
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, true));
     return `￰MATHPH${idx}￰`;
   });
 
-  // Single-line display math: \[ at line start, \] at line end
-  working = working.replace(/^\\\[(.+?)\\\]\s*$/gm, (_, latex) => {
+  // Single-line display math: \[ at line start, first \] closes,
+  // nothing (or only a {#type:id} label) after close — mirrors editor grammar.
+  working = working.replace(/^\\\[.+$/gm, (match) => {
+    const closeIdx = match.indexOf('\\]', 2);
+    if (closeIdx <= 2) return match;
+    const afterClose = match.slice(closeIdx + 2).trim();
+    if (afterClose !== '' && !/^\{#[a-z]+:[^}]+\}$/.test(afterClose)) return match;
+    const latex = match.slice(2, closeIdx);
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, true));
     return `￰MATHPH${idx}￰`;
   });
 
   // Multi-line display math: \[ alone on its line, \] at end of a line
-  working = working.replace(/^\\\[\s*\n([\s\S]+?)\\\]\s*$/gm, (_, latex) => {
+  working = working.replace(/^\\\[\s*\n([\s\S]+?)\\\][ \t]*(?:\{#[a-z]+:[^}]+\})?[ \t]*$/gm, (_, latex) => {
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, true));
     return `￰MATHPH${idx}￰`;
