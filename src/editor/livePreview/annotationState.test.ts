@@ -13,7 +13,10 @@ import {
   setDisplayMode,
   findAnnotationAtCursor,
   buildAnnotationDecorations,
+  buildAnnotationRangeMap,
+  findAnnotationForRange,
   hasAnnotationEffect,
+  hasInlineAnnotationEffect,
   shouldRebuildBlocksOnTreeChange,
 } from "./annotationState";
 import {
@@ -1101,10 +1104,11 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
     view.destroy();
   });
 
-  it("hasAnnotationEffect is the single source of truth for every rebuild-triggering effect", () => {
-    // Single source of truth: the plugin's inline rebuild gate and the block
-    // StateField's gate both delegate to hasAnnotationEffect. Each of these
-    // effects must be recognized, and an unrelated/empty transaction must not.
+  it("hasAnnotationEffect recognizes every block-field rebuild-triggering effect", () => {
+    // hasAnnotationEffect is the block StateField's rebuild gate (the superset).
+    // The inline plugin uses the narrower hasInlineAnnotationEffect gate (see the
+    // dedicated test below) which excludes fold/thread-turn effects. Each of
+    // these effects must be recognized, and an unrelated/empty transaction must not.
     const cases = [
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
@@ -1122,6 +1126,78 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
 
     const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
     expect(hasAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasInlineAnnotationEffect recognizes ONLY the inline-relevant effects", () => {
+    // The inline plugin never reads fold/turn state (it skips multiline blocks),
+    // so its rebuild gate must exclude fold and thread-turn effects. Those five
+    // effects change inline widget content; the three below do not.
+    const inlineRelevant = [
+      setAnnotationData.of([]),
+      setDisplayMode.of("footnote"),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+    ];
+    for (const effect of inlineRelevant) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasInlineAnnotationEffect(tr)).toBe(true);
+    }
+
+    const notInline = [
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of notInline) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasInlineAnnotationEffect(tr)).toBe(false);
+    }
+
+    const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
+    expect(hasInlineAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("does NOT rebuild the inline plugin on toggleAnnotationFoldEffect", () => {
+    // Fold state only affects the block field's callout; the inline plugin skips
+    // multiline blocks entirely, so a fold toggle must not trigger a (wasted)
+    // inline rebuild. The plugin's decoration set reference must be preserved.
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const before = getSet(view);
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 12 }) });
+    expect(getSet(view)).toBe(before);
+
+    view.destroy();
+  });
+
+  it("does NOT rebuild the inline plugin on setAllAnnotationFoldsEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const before = getSet(view);
+    view.dispatch({ effects: setAllAnnotationFoldsEffect.of({ positions: [12], collapsed: true }) });
+    expect(getSet(view)).toBe(before);
+
+    view.destroy();
+  });
+
+  it("does NOT rebuild the inline plugin on setThreadTurnEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const before = getSet(view);
+    view.dispatch({ effects: setThreadTurnEffect.of({ pos: 12, turn: 1 }) });
+    expect(getSet(view)).toBe(before);
+
+    view.destroy();
   });
 
   it("does NOT rebuild when cursor moves between two non-annotation (plain) lines", () => {
@@ -1556,6 +1632,21 @@ describe("buildAnnotationDecorations", () => {
     view.destroy();
   });
 
+  it("single-line BlockAnnotation → no block-field callout (lineAt multiline guard)", () => {
+    // A single-line BlockAnnotation renders as an inline pill; the block field's
+    // startLine!==endLine guard must exclude it, matching the old sliceString
+    // includes("\n") semantics exactly.
+    const doc = "first line\n<!---content--->";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 11, char_end: 27, original: "<!---content--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const fieldSet = view.state.field(annotationBlockDecorationField).decorations;
+    expect(iterateSet(fieldSet).find((d) => d.from === 11 && d.to === 27)).toBeUndefined();
+    expect(fieldSet.size).toBe(0);
+    view.destroy();
+  });
+
   it("firing annotation → widget still produced (field read path intact)", () => {
     const doc = "first line\ntext <!---n | body---> more";
     const view = makeView(doc, 0);
@@ -1595,6 +1686,32 @@ describe("buildAnnotationDecorations", () => {
     const line = view.state.doc.lineAt(16).number;
     expect(cursorSensitiveLines.has(line)).toBe(true);
     view.destroy();
+  });
+});
+
+describe("buildAnnotationRangeMap", () => {
+  it("keys annotations by char_start:char_end for O(1) lookup", () => {
+    const a = makeAnnotation({ char_start: 5, char_end: 15 });
+    const b = makeAnnotation({ char_start: 20, char_end: 30 });
+    const map = buildAnnotationRangeMap([a, b]);
+    expect(map.get("5:15")).toBe(a);
+    expect(map.get("20:30")).toBe(b);
+    expect(map.get("0:10")).toBeUndefined();
+  });
+
+  it("preserves findAnnotationForRange's first-match-wins for duplicate spans", () => {
+    // Two annotations share the exact span; the map must keep the earliest, just
+    // like Array.prototype.find, so the lookup and the scan agree.
+    const first = makeAnnotation({ char_start: 5, char_end: 15, body: "first" });
+    const second = makeAnnotation({ char_start: 5, char_end: 15, body: "second" });
+    const anns = [first, second];
+    const map = buildAnnotationRangeMap(anns);
+    expect(map.get("5:15")).toBe(findAnnotationForRange(anns, 5, 15));
+    expect(map.get("5:15")).toBe(first);
+  });
+
+  it("returns an empty map for no annotations", () => {
+    expect(buildAnnotationRangeMap([]).size).toBe(0);
   });
 });
 

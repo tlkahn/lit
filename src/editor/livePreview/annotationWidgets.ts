@@ -376,10 +376,18 @@ export const annotationFoldField = StateField.define<Map<number, boolean>>({
     return new Map();
   },
   update(value: Map<number, boolean>, tr: Transaction) {
-    if (!tr.docChanged && !tr.effects.length) return value;
+    // Skip the Map copy entirely unless the doc moved (positions need remapping)
+    // or a fold effect actually changes this field. Unrelated effects (firing,
+    // display mode, thread turns) dispatched alongside a fold toggle must NOT
+    // churn this Map.
+    const hasFoldEffect = tr.effects.some(
+      (e) => e.is(toggleAnnotationFoldEffect) || e.is(setAllAnnotationFoldsEffect),
+    );
+    if (!tr.docChanged && !hasFoldEffect) return value;
+
     const newMap = new Map<number, boolean>();
     for (const [pos, collapsed] of value) {
-      const newPos = tr.changes.mapPos(pos, 1);
+      const newPos = tr.docChanged ? tr.changes.mapPos(pos, 1) : pos;
       newMap.set(newPos, collapsed);
     }
     for (const effect of tr.effects) {
@@ -403,10 +411,14 @@ export const threadTurnField = StateField.define<Map<number, number>>({
     return new Map();
   },
   update(value: Map<number, number>, tr: Transaction) {
-    if (!tr.docChanged && !tr.effects.length) return value;
+    // Skip the Map copy unless the doc moved or a thread-turn effect changes this
+    // field. Unrelated effects (e.g. fold toggles) must not churn this Map.
+    const hasTurnEffect = tr.effects.some((e) => e.is(setThreadTurnEffect));
+    if (!tr.docChanged && !hasTurnEffect) return value;
+
     const newMap = new Map<number, number>();
     for (const [pos, turn] of value) {
-      const newPos = tr.changes.mapPos(pos, 1);
+      const newPos = tr.docChanged ? tr.changes.mapPos(pos, 1) : pos;
       newMap.set(newPos, turn);
     }
     for (const effect of tr.effects) {

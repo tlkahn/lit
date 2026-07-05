@@ -14,7 +14,10 @@ import {
   annotationFoldField,
   firingAnnotationsField,
   llmLockedField,
+  threadTurnField,
+  toggleAnnotationFoldEffect,
 } from "./annotationWidgets";
+import { toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import { generateAnnotationHeavy } from "../../test/fixtures/generate";
@@ -243,8 +246,86 @@ function blockAnnotationsFromTree(view: EditorView): Annotation[] {
   return annotations;
 }
 
+/**
+ * Build a view over a block-heavy doc with the block annotations already
+ * dispatched into annotationDataField and the full syntax tree materialized.
+ */
+function makeBlockPerfView(doc: string): EditorView {
+  const state = EditorState.create({
+    doc,
+    selection: { anchor: doc.length - 2 }, // trailing plain line
+    extensions: [
+      markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+      annotationDataField,
+      displayModeField,
+      annotationFoldField,
+      threadTurnField,
+      firingAnnotationsField,
+      llmLockedField,
+      annotationDecorationPlugin,
+      annotationBlockDecorationField,
+    ],
+  });
+  const view = new EditorView({ state, parent: document.createElement("div") });
+  ensureSyntaxTree(view.state, view.state.doc.length);
+  view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view)) });
+  return view;
+}
+
 describe("annotationBlockDecorationField — block-heavy doc", () => {
   const BLOCK_COUNT = 200;
+
+  it(`single toggleAnnotationFoldEffect (${BLOCK_COUNT} block annotations)`, () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockPerfView(doc);
+    const firstBlockFrom = blockAnnotationsFromTree(view)[0]!.char_start;
+
+    const start = performance.now();
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: firstBlockFrom }) });
+    const elapsed = performance.now() - start;
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] block-annotation single fold toggle: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(HARD_LIMIT_MS);
+    view.destroy();
+  });
+
+  it(`toggleAllBlockAnnotationFolds (${BLOCK_COUNT} block annotations)`, () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockPerfView(doc);
+
+    const start = performance.now();
+    const toggled = toggleAllBlockAnnotationFolds(view);
+    const elapsed = performance.now() - start;
+
+    expect(toggled).toBe(true);
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] block-annotation toggle-all: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(HARD_LIMIT_MS);
+    view.destroy();
+  });
+
+  it(`setAnnotationData re-dispatch (${BLOCK_COUNT} block annotations)`, () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockPerfView(doc);
+    const sameAnnotations = blockAnnotationsFromTree(view);
+
+    const elapsed = measureEffectDispatch(view, setAnnotationData.of(sameAnnotations));
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] block-annotation setAnnotationData re-dispatch: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(HARD_LIMIT_MS);
+    view.destroy();
+  });
 
   it(`plain-line cursor move skips field rebuild fast (${BLOCK_COUNT} block annotations)`, () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);

@@ -206,6 +206,21 @@ describe("toggleAllBlockAnnotationFolds", () => {
     view.destroy();
   });
 
+  it("collapses all block annotations on a fully-parsed doc (tree-reuse path)", () => {
+    // makeView calls ensureSyntaxTree over the whole doc, so syntaxTree(state)
+    // already spans state.doc.length and the ensureSyntaxTree call is skipped.
+    // Behavior must be identical to the parse-push path.
+    const { view, from1, from2 } = makeTwoBlockView();
+    expect(ensureSyntaxTree(view.state, view.state.doc.length, 0)!.length).toBe(view.state.doc.length);
+
+    expect(toggleAllBlockAnnotationFolds(view)).toBe(true);
+    const fold = view.state.field(annotationFoldField);
+    expect(fold.get(from1)).toBe(true);
+    expect(fold.get(from2)).toBe(true);
+
+    view.destroy();
+  });
+
   it("ignores multiline block nodes with no matching annotation data", () => {
     // Annotation data exists but its range does not line up with the block
     // node (stale positions) — the node must not be targeted.

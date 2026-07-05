@@ -152,6 +152,23 @@ export function findAnnotationForRange(
   );
 }
 
+/**
+ * Index annotations by their `char_start:char_end` span for O(1) range lookup.
+ *
+ * Replaces repeated O(n) `findAnnotationForRange` scans inside a per-node tree
+ * walk (which is O(n·m) overall) with a single O(n) build plus O(1) lookups. To
+ * preserve `findAnnotationForRange`'s "first match wins" semantics, a span that
+ * appears more than once keeps the earliest annotation.
+ */
+export function buildAnnotationRangeMap(annotations: Annotation[]): Map<string, Annotation> {
+  const map = new Map<string, Annotation>();
+  for (const a of annotations) {
+    const key = `${a.char_start}:${a.char_end}`;
+    if (!map.has(key)) map.set(key, a);
+  }
+  return map;
+}
+
 export interface BuildAnnotationDecorationsResult {
   decorations: DecorationSet;
   cursorSensitiveLines: Set<number>;
@@ -178,6 +195,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
   const mode = state.field(displayModeField);
   const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
   const llmLocked = state.field(llmLockedField, false) ?? false;
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -212,11 +230,12 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
 
         if (isCursorOnLine(state, nodeFrom, nodeTo)) return;
 
-        const ann = findAnnotationForRange(annotations, nodeFrom, nodeTo);
+        const ann = rangeMap.get(`${nodeFrom}:${nodeTo}`);
         if (!ann) return;
 
-        const text = state.doc.sliceString(nodeFrom, nodeTo);
-        const isMultiLine = text.includes("\n");
+        // Reuse the line numbers already computed above rather than slicing the
+        // node text just to look for a newline — spanning >1 line is multiline.
+        const isMultiLine = startLine !== endLine;
 
         // A multiline block annotation's callout is a line-break-spanning
         // replacement, which CodeMirror forbids from plugin sources;
@@ -315,7 +334,7 @@ class AnnotationDecorationPluginValue implements PluginValue {
     const treeChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
     if (update.docChanged || update.viewportChanged || treeChanged) {
       this.rebuild(update.view, update.docChanged ? "docChanged" : update.viewportChanged ? "viewportChanged" : "syntaxTree");
-    } else if (update.transactions.some((tr) => hasAnnotationEffect(tr))) {
+    } else if (update.transactions.some((tr) => hasInlineAnnotationEffect(tr))) {
       this.rebuild(update.view, "effect");
     } else if (update.selectionSet) {
       const oldLine = update.startState.doc.lineAt(update.startState.selection.main.head).number;
@@ -340,7 +359,9 @@ export const annotationDecorationPlugin = ViewPlugin.fromClass(
 
 /**
  * Returns true when a transaction carries an annotation-relevant state effect
- * (the same effects that trigger a plugin rebuild).
+ * that the block decoration StateField must rebuild for. This is the superset:
+ * it includes fold and thread-turn effects, which only the block field cares
+ * about (they change collapsed/turn state on the multiline callouts it owns).
  */
 export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
   return tr.effects.some((e) =>
@@ -352,6 +373,23 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
     e.is(clearFiringAnnotation) ||
     e.is(setLlmLockedEffect) ||
     e.is(setThreadTurnEffect),
+  );
+}
+
+/**
+ * Returns true when a transaction carries a state effect the INLINE plugin must
+ * rebuild for. Strict subset of `hasAnnotationEffect`: the inline plugin skips
+ * multiline block annotations entirely, so fold (`toggleAnnotationFoldEffect`,
+ * `setAllAnnotationFoldsEffect`) and thread-turn (`setThreadTurnEffect`) effects
+ * never change what it renders — rebuilding on them is pure wasted work.
+ */
+export function hasInlineAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return tr.effects.some((e) =>
+    e.is(setAnnotationData) ||
+    e.is(setDisplayMode) ||
+    e.is(setFiringAnnotation) ||
+    e.is(clearFiringAnnotation) ||
+    e.is(setLlmLockedEffect),
   );
 }
 
@@ -387,6 +425,7 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
   const llmLocked = state.field(llmLockedField, false) ?? false;
   const foldState = state.field(annotationFoldField, false);
   const turnState = state.field(threadTurnField, false);
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -397,18 +436,22 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
       const from = node.from;
       const to = node.to;
       if (from < 0 || to > docLen || from >= to) return;
-      if (!state.doc.sliceString(from, to).includes("\n")) return;
+
+      // Only multiline block annotations get a callout. Compute the spanned line
+      // numbers once (also used for cursor-sensitivity tracking) instead of
+      // slicing the node text to search for a newline.
+      const startLine = state.doc.lineAt(from).number;
+      const endLine = state.doc.lineAt(to).number;
+      if (startLine === endLine) return;
 
       // Track every line spanned by this multiline block annotation
       // (cursor-sensitive) BEFORE the isCursorOnLine early-return, so moving the
       // cursor OFF a block line still triggers a rebuild that restores the callout.
-      const startLine = state.doc.lineAt(from).number;
-      const endLine = state.doc.lineAt(to).number;
       for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
 
       if (isCursorOnLine(state, from, to)) return;
 
-      const ann = findAnnotationForRange(annotations, from, to);
+      const ann = rangeMap.get(`${from}:${to}`);
       if (!ann) return;
 
       const isCollapsed = foldState?.get(from) ?? false;

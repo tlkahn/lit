@@ -287,6 +287,19 @@ describe("annotationFoldField", () => {
     expect(fold.get(8)).toBe(true);
     expect(fold.has(6)).toBe(false);
   });
+
+  it("returns the SAME Map reference on an unrelated effect (no fold effect, no doc change)", () => {
+    // A transaction carrying only non-fold effects must not copy the Map — every
+    // fold-toggle dispatch would otherwise rebuild an unrelated field's value.
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationFoldField, firingAnnotationsField],
+    });
+    const tr1 = state.update({ effects: toggleAnnotationFoldEffect.of({ pos: 0 }) });
+    const before = tr1.state.field(annotationFoldField);
+    const tr2 = tr1.state.update({ effects: setFiringAnnotation.of(5) });
+    expect(tr2.state.field(annotationFoldField)).toBe(before);
+  });
 });
 
 describe("CalloutWidget", () => {
@@ -1398,6 +1411,17 @@ describe("threadTurnField", () => {
     const tr1 = state.update({ effects: setThreadTurnEffect.of({ pos: 5, turn: 1 }) });
     const before = tr1.state.field(threadTurnField);
     const tr2 = tr1.state.update({ selection: { anchor: 2 } });
+    expect(tr2.state.field(threadTurnField)).toBe(before);
+  });
+
+  it("returns the SAME Map reference on an unrelated effect (no turn effect, no doc change)", () => {
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [threadTurnField, annotationFoldField],
+    });
+    const tr1 = state.update({ effects: setThreadTurnEffect.of({ pos: 5, turn: 1 }) });
+    const before = tr1.state.field(threadTurnField);
+    const tr2 = tr1.state.update({ effects: toggleAnnotationFoldEffect.of({ pos: 0 }) });
     expect(tr2.state.field(threadTurnField)).toBe(before);
   });
 });

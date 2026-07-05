@@ -1,6 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
-import { annotationDataField, findAnnotationForRange } from "./annotationState";
+import { annotationDataField, buildAnnotationRangeMap } from "./annotationState";
 import { annotationFoldField, setAllAnnotationFoldsEffect } from "./annotationWidgets";
 
 // Bounded parse budget: on large docs the background parser may not have
@@ -21,8 +21,17 @@ export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {
   const annotations = state.field(annotationDataField, false) ?? [];
   if (annotations.length === 0) return false;
 
-  const tree = ensureSyntaxTree(state, state.doc.length, PARSE_TIMEOUT_MS) ?? syntaxTree(state);
+  // When the materialized tree already spans the whole document, reuse it
+  // directly — `ensureSyntaxTree` would otherwise re-enter the parser and pay up
+  // to PARSE_TIMEOUT_MS of budget on every toggle even though there is nothing
+  // left to parse. Only fall back to the bounded parse push when the tree is
+  // still short of the document end (late annotations past the frontier).
+  const existingTree = syntaxTree(state);
+  const tree = existingTree.length >= state.doc.length
+    ? existingTree
+    : (ensureSyntaxTree(state, state.doc.length, PARSE_TIMEOUT_MS) ?? existingTree);
   const docLen = state.doc.length;
+  const rangeMap = buildAnnotationRangeMap(annotations);
   const targets: number[] = [];
   tree.iterate({
     enter: (node) => {
@@ -30,8 +39,8 @@ export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {
       const from = node.from;
       const to = node.to;
       if (from < 0 || to > docLen || from >= to) return;
-      if (!state.doc.sliceString(from, to).includes("\n")) return;
-      if (!findAnnotationForRange(annotations, from, to)) return;
+      if (state.doc.lineAt(from).number === state.doc.lineAt(to).number) return;
+      if (!rangeMap.has(`${from}:${to}`)) return;
       targets.push(from);
     },
   });
