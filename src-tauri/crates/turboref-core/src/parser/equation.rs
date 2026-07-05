@@ -366,4 +366,91 @@ $$\nF = ma\n$$\n{#eq:newton}";
         let defs = parse_equations(content);
         assert_eq!(defs.len(), 0);
     }
+
+    // --- Tests for close lines carrying trailing {#eq:id} tags ---
+
+    #[test]
+    fn bracket_close_with_tag_unblocks_later_equations() {
+        // \] {#eq:a} must close the bracket math block so subsequent
+        // equations are not swallowed by in_math_block staying true.
+        let content = "\\[\nE=mc^2\n\\] {#eq:a}\n\n$$\nb\n$$\n{#eq:second}";
+        let defs = parse_equations(content);
+        assert!(
+            defs.iter().any(|d| d.id == "second"),
+            "eq:second must be found; defs = {:?}",
+            defs
+        );
+    }
+
+    #[test]
+    fn dollar_close_with_tag_unblocks_later_equations() {
+        // $$ {#eq:x} must close the dollar math block so eq:y is found.
+        let content = "$$\na\n$$ {#eq:x}\n\n$$\nb\n$$\n{#eq:y}";
+        let defs = parse_equations(content);
+        assert!(
+            defs.iter().any(|d| d.id == "y"),
+            "eq:y must be found; defs = {:?}",
+            defs
+        );
+    }
+
+    #[test]
+    fn bracket_close_with_tag_sets_prev_line_closed_math() {
+        // \] {#eq:embedded} should close math AND set prev_line_closed_math
+        // so that {#eq:nextline} on the following line is picked up.
+        let content = "\\[\nE=mc^2\n\\] {#eq:embedded}\n{#eq:nextline}";
+        let defs = parse_equations(content);
+        assert!(
+            defs.iter().any(|d| d.id == "nextline"),
+            "eq:nextline must be found via prev_line_closed_math; defs = {:?}",
+            defs
+        );
+    }
+
+    #[test]
+    fn regression_plain_bracket_close_still_works() {
+        let content = "\\[\nE=mc^2\n\\]\n{#eq:e}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "e");
+        assert_eq!(defs[0].number, RefNumber::Simple(1));
+    }
+
+    #[test]
+    fn regression_plain_dollar_close_still_works() {
+        let content = "$$\nE=mc^2\n$$\n{#eq:e}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "e");
+        assert_eq!(defs[0].number, RefNumber::Simple(1));
+    }
+
+    #[test]
+    fn regression_same_line_forms_still_work() {
+        let content = "$$E=mc^2$${#eq:a}\n\\[F=ma\\]{#eq:b}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 2);
+        assert!(defs.iter().any(|d| d.id == "a"));
+        assert!(defs.iter().any(|d| d.id == "b"));
+    }
+
+    #[test]
+    fn prose_with_escaped_brackets_does_not_open_math_block() {
+        // A prose line starting with \[ but not ending with \] must NOT
+        // open a math block that suppresses all parsers below.
+        let content = "\\[a\\] and \\[b\\] are the options\n$$\nE = mc^2\n$$\n{#eq:newton}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1, "expected 1 def, got {:?}", defs);
+        assert_eq!(defs[0].id, "newton");
+    }
+
+    #[test]
+    fn bracket_with_trailing_content_does_not_open_block() {
+        // \[ with trailing content (no closing \]) must not suppress
+        // subsequent $$ blocks.
+        let content = "\\[some content\n$$\nE = mc^2\n$$\n{#eq:e}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1, "expected 1 def, got {:?}", defs);
+        assert_eq!(defs[0].id, "e");
+    }
 }

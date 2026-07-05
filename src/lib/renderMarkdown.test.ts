@@ -99,6 +99,44 @@ describe("renderMarkdown", () => {
     expect(result).not.toContain("cm-preview-math-inline");
   });
 
+  it("does not fuse unrelated \\[...\\] across paragraphs into display math", () => {
+    const input = "The task \\[TODO\\]\n\nSome heading\n\nprices \\[USD\\]";
+    const result = renderMarkdown(input);
+    // Both \[ are mid-line so neither should become display math.
+    // The old regex fused the first \[ with the last \], swallowing
+    // all intervening prose into a single KaTeX block.
+    expect(result).not.toContain("cm-preview-math-display");
+    expect(result).toContain("Some heading");
+  });
+
+  it("does not render \\[...\\] as display math when \\[ is mid-line", () => {
+    const input = "See \\[1\\] for details";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+    expect(result).toContain("details");
+  });
+
+  it("does not render display math when opener line has content after \\[", () => {
+    const input = "\\[ some content\nmore\n\\]";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("does not render display math when there is trailing text after \\]", () => {
+    const input = "\\[E=mc^2\\] and some text";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  // Tradeoff: \( is math, not CommonMark escape — this is intentional.
+  // Same precedence as Pandoc, MathJax, KaTeX auto-render, Obsidian, Typora.
+  // Users who want literal backslash+paren use \\(.
+  it("f\\(x\\) is undefined here renders \\(x\\) as inline math (tradeoff)", () => {
+    const result = renderMarkdown("f\\(x\\) is undefined here");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("katex");
+  });
+
   it("mismatched \\(x$ is not math", () => {
     const result = renderMarkdown("\\(x$");
     expect(result).not.toContain("cm-preview-math");

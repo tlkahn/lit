@@ -20,6 +20,41 @@ pub struct DefinitionTagMatch {
     pub original: String,
 }
 
+/// Scan forward line-by-line from `start` until `is_close_line` returns true
+/// for a line's content (after stripping trailing ref tags and trimming).
+/// Pushes an excluded range from `block_start` to the end of the closing line
+/// (or EOF if unclosed). Returns the updated byte position.
+fn scan_until_close_line(
+    content: &str,
+    bytes: &[u8],
+    len: usize,
+    block_start: usize,
+    start: usize,
+    is_close_line: impl Fn(&str) -> bool,
+    ranges: &mut Vec<(usize, usize)>,
+) -> usize {
+    let mut i = start;
+    loop {
+        if i >= len {
+            ranges.push((block_start, len));
+            break;
+        }
+        let mut le = i;
+        while le < len && bytes[le] != b'\n' {
+            le += 1;
+        }
+        let next = if le < len { le + 1 } else { le };
+        let stripped = crate::parser::scan::strip_trailing_ref_tag(content[i..le].trim_end());
+        if is_close_line(&stripped) {
+            ranges.push((block_start, next));
+            i = next;
+            break;
+        }
+        i = next;
+    }
+    i
+}
+
 /// Compute byte ranges that should be excluded (code blocks and math blocks).
 fn compute_excluded_ranges(content: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
@@ -104,35 +139,7 @@ fn compute_excluded_ranges(content: &str) -> Vec<(usize, usize)> {
                     i = if j < len { j + 1 } else { j };
 
                     // Find closing $$
-                    loop {
-                        if i >= len {
-                            ranges.push((block_start, len));
-                            break;
-                        }
-                        // Check if line is $$
-                        if bytes[i] == b'$' && i + 1 < len && bytes[i + 1] == b'$' {
-                            let mut k = i + 2;
-                            while k < len && bytes[k] != b'\n' && bytes[k].is_ascii_whitespace() {
-                                k += 1;
-                            }
-                            if k >= len || bytes[k] == b'\n' {
-                                // Closing $$
-                                if k < len {
-                                    k += 1;
-                                }
-                                ranges.push((block_start, k));
-                                i = k;
-                                break;
-                            }
-                        }
-                        // Skip to next line
-                        while i < len && bytes[i] != b'\n' {
-                            i += 1;
-                        }
-                        if i < len {
-                            i += 1;
-                        }
-                    }
+                    i = scan_until_close_line(content, bytes, len, block_start, i, |s| s.trim() == "$$", &mut ranges);
                     continue;
                 }
             }
@@ -147,31 +154,17 @@ fn compute_excluded_ranges(content: &str) -> Vec<(usize, usize)> {
                 while line_end < len && bytes[line_end] != b'\n' {
                     line_end += 1;
                 }
-                // Single-line \[...\]{#eq:id} math keeps its tag scannable,
-                // matching $$x$${#eq:id} — only multi-line blocks are excluded.
-                if !crate::parser::scan::bracket_closes_same_line(content[i..line_end].trim())
+                // Multi-line \[...\] block: only open when the line is
+                // exactly `\[` (plus optional whitespace), mirroring the
+                // `$$` check above.  Single-line \[...\]{#eq:id} keeps its
+                // tag scannable, matching $$x$${#eq:id}.
+                if content[i + 2..line_end].trim().is_empty()
                 {
                     let block_start = i;
                     i = if line_end < len { line_end + 1 } else { line_end };
 
                     // Scan until a line whose trimmed content ends with \]
-                    loop {
-                        if i >= len {
-                            ranges.push((block_start, len));
-                            break;
-                        }
-                        let mut le = i;
-                        while le < len && bytes[le] != b'\n' {
-                            le += 1;
-                        }
-                        let next = if le < len { le + 1 } else { le };
-                        if content[i..le].trim_end().ends_with("\\]") {
-                            ranges.push((block_start, next));
-                            i = next;
-                            break;
-                        }
-                        i = next;
-                    }
+                    i = scan_until_close_line(content, bytes, len, block_start, i, |s| s.ends_with("\\]"), &mut ranges);
                     continue;
                 }
             }
@@ -500,5 +493,215 @@ mod tests {
         let config = crate::i18n::localized_defaults(crate::i18n::Locale::Zh);
         let resolved = resolve_definition_tags(&tags, &ref_map, &config);
         assert_eq!(resolved[0].rendered_text, "#图 1");
+    }
+
+    // --- Tests for close lines carrying trailing {#type:id} tags ---
+
+    #[test]
+    fn bracket_close_with_tag_excluded_range() {
+        // \] {#eq:a} must be recognised as closing the bracket math block;
+        // {#fig:test} after the block must NOT be excluded.
+        let content = "\\[\nE=mc^2\n\\] {#eq:a}\n\n{#fig:test}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            tags.iter().any(|t| t.id == "test" && t.ref_type == RefType::Fig),
+            "fig:test must not be swallowed by an unclosed math exclusion; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn dollar_close_with_tag_excluded_range() {
+        // $$ {#eq:a} must be recognised as closing the dollar math block;
+        // {#fig:test} after the block must NOT be excluded.
+        let content = "$$\nE=mc^2\n$$ {#eq:a}\n\n{#fig:test}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            tags.iter().any(|t| t.id == "test" && t.ref_type == RefType::Fig),
+            "fig:test must not be swallowed by an unclosed math exclusion; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn prose_brackets_do_not_exclude_range() {
+        // A prose line starting with \[ that does not end with \] must NOT
+        // open a math exclusion range that hides subsequent tags.
+        let content = "\\[a\\] and \\[b\\] are the options\n{#fig:test}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            tags.iter().any(|t| t.id == "test" && t.ref_type == RefType::Fig),
+            "fig:test must not be swallowed by a false math exclusion; tags = {:?}",
+            tags
+        );
+    }
+
+    // --- Tests for unified close-line detection (F8 consolidation) ---
+
+    #[test]
+    fn dollar_close_with_trailing_ref_tag_excludes_block() {
+        // $$ block with trailing ref tag: the tag on the close line is inside
+        // the excluded range, and the tag on the next line (fig:cat) should
+        // also NOT be found if within the excluded range. The math block
+        // should end at the $$ {#eq:e} line (inclusive).
+        let content = "$$\nE=mc^2\n$$ {#eq:e}\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        // eq:e is on the $$ close line, inside the excluded math block
+        assert!(
+            !tags.iter().any(|t| t.id == "e" && t.ref_type == RefType::Eq),
+            "eq:e should be inside the excluded math block; tags = {:?}",
+            tags
+        );
+        // fig:cat is on the line after the math block, should be found
+        assert!(
+            tags.iter().any(|t| t.id == "cat" && t.ref_type == RefType::Fig),
+            "fig:cat should be outside the math block; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn dollar_close_with_inline_ref_tag() {
+        // $$ close with {#eq:x} immediately after (no space): the tag is
+        // inside the excluded range. fig:y on the next line is outside.
+        let content = "$$\nE=mc^2\n$${#eq:x}\nSome text {#fig:y}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            !tags.iter().any(|t| t.id == "x" && t.ref_type == RefType::Eq),
+            "eq:x should be inside the excluded math block; tags = {:?}",
+            tags
+        );
+        assert!(
+            tags.iter().any(|t| t.id == "y" && t.ref_type == RefType::Fig),
+            "fig:y should be outside the math block; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn dollar_close_plain_no_tag() {
+        // Plain $$ close without tag: {#eq:e} on the next line is outside.
+        let content = "$$\nE=mc^2\n$$\n{#eq:e}";
+        let tags = scan_definition_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].id, "e");
+        assert_eq!(tags[0].ref_type, RefType::Eq);
+    }
+
+    #[test]
+    fn bracket_close_with_tag_regression() {
+        // \] close with tag: eq:e on the close line is excluded,
+        // fig:cat on the next line is found.
+        let content = "\\[\nE=mc^2\n\\] {#eq:e}\nSome text {#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            !tags.iter().any(|t| t.id == "e" && t.ref_type == RefType::Eq),
+            "eq:e should be inside the excluded math block; tags = {:?}",
+            tags
+        );
+        assert!(
+            tags.iter().any(|t| t.id == "cat" && t.ref_type == RefType::Fig),
+            "fig:cat should be outside the math block; tags = {:?}",
+            tags
+        );
+    }
+
+    // --- F9 regression tests: refactoring safety net ---
+
+    #[test]
+    fn unclosed_dollar_block_excludes_to_eof() {
+        // No closing $$, so the entire rest of content is excluded.
+        let content = "$$\nE=mc^2\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert_eq!(
+            tags.len(),
+            0,
+            "fig:cat inside unclosed $$ block should be excluded; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn unclosed_bracket_block_excludes_to_eof() {
+        // No closing \], so the entire rest of content is excluded.
+        let content = "\\[\nE=mc^2\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert_eq!(
+            tags.len(),
+            0,
+            "fig:cat inside unclosed \\[ block should be excluded; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn empty_dollar_math_block_tag_after() {
+        // $$ immediately closed on the next line; tag after is found.
+        let content = "$$\n$$\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert_eq!(tags.len(), 1, "fig:cat after empty $$ block should be found; tags = {:?}", tags);
+        assert_eq!(tags[0].id, "cat");
+    }
+
+    #[test]
+    fn empty_bracket_math_block_tag_after() {
+        // \[ immediately closed on the next line; tag after is found.
+        let content = "\\[\n\\]\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert_eq!(tags.len(), 1, "fig:cat after empty \\[ block should be found; tags = {:?}", tags);
+        assert_eq!(tags[0].id, "cat");
+    }
+
+    #[test]
+    fn dollar_close_with_leading_whitespace() {
+        // $$ close line has leading whitespace: "  $$ {#eq:e}"
+        // eq:e is inside the excluded block, fig:cat after is found.
+        let content = "$$\nE=mc^2\n  $$ {#eq:e}\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            !tags.iter().any(|t| t.id == "e"),
+            "eq:e should be inside the excluded math block; tags = {:?}",
+            tags
+        );
+        assert!(
+            tags.iter().any(|t| t.id == "cat" && t.ref_type == RefType::Fig),
+            "fig:cat should be outside the math block; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn bracket_close_with_content_before() {
+        // \] at the end of a line with other content before it.
+        let content = "\\[\nE=mc^2\\]\n{#fig:cat}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            tags.iter().any(|t| t.id == "cat" && t.ref_type == RefType::Fig),
+            "fig:cat should be found after \\[ block closed by content\\]; tags = {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn mixed_dollar_and_bracket_blocks_with_tags() {
+        // Both $$ and \[ blocks with trailing tags: eq:a and eq:b are
+        // excluded, fig:outside on the last line is found.
+        let content = "$$\na\n$$ {#eq:a}\n\\[\nb\n\\] {#eq:b}\n{#fig:outside}";
+        let tags = scan_definition_tags(content);
+        assert!(
+            !tags.iter().any(|t| t.id == "a" && t.ref_type == RefType::Eq),
+            "eq:a should be inside the $$ excluded block; tags = {:?}",
+            tags
+        );
+        assert!(
+            !tags.iter().any(|t| t.id == "b" && t.ref_type == RefType::Eq),
+            "eq:b should be inside the \\[ excluded block; tags = {:?}",
+            tags
+        );
+        assert!(
+            tags.iter().any(|t| t.id == "outside" && t.ref_type == RefType::Fig),
+            "fig:outside should be outside both math blocks; tags = {:?}",
+            tags
+        );
     }
 }

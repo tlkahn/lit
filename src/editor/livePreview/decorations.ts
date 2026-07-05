@@ -629,8 +629,13 @@ function addDisplayMathDecos(
   if (isCursorOnLine(state, from, to)) return;
 
   let latex = state.doc.sliceString(from, to);
-  if (latex.startsWith("$$") || latex.startsWith("\\[")) latex = latex.slice(2);
-  if (latex.endsWith("$$") || latex.endsWith("\\]")) latex = latex.slice(0, -2);
+  if (latex.startsWith("$$")) {
+    latex = latex.slice(2);
+    if (latex.endsWith("$$")) latex = latex.slice(0, -2);
+  } else if (latex.startsWith("\\[")) {
+    latex = latex.slice(2);
+    if (latex.endsWith("\\]")) latex = latex.slice(0, -2);
+  }
   latex = latex.trim();
 
   decos.push({

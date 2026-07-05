@@ -1,6 +1,6 @@
 import { marked, Marked } from "marked";
 import DOMPurify from "dompurify";
-import { renderMathToHtml } from "./renderMath";
+import { renderMathToHtml, replaceInlineMath } from "./renderMath";
 import { litFootnoteExtension } from "./markedFootnote";
 
 // Dedicated instance so the footnote extension never leaks into other callers
@@ -56,19 +56,21 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
     return `￰MATHPH${idx}￰`;
   });
 
-  working = working.replace(/(?<!\\)\\\[([\s\S]+?)\\\]/g, (_, latex) => {
+  // Single-line display math: \[ at line start, \] at line end
+  working = working.replace(/^\\\[(.+?)\\\]\s*$/gm, (_, latex) => {
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, true));
     return `￰MATHPH${idx}￰`;
   });
 
-  working = working.replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, latex) => {
+  // Multi-line display math: \[ alone on its line, \] at end of a line
+  working = working.replace(/^\\\[\s*\n([\s\S]+?)\\\]\s*$/gm, (_, latex) => {
     const idx = placeholders.length;
-    placeholders.push(renderMathToHtml(latex, false));
+    placeholders.push(renderMathToHtml(latex, true));
     return `￰MATHPH${idx}￰`;
   });
 
-  working = working.replace(/(?<!\\)\\\(([^\n]+?)\\\)/g, (_, latex) => {
+  working = replaceInlineMath(working, (latex) => {
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, false));
     return `￰MATHPH${idx}￰`;

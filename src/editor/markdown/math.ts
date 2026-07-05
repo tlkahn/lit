@@ -10,6 +10,16 @@ export const Math: MarkdownConfig = {
   parseInline: [
     {
       name: "InlineMath",
+      // Must run before Escape so \( is intercepted as a math opener
+      // rather than consumed by CommonMark's Escape parser (which turns
+      // \<punctuation> into a literal character).
+      //
+      // Tradeoff: \( can no longer produce a literal parenthesis via
+      // CommonMark escape.  This is intentional — parentheses need no
+      // escaping in markdown, so the \( escape is unused in practice.
+      // Every major tool that supports \(...\) math (Pandoc, MathJax,
+      // KaTeX auto-render, Obsidian, Typora) makes the same choice.
+      // Users who want a literal backslash+paren sequence use \\(.
       before: "Escape",
       parse(cx, next, pos) {
         // Two delimiter styles: $...$ (openSize 1) and \(...\) (openSize 2)
@@ -67,6 +77,10 @@ export const Math: MarkdownConfig = {
             return true;
           }
         }
+
+        // \[ must be alone on the line to open a multi-line block,
+        // mirroring the $$ rule.  Prose like \[a\] ... is not display math.
+        if (close === "\\]" && line.text.trim() !== "\\[") return false;
 
         // $$ closes only on its own line; \] closes any line it ends
         const closeRe =

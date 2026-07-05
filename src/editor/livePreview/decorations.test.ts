@@ -902,6 +902,60 @@ describe("buildDecorations — display math with \\[...\\] delimiters", () => {
     expect(widget).toBeUndefined();
     view.destroy();
   });
+
+  it("unclosed $$ block whose last line ends with \\] does not strip \\] as closer", () => {
+    const doc = "hello\n\n$$\nx^2 \\]";
+    const view = makeView(doc, 0);
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2 \\]");
+    view.destroy();
+  });
+
+  it("unclosed \\[ block whose last line ends with $$ does not strip $$ as closer", () => {
+    const doc = "hello\n\n\\[\nx^2 $$";
+    const view = makeView(doc, 0);
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2 $$");
+    view.destroy();
+  });
+
+  it("properly closed multi-line $$...$$ still extracts latex correctly", () => {
+    const doc = "$$\nx^2\n$$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
+
+  it("properly closed multi-line \\[...\\] still extracts latex correctly", () => {
+    const doc = "\\[\nx^2\n\\]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
+
+  it("single-line $$x^2$$ still extracts latex correctly", () => {
+    const doc = "$$x^2$$\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
+
+  it("single-line \\[x^2\\] still extracts latex correctly", () => {
+    const doc = "\\[x^2\\]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
 });
 
 describe("buildDecorations — inline math with \\(...\\) delimiters", () => {

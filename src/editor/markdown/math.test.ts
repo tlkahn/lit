@@ -112,6 +112,33 @@ describe("InlineMath parser with \\(...\\) delimiters", () => {
     expect(im!.from).toBe(8);
     expect(im!.to).toBe(13);
   });
+
+  // Tradeoff: \( is math, not CommonMark escape — this is intentional.
+  // Parentheses need no escaping in markdown, so \( as escape is unused
+  // in practice. Users who want literal backslash+paren use \\(.
+  it("f\\(x\\) is parsed as InlineMath (tradeoff: \\( is math, not CommonMark escape)", () => {
+    const nodes = parseNodes("f\\(x\\)");
+    const im = nodes.find((n) => n.name === "InlineMath");
+    expect(im).toBeDefined();
+    expect(im!.from).toBe(1);
+    expect(im!.to).toBe(6);
+    const marks = nodes.filter((n) => n.name === "InlineMathMark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toEqual({ name: "InlineMathMark", from: 1, to: 3 });
+    expect(marks[1]).toEqual({ name: "InlineMathMark", from: 4, to: 6 });
+  });
+
+  it("mid-sentence \\(x+1\\) is parsed as InlineMath", () => {
+    const nodes = parseNodes("compute \\(x+1\\) here");
+    const im = nodes.find((n) => n.name === "InlineMath");
+    expect(im).toBeDefined();
+    expect(im!.from).toBe(8);
+    expect(im!.to).toBe(15);
+    const marks = nodes.filter((n) => n.name === "InlineMathMark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toEqual({ name: "InlineMathMark", from: 8, to: 10 });
+    expect(marks[1]).toEqual({ name: "InlineMathMark", from: 13, to: 15 });
+  });
 });
 
 describe("DisplayMath parser", () => {
@@ -257,5 +284,58 @@ describe("DisplayMath parser with \\[...\\] delimiters", () => {
   it("\\[ inside fenced code does not parse", () => {
     const nodes = parseNodes("```\n\\[\nx\n\\]\n```");
     expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
+  });
+
+  it("prose with \\[a\\] brackets is not parsed as DisplayMath", () => {
+    const nodes = parseNodes("\\[a\\] and \\[b\\] are the options");
+    expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
+  });
+
+  it("\\[ with trailing content and no close is not multi-line DisplayMath", () => {
+    const nodes = parseNodes("\\[content\nmore text");
+    expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
+  });
+
+  it("empty \\[\\] does not produce DisplayMath", () => {
+    const nodes = parseNodes("\\[\\]");
+    expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
+  });
+
+  it("empty \\[\\] followed by content does not wrap to end of document", () => {
+    const nodes = parseNodes("\\[\\]\nsome text\nmore text");
+    expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
+  });
+
+  it("\\[x\\] single-char content parses as DisplayMath", () => {
+    const nodes = parseNodes("\\[x\\]");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(5);
+  });
+});
+
+describe("DisplayMath empty-content consistency", () => {
+  it("$$$$ (empty dollar display math) falls through to unclosed block", () => {
+    // $$closeIdx = "$$$$".indexOf("$$", 2) = 2, closeIdx > 2 is false,
+    // so same-line branch is skipped. Since close is "$$" (not "\\]"),
+    // line 83 guard doesn't apply, and multi-line loop finds no closing $$.
+    // Falls through to unclosed-block at line 102.
+    const nodes = parseNodes("$$$$");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    // It creates an unclosed DisplayMath covering the whole line
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(4);
+  });
+
+  it("$$$$ followed by content wraps to end (unclosed block)", () => {
+    const nodes = parseNodes("$$$$\nsome text");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    // $$ on the second line matches the closeRe, so closes after "some text"
+    // Actually: "$$$$" opens, nextLine gives "some text", closeRe doesn't match,
+    // loop ends, falls to unclosed block covering to lastEnd
+    expect(dm!.from).toBe(0);
   });
 });

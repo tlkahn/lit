@@ -1,5 +1,5 @@
 import { escapeHtml } from "../../lib/escapeHtml";
-import { renderMathToHtml } from "../../lib/renderMath";
+import { renderMathToHtml, replaceInlineMath } from "../../lib/renderMath";
 
 export type Alignment = "left" | "right" | "center" | "default";
 
@@ -92,15 +92,8 @@ export function renderInlineMarkdown(text: string): string {
     return `￰TBLPH${idx}￰`;
   });
 
-  // Inline math
-  working = working.replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, latex) => {
-    const idx = placeholders.length;
-    placeholders.push(renderMathToHtml(latex, false));
-    return `￰TBLPH${idx}￰`;
-  });
-
-  // Inline math, \(...\) style
-  working = working.replace(/(?<!\\)\\\(([^\n]+?)\\\)/g, (_, latex) => {
+  // Inline math ($...$ and \(...\) delimiters)
+  working = replaceInlineMath(working, (latex) => {
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, false));
     return `￰TBLPH${idx}￰`;

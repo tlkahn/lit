@@ -88,18 +88,20 @@ fn detect_fence_close(line: &str, expected_fence: &str) -> bool {
     }
 }
 
-/// True when a line that starts a `\[` display block also closes it on the
-/// same line: it ends with `\]` plus an optional `{#...}` label. Single-line
-/// display math is left to the equation parser, mirroring `$$x$${#eq:id}`.
-pub(crate) fn bracket_closes_same_line(trimmed: &str) -> bool {
-    let mut rest = trimmed.trim_end();
-    // Strip an optional trailing {#...} label
+/// Strip an optional trailing `{#type:id}` reference tag (plus surrounding
+/// whitespace) from a line.  Returns the slice before the tag, or the
+/// original (trimmed) string if no tag is present.
+///
+/// Grammar: `<content> [ws] {#<word>:<chars>} [ws]` where `<word>` is `[a-z]+`
+/// and `<chars>` is `[^}]+`.
+pub(crate) fn strip_trailing_ref_tag(s: &str) -> &str {
+    let rest = s.trim_end();
     if rest.ends_with('}') {
         if let Some(idx) = rest.rfind("{#") {
-            rest = rest[..idx].trim_end();
+            return rest[..idx].trim_end();
         }
     }
-    rest.len() > 2 && rest.ends_with("\\]")
+    rest
 }
 
 /// Single-pass scanner. Iterates all lines once, updates context, dispatches to parsers.
@@ -152,10 +154,13 @@ pub fn scan_document(
         if !ctx.in_code_block {
             let trimmed = line.trim();
             if ctx.in_math_block {
-                // Close only on the delimiter style that opened the block
+                // Close only on the delimiter style that opened the block.
+                // The close line may carry a trailing {#eq:id} tag, which
+                // must be stripped before matching the delimiter.
+                let stripped = strip_trailing_ref_tag(trimmed);
                 let closes = match ctx.math_delim {
-                    Some(MathDelim::Bracket) => trimmed.ends_with("\\]"),
-                    _ => trimmed == "$$",
+                    Some(MathDelim::Bracket) => stripped.ends_with("\\]"),
+                    _ => stripped == "$$",
                 };
                 if closes {
                     ctx.in_math_block = false;
@@ -167,7 +172,7 @@ pub fn scan_document(
             } else {
                 let opens = if trimmed == "$$" {
                     Some(MathDelim::Dollar)
-                } else if trimmed.starts_with("\\[") && !bracket_closes_same_line(trimmed) {
+                } else if trimmed == "\\[" {
                     Some(MathDelim::Bracket)
                 } else {
                     None
@@ -241,15 +246,6 @@ mod tests {
         let offsets = compute_utf16_offsets(content);
         // "图" = 1 UTF-16 unit, + newline = 2
         assert_eq!(offsets, vec![0, 2]);
-    }
-
-    #[test]
-    fn bracket_closes_same_line_cases() {
-        assert!(bracket_closes_same_line(r"\[x\]"));
-        assert!(bracket_closes_same_line(r"\[x\]{#eq:a}"));
-        assert!(bracket_closes_same_line(r"\[x\] {#eq:a}"));
-        assert!(!bracket_closes_same_line(r"\["));
-        assert!(!bracket_closes_same_line(r"\[x"));
     }
 
     #[test]
