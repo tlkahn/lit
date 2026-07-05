@@ -51,7 +51,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     paddingLeft: "calc(8px + var(--li-indent, 0px))",
   },
   ".cm-callout.cm-list-item": {
-    paddingLeft: "calc(8px + var(--li-indent, 0px))",
+    paddingLeft: "calc(12px + var(--li-indent, 0px))",
   },
   ".cm-list-item-continuation": {
     paddingLeft: "var(--li-indent, 0px)",
@@ -60,7 +60,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     paddingLeft: "calc(8px + var(--li-indent, 0px))",
   },
   ".cm-callout.cm-list-item-continuation": {
-    paddingLeft: "calc(8px + var(--li-indent, 0px))",
+    paddingLeft: "calc(12px + var(--li-indent, 0px))",
   },
 
   // Blockquotes
@@ -82,19 +82,41 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     fontStyle: "italic !important",
   },
 
-  // Callouts — base
+  // Callouts — base. Mirrors .cm-annotation-callout (annotation.css): 4px soft
+  // border, 5% background, 8px/12px block padding. The block padding is spread
+  // across per-line decorations: inline padding on every line, top on
+  // .cm-callout-first, bottom on .cm-callout-last (padding, never margin — CM6
+  // height map). Corner radii live on the edge lines so the multi-line block
+  // reads as one continuous box instead of per-line scallops.
   ".cm-callout": {
-    borderInlineStart: "3px solid var(--text-faint)",
-    borderRadius: "4px",
-    padding: "2px 8px",
-    backgroundColor: "color-mix(in srgb, var(--text-faint) 8%, transparent)",
+    borderInlineStart: "4px solid color-mix(in srgb, var(--text-faint) 60%, transparent)",
+    padding: "0 12px",
+    backgroundColor: "color-mix(in srgb, var(--text-faint) 5%, transparent)",
   },
+  ".cm-callout-first": {
+    borderStartStartRadius: "4px",
+    borderStartEndRadius: "4px",
+    paddingTop: "8px",
+    paddingBottom: "6px",
+  },
+  ".cm-callout-last": {
+    borderEndStartRadius: "4px",
+    borderEndEndRadius: "4px",
+    paddingBottom: "8px",
+  },
+  // inline-flex, not flex: a block-level widget splits the line's inline
+  // content into separate line boxes, so CM6's widget buffers (the IMG
+  // elements inserted around every inline widget) each claim a full
+  // line-height of phantom vertical space. Keeping the header inline lets the
+  // buffers share its line box.
   ".cm-callout-header": {
-    display: "flex",
+    display: "inline-flex",
+    width: "100%",
+    verticalAlign: "top",
     alignItems: "center",
     gap: "6px",
-    fontWeight: "bold",
-    fontSize: "0.95em",
+    fontWeight: "600",
+    fontSize: "0.9em",
     padding: "0",
   },
   ".cm-callout-fold-icon": {
@@ -122,56 +144,56 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
 
   // Callouts — per-type
   ".cm-callout-note": {
-    borderInlineStartColor: "var(--color-blue)",
-    backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-blue) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-blue) 5%, transparent)",
   },
   ".cm-callout-tip": {
-    borderInlineStartColor: "var(--color-green)",
-    backgroundColor: "color-mix(in srgb, var(--color-green) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-green) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-green) 5%, transparent)",
   },
   ".cm-callout-warning": {
-    borderInlineStartColor: "var(--color-yellow)",
-    backgroundColor: "color-mix(in srgb, var(--color-yellow) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-yellow) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-yellow) 5%, transparent)",
   },
   ".cm-callout-danger": {
-    borderInlineStartColor: "var(--color-red)",
-    backgroundColor: "color-mix(in srgb, var(--color-red) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-red) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-red) 5%, transparent)",
   },
   ".cm-callout-info": {
-    borderInlineStartColor: "var(--color-blue)",
-    backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-blue) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-blue) 5%, transparent)",
   },
   ".cm-callout-success": {
-    borderInlineStartColor: "var(--color-green)",
-    backgroundColor: "color-mix(in srgb, var(--color-green) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-green) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-green) 5%, transparent)",
   },
   ".cm-callout-failure": {
-    borderInlineStartColor: "var(--color-red)",
-    backgroundColor: "color-mix(in srgb, var(--color-red) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-red) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-red) 5%, transparent)",
   },
   ".cm-callout-bug": {
-    borderInlineStartColor: "var(--color-orange)",
-    backgroundColor: "color-mix(in srgb, var(--color-orange) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-orange) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-orange) 5%, transparent)",
   },
   ".cm-callout-example": {
-    borderInlineStartColor: "var(--color-purple)",
-    backgroundColor: "color-mix(in srgb, var(--color-purple) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-purple) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-purple) 5%, transparent)",
   },
   ".cm-callout-quote": {
-    borderInlineStartColor: "var(--text-faint)",
-    backgroundColor: "color-mix(in srgb, var(--text-faint) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--text-faint) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--text-faint) 5%, transparent)",
   },
   ".cm-callout-question": {
-    borderInlineStartColor: "var(--color-yellow)",
-    backgroundColor: "color-mix(in srgb, var(--color-yellow) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-yellow) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-yellow) 5%, transparent)",
   },
   ".cm-callout-abstract": {
-    borderInlineStartColor: "var(--color-cyan)",
-    backgroundColor: "color-mix(in srgb, var(--color-cyan) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-cyan) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-cyan) 5%, transparent)",
   },
   ".cm-callout-todo": {
-    borderInlineStartColor: "var(--color-blue)",
-    backgroundColor: "color-mix(in srgb, var(--color-blue) 8%, transparent)",
+    borderInlineStartColor: "color-mix(in srgb, var(--color-blue) 60%, transparent)",
+    backgroundColor: "color-mix(in srgb, var(--color-blue) 5%, transparent)",
   },
 
   // Math
