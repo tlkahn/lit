@@ -217,3 +217,26 @@ describe("list item continuation theme spec", () => {
     expect(rule.paddingLeft).toContain("8px");
   });
 });
+
+describe("callout theme spec", () => {
+  it(".cm-callout-header has no vertical padding and reduced title size", () => {
+    const rule = livePreviewThemeSpec[".cm-callout-header"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.padding).toBe("0");
+    expect(rule.fontSize).toBe("0.95em");
+    expect(rule.fontWeight).toBe("bold");
+  });
+
+  it(".cm-callout-icon matches the header font size", () => {
+    const rule = livePreviewThemeSpec[".cm-callout-icon"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.fontSize).toBe("1em");
+  });
+
+  it(".cm-callout-fold-icon .svg-icon is 16px", () => {
+    const rule = livePreviewThemeSpec[".cm-callout-fold-icon .svg-icon"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.width).toBe("16px");
+    expect(rule.height).toBe("16px");
+  });
+});

@@ -213,7 +213,7 @@ export class CalloutHeaderWidget extends WidgetType {
   }
 
   get estimatedHeight(): number {
-    return 30;
+    return 20;
   }
 }
 

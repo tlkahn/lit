@@ -94,7 +94,8 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     alignItems: "center",
     gap: "6px",
     fontWeight: "bold",
-    padding: "4px 0",
+    fontSize: "0.95em",
+    padding: "0",
   },
   ".cm-callout-fold-icon": {
     cursor: "pointer",
@@ -104,8 +105,8 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     alignItems: "center",
   },
   ".cm-callout-fold-icon .svg-icon": {
-    width: "18px",
-    height: "18px",
+    width: "16px",
+    height: "16px",
     strokeWidth: "2",
     transition: "transform 100ms ease-in-out",
   },
@@ -113,7 +114,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     transform: "rotate(-90deg)",
   },
   ".cm-callout-icon": {
-    fontSize: "1.1em",
+    fontSize: "1em",
   },
   ".cm-callout-title": {
     flex: "1",
