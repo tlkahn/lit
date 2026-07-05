@@ -248,3 +248,54 @@ describe("renderInlineMarkdown", () => {
     expect(result).not.toContain("footnote-ref");
   });
 });
+
+describe("renderMarkdown hr variants", () => {
+  it("renders --- as short hr", () => {
+    const result = renderMarkdown("---");
+    expect(result).toContain('class="md-hr md-hr-short"');
+  });
+
+  it("renders ---- as full hr", () => {
+    const result = renderMarkdown("----");
+    expect(result).toContain('class="md-hr"');
+    expect(result).not.toContain("md-hr-short");
+  });
+
+  it("renders *** as full hr", () => {
+    const result = renderMarkdown("***");
+    expect(result).toContain('class="md-hr"');
+    expect(result).not.toContain("md-hr-short");
+  });
+
+  it("renders ***** as full hr", () => {
+    const result = renderMarkdown("*****");
+    expect(result).toContain('class="md-hr"');
+    expect(result).not.toContain("md-hr-short");
+  });
+
+  it("renders ___ as full hr", () => {
+    const result = renderMarkdown("___");
+    expect(result).toContain('class="md-hr"');
+    expect(result).not.toContain("md-hr-short");
+  });
+
+  it("renders spaced dashes - - - as short hr", () => {
+    const result = renderMarkdown("- - -");
+    expect(result).toContain("md-hr-short");
+  });
+
+  it("renders setext heading (text\\n---) as h2, not hr", () => {
+    const result = renderMarkdown("heading\n---");
+    expect(result).toContain("<h2");
+    expect(result).not.toContain("md-hr");
+  });
+
+  it("class attribute survives DOMPurify sanitization", () => {
+    const result = renderMarkdown("---");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const hr = div.querySelector("hr");
+    expect(hr?.classList.contains("md-hr")).toBe(true);
+    expect(hr?.classList.contains("md-hr-short")).toBe(true);
+  });
+});

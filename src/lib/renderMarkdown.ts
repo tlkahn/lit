@@ -13,6 +13,12 @@ litMarked.use({
       const titleAttr = title ? ` title="${title}"` : "";
       return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
     },
+    hr({ raw }) {
+      const short = raw.replace(/\s/g, "") === "---";
+      return short
+        ? '<hr class="md-hr md-hr-short">\n'
+        : '<hr class="md-hr">\n';
+    },
   },
 });
 

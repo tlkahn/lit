@@ -439,3 +439,17 @@ section.footnotes a[data-footnote-backref] {
 section.footnotes a[data-footnote-backref]:hover {
   color: var(--text-accent);
 }
+
+/* === hr variants in rendered markdown (annotation widgets, cards, previews) === */
+
+hr.md-hr {
+  border: none;
+  border-top: 1px solid var(--text-faint);
+  margin: 0.75em 0;
+}
+
+hr.md-hr.md-hr-short {
+  width: 25%;
+  margin: 1em auto;
+  opacity: 0.6;
+}
