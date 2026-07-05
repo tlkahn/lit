@@ -59,6 +59,61 @@ describe("InlineMath parser", () => {
   });
 });
 
+describe("InlineMath parser with \\(...\\) delimiters", () => {
+  it("parses \\(E=mc^2\\) as InlineMath with 2-char marks", () => {
+    const nodes = parseNodes("\\(E=mc^2\\)");
+    const im = nodes.find((n) => n.name === "InlineMath");
+    expect(im).toBeDefined();
+    expect(im!.from).toBe(0);
+    expect(im!.to).toBe(10);
+    const marks = nodes.filter((n) => n.name === "InlineMathMark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toEqual({ name: "InlineMathMark", from: 0, to: 2 });
+    expect(marks[1]).toEqual({ name: "InlineMathMark", from: 8, to: 10 });
+  });
+
+  it("escaped opener \\\\(not math\\) does not parse", () => {
+    const nodes = parseNodes("\\\\(not math\\)");
+    expect(nodes.some((n) => n.name === "InlineMath")).toBe(false);
+  });
+
+  it("bare parens inside content do not close: \\( f(x) \\)", () => {
+    const nodes = parseNodes("\\( f(x) \\)");
+    const im = nodes.find((n) => n.name === "InlineMath");
+    expect(im).toBeDefined();
+    expect(im!.from).toBe(0);
+    expect(im!.to).toBe(10);
+  });
+
+  it("does not match \\(unclosed", () => {
+    const nodes = parseNodes("\\(unclosed");
+    expect(nodes.some((n) => n.name === "InlineMath")).toBe(false);
+  });
+
+  it("does not span newlines", () => {
+    const nodes = parseNodes("\\(broken\nmath\\)");
+    expect(nodes.some((n) => n.name === "InlineMath")).toBe(false);
+  });
+
+  it("mixed delimiters do not match: \\( x $", () => {
+    const nodes = parseNodes("\\( x $");
+    expect(nodes.some((n) => n.name === "InlineMath")).toBe(false);
+  });
+
+  it("mixed delimiters do not match: $ x \\)", () => {
+    const nodes = parseNodes("$ x \\)");
+    expect(nodes.some((n) => n.name === "InlineMath")).toBe(false);
+  });
+
+  it("escaped dollar coexists with paren math: \\$5 and \\(x\\)", () => {
+    const nodes = parseNodes("\\$5 and \\(x\\)");
+    const im = nodes.find((n) => n.name === "InlineMath");
+    expect(im).toBeDefined();
+    expect(im!.from).toBe(8);
+    expect(im!.to).toBe(13);
+  });
+});
+
 describe("DisplayMath parser", () => {
   it("parses multi-line $$...$$  as DisplayMath", () => {
     const nodes = parseNodes("$$\ncontent\n$$");
@@ -129,5 +184,78 @@ describe("DisplayMath parser", () => {
     expect(dm).toBeDefined();
     expect(dm!.from).toBe(0);
     expect(dm!.to).toBe(13);
+  });
+});
+
+describe("DisplayMath parser with \\[...\\] delimiters", () => {
+  it("parses single-line \\[E=mc^2\\] as DisplayMath", () => {
+    const nodes = parseNodes("\\[E=mc^2\\]");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(10);
+  });
+
+  it("parses \\[E=mc^2\\] {#eq:label} excluding the label", () => {
+    const nodes = parseNodes("\\[E=mc^2\\] {#eq:einstein}");
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(10);
+  });
+
+  it("parses multi-line \\[...\\] with close on its own line", () => {
+    const doc = "\\[\nE=mc^2\n\\]";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(doc.length);
+  });
+
+  it("parses multi-line \\[...\\] {#eq:label} on closing line, label excluded", () => {
+    const doc = "\\[\nE=mc^2\n\\] {#eq:einstein}";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(12); // ends after \] on closing line
+  });
+
+  it("closes when a content line ends with \\]", () => {
+    const doc = "\\[\nE=mc^2 \\]";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(12); // ends after \] at end of content line
+  });
+
+  it("content-line close with trailing label excludes the label", () => {
+    const doc = "\\[\nE=mc^2 \\] {#eq:e}";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(12);
+  });
+
+  it("unclosed \\[ produces DisplayMath to last line", () => {
+    const doc = "\\[\nfoo";
+    const nodes = parseNodes(doc);
+    const dm = nodes.find((n) => n.name === "DisplayMath");
+    expect(dm).toBeDefined();
+    expect(dm!.from).toBe(0);
+    expect(dm!.to).toBe(doc.length);
+  });
+
+  it("escaped opener \\\\[ at line start does not parse", () => {
+    const nodes = parseNodes("\\\\[not math\\]");
+    expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
+  });
+
+  it("\\[ inside fenced code does not parse", () => {
+    const nodes = parseNodes("```\n\\[\nx\n\\]\n```");
+    expect(nodes.some((n) => n.name === "DisplayMath")).toBe(false);
   });
 });

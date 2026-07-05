@@ -56,7 +56,19 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
     return `￰MATHPH${idx}￰`;
   });
 
+  working = working.replace(/(?<!\\)\\\[([\s\S]+?)\\\]/g, (_, latex) => {
+    const idx = placeholders.length;
+    placeholders.push(renderMathToHtml(latex, true));
+    return `￰MATHPH${idx}￰`;
+  });
+
   working = working.replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, latex) => {
+    const idx = placeholders.length;
+    placeholders.push(renderMathToHtml(latex, false));
+    return `￰MATHPH${idx}￰`;
+  });
+
+  working = working.replace(/(?<!\\)\\\(([^\n]+?)\\\)/g, (_, latex) => {
     const idx = placeholders.length;
     placeholders.push(renderMathToHtml(latex, false));
     return `￰MATHPH${idx}￰`;

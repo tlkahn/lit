@@ -138,6 +138,45 @@ fn compute_excluded_ranges(content: &str) -> Vec<(usize, usize)> {
             }
         }
 
+        // Check for display math block opened by \[ at line start.
+        // An escaped \\[ line has bytes[i + 1] == b'\\', so it never matches.
+        if i + 1 < len && bytes[i] == b'\\' && bytes[i + 1] == b'[' {
+            let at_line_start = i == 0 || bytes[i - 1] == b'\n';
+            if at_line_start {
+                let mut line_end = i;
+                while line_end < len && bytes[line_end] != b'\n' {
+                    line_end += 1;
+                }
+                // Single-line \[...\]{#eq:id} math keeps its tag scannable,
+                // matching $$x$${#eq:id} — only multi-line blocks are excluded.
+                if !crate::parser::scan::bracket_closes_same_line(content[i..line_end].trim())
+                {
+                    let block_start = i;
+                    i = if line_end < len { line_end + 1 } else { line_end };
+
+                    // Scan until a line whose trimmed content ends with \]
+                    loop {
+                        if i >= len {
+                            ranges.push((block_start, len));
+                            break;
+                        }
+                        let mut le = i;
+                        while le < len && bytes[le] != b'\n' {
+                            le += 1;
+                        }
+                        let next = if le < len { le + 1 } else { le };
+                        if content[i..le].trim_end().ends_with("\\]") {
+                            ranges.push((block_start, next));
+                            i = next;
+                            break;
+                        }
+                        i = next;
+                    }
+                    continue;
+                }
+            }
+        }
+
         // Move to next line
         while i < len && bytes[i] != b'\n' {
             i += 1;
@@ -363,6 +402,28 @@ mod tests {
         let tags = scan_definition_tags(content);
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].id, "einstein");
+    }
+
+    #[test]
+    fn scan_tag_in_bracket_math_block_skipped() {
+        let content = "\\[\n{#eq:fake}\n\\]";
+        let tags = scan_definition_tags(content);
+        assert_eq!(tags.len(), 0);
+    }
+
+    #[test]
+    fn scan_tag_after_bracket_math_block_not_skipped() {
+        let content = "\\[\nE=mc^2\n\\]\n{#eq:real}";
+        let tags = scan_definition_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].id, "real");
+    }
+
+    #[test]
+    fn scan_tag_on_single_line_bracket_math_not_skipped() {
+        let tags = scan_definition_tags("\\[E=mc^2\\]{#eq:inline}");
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].id, "inline");
     }
 
     #[test]

@@ -99,6 +99,13 @@ export function renderInlineMarkdown(text: string): string {
     return `￰TBLPH${idx}￰`;
   });
 
+  // Inline math, \(...\) style
+  working = working.replace(/(?<!\\)\\\(([^\n]+?)\\\)/g, (_, latex) => {
+    const idx = placeholders.length;
+    placeholders.push(renderMathToHtml(latex, false));
+    return `￰TBLPH${idx}￰`;
+  });
+
   // Pass 2: HTML-escape text segments between placeholders
   working = escapeSegments(working);
 

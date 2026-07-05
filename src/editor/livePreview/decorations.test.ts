@@ -11,7 +11,7 @@ import { Footnote } from "../markdown/footnote";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
-import { ImageWidget, MermaidWidget, HorizontalRuleWidget } from "./widgets";
+import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget } from "./widgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -840,6 +840,84 @@ describe("buildDecorations — display math", () => {
     expect(mathWidget).toBeDefined();
     // Widget covers from opening $$ to closing $$ only (pos 0 to 7+2=9)
     expect(mathWidget!.to).toBe(9);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — display math with \\[...\\] delimiters", () => {
+  function findDisplayMathWidget(view: EditorView): DisplayMathWidget | undefined {
+    const { decorations: decoSet } = buildDecorations(view);
+    const iter = decoSet.iter();
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof DisplayMathWidget) {
+        return iter.value.spec.widget;
+      }
+      iter.next();
+    }
+    return undefined;
+  }
+
+  function findBlockDisplayMathWidget(view: EditorView): DisplayMathWidget | undefined {
+    const blockState = buildBlockReplacements(view.state);
+    const iter = blockState.decos.iter();
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof DisplayMathWidget) {
+        return iter.value.spec.widget;
+      }
+      iter.next();
+    }
+    return undefined;
+  }
+
+  it("single-line \\[x^2\\] renders widget with latex x^2", () => {
+    const doc = "\\[x^2\\]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
+
+  it("content-line close \\[\\nx^2 \\] renders widget with latex x^2", () => {
+    const doc = "\\[\nx^2 \\]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
+
+  it("multi-line \\[...\\] with own-line close renders widget with latex x^2", () => {
+    const doc = "\\[\nx^2\n\\]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeDefined();
+    expect(widget!.latex).toBe("x^2");
+    view.destroy();
+  });
+
+  it("shows raw multi-line \\[...\\] when cursor is on any line of block", () => {
+    const view = makeView("\\[\nx^2\n\\]", 4); // cursor on content line
+    const widget = findBlockDisplayMathWidget(view);
+    expect(widget).toBeUndefined();
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — inline math with \\(...\\) delimiters", () => {
+  it("replaces \\(E=mc^2\\) with InlineMathWidget when cursor elsewhere", () => {
+    const doc = "\\(E=mc^2\\)\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const mathWidget = decos.find((d) => d.widget && d.from === 0 && d.to === 10);
+    expect(mathWidget).toBeDefined();
+    view.destroy();
+  });
+
+  it("shows raw \\(E=mc^2\\) when cursor is inside math", () => {
+    const view = makeView("\\(E=mc^2\\)", 4);
+    const decos = collectDecos(view);
+    expect(decos).toHaveLength(0);
     view.destroy();
   });
 });

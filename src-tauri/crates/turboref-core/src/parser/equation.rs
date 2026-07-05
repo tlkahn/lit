@@ -17,6 +17,17 @@ static INLINE_SAME_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[^$])\$([^$]+)\$\s*\{#eq:([^}]+)\}\s*$").unwrap()
 });
 
+// Same-line display math, bracket style: \[E = mc^2\]{#eq:id}
+static BRACKET_DISPLAY_SAME_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\\\[(.+?)\\\]\s*\{#eq:([^}]+)\}\s*$").unwrap()
+});
+
+// Same-line inline math, paren style: \(E = mc^2\){#eq:id}
+// Rust regex has no lookbehind; (?:^|[^\\]) rejects the escaped opener \\(
+static BRACKET_INLINE_SAME_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^\\])\\\((.+?)\\\)\s*\{#eq:([^}]+)\}\s*$").unwrap()
+});
+
 // Next-line bare tag: {#eq:id}
 static EQ_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*\{#eq:([^}]+)\}\s*$").unwrap()
@@ -34,6 +45,24 @@ impl EquationParser {
     pub fn new() -> Self {
         Self
     }
+}
+
+fn equation_def(
+    id: &str,
+    caption: Option<String>,
+    line_idx: usize,
+    char_offset: usize,
+    counters: &mut Counters,
+) -> Vec<Definition> {
+    counters.eq_count += 1;
+    vec![Definition {
+        ref_type: RefType::Eq,
+        id: id.trim().to_string(),
+        number: RefNumber::Simple(counters.eq_count),
+        caption,
+        line: line_idx,
+        char_offset,
+    }]
 }
 
 impl DefinitionParser for EquationParser {
@@ -62,30 +91,13 @@ impl DefinitionParser for EquationParser {
         if ctx.prev_line_closed_math {
             // Bare tag: {#eq:id}
             if let Some(caps) = EQ_TAG_RE.captures(line) {
-                let id = caps[1].trim().to_string();
-                counters.eq_count += 1;
-                return vec![Definition {
-                    ref_type: RefType::Eq,
-                    id,
-                    number: RefNumber::Simple(counters.eq_count),
-                    caption: None,
-                    line: line_idx,
-                    char_offset,
-                }];
+                return equation_def(&caps[1], None, line_idx, char_offset, counters);
             }
             // Caption-style: : Caption {#eq:id}
             if let Some(caps) = EQ_CAPTION_RE.captures(line) {
                 let caption = caps[1].trim().to_string();
-                let id = caps[2].trim().to_string();
-                counters.eq_count += 1;
-                return vec![Definition {
-                    ref_type: RefType::Eq,
-                    id,
-                    number: RefNumber::Simple(counters.eq_count),
-                    caption: if caption.is_empty() { None } else { Some(caption) },
-                    line: line_idx,
-                    char_offset,
-                }];
+                let caption = if caption.is_empty() { None } else { Some(caption) };
+                return equation_def(&caps[2], caption, line_idx, char_offset, counters);
             }
         }
 
@@ -94,32 +106,17 @@ impl DefinitionParser for EquationParser {
             return Vec::new();
         }
 
-        // 2. Same-line display math: $$...$${#eq:id}
-        if let Some(caps) = DISPLAY_SAME_LINE_RE.captures(line) {
-            let id = caps[2].trim().to_string();
-            counters.eq_count += 1;
-            return vec![Definition {
-                ref_type: RefType::Eq,
-                id,
-                number: RefNumber::Simple(counters.eq_count),
-                caption: None,
-                line: line_idx,
-                char_offset,
-            }];
-        }
-
-        // 3. Same-line inline math: $...$\{#eq:id}
-        if let Some(caps) = INLINE_SAME_LINE_RE.captures(line) {
-            let id = caps[2].trim().to_string();
-            counters.eq_count += 1;
-            return vec![Definition {
-                ref_type: RefType::Eq,
-                id,
-                number: RefNumber::Simple(counters.eq_count),
-                caption: None,
-                line: line_idx,
-                char_offset,
-            }];
+        // 2. Same-line display math: $$...$${#eq:id} or \[...\]{#eq:id}
+        // 3. Same-line inline math: $...${#eq:id} or \(...\){#eq:id}
+        for re in [
+            &DISPLAY_SAME_LINE_RE,
+            &BRACKET_DISPLAY_SAME_LINE_RE,
+            &INLINE_SAME_LINE_RE,
+            &BRACKET_INLINE_SAME_LINE_RE,
+        ] {
+            if let Some(caps) = re.captures(line) {
+                return equation_def(&caps[2], None, line_idx, char_offset, counters);
+            }
         }
 
         Vec::new()
@@ -149,11 +146,48 @@ mod tests {
     }
 
     #[test]
+    fn parse_bracket_display_same_line() {
+        let defs = parse_equations(r"\[E = mc^2\]{#eq:einstein}");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "einstein");
+        assert_eq!(defs[0].number, RefNumber::Simple(1));
+        assert_eq!(defs[0].ref_type, RefType::Eq);
+    }
+
+    #[test]
+    fn parse_bracket_display_same_line_with_space_before_tag() {
+        let defs = parse_equations(r"\[E = mc^2\] {#eq:einstein}");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "einstein");
+    }
+
+    #[test]
     fn parse_inline_same_line() {
         let defs = parse_equations("$E = mc^2${#eq:einstein}");
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].id, "einstein");
         assert_eq!(defs[0].number, RefNumber::Simple(1));
+    }
+
+    #[test]
+    fn parse_bracket_inline_same_line() {
+        let defs = parse_equations(r"\(E = mc^2\){#eq:einstein}");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "einstein");
+        assert_eq!(defs[0].number, RefNumber::Simple(1));
+    }
+
+    #[test]
+    fn parse_bracket_inline_same_line_mid_text() {
+        let defs = parse_equations(r"where \(x\){#eq:x}");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "x");
+    }
+
+    #[test]
+    fn escaped_paren_inline_no_def() {
+        let defs = parse_equations(r"\\(x\){#eq:bad}");
+        assert_eq!(defs.len(), 0);
     }
 
     #[test]
@@ -163,6 +197,73 @@ mod tests {
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].id, "einstein");
         assert_eq!(defs[0].number, RefNumber::Simple(1));
+    }
+
+    #[test]
+    fn parse_bracket_display_next_line() {
+        let content = "\\[\nE = mc^2\n\\]\n{#eq:einstein}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "einstein");
+        assert_eq!(defs[0].number, RefNumber::Simple(1));
+    }
+
+    #[test]
+    fn parse_bracket_equation_with_caption() {
+        let content = "\\[\nE = mc^2\n\\]\n: Einstein's equation {#eq:einstein}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "einstein");
+        assert_eq!(defs[0].caption, Some("Einstein's equation".to_string()));
+    }
+
+    #[test]
+    fn mixed_fences_dollar_open_bracket_close_no_def() {
+        let content = "$$\nE = mc^2\n\\]\n{#eq:bad}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 0);
+    }
+
+    #[test]
+    fn mixed_fences_bracket_open_dollar_close_no_def() {
+        let content = "\\[\nE = mc^2\n$$\n{#eq:bad}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 0);
+    }
+
+    #[test]
+    fn parse_bracket_content_line_close() {
+        let content = "\\[\nE = mc^2 \\]\n{#eq:e}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].id, "e");
+    }
+
+    #[test]
+    fn escaped_bracket_opener_no_def() {
+        let content = "\\\\[\nE = mc^2\n\\]\n{#eq:bad}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 0);
+    }
+
+    #[test]
+    fn bracket_in_code_fence_ignored() {
+        let content = "```\n\\[\nE = mc^2\n\\]\n{#eq:fake}\n```";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 0);
+    }
+
+    #[test]
+    fn bracket_and_dollar_equations_interleave_numbering() {
+        let content = "\\[\na\n\\]\n{#eq:first}\n\n$$\nb\n$$\n{#eq:second}\n\n\\[c\\]{#eq:third}";
+        let defs = parse_equations(content);
+        assert_eq!(defs.len(), 3);
+        assert_eq!(defs[0].id, "first");
+        assert_eq!(defs[0].number, RefNumber::Simple(1));
+        assert_eq!(defs[1].id, "second");
+        assert_eq!(defs[1].number, RefNumber::Simple(2));
+        assert_eq!(defs[2].id, "third");
+        assert_eq!(defs[2].number, RefNumber::Simple(3));
     }
 
     #[test]

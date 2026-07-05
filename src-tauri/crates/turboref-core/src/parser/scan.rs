@@ -2,6 +2,16 @@ use crate::config::DocumentConfig;
 use crate::types::Definition;
 use super::{Counters, ParserRegistry};
 
+/// Which delimiter style opened the current display math block.
+/// A block opened with one style can only be closed by the same style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathDelim {
+    /// $$ ... $$
+    Dollar,
+    /// \[ ... \]
+    Bracket,
+}
+
 /// Shared scanning context updated as we iterate through lines.
 /// Parsers check these flags to skip irrelevant states
 /// (e.g., equation parser skips when in_code_block is true).
@@ -10,8 +20,10 @@ pub struct ScanContext {
     pub in_code_block: bool,
     pub code_fence: String,
     pub in_math_block: bool,
+    /// Delimiter style of the open math block; None when not in a math block.
+    pub math_delim: Option<MathDelim>,
     pub in_html_div: Option<String>,
-    /// Set when the previous line closed a display math block ($$).
+    /// Set when the previous line closed a display math block ($$ or \]).
     pub prev_line_closed_math: bool,
     /// Set when the previous line closed a fenced code block.
     pub prev_line_closed_code: bool,
@@ -76,6 +88,20 @@ fn detect_fence_close(line: &str, expected_fence: &str) -> bool {
     }
 }
 
+/// True when a line that starts a `\[` display block also closes it on the
+/// same line: it ends with `\]` plus an optional `{#...}` label. Single-line
+/// display math is left to the equation parser, mirroring `$$x$${#eq:id}`.
+pub(crate) fn bracket_closes_same_line(trimmed: &str) -> bool {
+    let mut rest = trimmed.trim_end();
+    // Strip an optional trailing {#...} label
+    if rest.ends_with('}') {
+        if let Some(idx) = rest.rfind("{#") {
+            rest = rest[..idx].trim_end();
+        }
+    }
+    rest.len() > 2 && rest.ends_with("\\]")
+}
+
 /// Single-pass scanner. Iterates all lines once, updates context, dispatches to parsers.
 pub fn scan_document(
     content: &str,
@@ -125,14 +151,30 @@ pub fn scan_document(
         // --- Update context: math blocks ---
         if !ctx.in_code_block {
             let trimmed = line.trim();
-            if trimmed == "$$" {
-                if ctx.in_math_block {
+            if ctx.in_math_block {
+                // Close only on the delimiter style that opened the block
+                let closes = match ctx.math_delim {
+                    Some(MathDelim::Bracket) => trimmed.ends_with("\\]"),
+                    _ => trimmed == "$$",
+                };
+                if closes {
                     ctx.in_math_block = false;
+                    ctx.math_delim = None;
                     ctx.prev_line_closed_math = true;
                     ctx.prev_line_closed_code = false;
                     continue;
+                }
+            } else {
+                let opens = if trimmed == "$$" {
+                    Some(MathDelim::Dollar)
+                } else if trimmed.starts_with("\\[") && !bracket_closes_same_line(trimmed) {
+                    Some(MathDelim::Bracket)
                 } else {
+                    None
+                };
+                if let Some(delim) = opens {
                     ctx.in_math_block = true;
+                    ctx.math_delim = Some(delim);
                     ctx.prev_line_closed_math = false;
                     ctx.prev_line_closed_code = false;
                     continue;
@@ -199,6 +241,15 @@ mod tests {
         let offsets = compute_utf16_offsets(content);
         // "图" = 1 UTF-16 unit, + newline = 2
         assert_eq!(offsets, vec![0, 2]);
+    }
+
+    #[test]
+    fn bracket_closes_same_line_cases() {
+        assert!(bracket_closes_same_line(r"\[x\]"));
+        assert!(bracket_closes_same_line(r"\[x\]{#eq:a}"));
+        assert!(bracket_closes_same_line(r"\[x\] {#eq:a}"));
+        assert!(!bracket_closes_same_line(r"\["));
+        assert!(!bracket_closes_same_line(r"\[x"));
     }
 
     #[test]

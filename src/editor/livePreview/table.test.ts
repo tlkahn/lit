@@ -187,6 +187,17 @@ describe("renderInlineMarkdown", () => {
     expect(result).toContain("E=mc^2");
   });
 
+  it("renders inline math with \\(...\\) delimiters", () => {
+    const result = renderInlineMarkdown("\\(x^2\\)");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("x^2");
+  });
+
+  it("does not treat escaped opener \\\\(...\\) as math", () => {
+    const result = renderInlineMarkdown("\\\\(not math\\)");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
   it("math protects content from other transforms", () => {
     const result = renderInlineMarkdown("$**not bold**$");
     expect(result).not.toContain("<strong>");

@@ -59,6 +59,51 @@ describe("renderMarkdown", () => {
     expect(result).toContain("katex");
   });
 
+  it("renders display math with \\[...\\] delimiters", () => {
+    const result = renderMarkdown("\\[x^2\\]");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).toContain("katex");
+  });
+
+  it("renders multi-line display math with \\[...\\] delimiters", () => {
+    const result = renderMarkdown("\\[\nx^2\n\\]");
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("renders inline math with \\(...\\) delimiters", () => {
+    const result = renderMarkdown("The equation \\(x^2\\) is simple.");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("katex");
+  });
+
+  it("keeps escaped \\\\(literal\\\\) as literal text", () => {
+    const result = renderMarkdown("\\\\(literal\\\\)");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("preserves code spans containing \\[not math\\]", () => {
+    const result = renderMarkdown("`\\[not math\\]`");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("preserves fenced code blocks containing \\[", () => {
+    const result = renderMarkdown("```\n\\[\nx\n\\]\n```");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("\\[ $x$ \\] renders as one display block (pass order)", () => {
+    const result = renderMarkdown("\\[ $x$ \\]");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("cm-preview-math-inline");
+  });
+
+  it("mismatched \\(x$ is not math", () => {
+    const result = renderMarkdown("\\(x$");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
   it("shows placeholder when KaTeX is not loaded", () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
     const result = renderMarkdown("$E=mc^2$");

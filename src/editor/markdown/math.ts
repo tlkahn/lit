@@ -10,19 +10,31 @@ export const Math: MarkdownConfig = {
   parseInline: [
     {
       name: "InlineMath",
-      after: "Escape",
+      before: "Escape",
       parse(cx, next, pos) {
-        if (next !== 36) return -1;
-        if (cx.char(pos + 1) === 36) return -1;
-        let end = pos + 1;
+        // Two delimiter styles: $...$ (openSize 1) and \(...\) (openSize 2)
+        let openSize: number;
+        if (next === 36) {
+          if (cx.char(pos + 1) === 36) return -1;
+          openSize = 1;
+        } else if (next === 92 && cx.char(pos + 1) === 40) {
+          openSize = 2;
+        } else {
+          return -1;
+        }
+        let end = pos + openSize;
         while (end < cx.end) {
           const ch = cx.char(end);
           if (ch === 10 || ch === 13 || ch === -1) return -1;
-          if (ch === 36) {
-            const closeEnd = end + 1;
+          const closes =
+            openSize === 1
+              ? ch === 36
+              : ch === 92 && cx.char(end + 1) === 41;
+          if (closes) {
+            const closeEnd = end + openSize;
             return cx.addElement(
               cx.elt("InlineMath", pos, closeEnd, [
-                cx.elt("InlineMathMark", pos, pos + 1),
+                cx.elt("InlineMathMark", pos, pos + openSize),
                 cx.elt("InlineMathMark", end, closeEnd),
               ]),
             );
@@ -38,11 +50,14 @@ export const Math: MarkdownConfig = {
       name: "DisplayMath",
       before: "HorizontalRule",
       parse(cx, line) {
-        if (!/^\$\$/.test(line.text)) return false;
+        let close: string;
+        if (/^\$\$/.test(line.text)) close = "$$";
+        else if (/^\\\[/.test(line.text)) close = "\\]";
+        else return false;
 
         const start = cx.lineStart;
 
-        const closeIdx = line.text.indexOf("$$", 2);
+        const closeIdx = line.text.indexOf(close, 2);
         if (closeIdx > 2) {
           const afterClose = line.text.slice(closeIdx + 2).trim();
           if (afterClose === "" || /^\{#[a-z]+:[^}]+\}$/.test(afterClose)) {
@@ -53,10 +68,16 @@ export const Math: MarkdownConfig = {
           }
         }
 
+        // $$ closes only on its own line; \] closes any line it ends
+        const closeRe =
+          close === "$$"
+            ? /^\$\$\s*(\{#[a-z]+:[^}]+\})?\s*$/
+            : /\\\]\s*(\{#[a-z]+:[^}]+\})?\s*$/;
         let lastEnd = cx.lineStart + line.text.length;
         while (cx.nextLine()) {
-          if (/^\$\$\s*(\{#[a-z]+:[^}]+\})?\s*$/.test(line.text)) {
-            const end = cx.lineStart + 2;
+          const m = closeRe.exec(line.text);
+          if (m) {
+            const end = cx.lineStart + m.index + 2;
             cx.nextLine();
             cx.addElement(cx.elt("DisplayMath", start, end));
             return true;

@@ -628,14 +628,10 @@ function addDisplayMathDecos(
 ) {
   if (isCursorOnLine(state, from, to)) return;
 
-  const text = state.doc.sliceString(from, to);
-  let latex: string;
-  if (text.startsWith("$$") && text.endsWith("$$") && text.length > 4) {
-    latex = text.slice(2, -2).trim();
-  } else {
-    const lines = text.split("\n");
-    latex = lines.slice(1, -1).join("\n").trim();
-  }
+  let latex = state.doc.sliceString(from, to);
+  if (latex.startsWith("$$") || latex.startsWith("\\[")) latex = latex.slice(2);
+  if (latex.endsWith("$$") || latex.endsWith("\\]")) latex = latex.slice(0, -2);
+  latex = latex.trim();
 
   decos.push({
     from,
