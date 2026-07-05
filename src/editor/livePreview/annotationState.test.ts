@@ -19,6 +19,7 @@ import {
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
+  setAllAnnotationFoldsEffect,
   PillWidget,
   CalloutWidget,
   MarkerWidget,
@@ -1102,12 +1103,13 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
 
   it("hasAnnotationEffect is the single source of truth for every rebuild-triggering effect", () => {
     // Single source of truth: the plugin's inline rebuild gate and the block
-    // StateField's gate both delegate to hasAnnotationEffect. Each of these six
+    // StateField's gate both delegate to hasAnnotationEffect. Each of these
     // effects must be recognized, and an unrelated/empty transaction must not.
     const cases = [
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
       setFiringAnnotation.of(0),
       clearFiringAnnotation.of(0),
       setLlmLockedEffect.of(true),

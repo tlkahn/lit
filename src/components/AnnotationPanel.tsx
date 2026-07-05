@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { EditorView } from "@codemirror/view";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { annotationDataField } from "../editor/livePreview/annotationState";
+import { executeCommand } from "../lib/commandRegistry";
 import { TYPE_ICON, getMarkIcon, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import type { Annotation } from "../lib/ipc";
 
@@ -95,8 +96,31 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
   const view = getCurrentEditorView();
   const doc = view?.state.doc;
 
+  const hasMultilineBlock =
+    doc != null &&
+    annotations.some(
+      (ann) =>
+        ann.char_start >= 0 &&
+        ann.char_end <= doc.length &&
+        ann.char_start < ann.char_end &&
+        doc.sliceString(ann.char_start, ann.char_end).includes("\n"),
+    );
+
   return (
     <div className="flex h-full flex-col px-4 py-2">
+      {hasMultilineBlock && (
+        <div data-testid="annotation-panel-toolbar" className="mb-1 flex shrink-0 items-center justify-end">
+          <button
+            data-testid="annotation-panel-fold-all"
+            aria-label="Collapse/expand all block annotations"
+            title="Collapse/expand all block annotations (⌘⇧M)"
+            onClick={() => executeCommand("app.toggleAllBlockAnnotations")}
+            className="flex items-center px-1 text-xs text-text-muted hover:text-text-normal"
+          >
+            <span className="nerd-font" aria-hidden="true">{''}</span>
+          </button>
+        </div>
+      )}
       {annotations.length === 0 ? (
         <p className="text-xs text-text-faint" data-testid="annotation-panel-empty">
           No annotations

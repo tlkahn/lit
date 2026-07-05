@@ -4,7 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect } from "./annotationWidgets";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -142,7 +142,7 @@ export const annotationPlugin = ViewPlugin.fromClass(
   },
 );
 
-function findAnnotationForRange(
+export function findAnnotationForRange(
   annotations: Annotation[],
   from: number,
   to: number,
@@ -347,6 +347,7 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
     e.is(setAnnotationData) ||
     e.is(setDisplayMode) ||
     e.is(toggleAnnotationFoldEffect) ||
+    e.is(setAllAnnotationFoldsEffect) ||
     e.is(setFiringAnnotation) ||
     e.is(clearFiringAnnotation) ||
     e.is(setLlmLockedEffect) ||

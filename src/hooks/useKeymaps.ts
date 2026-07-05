@@ -14,6 +14,7 @@ import { getCurrentEditorView, getPaneView, setFocusedPane, isFocusInsideContent
 import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
+import { toggleAllBlockAnnotationFolds } from "../editor/livePreview/annotationFoldAll";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import { canFire } from "../lib/fireClassification";
 import { fireAnnotation } from "../lib/fireOrchestrator";
@@ -313,6 +314,16 @@ export function ensureCommandsRegistered() {
     action: () => {
       const view = getCurrentEditorView();
       if (view) batchFireReplacingAnnotations(view);
+    },
+  });
+  registerCommand({
+    id: "app.toggleAllBlockAnnotations",
+    label: "Collapse/Expand All Block Annotations",
+    keywords: ["fold", "collapse", "expand", "annotation", "callout", "thread"],
+    when: () => getCurrentEditorView() != null,
+    action: () => {
+      const view = getCurrentEditorView();
+      if (view) toggleAllBlockAnnotationFolds(view);
     },
   });
 }

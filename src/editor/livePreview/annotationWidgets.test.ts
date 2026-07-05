@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
@@ -258,6 +258,34 @@ describe("annotationFoldField", () => {
     const tr2 = tr1.state.update({ effects: toggleAnnotationFoldEffect.of({ pos: 0 }) });
     const fold2 = tr2.state.field(annotationFoldField);
     expect(fold2.get(0)).toBe(false);
+  });
+
+  it("setAllAnnotationFoldsEffect sets multiple positions at once", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [annotationFoldField] });
+    const tr = state.update({ effects: setAllAnnotationFoldsEffect.of({ positions: [0, 6], collapsed: true }) });
+    const fold = tr.state.field(annotationFoldField);
+    expect(fold.get(0)).toBe(true);
+    expect(fold.get(6)).toBe(true);
+  });
+
+  it("setAllAnnotationFoldsEffect overwrites existing per-position fold state", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [annotationFoldField] });
+    const tr1 = state.update({ effects: toggleAnnotationFoldEffect.of({ pos: 0 }) });
+    expect(tr1.state.field(annotationFoldField).get(0)).toBe(true);
+
+    const tr2 = tr1.state.update({ effects: setAllAnnotationFoldsEffect.of({ positions: [0, 6], collapsed: false }) });
+    const fold = tr2.state.field(annotationFoldField);
+    expect(fold.get(0)).toBe(false);
+    expect(fold.get(6)).toBe(false);
+  });
+
+  it("positions set via setAllAnnotationFoldsEffect are remapped on doc edits", () => {
+    const state = EditorState.create({ doc: "hello world", extensions: [annotationFoldField] });
+    const tr1 = state.update({ effects: setAllAnnotationFoldsEffect.of({ positions: [6], collapsed: true }) });
+    const tr2 = tr1.state.update({ changes: { from: 0, insert: "ab" } });
+    const fold = tr2.state.field(annotationFoldField);
+    expect(fold.get(8)).toBe(true);
+    expect(fold.has(6)).toBe(false);
   });
 });
 

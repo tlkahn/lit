@@ -11,6 +11,7 @@ import { useLeafFileType } from "../hooks/useLeafFileType";
 import { resolveLanguage } from "../editor/codeLanguages";
 import { getPdfGoToPage, getPdfCurrentPage } from "../lib/pdfPaneRef";
 import { getNextUntitledName } from "../lib/naming";
+import { executeCommand } from "../lib/commandRegistry";
 import { BufferStack } from "./BufferStack";
 import type { TabId } from "../stores/bottomPanel";
 
@@ -203,6 +204,23 @@ function SwapPanesButton() {
   );
 }
 
+function ToggleAnnotationsFoldButton() {
+  const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
+  const annotationCount = useBottomPanelStore((s) => s.tabMeta.annotations.count);
+  if (!annotationEnabled || (annotationCount ?? 0) === 0) return null;
+  return (
+    <button
+      data-testid="toggle-annotations-fold-button"
+      aria-label="Collapse/expand all block annotations"
+      title="Collapse/expand all block annotations (⌘⇧M)"
+      onClick={() => executeCommand("app.toggleAllBlockAnnotations")}
+      className="flex items-center px-1 text-text-muted hover:text-text-normal"
+    >
+      <span className="nerd-font" aria-hidden="true">{''}</span>
+    </button>
+  );
+}
+
 interface ToastSnapshot {
   message: string;
   variant: StatusVariant;
@@ -317,6 +335,7 @@ export function StatusBar() {
         {newPageButton}
         <BufferStack />
         <SwapPanesButton />
+        <ToggleAnnotationsFoldButton />
       </div>
       <div className="flex items-center">
         {toast && (

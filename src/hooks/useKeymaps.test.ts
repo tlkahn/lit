@@ -12,7 +12,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
-import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
+import { registerPaneView, setFocusedPane, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
 
@@ -534,6 +534,35 @@ describe("useKeymaps", () => {
   it("app.batchFireAnnotations is registered after ensureCommandsRegistered", async () => {
     await loadHook();
     expect(hasCommand("app.batchFireAnnotations")).toBe(true);
+  });
+
+  it("app.toggleAllBlockAnnotations is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.toggleAllBlockAnnotations")).toBe(true);
+  });
+
+  it("app.toggleAllBlockAnnotations is hidden from the palette without an editor view", async () => {
+    await loadHook();
+    const ids = getVisibleCommands("block annotations").map((c) => c.id);
+    expect(ids).not.toContain("app.toggleAllBlockAnnotations");
+  });
+
+  it("app.toggleAllBlockAnnotations is visible in the palette when an editor view exists", async () => {
+    await loadHook();
+    // Minimal state so other commands' when guards (e.g. app.fireAnnotation)
+    // can safely probe the view while the palette filters.
+    const mockView = {
+      focus: vi.fn(),
+      state: { field: () => undefined, selection: { main: { head: 0 } } },
+    } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    setFocusedPane("main");
+    usePaneStore.setState({
+      root: { type: "leaf", id: "main", pagePath: "test.md" },
+      focusedPaneId: "main",
+    });
+    const ids = getVisibleCommands("block annotations").map((c) => c.id);
+    expect(ids).toContain("app.toggleAllBlockAnnotations");
   });
 
   // --- Cycle B4: when guard on global keydown handler ---

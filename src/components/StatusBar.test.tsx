@@ -12,6 +12,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import * as pdfPaneRef from "../lib/pdfPaneRef";
+import * as commandRegistryModule from "../lib/commandRegistry";
 
 // ---------------------------------------------------------------------------
 // Mock pdfjs for the real PdfViewer integration test
@@ -1067,6 +1068,48 @@ describe("StatusBar", () => {
       render(<StatusBar />);
       const el = screen.getByTestId("status-bar-message");
       expect(el.className).not.toContain("status-toast-enter");
+    });
+  });
+
+  describe("toggle annotations fold button", () => {
+    function setAnnotationCount(count: number) {
+      const tabMeta = defaultTabMeta();
+      tabMeta.annotations = { ...tabMeta.annotations, count };
+      useBottomPanelStore.setState({ tabMeta });
+    }
+
+    beforeEach(() => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+    });
+
+    it("renders when annotations are enabled and the page has annotations", () => {
+      setAnnotationCount(2);
+      render(<StatusBar />);
+      expect(screen.getByTestId("toggle-annotations-fold-button")).toBeInTheDocument();
+    });
+
+    it("does not render when the page has no annotations", () => {
+      setAnnotationCount(0);
+      render(<StatusBar />);
+      expect(screen.queryByTestId("toggle-annotations-fold-button")).toBeNull();
+    });
+
+    it("does not render when annotations are disabled", () => {
+      usePreferencesStore.setState({ annotationEnabled: false });
+      setAnnotationCount(2);
+      render(<StatusBar />);
+      expect(screen.queryByTestId("toggle-annotations-fold-button")).toBeNull();
+    });
+
+    it("clicking executes app.toggleAllBlockAnnotations", async () => {
+      setAnnotationCount(2);
+      const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
+      render(<StatusBar />);
+
+      await userEvent.click(screen.getByTestId("toggle-annotations-fold-button"));
+
+      expect(spy).toHaveBeenCalledWith("app.toggleAllBlockAnnotations");
+      spy.mockRestore();
     });
   });
 });

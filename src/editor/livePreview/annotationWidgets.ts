@@ -369,6 +369,8 @@ export class MarkerWidget extends WidgetType {
 
 export const toggleAnnotationFoldEffect = StateEffect.define<{ pos: number }>();
 
+export const setAllAnnotationFoldsEffect = StateEffect.define<{ positions: number[]; collapsed: boolean }>();
+
 export const annotationFoldField = StateField.define<Map<number, boolean>>({
   create() {
     return new Map();
@@ -384,6 +386,8 @@ export const annotationFoldField = StateField.define<Map<number, boolean>>({
       if (effect.is(toggleAnnotationFoldEffect)) {
         const current = newMap.get(effect.value.pos) ?? false;
         newMap.set(effect.value.pos, !current);
+      } else if (effect.is(setAllAnnotationFoldsEffect)) {
+        for (const pos of effect.value.positions) newMap.set(pos, effect.value.collapsed);
       }
     }
     return newMap;
