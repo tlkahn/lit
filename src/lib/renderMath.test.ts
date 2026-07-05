@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderMathToHtml } from "./renderMath";
+import { renderMathToHtml, replaceInlineMath } from "./renderMath";
 import { getKatexSync } from "../editor/livePreview/katexLoader";
 
 const mockKatex = {
@@ -103,5 +103,37 @@ describe("renderMathToHtml", () => {
     );
     const result = renderMathToHtml("x", false);
     expect(result).not.toContain("onerror");
+  });
+});
+
+describe("replaceInlineMath", () => {
+  it("replaces $...$ math and calls replacer with latex content", () => {
+    const result = replaceInlineMath("hello $x^2$ world", (latex) => `[${latex}]`);
+    expect(result).toBe("hello [x^2] world");
+  });
+
+  it("replaces \\(...\\) math and calls replacer with latex content", () => {
+    const result = replaceInlineMath("hello \\(x^2\\) world", (latex) => `[${latex}]`);
+    expect(result).toBe("hello [x^2] world");
+  });
+
+  it("replaces both $...$ and \\(...\\) in one string", () => {
+    const result = replaceInlineMath("$a$ and \\(b\\)", (latex) => `[${latex}]`);
+    expect(result).toBe("[a] and [b]");
+  });
+
+  it("does not match escaped dollar \\$x\\$", () => {
+    const result = replaceInlineMath("\\$x\\$", (latex) => `[${latex}]`);
+    expect(result).toBe("\\$x\\$");
+  });
+
+  it("does not match escaped backslash-paren \\\\(not math\\)", () => {
+    const result = replaceInlineMath("\\\\(not math\\)", (latex) => `[${latex}]`);
+    expect(result).toBe("\\\\(not math\\)");
+  });
+
+  it("does not match spaced dollars $ x $", () => {
+    const result = replaceInlineMath("$ x $", (latex) => `[${latex}]`);
+    expect(result).toBe("$ x $");
   });
 });

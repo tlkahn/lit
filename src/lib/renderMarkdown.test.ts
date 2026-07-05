@@ -59,6 +59,149 @@ describe("renderMarkdown", () => {
     expect(result).toContain("katex");
   });
 
+  it("renders display math with \\[...\\] delimiters", () => {
+    const result = renderMarkdown("\\[x^2\\]");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).toContain("katex");
+  });
+
+  it("renders multi-line display math with \\[...\\] delimiters", () => {
+    const result = renderMarkdown("\\[\nx^2\n\\]");
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("renders inline math with \\(...\\) delimiters", () => {
+    const result = renderMarkdown("The equation \\(x^2\\) is simple.");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("katex");
+  });
+
+  it("keeps escaped \\\\(literal\\\\) as literal text", () => {
+    const result = renderMarkdown("\\\\(literal\\\\)");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("preserves code spans containing \\[not math\\]", () => {
+    const result = renderMarkdown("`\\[not math\\]`");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("preserves fenced code blocks containing \\[", () => {
+    const result = renderMarkdown("```\n\\[\nx\n\\]\n```");
+    expect(result).toContain("<code>");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("\\[ $x$ \\] renders as one display block (pass order)", () => {
+    const result = renderMarkdown("\\[ $x$ \\]");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("cm-preview-math-inline");
+  });
+
+  it("does not fuse unrelated \\[...\\] across paragraphs into display math", () => {
+    const input = "The task \\[TODO\\]\n\nSome heading\n\nprices \\[USD\\]";
+    const result = renderMarkdown(input);
+    // Both \[ are mid-line so neither should become display math.
+    // The old regex fused the first \[ with the last \], swallowing
+    // all intervening prose into a single KaTeX block.
+    expect(result).not.toContain("cm-preview-math-display");
+    expect(result).toContain("Some heading");
+  });
+
+  it("does not render \\[...\\] as display math when \\[ is mid-line", () => {
+    const input = "See \\[1\\] for details";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+    expect(result).toContain("details");
+  });
+
+  it("does not render display math when opener line has content after \\[", () => {
+    const input = "\\[ some content\nmore\n\\]";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("does not render display math when there is trailing text after \\]", () => {
+    const input = "\\[E=mc^2\\] and some text";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("does not render \\[a\\] text \\[b\\] as display math (first \\] has trailing prose)", () => {
+    const input = "\\[a\\] text \\[b\\]";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("renders \\[a\\] as display math (single-char content, empty tail after first \\])", () => {
+    const input = "\\[a\\]";
+    const result = renderMarkdown(input);
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("renders \\[E=mc^2\\] {#eq:energy} as display math (label after first \\])", () => {
+    const input = "\\[E=mc^2\\] {#eq:energy}";
+    const result = renderMarkdown(input);
+    expect(result).toContain("cm-preview-math-display");
+  });
+
+  it("does not render \\[\\] as display math (empty content fails closeIdx > 2 guard)", () => {
+    const input = "\\[\\]";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("does not render \\[a\\] {#eq:test} extra as display math (afterClose is not purely a label)", () => {
+    const input = "\\[a\\] {#eq:test} extra";
+    const result = renderMarkdown(input);
+    expect(result).not.toContain("cm-preview-math-display");
+  });
+
+  it("renders $$E=mc^2$$ {#eq:energy} as display math and strips label", () => {
+    const result = renderMarkdown("$$E=mc^2$$ {#eq:energy}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("renders multi-line $$...$$  with label and strips label", () => {
+    const result = renderMarkdown("$$\nE=mc^2\n$$ {#eq:energy}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("renders multi-line \\[...\\] with label and strips label", () => {
+    const result = renderMarkdown("\\[\nE=mc^2\n\\] {#eq:energy}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("renders $$E=mc^2$${#eq:a} (no space before label) as display math and strips label", () => {
+    const result = renderMarkdown("$$E=mc^2$${#eq:a}");
+    expect(result).toContain("cm-preview-math-display");
+    expect(result).not.toContain("{#eq:");
+  });
+
+  it("does not swallow text after a label on $$ display math", () => {
+    const result = renderMarkdown("$$E=mc^2$$ {#eq:a} extra text");
+    // The label is consumed but "extra text" remains as prose
+    expect(result).toContain("extra text");
+  });
+
+  // Tradeoff: \( is math, not CommonMark escape — this is intentional.
+  // Same precedence as Pandoc, MathJax, KaTeX auto-render, Obsidian, Typora.
+  // Users who want literal backslash+paren use \\(.
+  it("f\\(x\\) is undefined here renders \\(x\\) as inline math (tradeoff)", () => {
+    const result = renderMarkdown("f\\(x\\) is undefined here");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("katex");
+  });
+
+  it("mismatched \\(x$ is not math", () => {
+    const result = renderMarkdown("\\(x$");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
   it("shows placeholder when KaTeX is not loaded", () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
     const result = renderMarkdown("$E=mc^2$");

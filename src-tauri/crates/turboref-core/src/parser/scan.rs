@@ -2,6 +2,16 @@ use crate::config::DocumentConfig;
 use crate::types::Definition;
 use super::{Counters, ParserRegistry};
 
+/// Which delimiter style opened the current display math block.
+/// A block opened with one style can only be closed by the same style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathDelim {
+    /// $$ ... $$
+    Dollar,
+    /// \[ ... \]
+    Bracket,
+}
+
 /// Shared scanning context updated as we iterate through lines.
 /// Parsers check these flags to skip irrelevant states
 /// (e.g., equation parser skips when in_code_block is true).
@@ -10,8 +20,10 @@ pub struct ScanContext {
     pub in_code_block: bool,
     pub code_fence: String,
     pub in_math_block: bool,
+    /// Delimiter style of the open math block; None when not in a math block.
+    pub math_delim: Option<MathDelim>,
     pub in_html_div: Option<String>,
-    /// Set when the previous line closed a display math block ($$).
+    /// Set when the previous line closed a display math block ($$ or \]).
     pub prev_line_closed_math: bool,
     /// Set when the previous line closed a fenced code block.
     pub prev_line_closed_code: bool,
@@ -76,6 +88,22 @@ fn detect_fence_close(line: &str, expected_fence: &str) -> bool {
     }
 }
 
+/// Strip an optional trailing `{#type:id}` reference tag (plus surrounding
+/// whitespace) from a line.  Returns the slice before the tag, or the
+/// original (trimmed) string if no tag is present.
+///
+/// Grammar: `<content> [ws] {#<word>:<chars>} [ws]` where `<word>` is `[a-z]+`
+/// and `<chars>` is `[^}]+`.
+pub(crate) fn strip_trailing_ref_tag(s: &str) -> &str {
+    let rest = s.trim_end();
+    if rest.ends_with('}') {
+        if let Some(idx) = rest.rfind("{#") {
+            return rest[..idx].trim_end();
+        }
+    }
+    rest
+}
+
 /// Single-pass scanner. Iterates all lines once, updates context, dispatches to parsers.
 pub fn scan_document(
     content: &str,
@@ -125,14 +153,33 @@ pub fn scan_document(
         // --- Update context: math blocks ---
         if !ctx.in_code_block {
             let trimmed = line.trim();
-            if trimmed == "$$" {
-                if ctx.in_math_block {
+            if ctx.in_math_block {
+                // Close only on the delimiter style that opened the block.
+                // The close line may carry a trailing {#eq:id} tag, which
+                // must be stripped before matching the delimiter.
+                let stripped = strip_trailing_ref_tag(trimmed);
+                let closes = match ctx.math_delim {
+                    Some(MathDelim::Bracket) => stripped.ends_with("\\]"),
+                    _ => stripped == "$$",
+                };
+                if closes {
                     ctx.in_math_block = false;
+                    ctx.math_delim = None;
                     ctx.prev_line_closed_math = true;
                     ctx.prev_line_closed_code = false;
                     continue;
+                }
+            } else {
+                let opens = if trimmed == "$$" {
+                    Some(MathDelim::Dollar)
+                } else if trimmed == "\\[" {
+                    Some(MathDelim::Bracket)
                 } else {
+                    None
+                };
+                if let Some(delim) = opens {
                     ctx.in_math_block = true;
+                    ctx.math_delim = Some(delim);
                     ctx.prev_line_closed_math = false;
                     ctx.prev_line_closed_code = false;
                     continue;
