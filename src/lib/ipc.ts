@@ -850,6 +850,15 @@ export async function getPageHeadings(target: string): Promise<HeadingInfo[]> {
   return invoke<HeadingInfo[]>("get_page_headings", { target });
 }
 
+export interface BlockAnchorInfo {
+  id: string;
+  line: number;
+}
+
+export async function getPageBlockAnchors(target: string): Promise<BlockAnchorInfo[]> {
+  return invoke<BlockAnchorInfo[]>("get_page_block_anchors", { target });
+}
+
 export async function rebuildGraphIndex(): Promise<string> {
   return invoke<string>("rebuild_graph_index");
 }
