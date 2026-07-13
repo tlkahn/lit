@@ -21,6 +21,7 @@ import { wikilinkCompletionSource } from "./wikilinkCompletion";
 import { annotationCompletionSource } from "./annotationCompletion";
 import { footnoteTooltipExtension } from "./footnoteTooltip";
 import { flashHighlightExtension } from "./flashHighlight";
+import { blockAnchorDecorationsExtension } from "./blockAnchorDecorations";
 import { citeprocTooltipExtension } from "./citeprocTooltip";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
@@ -59,6 +60,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     footnoteTooltipExtension(),
     citeprocTooltipExtension(),
     flashHighlightExtension(),
+    blockAnchorDecorationsExtension(),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));

@@ -50,4 +50,17 @@ describe("blockAnchorDecorations", () => {
     expect(dimmedTexts(parent)).toEqual(["^first", "^second"]);
     view.destroy();
   });
+
+  it("removes the dim when the selection moves onto the anchor line and restores it on leave", () => {
+    const doc = "text ^abc\nsecond line";
+    const { view, parent } = makeView(doc, doc.length);
+    expect(dimmedTexts(parent)).toEqual(["^abc"]);
+
+    view.dispatch({ selection: { anchor: 0 } });
+    expect(dimmedTexts(parent)).toEqual([]);
+
+    view.dispatch({ selection: { anchor: doc.length } });
+    expect(dimmedTexts(parent)).toEqual(["^abc"]);
+    view.destroy();
+  });
 });
