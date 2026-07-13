@@ -38,18 +38,28 @@ describe("renderMathToHtml", () => {
 
   it("passes displayMode:false to renderToString for inline math", () => {
     renderMathToHtml("x", false);
-    expect(mockKatex.renderToString).toHaveBeenCalledWith("x", {
-      throwOnError: false,
-      displayMode: false,
-    });
+    expect(mockKatex.renderToString).toHaveBeenCalledWith(
+      "x",
+      expect.objectContaining({ throwOnError: false, displayMode: false }),
+    );
   });
 
   it("passes displayMode:true to renderToString for display math", () => {
     renderMathToHtml("x", true);
-    expect(mockKatex.renderToString).toHaveBeenCalledWith("x", {
-      throwOnError: false,
-      displayMode: true,
-    });
+    expect(mockKatex.renderToString).toHaveBeenCalledWith(
+      "x",
+      expect.objectContaining({ throwOnError: false, displayMode: true }),
+    );
+  });
+
+  it("passes compat macros to renderToString", () => {
+    renderMathToHtml("x", false);
+    expect(mockKatex.renderToString).toHaveBeenCalledWith(
+      "x",
+      expect.objectContaining({
+        macros: expect.objectContaining({ "\\tenrm": "\\rm" }),
+      }),
+    );
   });
 
   it("shows error class on KaTeX throw", () => {

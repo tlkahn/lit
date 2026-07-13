@@ -6,6 +6,7 @@ import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
 import { widgetSync } from "./widgetSyncAnnotation";
 import { getKatexSync, loadKatex } from "./katexLoader";
+import { katexOptions } from "../../lib/latexCompat";
 import "katex/dist/katex.min.css";
 
 const SPINNER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>.spinner{transform-origin:center;animation:rotate .75s linear infinite}@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><g class="spinner"><circle cx="12" cy="2.5" r="1.5" opacity=".14"/><circle cx="16.75" cy="3.77" r="1.5" opacity=".29"/><circle cx="20.23" cy="7.25" r="1.5" opacity=".43"/><circle cx="21.5" cy="12" r="1.5" opacity=".57"/><circle cx="20.23" cy="16.75" r="1.5" opacity=".71"/><circle cx="16.75" cy="20.23" r="1.5" opacity=".86"/><circle cx="12" cy="21.5" r="1.5"/></g></svg>`;
@@ -240,7 +241,7 @@ export class InlineMathWidget extends WidgetType {
     const katex = getKatexSync();
     if (katex) {
       try {
-        katex.render(this.latex, span, { throwOnError: false, displayMode: false });
+        katex.render(this.latex, span, katexOptions(false));
       } catch {
         span.textContent = this.latex;
         span.classList.add("cm-preview-math-error");
@@ -253,7 +254,7 @@ export class InlineMathWidget extends WidgetType {
         if (!span.isConnected) return;
         span.classList.remove("cm-preview-math-placeholder");
         try {
-          k.render(this.latex, span, { throwOnError: false, displayMode: false });
+          k.render(this.latex, span, katexOptions(false));
         } catch {
           span.textContent = this.latex;
           span.classList.add("cm-preview-math-error");
@@ -270,7 +271,7 @@ export class InlineMathWidget extends WidgetType {
     const katex = getKatexSync();
     if (katex) {
       try {
-        katex.render(this.latex, dom, { throwOnError: false, displayMode: false });
+        katex.render(this.latex, dom, katexOptions(false));
       } catch {
         dom.textContent = this.latex;
         dom.classList.add("cm-preview-math-error");
@@ -283,7 +284,7 @@ export class InlineMathWidget extends WidgetType {
         if (!dom.isConnected) return;
         dom.classList.remove("cm-preview-math-placeholder");
         try {
-          k.render(this.latex, dom, { throwOnError: false, displayMode: false });
+          k.render(this.latex, dom, katexOptions(false));
         } catch {
           dom.textContent = this.latex;
           dom.classList.add("cm-preview-math-error");
@@ -318,7 +319,7 @@ export class DisplayMathWidget extends WidgetType {
     const katex = getKatexSync();
     if (katex) {
       try {
-        katex.render(this.latex, div, { throwOnError: false, displayMode: true });
+        katex.render(this.latex, div, katexOptions(true));
       } catch {
         div.textContent = this.latex;
         div.classList.add("cm-preview-math-error");
@@ -330,7 +331,7 @@ export class DisplayMathWidget extends WidgetType {
         if (!div.isConnected) return;
         div.classList.remove("cm-preview-math-placeholder");
         try {
-          k.render(this.latex, div, { throwOnError: false, displayMode: true });
+          k.render(this.latex, div, katexOptions(true));
         } catch {
           div.textContent = this.latex;
           div.classList.add("cm-preview-math-error");
@@ -346,7 +347,7 @@ export class DisplayMathWidget extends WidgetType {
     const katex = getKatexSync();
     if (katex) {
       try {
-        katex.render(this.latex, dom, { throwOnError: false, displayMode: true });
+        katex.render(this.latex, dom, katexOptions(true));
       } catch {
         dom.textContent = this.latex;
         dom.classList.add("cm-preview-math-error");
@@ -358,7 +359,7 @@ export class DisplayMathWidget extends WidgetType {
         if (!dom.isConnected) return;
         dom.classList.remove("cm-preview-math-placeholder");
         try {
-          k.render(this.latex, dom, { throwOnError: false, displayMode: true });
+          k.render(this.latex, dom, katexOptions(true));
         } catch {
           dom.textContent = this.latex;
           dom.classList.add("cm-preview-math-error");
