@@ -1,6 +1,10 @@
-use std::path::Path;
+use std::process::Command;
 
 #[tauri::command]
 pub fn is_cli_installed() -> bool {
-    Path::new("/usr/local/bin/lit").exists()
+    Command::new("which")
+        .arg("lit")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
