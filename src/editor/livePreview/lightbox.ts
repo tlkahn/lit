@@ -36,12 +36,15 @@ export function showMediaLightbox(content: LightboxContent): void {
     inner.appendChild(img);
   } else {
     inner.innerHTML = content.svg;
+    inner.style.backgroundColor = "var(--background-primary)";
+    inner.style.borderRadius = "8px";
+    inner.style.padding = "16px";
     const svg = inner.querySelector("svg");
     if (svg) {
       svg.removeAttribute("width");
       svg.removeAttribute("height");
-      svg.style.width = "90vw";
-      svg.style.maxHeight = "90vh";
+      svg.style.width = "calc(90vw - 32px)";
+      svg.style.maxHeight = "calc(90vh - 32px)";
     }
   }
 
