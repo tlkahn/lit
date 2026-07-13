@@ -12,8 +12,8 @@ const shared = EditorView.baseTheme({
     overflowX: "clip",
     padding: "1rem 1.5rem",
     fontFamily: "var(--font-text-theme, var(--font-interface-theme, -apple-system, BlinkMacSystemFont, sans-serif))",
-    fontSize: "0.875rem",
-    lineHeight: "1.25rem",
+    fontSize: "var(--font-text-size, 16px)",
+    lineHeight: "1.5",
   },
   ".cm-gutters": {
     backgroundColor: "transparent",

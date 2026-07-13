@@ -121,6 +121,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    label: "Fonts",
+    storeField: "fontInterfaceList",
+    jsonKey: "appearance.interfaceFontList",
+    controlType: "custom",
+    testId: "settings-fonts",
+    keywords: ["font", "typeface", "interface font", "text font", "monospace font", "font size", "font family", "manage fonts"],
+  },
+  {
+    category: "Appearance",
     label: "Bottom Panel Position",
     storeField: "bottomPanelPosition",
     jsonKey: "workbench.bottomPanel.position",

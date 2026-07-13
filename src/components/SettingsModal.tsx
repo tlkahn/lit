@@ -20,6 +20,7 @@ import { AcademicExportSettings } from "./AcademicExportSettings";
 import { LlmProviderSettings } from "./LlmProviderSettings";
 import { CompanionSearchPathSettings } from "./CompanionSearchPathSettings";
 import { SearchProviderSettings } from "./SearchProviderSettings";
+import { FontSettings } from "./FontSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 interface SettingsModalProps {
@@ -503,6 +504,11 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           {cat === "Academic Export" && (
                             <div className="mt-3">
                               <AcademicExportSettings />
+                            </div>
+                          )}
+                          {cat === "Appearance" && (
+                            <div className="mt-3">
+                              <FontSettings />
                             </div>
                           )}
                           {cat === "Editor" && (

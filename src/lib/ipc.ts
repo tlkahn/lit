@@ -1555,6 +1555,12 @@ export async function detectPandoc(): Promise<PandocInfo> {
   return invoke<PandocInfo>("detect_pandoc");
 }
 
+// Font enumeration
+
+export async function listSystemFonts(): Promise<string[]> {
+  return invoke<string[]>("list_system_fonts");
+}
+
 export async function exportDocument(request: ExportRequest): Promise<ExportDocumentResult> {
   return invoke<ExportDocumentResult>("export_document", {
     request: {

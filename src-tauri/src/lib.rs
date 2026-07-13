@@ -470,6 +470,7 @@ pub fn run() {
             context_menu::show_mindmap_context_menu,
             context_menu::show_graph_context_menu,
             context_menu::show_cardbox_context_menu,
+            commands::font::list_system_fonts,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
