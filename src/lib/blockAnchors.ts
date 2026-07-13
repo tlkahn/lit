@@ -8,6 +8,11 @@ export interface BlockAnchor {
 const ANCHOR_RE = /(?:^|\s)\^([A-Za-z0-9-]+)[ \t]*$/;
 const FENCE_RE = /^(`{3,}|~{3,})/;
 
+export function findBlockAnchor(body: string, id: string): BlockAnchor | null {
+  const lower = id.toLowerCase();
+  return extractBlockAnchors(body).find((a) => a.id.toLowerCase() === lower) ?? null;
+}
+
 export function extractBlockAnchors(body: string): BlockAnchor[] {
   if (!body) return [];
   const lines = body.split("\n");

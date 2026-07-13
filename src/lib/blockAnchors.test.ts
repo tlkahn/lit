@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractBlockAnchors } from "./blockAnchors";
+import { extractBlockAnchors, findBlockAnchor } from "./blockAnchors";
 
 describe("extractBlockAnchors", () => {
   it("extracts trailing-form anchor with marker range", () => {
@@ -80,5 +80,26 @@ describe("extractBlockAnchors", () => {
 
   it("returns empty for empty body", () => {
     expect(extractBlockAnchors("")).toEqual([]);
+  });
+});
+
+describe("findBlockAnchor", () => {
+  const body = "First block. ^3141e2\n\nSecond block. ^other";
+
+  it("finds anchor by exact id", () => {
+    const anchor = findBlockAnchor(body, "3141e2");
+    expect(anchor).not.toBeNull();
+    expect(anchor!.id).toBe("3141e2");
+    expect(anchor!.line).toBe(0);
+  });
+
+  it("matches case-insensitively, preserving original id", () => {
+    const anchor = findBlockAnchor(body, "3141E2");
+    expect(anchor).not.toBeNull();
+    expect(anchor!.id).toBe("3141e2");
+  });
+
+  it("returns null when absent", () => {
+    expect(findBlockAnchor(body, "missing")).toBeNull();
   });
 });
