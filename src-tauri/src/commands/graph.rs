@@ -584,6 +584,19 @@ pub fn get_page_headings(
 }
 
 #[tauri::command]
+pub fn get_page_block_anchors(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<GraphRegistry>>,
+    target: String,
+) -> Result<serde_json::Value, String> {
+    with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        let anchors = gi.page_block_anchors(&target)?;
+        serde_json::to_value(anchors).map_err(|e| crate::graph::error::GraphError::Other(e.to_string()))
+    })
+}
+
+#[tauri::command]
 pub async fn get_unlinked_mentions(
     window: tauri::Window,
     workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
@@ -901,6 +914,17 @@ mod tests {
         assert_eq!(headings.len(), 2);
         assert_eq!(headings[0].text, "Intro");
         assert_eq!(headings[1].text, "Details");
+    }
+
+    #[test]
+    fn cmd_get_page_block_anchors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "First block. ^3141e2\n\nPlain line.").unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anchors = gi.page_block_anchors("a").unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].id, "3141e2");
+        assert_eq!(anchors[0].line, 1);
     }
 
     #[test]
