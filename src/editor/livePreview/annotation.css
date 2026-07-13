@@ -516,6 +516,13 @@
   background: rgba(255, 200, 60, 0.22);
 }
 
+/* Block anchor marker (^block-id) — dimmed when the cursor is off its line,
+   plain editable text when the cursor is on it. */
+.cm-block-anchor-dim {
+  opacity: 0.35;
+  font-size: 0.85em;
+}
+
 /* Minimal mark pill — compact badge holding only the mark icon. Inherits
    flex/border-radius/cursor from .cm-annotation-pill. */
 .cm-annotation-pill-minimal {
