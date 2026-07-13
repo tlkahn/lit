@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { getKatexSync } from "../editor/livePreview/katexLoader";
 import { escapeHtml } from "./escapeHtml";
+import { katexOptions } from "./latexCompat";
 
 /**
  * Replace inline math delimiters ($...$ and \(...\)) in `text`, calling
@@ -33,7 +34,7 @@ export function renderMathToHtml(latex: string, displayMode: boolean): string {
   const katex = getKatexSync();
   if (katex) {
     try {
-      const rendered = katex.renderToString(latex, { throwOnError: false, displayMode });
+      const rendered = katex.renderToString(latex, katexOptions(displayMode));
       return DOMPurify.sanitize(`<${tag} class="${cls}">${rendered}</${tag}>`, {
         ADD_TAGS: ["semantics", "annotation", "annotation-xml"],
         ADD_ATTR: ["encoding"],

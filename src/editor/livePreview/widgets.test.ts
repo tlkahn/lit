@@ -417,6 +417,19 @@ describe("InlineMathWidget", () => {
     expect(new InlineMathWidget("x").ignoreEvent()).toBe(false);
   });
 
+  it("passes compat macros to katex.render", () => {
+    new InlineMathWidget("x").toDOM();
+    expect(mockKatex.render).toHaveBeenCalledWith(
+      "x",
+      expect.any(HTMLElement),
+      expect.objectContaining({
+        throwOnError: false,
+        displayMode: false,
+        macros: expect.objectContaining({ "\\tenrm": "\\rm" }),
+      }),
+    );
+  });
+
   it("toDOM shows placeholder when katex not loaded, renders after load", async () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
     const widget = new InlineMathWidget("E=mc^2");
@@ -479,6 +492,19 @@ describe("DisplayMathWidget", () => {
 
   it("ignoreEvent returns false to allow click-to-edit", () => {
     expect(new DisplayMathWidget("x").ignoreEvent()).toBe(false);
+  });
+
+  it("passes compat macros to katex.render", () => {
+    new DisplayMathWidget("x").toDOM();
+    expect(mockKatex.render).toHaveBeenCalledWith(
+      "x",
+      expect.any(HTMLElement),
+      expect.objectContaining({
+        throwOnError: false,
+        displayMode: true,
+        macros: expect.objectContaining({ "\\tenrm": "\\rm" }),
+      }),
+    );
   });
 
   it("toDOM shows placeholder when katex not loaded, renders after load", async () => {
