@@ -10,10 +10,11 @@ import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
-import { resolveRelativePath, getFileDir } from "../lib/pathUtils";
+import { resolveRelativePath, getFileDir, isVaultInternalMarkdown } from "../lib/pathUtils";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
-import { extractHeadings } from "../lib/headings";
+import { resolvePendingSection } from "../lib/sectionTarget";
+import { dispatchFlashHighlight } from "../editor/livePreview/flashHighlight";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { shouldEditorClaimFocus } from "../lib/editorFocus";
 import { applyJumpLine, applyPendingCursorLine } from "../lib/editorScroll";
@@ -172,15 +173,6 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     return convertFileSrc("/" + resolveRelativePath(noteDir, src));
   }, [noteDir]);
 
-  const openFilePath = useCallback((path: string) => {
-    if (path.startsWith("/")) {
-      openPath(path);
-      return;
-    }
-    if (!noteDir) return;
-    openPath("/" + resolveRelativePath(noteDir, path));
-  }, [noteDir]);
-
   const navigateToPage = useCallback((target: string, section?: string, departurePos?: number) => {
     navigateWikilink(target, section, {
       resolveWikilink,
@@ -208,6 +200,20 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     });
   }, [paneId, selectPage, triggerReload, refreshPages]);
 
+  const openFilePath = useCallback((path: string, fragment: string | null = null) => {
+    if (path.startsWith("/")) {
+      openPath(path);
+      return;
+    }
+    if (isVaultInternalMarkdown(path)) {
+      const target = path.replace(/^\.\//, "").replace(/\.md$/i, "");
+      navigateToPage(target, fragment ?? undefined);
+      return;
+    }
+    if (!noteDir) return;
+    openPath("/" + resolveRelativePath(noteDir, path));
+  }, [noteDir, navigateToPage]);
+
   const handleDocReplaced = useCallback(() => {
     const path = currentPathRef.current;
     if (!path) return;
@@ -233,16 +239,15 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         const section = storeState.pendingSection;
         useWorkspaceStore.setState({ pendingSection: null });
         const docBody = view.state.doc.toString();
-        const headings = extractHeadings(docBody);
-        const match = headings.find(
-          (h) => h.text.toLowerCase() === section.toLowerCase(),
-        );
-        if (match) {
-          const pos = match.from;
+        const target = resolvePendingSection(docBody, section);
+        if (target) {
           view.dispatch({
-            selection: EditorSelection.cursor(pos),
-            effects: EditorView.scrollIntoView(pos, { y: "start" }),
+            selection: EditorSelection.cursor(target.pos),
+            effects: EditorView.scrollIntoView(target.pos, { y: "start" }),
           });
+          if (target.flash) {
+            dispatchFlashHighlight(view, target.flash.from, target.flash.to);
+          }
         }
       } else {
         const vs = storeState.viewStates[path];

@@ -31,7 +31,7 @@ export { navigateToPageFacet } from "./navigateToPageFacet";
 
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
-  openFilePath?: (path: string) => void;
+  openFilePath?: (path: string, fragment: string | null) => void;
   resolveImageSrc?: ImageResolver;
   navigateToPage?: NavigateToPage;
 }

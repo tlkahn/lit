@@ -53,6 +53,10 @@ export function getAncestorPaths(relativePath: string): string[] {
   return ancestors;
 }
 
+export function isVaultInternalMarkdown(path: string): boolean {
+  return /\.md$/i.test(path);
+}
+
 export function frontmatterLineCount(rawYaml: string): number {
   if (!rawYaml) return 0;
   return rawYaml.trimEnd().split("\n").length + 2;
