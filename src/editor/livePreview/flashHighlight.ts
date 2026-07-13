@@ -22,6 +22,27 @@ export const flashHighlightField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+const pendingTimers = new WeakMap<EditorView, ReturnType<typeof setTimeout>>();
+
+export function dispatchFlashHighlight(
+  view: EditorView,
+  from: number,
+  to: number,
+  durationMs = 1200,
+) {
+  if (from >= to) return;
+  const prev = pendingTimers.get(view);
+  if (prev !== undefined) clearTimeout(prev);
+  view.dispatch({ effects: setFlashHighlight.of({ from, to }) });
+  const timer = setTimeout(() => {
+    pendingTimers.delete(view);
+    // CM6 turns dispatch on a destroyed view into a state-only no-op,
+    // so a flash outliving its editor is harmless.
+    view.dispatch({ effects: setFlashHighlight.of(null) });
+  }, durationMs);
+  pendingTimers.set(view, timer);
+}
+
 export function flashHighlightExtension(): Extension {
   return flashHighlightField;
 }

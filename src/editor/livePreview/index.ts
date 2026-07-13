@@ -20,6 +20,7 @@ import { crossrefCompletionSource, bibReconciliationPlugin } from "./crossrefCom
 import { wikilinkCompletionSource } from "./wikilinkCompletion";
 import { annotationCompletionSource } from "./annotationCompletion";
 import { footnoteTooltipExtension } from "./footnoteTooltip";
+import { flashHighlightExtension } from "./flashHighlight";
 import { citeprocTooltipExtension } from "./citeprocTooltip";
 import { openUrl as defaultOpenUrl } from "@tauri-apps/plugin-opener";
 
@@ -57,6 +58,7 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     bibReconciliationPlugin,
     footnoteTooltipExtension(),
     citeprocTooltipExtension(),
+    flashHighlightExtension(),
   ];
   if (config?.resolveImageSrc) {
     exts.push(imageResolverFacet.of(config.resolveImageSrc));
