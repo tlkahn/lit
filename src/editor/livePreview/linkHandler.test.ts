@@ -216,6 +216,18 @@ describe("createLinkClickHandler", () => {
     view.destroy();
   });
 
+  it("routes non-md paths with fragments through openFilePath with the fragment split off", () => {
+    const openUrl = vi.fn();
+    const openFilePath = vi.fn();
+    const view = createView("[Click](file.pdf#page=3)", { openUrl, openFilePath });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(openFilePath).toHaveBeenCalledWith("file.pdf", "page=3");
+    expect(openUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
   it("keeps urls with fragments routed to openUrl untouched", () => {
     const openUrl = vi.fn();
     const openFilePath = vi.fn();

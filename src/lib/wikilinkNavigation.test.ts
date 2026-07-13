@@ -61,6 +61,13 @@ describe("navigateWikilink", () => {
     expect(deps.selectPage).toHaveBeenCalledWith("Page.md");
   });
 
+  it("delivers a block-anchor section (^id) verbatim to pendingSection", async () => {
+    const deps = makeDeps();
+    await navigateWikilink("Page", "^3141e2", deps);
+    expect(deps.setPendingSection).toHaveBeenCalledWith("^3141e2");
+    expect(deps.selectPage).toHaveBeenCalledWith("Page.md");
+  });
+
   it("same-page section (#Section only) sets pendingSection without changing page", async () => {
     const deps = makeDeps();
     await navigateWikilink("", "Heading", deps);
