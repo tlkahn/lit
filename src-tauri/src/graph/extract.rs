@@ -666,6 +666,45 @@ mod tests {
         assert_eq!(result[0].id, "my-block-1");
     }
 
+    #[test]
+    fn extract_block_anchors_ignores_midline() {
+        assert!(extract_block_anchors("text ^abc more text").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_no_leading_whitespace() {
+        assert!(extract_block_anchors("foo^abc").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_escaped() {
+        assert!(extract_block_anchors(r"text \^abc").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_invalid_chars() {
+        assert!(extract_block_anchors("text ^ab_cd").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_bare_caret() {
+        assert!(extract_block_anchors("text ^").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_inline_code_wrapped() {
+        assert!(extract_block_anchors("text `^abc`").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_skips_fenced_code() {
+        let body = "```\ncode ^abc\n```\nreal text ^def";
+        let result = extract_block_anchors(body);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "def");
+        assert_eq!(result[0].line, 4);
+    }
+
     // --- extract_sentence_context ---
 
     #[test]
