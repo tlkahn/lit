@@ -50,9 +50,15 @@ export function classifyLinkTarget(target: string): LinkTargetKind {
   return "path";
 }
 
+export function splitLinkTarget(target: string): { path: string; fragment: string | null } {
+  const hash = target.indexOf("#");
+  if (hash === -1) return { path: target, fragment: null };
+  return { path: target.slice(0, hash), fragment: target.slice(hash + 1) };
+}
+
 export interface LinkClickHandlers {
   openUrl: (url: string) => void;
-  openFilePath?: (path: string) => void;
+  openFilePath?: (path: string, fragment: string | null) => void;
 }
 
 export function createLinkClickHandler(
@@ -77,7 +83,8 @@ export function createLinkClickHandler(
       if (kind === "path") {
         if (!handlers.openFilePath) return false;
         event.preventDefault();
-        handlers.openFilePath(info.url);
+        const { path, fragment } = splitLinkTarget(info.url);
+        handlers.openFilePath(path, fragment);
         return true;
       }
       event.preventDefault();

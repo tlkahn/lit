@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { getLinkUrlAtPos, getLinkInfoAtPos, createLinkClickHandler, classifyLinkTarget } from "./linkHandler";
+import { getLinkUrlAtPos, getLinkInfoAtPos, createLinkClickHandler, classifyLinkTarget, splitLinkTarget } from "./linkHandler";
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -70,6 +70,40 @@ describe("classifyLinkTarget", () => {
 
   it("classifies absolute path as path", () => {
     expect(classifyLinkTarget("/absolute/path.pdf")).toBe("path");
+  });
+});
+
+describe("splitLinkTarget", () => {
+  it("splits a path with a block-anchor fragment", () => {
+    expect(splitLinkTarget("notes/foo.md#^id")).toEqual({
+      path: "notes/foo.md",
+      fragment: "^id",
+    });
+  });
+
+  it("splits a path with a heading fragment", () => {
+    expect(splitLinkTarget("foo.md#Heading")).toEqual({
+      path: "foo.md",
+      fragment: "Heading",
+    });
+  });
+
+  it("returns null fragment when there is no hash", () => {
+    expect(splitLinkTarget("notes/foo.md")).toEqual({
+      path: "notes/foo.md",
+      fragment: null,
+    });
+  });
+
+  it("splits on the first hash only", () => {
+    expect(splitLinkTarget("a.md#one#two")).toEqual({
+      path: "a.md",
+      fragment: "one#two",
+    });
+  });
+
+  it("does not affect url classification of fragmented urls", () => {
+    expect(classifyLinkTarget("https://x#y")).toBe("url");
   });
 });
 
@@ -165,8 +199,32 @@ describe("createLinkClickHandler", () => {
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, bubbles: true }),
     );
-    expect(openFilePath).toHaveBeenCalledWith("file.pdf");
+    expect(openFilePath).toHaveBeenCalledWith("file.pdf", null);
     expect(openUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("passes the fragment separately for path targets with a hash", () => {
+    const openUrl = vi.fn();
+    const openFilePath = vi.fn();
+    const view = createView("[Click](notes/foo.md#^3141e2)", { openUrl, openFilePath });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(openFilePath).toHaveBeenCalledWith("notes/foo.md", "^3141e2");
+    expect(openUrl).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("keeps urls with fragments routed to openUrl untouched", () => {
+    const openUrl = vi.fn();
+    const openFilePath = vi.fn();
+    const view = createView("[Click](https://example.com#section)", { openUrl, openFilePath });
+    view.contentDOM.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+    expect(openUrl).toHaveBeenCalledWith("https://example.com#section");
+    expect(openFilePath).not.toHaveBeenCalled();
     view.destroy();
   });
 
