@@ -9,6 +9,7 @@ import { LicenseGate } from "./components/LicenseGate";
 import { LicenseInfoDialog } from "./components/LicenseInfoDialog";
 const AcknowledgementsDialog = lazy(() => import("./components/AcknowledgementsDialog"));
 import { useTheme } from "./hooks/useTheme";
+import { useFontOverrides } from "./hooks/useFontOverrides";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
@@ -64,6 +65,7 @@ declare global {
 
 function App() {
   useTheme();
+  useFontOverrides();
   useBottomPanelEvents();
   const { position } = useSidebarPosition();
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);

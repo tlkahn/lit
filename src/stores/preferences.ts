@@ -66,6 +66,10 @@ export interface PreferencesState {
   searchPubmedApiKeySet: boolean;
   searchGoogleBooksApiKeySet: boolean;
   searchBaseApiKeySet: boolean;
+  fontInterfaceList: string[];
+  fontTextList: string[];
+  fontMonospaceList: string[];
+  fontTextSize: number;
   autoRevealInSidebar: boolean;
   loaded: boolean;
   loadPreferences: () => Promise<void>;
@@ -153,6 +157,16 @@ function applyCustomProviders(val: unknown): CustomProviderDef[] {
   }));
 }
 
+function applyFontList(val: unknown): string[] {
+  if (!Array.isArray(val)) return [];
+  return val.filter((entry): entry is string => typeof entry === "string");
+}
+
+function applyFontSize(val: unknown): number {
+  if (typeof val !== "number") return 16;
+  return Math.max(10, Math.min(30, Math.round(val)));
+}
+
 function applyCompanionSearchPath(val: unknown): string[] {
   if (!Array.isArray(val)) return ["."];
   const filtered = val.filter((entry): entry is string => typeof entry === "string");
@@ -214,6 +228,10 @@ function mapPreferences(prefs: Preferences) {
     academicIndicFont: (prefs["academic.indicFont"] as string) ?? "",
     annotationPrefillLastUsed: (prefs["annotations.prefillLastUsed"] as boolean) ?? false,
     annotationBuilderDefaults: isValidBuilderDefaults(prefs["annotations.builderDefaults"]) ? prefs["annotations.builderDefaults"] : null,
+    fontInterfaceList: applyFontList(prefs["appearance.interfaceFontList"]),
+    fontTextList: applyFontList(prefs["appearance.textFontList"]),
+    fontMonospaceList: applyFontList(prefs["appearance.monospaceFontList"]),
+    fontTextSize: applyFontSize(prefs["appearance.baseFontSize"]),
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
     autoRevealInSidebar: (prefs["workbench.autoRevealInSidebar"] as boolean) ?? false,
@@ -230,6 +248,37 @@ export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
   usePreferencesStore.setState({ llmProvider: next });
   setPreference("llm.provider", next).catch(() => {
     usePreferencesStore.setState({ llmProvider: prev });
+  });
+}
+
+export type FontCategory = "interface" | "text" | "monospace";
+
+const FONT_CATEGORY_META: Record<FontCategory, { storeField: "fontInterfaceList" | "fontTextList" | "fontMonospaceList"; jsonKey: string }> = {
+  interface: { storeField: "fontInterfaceList", jsonKey: "appearance.interfaceFontList" },
+  text: { storeField: "fontTextList", jsonKey: "appearance.textFontList" },
+  monospace: { storeField: "fontMonospaceList", jsonKey: "appearance.monospaceFontList" },
+};
+
+export function setFontList(category: FontCategory, fonts: string[]) {
+  const { storeField, jsonKey } = FONT_CATEGORY_META[category];
+  const prev = usePreferencesStore.getState()[storeField];
+  const next = applyFontList(fonts);
+  usePreferencesStore.setState({ [storeField]: next });
+  setPreference(jsonKey, next).catch(() => {
+    usePreferencesStore.setState((state) =>
+      state[storeField] === next ? { [storeField]: prev } : {},
+    );
+  });
+}
+
+export function setFontTextSize(size: number) {
+  const prev = usePreferencesStore.getState().fontTextSize;
+  const next = applyFontSize(size);
+  usePreferencesStore.setState({ fontTextSize: next });
+  setPreference("appearance.baseFontSize", next).catch(() => {
+    usePreferencesStore.setState((state) =>
+      state.fontTextSize === next ? { fontTextSize: prev } : {},
+    );
   });
 }
 
@@ -333,6 +382,10 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   searchPubmedApiKeySet: false,
   searchGoogleBooksApiKeySet: false,
   searchBaseApiKeySet: false,
+  fontInterfaceList: [],
+  fontTextList: [],
+  fontMonospaceList: [],
+  fontTextSize: 16,
   autoRevealInSidebar: false,
   loaded: false,
 

@@ -28,3 +28,4 @@ pub mod pdf_download;
 pub mod ocr;
 pub mod paper_search;
 pub mod pdf_link;
+pub mod font;
