@@ -16,7 +16,7 @@ describe("PreferencesStore", () => {
   beforeEach(() => {
     usePreferencesStore.setState({
       darkMode: "auto",
-      colorTheme: "book",
+      colorTheme: null,
       sidebarVisible: true,
       sidebarLocation: "left",
       bottomPanelPosition: "bottom",
@@ -70,7 +70,7 @@ describe("PreferencesStore", () => {
 
     const state = usePreferencesStore.getState();
     expect(state.darkMode).toBe("light");
-    expect(state.colorTheme).toBe("book");
+    expect(state.colorTheme).toBeNull();
     expect(state.sidebarLocation).toBe("left");
   });
 

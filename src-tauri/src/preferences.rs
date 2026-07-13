@@ -30,10 +30,6 @@ fn default_view_mode() -> String {
     "editor".to_string()
 }
 
-fn default_color_theme() -> Option<String> {
-    Some("book".to_string())
-}
-
 fn deserialize_dark_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -66,7 +62,7 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Preferences {
-    #[serde(rename = "workbench.colorTheme", default = "default_color_theme")]
+    #[serde(rename = "workbench.colorTheme")]
     pub color_theme: Option<String>,
     #[serde(
         rename = "workbench.darkMode",
@@ -98,7 +94,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            color_theme: Some("book".to_string()),
+            color_theme: None,
             dark_mode: "auto".to_string(),
             sidebar_location: "left".to_string(),
             folding_enabled: true,
@@ -443,7 +439,7 @@ mod tests {
     #[test]
     fn defaults() {
         let prefs = Preferences::default();
-        assert_eq!(prefs.color_theme, Some("book".to_string()));
+        assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
@@ -455,7 +451,7 @@ mod tests {
     #[test]
     fn parse_empty_json() {
         let prefs: Preferences = serde_json::from_str("{}").unwrap();
-        assert_eq!(prefs.color_theme, Some("book".to_string()));
+        assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.dark_mode, "auto");
         assert_eq!(prefs.sidebar_location, "left");
         assert!(prefs.folding_enabled);
@@ -468,7 +464,7 @@ mod tests {
         let prefs: Preferences =
             serde_json::from_str(r#"{"workbench.darkMode": true}"#).unwrap();
         assert_eq!(prefs.dark_mode, "dark");
-        assert_eq!(prefs.color_theme, Some("book".to_string()));
+        assert_eq!(prefs.color_theme, None);
         assert_eq!(prefs.sidebar_location, "left");
     }
 

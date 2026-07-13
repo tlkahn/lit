@@ -92,4 +92,24 @@ describe("SettingsDropdown", () => {
     expect(wrapper.className).toContain("gap-2");
   });
 
+  it("prepends Default option when nullable=true", () => {
+    const { container } = render(
+      <SettingsDropdown options={options} value="" onChange={vi.fn()} testId="test-dropdown" nullable />,
+    );
+    const opts = container.querySelectorAll("option");
+    expect(opts).toHaveLength(4);
+    expect(opts[0]!.value).toBe("");
+    expect(opts[0]!.textContent).toBe("Default");
+  });
+
+  it("selecting Default fires onChange with empty string", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <SettingsDropdown options={options} value="a" onChange={onChange} testId="test-dropdown" nullable />,
+    );
+    const select = container.querySelector("[data-testid='test-dropdown']")!;
+    fireEvent.change(select, { target: { value: "" } });
+    expect(onChange).toHaveBeenCalledWith("");
+  });
+
 });
