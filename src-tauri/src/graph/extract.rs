@@ -138,6 +138,26 @@ pub fn extract_headings(body: &str) -> Vec<super::types::HeadingInfo> {
     headings
 }
 
+pub fn extract_block_anchors(body: &str) -> Vec<super::types::BlockAnchorInfo> {
+    static ANCHOR_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?:^|\s)\^([A-Za-z0-9-]+)[ \t]*$").unwrap()
+    });
+
+    let blanked = super::links::blank_code(body);
+    let mut anchors = Vec::new();
+
+    for (idx, line) in blanked.lines().enumerate() {
+        if let Some(caps) = ANCHOR_RE.captures(line) {
+            anchors.push(super::types::BlockAnchorInfo {
+                id: caps.get(1).unwrap().as_str().to_string(),
+                line: idx + 1,
+            });
+        }
+    }
+
+    anchors
+}
+
 pub fn strip_for_mention_scan(body: &str) -> String {
     let mut text = body.to_string();
 
@@ -618,6 +638,32 @@ mod tests {
         let result = extract_headings(body);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].text, "Outside");
+    }
+
+    // --- extract_block_anchors ---
+
+    #[test]
+    fn extract_block_anchors_trailing_form() {
+        let result = extract_block_anchors("Some text ^abc");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "abc");
+        assert_eq!(result[0].line, 1);
+    }
+
+    #[test]
+    fn extract_block_anchors_standalone_line() {
+        let body = "| a | b |\n| - | - |\n| 1 | 2 |\n^tbl-1";
+        let result = extract_block_anchors(body);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "tbl-1");
+        assert_eq!(result[0].line, 4);
+    }
+
+    #[test]
+    fn extract_block_anchors_allows_hyphens() {
+        let result = extract_block_anchors("paragraph text ^my-block-1");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "my-block-1");
     }
 
     // --- extract_sentence_context ---
