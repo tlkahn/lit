@@ -32,6 +32,8 @@ export const useThemeStore = create<ThemeStore>((set, get) => ({
     const themes = get().availableThemes;
     if (colorTheme && themes.some((t) => t.directory_name === colorTheme)) {
       await get().activateTheme(colorTheme);
+    } else {
+      get().deactivateTheme();
     }
   },
 

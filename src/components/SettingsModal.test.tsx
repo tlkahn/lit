@@ -3,12 +3,13 @@ import { render, fireEvent, act } from "@testing-library/react";
 import { SettingsModal } from "./SettingsModal";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
+import { useThemeStore } from "../stores/theme";
 import { CATEGORIES, SETTINGS_REGISTRY } from "../lib/settingsRegistry";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 const defaults = {
   darkMode: "auto" as const,
-  colorTheme: "book",
+  colorTheme: null,
   sidebarVisible: true,
   sidebarLocation: "left" as const,
   bottomPanelPosition: "bottom" as const,
@@ -50,6 +51,14 @@ beforeEach(() => {
     return undefined;
   });
   usePreferencesStore.setState(defaults);
+  useThemeStore.setState({
+    availableThemes: [
+      { name: "Leuvburn", directory_name: "leuvburn", version: "1.0", author: "test" },
+      { name: "Nordic", directory_name: "nordic", version: "1.0", author: "test" },
+      { name: "Book", directory_name: "book", version: "1.0", author: "test" },
+      { name: "Yuppie", directory_name: "yuppie", version: "1.0", author: "test" },
+    ],
+  });
   useSecretStoreStore.getState()._resetSettler();
   useSecretStoreStore.setState({ exists: false, unlocked: false, loading: false, migrationPromptOpen: false });
   Element.prototype.scrollIntoView = vi.fn();
@@ -167,7 +176,111 @@ describe("SettingsModal", () => {
     });
   });
 
-  // colorTheme is hidden from the preferences UI (see #839)
+  // --- colorTheme (SettingsDropdown, nullable, dynamic options) ---
+
+  describe("colorTheme", () => {
+    it("renders a dropdown with data-testid 'settings-colorTheme'", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']");
+      expect(select).toBeTruthy();
+      expect(select!.tagName).toBe("SELECT");
+    });
+
+    it("has a Default option plus 4 theme options", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      const opts = Array.from(select.querySelectorAll("option"));
+      expect(opts).toHaveLength(5);
+      expect(opts[0]!.textContent).toBe("Default");
+      expect(opts[0]!.value).toBe("");
+    });
+
+    it("reflects null store value as Default selected", () => {
+      usePreferencesStore.setState({ colorTheme: null });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+      expect(select.value).toBe("");
+    });
+
+    it("reflects a theme store value", () => {
+      usePreferencesStore.setState({ colorTheme: "book" });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+      expect(select.value).toBe("book");
+    });
+
+    it("selecting a theme calls setPreference", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      fireEvent.change(select, { target: { value: "nordic" } });
+      expect(usePreferencesStore.getState().colorTheme).toBe("nordic");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "workbench.colorTheme", value: "nordic" },
+        });
+      });
+    });
+
+    it("selecting Default sends null to setPreference", async () => {
+      usePreferencesStore.setState({ colorTheme: "book" });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      fireEvent.change(select, { target: { value: "" } });
+      expect(usePreferencesStore.getState().colorTheme).toBeNull();
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "workbench.colorTheme", value: null },
+        });
+      });
+    });
+
+    it("syncs colorTheme when store changes externally", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']") as HTMLSelectElement;
+      expect(select.value).toBe("");
+
+      act(() => {
+        usePreferencesStore.setState({ colorTheme: "yuppie" });
+      });
+
+      expect(select.value).toBe("yuppie");
+    });
+
+    it("auto-clears stale colorTheme when not in available themes", () => {
+      usePreferencesStore.setState({ colorTheme: "nonexistent" });
+      render(<SettingsModal open={true} onClose={vi.fn()} />);
+      expect(usePreferencesStore.getState().colorTheme).toBeNull();
+    });
+
+    it("handles empty theme list", () => {
+      useThemeStore.setState({ availableThemes: [] });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const select = container.querySelector("[data-testid='settings-colorTheme']")!;
+      const opts = Array.from(select.querySelectorAll("option"));
+      expect(opts).toHaveLength(1);
+      expect(opts[0]!.textContent).toBe("Default");
+    });
+
+    it("updates options when dynamic theme list changes", () => {
+      const { container, rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      let opts = Array.from(container.querySelector("[data-testid='settings-colorTheme']")!.querySelectorAll("option"));
+      expect(opts).toHaveLength(5);
+
+      act(() => {
+        useThemeStore.setState({
+          availableThemes: [
+            { name: "Book", directory_name: "book", version: "1.0", author: "test" },
+            { name: "Nordic", directory_name: "nordic", version: "1.0", author: "test" },
+          ],
+        });
+      });
+      rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+      opts = Array.from(container.querySelector("[data-testid='settings-colorTheme']")!.querySelectorAll("option"));
+      expect(opts).toHaveLength(3);
+    });
+  });
 
   // --- sidebarVisible (ToggleSwitch) ---
 
@@ -844,10 +957,11 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 26 control data-testid values exist", () => {
+  it("all 27 control data-testid values exist", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
+      "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
       "settings-bottomPanelPosition-bottom",
@@ -949,7 +1063,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 26 controls", () => {
+  it("empty search shows all 27 controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
@@ -957,6 +1071,7 @@ describe("SettingsModal", () => {
 
     const expectedIds = [
       "settings-darkMode-auto",
+      "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
       "settings-bottomPanelPosition-bottom",
@@ -1065,6 +1180,7 @@ describe("SettingsModal", () => {
 
     const expectedIds = [
       "settings-darkMode-auto",
+      "settings-colorTheme",
       "settings-sidebarVisible",
       "settings-sidebarLocation-left",
       "settings-bottomPanelPosition-bottom",

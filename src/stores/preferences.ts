@@ -22,7 +22,7 @@ export interface LlmProviderConfig {
 
 export interface PreferencesState {
   darkMode: DarkModePref;
-  colorTheme: string;
+  colorTheme: string | null;
   sidebarVisible: boolean;
   sidebarLocation: "left" | "right";
   foldingEnabled: boolean;
@@ -181,7 +181,7 @@ function mapPreferences(prefs: Preferences) {
   const searchProviders = applySearchEnabledProviders(prefs["search.enabledProviders"]);
   return {
     darkMode: applyDarkMode(prefs["workbench.darkMode"]),
-    colorTheme: prefs["workbench.colorTheme"] ?? "book",
+    colorTheme: prefs["workbench.colorTheme"] ?? null,
     sidebarVisible: (prefs["workbench.sideBar.visible"] as boolean) ?? true,
     sidebarLocation: applySidebarLocation(prefs["workbench.sideBar.location"] ?? "left"),
     defaultViewMode: applyDefaultViewMode(prefs["workbench.defaultViewMode"]),
@@ -287,7 +287,7 @@ export function removeCustomProvider(id: string) {
 
 export const usePreferencesStore = create<PreferencesState>((set) => ({
   darkMode: "auto",
-  colorTheme: "book",
+  colorTheme: null,
   sidebarVisible: true,
   sidebarLocation: "left",
   defaultViewMode: "editor",
