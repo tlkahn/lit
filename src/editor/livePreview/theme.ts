@@ -313,7 +313,10 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   // Mermaid diagrams
   ".cm-preview-mermaid": {
     textAlign: "center",
-    padding: "8px 0",
+    padding: "8px 12px",
+    backgroundColor: "var(--background-primary-alt)",
+    borderRadius: "6px",
+    border: "1px solid var(--background-modifier-border)",
   },
   ".cm-preview-mermaid svg": {
     maxWidth: "100%",
