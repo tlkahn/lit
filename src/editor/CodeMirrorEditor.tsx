@@ -14,7 +14,7 @@ interface CodeMirrorEditorProps {
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
   notePath?: string;
-  openFilePath?: (path: string) => void;
+  openFilePath?: (path: string, fragment: string | null) => void;
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
   style?: React.CSSProperties;
 }

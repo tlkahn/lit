@@ -28,15 +28,15 @@ export async function navigateWikilink(
   try {
     const resolved = await deps.resolveWikilink(target);
 
-    if (section) {
-      deps.setPendingSection(section);
-    }
-
     if (resolved.node_id) {
       deps.selectPage(resolved.node_id);
     } else {
       const meta = await deps.createPage(target);
       deps.selectPage(meta.relative_path);
+    }
+
+    if (section) {
+      deps.setPendingSection(section);
     }
   } catch (err) {
     console.error("[navigateWikilink] failed:", err);

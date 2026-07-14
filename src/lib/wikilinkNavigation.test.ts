@@ -119,6 +119,39 @@ describe("navigateWikilink", () => {
     expect(recordDeparture).toHaveBeenCalledOnce();
   });
 
+  it("pendingSection survives selectPage on cross-page navigation (regression)", async () => {
+    let pendingSection: string | null = "STALE";
+    const deps = makeDeps({
+      selectPage: vi.fn(() => { pendingSection = null; }),
+      setPendingSection: vi.fn((s: string) => { pendingSection = s; }),
+    });
+    await navigateWikilink("Page", "^3141e2", deps);
+    expect(pendingSection).toBe("^3141e2");
+  });
+
+  it("pendingSection survives selectPage when the target page must be created", async () => {
+    let pendingSection: string | null = null;
+    const deps = makeDeps({
+      resolveWikilink: vi.fn().mockResolvedValue({
+        target: "NewPage",
+        node_id: null,
+        tier: "Unresolved",
+      }),
+      createPage: vi.fn().mockResolvedValue({
+        title: "NewPage",
+        relative_path: "NewPage.md",
+        frontmatter: {},
+        created_at: null,
+        modified_at: null,
+        file_type: 'markdown',
+      }),
+      selectPage: vi.fn(() => { pendingSection = null; }),
+      setPendingSection: vi.fn((s: string) => { pendingSection = s; }),
+    });
+    await navigateWikilink("NewPage", "^abc123", deps);
+    expect(pendingSection).toBe("^abc123");
+  });
+
   it("handles IPC error gracefully (no crash, logs error)", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const deps = makeDeps({

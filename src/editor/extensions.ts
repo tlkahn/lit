@@ -45,7 +45,7 @@ export interface ExtensionConfig {
   onChange?: (content: string) => void;
   onSelectionChange?: (line: number, col: number) => void;
   openUrl?: (url: string) => void;
-  openFilePath?: (path: string) => void;
+  openFilePath?: (path: string, fragment: string | null) => void;
   resolveImageSrc?: (src: string) => string;
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
