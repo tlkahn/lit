@@ -657,7 +657,7 @@ function App() {
           />
         )}
         <AcademicExportDialog open={academicExportOpen} onClose={() => setAcademicExportOpen(false)} initialFormat={academicExportFormat} />
-        <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />
+        {settingsOpen && <SettingsModal open onClose={() => setSettingsOpen(false)} initialCategory={settingsInitialCategory} />}
         <PassphraseModal />
         <LicenseInfoDialog open={licenseInfoOpen} licenseState={licenseState} licensedTo={licensedTo} onClose={() => setLicenseInfoOpen(false)} />
         <Suspense fallback={null}>
