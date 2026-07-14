@@ -492,6 +492,9 @@ describe("ReferenceLibrary", () => {
 
     it("collapses rapid .bib events into a single IPC call", async () => {
       render(<ReferenceLibrary />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
       await vi.advanceTimersByTimeAsync(100);
       expect(screen.getByText("The Saiva Age")).toBeInTheDocument();
 
@@ -505,7 +508,9 @@ describe("ReferenceLibrary", () => {
         });
       }
 
-      await vi.advanceTimersByTimeAsync(250);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
 
       const after = invokedCommands.filter(
         (c) => c.cmd === "list_bib_entries",
@@ -3903,14 +3908,12 @@ describe("EnrichCandidatePicker integration", () => {
       }
 
       // 1. Dispatch reveal for sanderson2009
-      act(() => {
+      await act(async () => {
         window.dispatchEvent(
           new CustomEvent("lit:reveal-bib-entry", {
             detail: { citekey: "sanderson2009" },
           }),
         );
-      });
-      await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
 
@@ -3926,14 +3929,12 @@ describe("EnrichCandidatePicker integration", () => {
       expect(findEntryContainer("The Saiva Age")!.className).toContain("bib-entry-revealed");
 
       // 3. Dispatch reveal for flood1996
-      act(() => {
+      await act(async () => {
         window.dispatchEvent(
           new CustomEvent("lit:reveal-bib-entry", {
             detail: { citekey: "flood1996" },
           }),
         );
-      });
-      await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
 

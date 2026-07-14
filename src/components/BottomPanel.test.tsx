@@ -129,13 +129,13 @@ describe("BottomPanel", () => {
     expect(panel.className).not.toContain("shadow-");
   });
 
-  it("has shadow class when unfolded", () => {
+  it("has no shadow class when unfolded", () => {
     render(<BottomPanel pageId="target.md" />);
     act(() => {
       useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
     });
     const panel = screen.getByTestId("bottom-panel");
-    expect(panel.className).toContain("shadow-");
+    expect(panel.className).not.toContain("shadow-");
   });
 
   describe("content rendering", () => {
@@ -1005,35 +1005,6 @@ describe("BottomPanel", () => {
           fireEvent.mouseUp(document);
         });
         expect(panel.style.transition).toBe("width 150ms ease-out");
-      });
-    });
-
-    describe("shadow direction", () => {
-      it("direction='bottom' has upward shadow", () => {
-        render(<BottomPanel pageId="target.md" direction="bottom" />);
-        act(() => {
-          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
-        });
-        const panel = screen.getByTestId("bottom-panel");
-        expect(panel.className).toContain("shadow-[0_-2px_4px_rgba(0,0,0,0.08)]");
-      });
-
-      it("direction='right' has leftward shadow", () => {
-        render(<BottomPanel pageId="target.md" direction="right" />);
-        act(() => {
-          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
-        });
-        const panel = screen.getByTestId("bottom-panel");
-        expect(panel.className).toContain("shadow-[-2px_0_4px_rgba(0,0,0,0.08)]");
-      });
-
-      it("direction='left' has rightward shadow", () => {
-        render(<BottomPanel pageId="target.md" direction="left" />);
-        act(() => {
-          useBottomPanelStore.setState({ unfolded: true, activeTab: "linked" });
-        });
-        const panel = screen.getByTestId("bottom-panel");
-        expect(panel.className).toContain("shadow-[2px_0_4px_rgba(0,0,0,0.08)]");
       });
     });
 

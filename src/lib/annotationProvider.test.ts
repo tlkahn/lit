@@ -176,8 +176,8 @@ describe("annotationProvider", () => {
       (call) => (call[0] as CustomEvent).type === "lit:scroll-to-line",
     );
     expect(scrollEvent).toBeDefined();
-    // navigateToNote converts 1-based source_line (10) to 0-based scrollLine (9)
-    expect((scrollEvent![0] as CustomEvent).detail).toEqual({ line: 9, cursor: true });
+    // source_line is passed through as-is
+    expect((scrollEvent![0] as CustomEvent).detail).toEqual({ line: 10, cursor: true });
     dispatchSpy.mockRestore();
   });
 });

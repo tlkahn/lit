@@ -726,8 +726,8 @@ describe("PaneContainer collapsed mode", () => {
     usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
     render(<PaneContainer />);
 
-    const wrapperA = screen.getByTestId("editor-pane-pane-a").parentElement!;
-    const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
+    const wrapperA = screen.getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
+    const wrapperB = screen.getByTestId("editor-pane-pane-b").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.style.display).toBe("flex");
     expect(wrapperB.style.display).toBe("none");
   });
@@ -741,8 +741,8 @@ describe("PaneContainer collapsed mode", () => {
       usePaneStore.setState({ focusedPaneId: "pane-b" });
     });
 
-    const wrapperA = screen.getByTestId("editor-pane-pane-a").parentElement!;
-    const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
+    const wrapperA = screen.getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
+    const wrapperB = screen.getByTestId("editor-pane-pane-b").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.style.display).toBe("none");
     expect(wrapperB.style.display).toBe("flex");
   });

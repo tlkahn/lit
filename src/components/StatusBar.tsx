@@ -235,8 +235,6 @@ function useToastAnimation() {
         }, 300); // matches .status-toast-exit duration (0.3s)
       }
     }
-    // toast omitted: including it would re-trigger the effect on every setToast call
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeMessage, storeVariant, storeAction]);
 
   useEffect(() => {
