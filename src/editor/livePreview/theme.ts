@@ -7,6 +7,13 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   ".cm-preview-h4": { fontWeight: "bold", fontSize: "1.05em" },
   ".cm-preview-h5": { fontWeight: "bold" },
   ".cm-preview-h6": { fontWeight: "bold" },
+  // The syntax highlighter's .tok-heading* spans nest inside the
+  // .cm-preview-h* mark; both set em font-sizes, which multiply through
+  // nesting. Neutralize the inner one so text and widgets share one scale.
+  ".cm-preview-h1 .tok-heading1": { fontSize: "1em" },
+  ".cm-preview-h2 .tok-heading2": { fontSize: "1em" },
+  ".cm-preview-h3 .tok-heading3": { fontSize: "1em" },
+  ".cm-preview-h4 .tok-heading4": { fontSize: "1em" },
   ".cm-preview-bold": { fontWeight: "bold" },
   ".cm-preview-italic": { fontStyle: "italic" },
   ".cm-preview-link": {
