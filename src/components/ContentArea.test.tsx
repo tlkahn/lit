@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
+import type { EditorView } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
 import { ContentArea, parseYamlErrorLocation } from "./ContentArea";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -9,6 +12,43 @@ import { usePreferencesStore } from "../stores/preferences";
 import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
+
+// Real CodeMirrorEditor mounts a live EditorView per test; across this file's
+// ~86 tests that piles up jsdom+CM state and contributes to the full-suite
+// hang (see doc/reports on the "ui" project stall). None of the remaining
+// tests here inspect the CM instance itself (they only assert on
+// screen.getByTestId("editor")'s presence/text/visibility, store state, or
+// mocked IPC calls) so a lightweight stand-in is safe. Tests that dispatch
+// real CM transactions live in ContentArea.editorSync.test.tsx instead.
+// PaneContainer calls view.focus() on a viewMode->"editor" transition, and
+// ContentArea reads view.scrollDOM/view.state (doc/selection) on page switch
+// to save scroll position and record jump history - so the mock view carries
+// a real EditorState (kept in sync with the current doc prop) rather than a
+// bare object.
+const mockView = {
+  focus: vi.fn(),
+  scrollDOM: { scrollTop: 0 },
+  state: EditorState.create({ doc: "" }),
+} as unknown as EditorView;
+
+vi.mock("../editor/CodeMirrorEditor", () => ({
+  CodeMirrorEditor: (props: {
+    doc: string;
+    style?: React.CSSProperties;
+    onViewChange?: (view: EditorView | null) => void;
+  }) => {
+    (mockView as unknown as { state: EditorState }).state = EditorState.create({ doc: props.doc });
+    useEffect(() => {
+      props.onViewChange?.(mockView);
+      return () => { props.onViewChange?.(null); };
+    }, []);
+    return (
+      <div data-testid="editor" className="flex-1 overflow-hidden" style={props.style}>
+        {props.doc}
+      </div>
+    );
+  },
+}));
 
 // Mock pdfjs for PdfViewer (which no longer uses pdfium IPC)
 vi.mock("../lib/pdfjs", () => {
@@ -455,199 +495,6 @@ describe("ContentArea mindmap toggle", () => {
     await waitFor(() => {
       expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
     });
-  });
-});
-
-describe("ContentArea mindmap selection persistence", () => {
-  function setupMultiHeadingMock() {
-    mockInvoke((cmd, args) => {
-      if (cmd === "read_page") {
-        const rp = (args as Record<string, unknown>)?.relativePath;
-        if (rp === "Multi.md") return multiHeadingPage;
-        return samplePage;
-      }
-      if (cmd === "write_page") return null;
-      if (cmd === "parse_raw_yaml") return {};
-      if (cmd === "get_backlinks") return [];
-      if (cmd === "get_keymaps") return [];
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-  }
-
-  it("selection persists when body changes and selected node still exists", async () => {
-    setupMultiHeadingMock();
-    setPage("Multi.md");
-    const user = userEvent.setup();
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
-    await user.click(mindmapBtn);
-    await waitFor(() => {
-      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
-    });
-
-    const { within } = await import("@testing-library/react");
-    const mindmapContainer = screen.getByTestId("mindmap-view");
-    let secondNode!: HTMLElement;
-    await waitFor(() => {
-      secondNode = within(mindmapContainer).getByText("Second");
-    });
-    await user.click(secondNode);
-
-    await waitFor(() => {
-      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    act(() => {
-      view.dispatch({
-        changes: { from: view.state.doc.length, insert: "\n## Third\nNew content" },
-      });
-    });
-
-    await waitFor(() => {
-      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
-    });
-  });
-
-  it("selection clears when selected node is removed from body", async () => {
-    setupMultiHeadingMock();
-    setPage("Multi.md");
-    const user = userEvent.setup();
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
-    await user.click(mindmapBtn);
-    await waitFor(() => {
-      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
-    });
-
-    const { within } = await import("@testing-library/react");
-    const mindmapContainer = screen.getByTestId("mindmap-view");
-    let secondNode!: HTMLElement;
-    await waitFor(() => {
-      secondNode = within(mindmapContainer).getByText("Second");
-    });
-    await user.click(secondNode);
-
-    await waitFor(() => {
-      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeTruthy();
-    });
-
-    const cmEditor = screen.getByTestId("editor").querySelector(".cm-editor");
-    const { EditorView } = await import("@codemirror/view");
-    const view = EditorView.findFromDOM(cmEditor as HTMLElement)!;
-
-    const secondStart = view.state.doc.toString().indexOf("## Second");
-    act(() => {
-      view.dispatch({
-        changes: { from: secondStart, to: view.state.doc.length },
-      });
-    });
-
-    await waitFor(() => {
-      expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeFalsy();
-    });
-  });
-});
-
-describe("ContentArea outline-to-mindmap selection", () => {
-  function setupMultiHeadingMock() {
-    mockInvoke((cmd, args) => {
-      if (cmd === "read_page") {
-        const rp = (args as Record<string, unknown>)?.relativePath;
-        if (rp === "Multi.md") return multiHeadingPage;
-        return samplePage;
-      }
-      if (cmd === "write_page") return null;
-      if (cmd === "parse_raw_yaml") return {};
-      if (cmd === "get_backlinks") return [];
-      if (cmd === "get_keymaps") return [];
-      throw new Error(`Unknown command: ${cmd}`);
-    });
-  }
-
-  it("dispatching lit:scroll-to-line selects corresponding mindmap node", async () => {
-    setupMultiHeadingMock();
-    setPage("Multi.md");
-    const user = userEvent.setup();
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
-    await user.click(mindmapBtn);
-    await waitFor(() => {
-      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
-    });
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("lit:scroll-to-line", { detail: { line: 2 } }),
-      );
-    });
-
-    const mindmapContainer = screen.getByTestId("mindmap-view");
-    await waitFor(() => {
-      expect(mindmapContainer.querySelector('[data-mindmap-node="h-2"][data-mindmap-selected]')).toBeTruthy();
-    });
-  });
-
-  it("dispatching lit:scroll-to-line with nonexistent line does not select any node", async () => {
-    setupMultiHeadingMock();
-    setPage("Multi.md");
-    const user = userEvent.setup();
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    const mindmapBtn = screen.getByRole("button", { name: /mindmap/i });
-    await user.click(mindmapBtn);
-    await waitFor(() => {
-      expect(screen.getByTestId("mindmap-view")).toBeInTheDocument();
-    });
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("lit:scroll-to-line", { detail: { line: 999 } }),
-      );
-    });
-
-    const mindmapContainer = screen.getByTestId("mindmap-view");
-    expect(mindmapContainer.querySelector("[data-mindmap-selected]")).toBeFalsy();
-  });
-
-  it("dispatching lit:scroll-to-line in editor mode does NOT affect mindmap", async () => {
-    setupMultiHeadingMock();
-    setPage("Multi.md");
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("editor")).toBeInTheDocument();
-    });
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("lit:scroll-to-line", { detail: { line: 2 } }),
-      );
-    });
-
-    expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
   });
 });
 
