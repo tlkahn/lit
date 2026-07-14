@@ -84,6 +84,14 @@ pub struct SearchResult {
     pub first_match_line: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SearchFilter {
+    pub folder_prefix: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub mtime_after: Option<i64>,
+    pub mtime_before: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Stats {
     pub nodes: i64,

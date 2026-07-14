@@ -375,6 +375,8 @@ pub fn run() {
             commands::graph::get_forward_links,
             commands::graph::get_citing_pages,
             commands::graph::search_pages,
+            commands::graph::search_content_filtered,
+            commands::graph::list_folders,
             commands::graph::search_pages_by_title,
             commands::graph::get_graph_stats,
             commands::graph::get_graph_neighbors,

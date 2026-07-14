@@ -14,7 +14,7 @@ use super::links::{blank_code, extract_wikilinks_blanked, WikiLink};
 use super::resolve::StemLookup;
 use super::cardbox_layout::load_layout_links;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchResult, Stats, UnlinkedMention};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchFilter, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -1198,6 +1198,140 @@ impl GraphIndex {
         Ok(hits)
     }
 
+    /// Faceted full-text search returning **one result per matching body line**
+    /// (1-based, body-relative — frontmatter excluded, matching what the
+    /// editor's `selectPageAtLine` expects). A file qualifies when its title +
+    /// body contain **all** query terms (AND semantics); within a qualifying
+    /// file every line containing at least one term is emitted (OR semantics),
+    /// with `<mark>` highlights in an HTML-escaped excerpt. Files where all
+    /// terms sit in the title but no body line matches yield a single
+    /// title-excerpt result anchored to line 1.
+    pub fn search_content_filtered(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: i64,
+    ) -> Result<Vec<SearchResult>, GraphError> {
+        use grep_regex::RegexMatcherBuilder;
+        use rayon::prelude::*;
+
+        let terms = parse_search_query(query);
+        if terms.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let pattern = terms
+            .iter()
+            .map(|t| regex::escape(t))
+            .collect::<Vec<_>>()
+            .join("|");
+
+        let matcher = match RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .build(&pattern)
+        {
+            Ok(m) => m,
+            Err(_) => return Ok(vec![]),
+        };
+
+        let store = self.store.lock().unwrap();
+        let candidates = store.synced_paths_filtered(filter)?;
+        let titles = store.node_titles()?;
+        drop(store);
+
+        let term_refs: Vec<&str> = terms.iter().map(|t| t.as_str()).collect();
+        let terms_lower: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+        let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
+
+        let mut file_hits: Vec<Vec<SearchResult>> = candidates
+            .par_iter()
+            .filter_map(|id| {
+                let title = titles.get(id).cloned().unwrap_or_default();
+                let title_lower = title.to_lowercase();
+                // Cheap raw-file prefilter; a title hit (possibly derived from
+                // the filename, absent from the file contents) also qualifies.
+                let title_has_any = terms_lower.iter().any(|t| title_lower.contains(t.as_str()));
+                if !title_has_any
+                    && !file_contains_any_name_with_matcher(
+                        &self.workspace_root.join(id.as_str()),
+                        &matcher,
+                    )
+                {
+                    return None;
+                }
+
+                let page =
+                    crate::workspace::ops::read_page(&self.workspace_root, id, &noop_registry)
+                        .ok()?;
+
+                let haystack = format!("{}\n{}", title_lower, page.body.to_lowercase());
+                if !terms_lower.iter().all(|t| haystack.contains(t.as_str())) {
+                    return None;
+                }
+
+                let lines = find_matching_lines(&page.body, &term_refs);
+                let score = -(lines.len().max(1) as f64);
+                let results = if lines.is_empty() {
+                    vec![SearchResult {
+                        id: id.clone(),
+                        title: title.clone(),
+                        score,
+                        excerpt: highlight_terms_in_line(&title, &term_refs),
+                        first_match_line: Some(1),
+                    }]
+                } else {
+                    lines
+                        .into_iter()
+                        .map(|(line_num, highlighted)| SearchResult {
+                            id: id.clone(),
+                            title: title.clone(),
+                            score,
+                            excerpt: highlighted,
+                            first_match_line: Some(line_num),
+                        })
+                        .collect()
+                };
+                Some(results)
+            })
+            .collect();
+
+        // Best-scoring files first (score is negated match count), stable by id;
+        // lines within a file are already in ascending order.
+        file_hits.sort_by(|a, b| {
+            a[0].score
+                .partial_cmp(&b[0].score)
+                .unwrap()
+                .then_with(|| a[0].id.cmp(&b[0].id))
+        });
+
+        let mut results: Vec<SearchResult> =
+            file_hits.into_iter().flatten().collect();
+        results.truncate(limit.max(0) as usize);
+        Ok(results)
+    }
+
+    /// Return distinct folder prefixes derived from synced paths. Each prefix
+    /// ends with `/` and intermediate segments are included ("a/b/c.md" yields
+    /// both "a/" and "a/b/"). Sorted alphabetically, capped at `limit`.
+    pub fn list_folders(&self, limit: i64) -> Result<Vec<String>, GraphError> {
+        let store = self.store.lock().unwrap();
+        let paths = store.all_synced_paths()?;
+        drop(store);
+
+        let mut folders = std::collections::BTreeSet::new();
+        for path in &paths {
+            let mut end = 0usize;
+            while let Some(pos) = path[end..].find('/') {
+                end += pos + 1;
+                folders.insert(path[..end].to_string());
+            }
+        }
+        Ok(folders
+            .into_iter()
+            .take(limit.max(0) as usize)
+            .collect())
+    }
+
     pub fn pagerank(&self) -> Result<HashMap<String, f64>, GraphError> {
         let store = self.store.lock().unwrap();
         let fingerprint = store.graph_fingerprint()?;
@@ -1579,6 +1713,135 @@ pub(crate) fn shadow_title(entry: &crate::bib::types::BibEntry) -> String {
 fn parse_search_query(raw: &str) -> Vec<String> {
     let trimmed = raw.trim().strip_suffix('*').unwrap_or(raw.trim());
     trimmed.split_whitespace().map(|s| s.to_string()).collect()
+}
+
+/// Build a mapping from each byte offset in `lowered` back to the corresponding
+/// byte offset in `original`.  Entry `map[i]` (for `i` in `0..=lowered.len()`)
+/// gives the byte offset in `original` that corresponds to lowered byte `i`.
+///
+/// Both strings must have been produced from the same source via
+/// `original` -> `original.to_lowercase()` == `lowered`.
+fn build_lower_to_orig_map(original: &str, lowered: &str) -> Vec<usize> {
+    let mut map = vec![0usize; lowered.len() + 1];
+    let mut orig_iter = original.char_indices().peekable();
+    let mut low_iter = lowered.char_indices().peekable();
+
+    loop {
+        match (orig_iter.peek(), low_iter.peek()) {
+            (Some(&(orig_byte, orig_ch)), Some(&(low_byte, _))) => {
+                // Map the start of this lowered char to the start of the original char.
+                map[low_byte] = orig_byte;
+                // A single original char may lowercase into multiple chars (e.g. 'İ' → "i\u{307}").
+                let orig_lower: String = orig_ch.to_lowercase().collect();
+                let orig_lower_bytes = orig_lower.len();
+                // Advance past all lowered chars that came from this single original char.
+                let mut consumed = 0;
+                while consumed < orig_lower_bytes {
+                    if let Some(&(_, lc)) = low_iter.peek() {
+                        consumed += lc.len_utf8();
+                        low_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                orig_iter.next();
+            }
+            _ => break,
+        }
+    }
+    // Sentinel: map the end-of-lowered to end-of-original.
+    map[lowered.len()] = original.len();
+    map
+}
+
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn highlight_terms_in_line(line: &str, terms: &[&str]) -> String {
+    let line_lower = line.to_lowercase();
+    let map = build_lower_to_orig_map(line, &line_lower);
+    // Collect ranges in *original* line byte offsets.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for term in terms {
+        let lower_term = term.to_lowercase();
+        if lower_term.is_empty() {
+            continue;
+        }
+        let lt_len = lower_term.len();
+        let mut start = 0usize; // byte offset in line_lower
+        while start + lt_len <= line_lower.len() {
+            if let Some(pos) = line_lower[start..].find(&lower_term) {
+                let abs_start = start + pos;
+                let abs_end = abs_start + lt_len;
+                // Map back to original string byte offsets.
+                ranges.push((map[abs_start], map[abs_end]));
+                // Advance past the first char of the match (char-aware).
+                start = abs_start
+                    + line_lower[abs_start..]
+                        .chars()
+                        .next()
+                        .map_or(1, |c| c.len_utf8());
+            } else {
+                break;
+            }
+        }
+    }
+    if ranges.is_empty() {
+        return html_escape(line);
+    }
+    ranges.sort_by_key(|&(a, _)| a);
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    let mut out = String::new();
+    let mut cursor = 0;
+    for (s, e) in &merged {
+        if cursor < *s {
+            out.push_str(&html_escape(&line[cursor..*s]));
+        }
+        out.push_str("<mark>");
+        out.push_str(&html_escape(&line[*s..*e]));
+        out.push_str("</mark>");
+        cursor = *e;
+    }
+    if cursor < line.len() {
+        out.push_str(&html_escape(&line[cursor..]));
+    }
+    out
+}
+
+/// Return every line in `body` that contains **any** of the given terms (OR semantics).
+///
+/// This is intentional: `search_content_filtered` already narrows results to documents
+/// where **all** terms appear (AND semantics), so within a matched document we highlight
+/// every line that mentions at least one term to give the user full context.
+fn find_matching_lines(body: &str, terms: &[&str]) -> Vec<(u64, String)> {
+    let lower_terms: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+    body.split('\n')
+        .enumerate()
+        .filter(|(_, line)| {
+            let lower = line.to_lowercase();
+            lower_terms.iter().any(|lt| lower.contains(lt.as_str()))
+        })
+        .map(|(i, line)| ((i as u64) + 1, highlight_terms_in_line(line, terms)))
+        .collect()
 }
 
 fn search_file_with_matcher(
@@ -4336,6 +4599,308 @@ mod tests {
         for r in &results {
             assert!(r.score < 0.0, "score should be negative (negated count)");
         }
+    }
+
+    // --- GraphIndex search_content_filtered (faceted, line-level) ---
+
+    fn set_mtime(root: &Path, rel_path: &str, secs: u64) {
+        let f = fs::File::options()
+            .write(true)
+            .open(root.join(rel_path))
+            .unwrap();
+        f.set_modified(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn search_content_filtered_line_level_body_relative() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Alpha\ndate: 2026-01-01\n---\nline one\nquantum here\nline three\nnew quantum",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("quantum", &SearchFilter::default(), 20)
+            .unwrap();
+        assert_eq!(results.len(), 2, "one result per matching body line");
+        assert_eq!(
+            results[0].first_match_line,
+            Some(2),
+            "line numbers must be body-relative (frontmatter excluded)"
+        );
+        assert_eq!(results[1].first_match_line, Some(4));
+        assert!(results[0].excerpt.contains("<mark>quantum</mark>"));
+        assert!(results[1].excerpt.contains("<mark>quantum</mark>"));
+        assert_eq!(results[0].title, "Alpha");
+    }
+
+    #[test]
+    fn search_content_filtered_multi_term_and() {
+        let dir = create_workspace();
+        write_md(dir.path(), "both.md", "quantum on this line\ncomputing on that line");
+        write_md(dir.path(), "one.md", "quantum mechanics only");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("quantum computing", &SearchFilter::default(), 20)
+            .unwrap();
+        assert!(!results.is_empty());
+        assert!(
+            results.iter().all(|r| r.id == "both.md"),
+            "only the file containing all terms should match"
+        );
+        assert_eq!(
+            results.len(),
+            2,
+            "each line containing at least one term is a result"
+        );
+    }
+
+    #[test]
+    fn search_content_filtered_folder_filter() {
+        let dir = create_workspace();
+        write_md(dir.path(), "projects/a.md", "quantum one\nquantum two");
+        write_md(dir.path(), "notes/b.md", "quantum one\nquantum two");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let filter = SearchFilter {
+            folder_prefix: Some("projects/".into()),
+            ..Default::default()
+        };
+        let results = gi.search_content_filtered("quantum", &filter, 20).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.id == "projects/a.md"));
+    }
+
+    #[test]
+    fn search_content_filtered_tag_filter_and_semantics() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntags: [physics, draft]\n---\nquantum body",
+        );
+        write_md(dir.path(), "b.md", "---\ntags: [physics]\n---\nquantum body");
+        write_md(dir.path(), "c.md", "quantum body");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        let one_tag = SearchFilter {
+            tags: Some(vec!["physics".into()]),
+            ..Default::default()
+        };
+        let results = gi.search_content_filtered("quantum", &one_tag, 20).unwrap();
+        let ids: HashSet<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, HashSet::from(["a.md", "b.md"]));
+
+        let two_tags = SearchFilter {
+            tags: Some(vec!["physics".into(), "draft".into()]),
+            ..Default::default()
+        };
+        let results = gi.search_content_filtered("quantum", &two_tags, 20).unwrap();
+        assert!(results.iter().all(|r| r.id == "a.md"));
+        assert!(!results.is_empty(), "a.md carries both tags");
+    }
+
+    #[test]
+    fn search_content_filtered_mtime_range() {
+        let dir = create_workspace();
+        write_md(dir.path(), "old.md", "quantum old");
+        write_md(dir.path(), "new.md", "quantum new");
+        set_mtime(dir.path(), "old.md", 1000);
+        set_mtime(dir.path(), "new.md", 2000);
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+
+        // sync.mtime is stored in epoch milliseconds.
+        let after = SearchFilter {
+            mtime_after: Some(1_500_000),
+            ..Default::default()
+        };
+        let results = gi.search_content_filtered("quantum", &after, 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "new.md");
+
+        let before = SearchFilter {
+            mtime_before: Some(1_500_000),
+            ..Default::default()
+        };
+        let results = gi.search_content_filtered("quantum", &before, 20).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "old.md");
+    }
+
+    #[test]
+    fn search_content_filtered_html_escapes_excerpt() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<b>bold</b> & quantum text");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("quantum", &SearchFilter::default(), 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        let excerpt = &results[0].excerpt;
+        assert!(
+            excerpt.contains("&lt;b&gt;") && excerpt.contains("&amp;"),
+            "excerpt must HTML-escape raw markup, got: {excerpt}"
+        );
+        assert!(excerpt.contains("<mark>quantum</mark>"));
+        assert!(!excerpt.contains("<b>"));
+    }
+
+    #[test]
+    fn search_content_filtered_title_only_fallback() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Quantum Physics\n---\nno match in body",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("Quantum", &SearchFilter::default(), 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+        assert!(results[0].excerpt.contains("<mark>Quantum</mark>"));
+    }
+
+    #[test]
+    fn search_content_filtered_filename_title_fallback() {
+        // Title derived from the filename never appears in the file contents,
+        // so the raw-file prefilter alone would miss it.
+        let dir = create_workspace();
+        write_md(dir.path(), "zanzibar-notes.md", "no match in body");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("zanzibar", &SearchFilter::default(), 10)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "zanzibar-notes.md");
+        assert_eq!(results[0].first_match_line, Some(1));
+    }
+
+    #[test]
+    fn search_content_filtered_empty_query() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("", &SearchFilter::default(), 10)
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_content_filtered_limit_caps_lines() {
+        let dir = create_workspace();
+        let body = "quantum one\nquantum two\nquantum three\nquantum four\nquantum five";
+        write_md(dir.path(), "a.md", body);
+        write_md(dir.path(), "b.md", body);
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("quantum", &SearchFilter::default(), 3)
+            .unwrap();
+        assert_eq!(results.len(), 3, "limit caps total line-level results");
+    }
+
+    #[test]
+    fn search_content_filtered_ranks_files_by_match_count() {
+        let dir = create_workspace();
+        write_md(dir.path(), "many.md", "rust\nrust\nrust");
+        write_md(dir.path(), "few.md", "rust once");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("rust", &SearchFilter::default(), 20)
+            .unwrap();
+        assert_eq!(results.len(), 4);
+        assert!(
+            results[..3].iter().all(|r| r.id == "many.md"),
+            "file with more matching lines ranks first, its lines grouped"
+        );
+        assert_eq!(
+            results[..3]
+                .iter()
+                .map(|r| r.first_match_line.unwrap())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3],
+            "lines within a file are in ascending order"
+        );
+        assert_eq!(results[3].id, "few.md");
+    }
+
+    // --- GraphIndex list_folders ---
+
+    #[test]
+    fn list_folders_returns_nested_prefixes_sorted() {
+        let dir = create_workspace();
+        write_md(dir.path(), "root.md", "x");
+        write_md(dir.path(), "a/one.md", "x");
+        write_md(dir.path(), "a/b/two.md", "x");
+        write_md(dir.path(), "z/three.md", "x");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let folders = gi.list_folders(100).unwrap();
+        assert_eq!(folders, vec!["a/", "a/b/", "z/"]);
+    }
+
+    #[test]
+    fn list_folders_respects_limit() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a/one.md", "x");
+        write_md(dir.path(), "b/two.md", "x");
+        write_md(dir.path(), "c/three.md", "x");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let folders = gi.list_folders(2).unwrap();
+        assert_eq!(folders, vec!["a/", "b/"]);
+    }
+
+    // --- find_matching_lines / highlight_terms_in_line (pure) ---
+
+    #[test]
+    fn find_matching_lines_multi() {
+        let body = "line one\nquantum here\nline three\nnew quantum";
+        let lines = find_matching_lines(body, &["quantum"]);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, 2);
+        assert!(lines[0].1.contains("<mark>quantum</mark>"));
+        assert_eq!(lines[1].0, 4);
+        assert!(lines[1].1.contains("<mark>quantum</mark>"));
+    }
+
+    #[test]
+    fn find_matching_lines_none() {
+        let body = "hello world\nnothing here";
+        let lines = find_matching_lines(body, &["quantum"]);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn find_matching_lines_single() {
+        let lines = find_matching_lines("quantum", &["quantum"]);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], (1, "<mark>quantum</mark>".to_string()));
+    }
+
+    #[test]
+    fn highlight_terms_case_insensitive_preserves_original() {
+        let out = highlight_terms_in_line("Quantum leap", &["quantum"]);
+        assert_eq!(out, "<mark>Quantum</mark> leap");
+    }
+
+    #[test]
+    fn highlight_terms_merges_overlapping_ranges() {
+        let out = highlight_terms_in_line("abcd", &["abc", "bcd"]);
+        assert_eq!(out, "<mark>abcd</mark>");
+    }
+
+    #[test]
+    fn highlight_terms_escapes_html_outside_marks() {
+        let out = highlight_terms_in_line("<i>x</i> term", &["term"]);
+        assert_eq!(out, "&lt;i&gt;x&lt;/i&gt; <mark>term</mark>");
+    }
+
+    #[test]
+    fn highlight_terms_multibyte_line() {
+        let out = highlight_terms_in_line("日本語 quantum 中文", &["quantum"]);
+        assert_eq!(out, "日本語 <mark>quantum</mark> 中文");
     }
 
     // --- GraphIndex search_by_title ---

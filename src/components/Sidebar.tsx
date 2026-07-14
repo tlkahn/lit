@@ -24,6 +24,8 @@ import { useRevealFlash } from "../hooks/useRevealFlash";
 import { useTreeKeyboard } from "../hooks/useTreeKeyboard";
 import { Outline } from "./Outline";
 import { ReferenceLibrary } from "./ReferenceLibrary";
+import { SearchPanel } from "./SearchPanel";
+import { useSearchPanelStore } from "../stores/searchPanel";
 import { SortDropdown } from "./SortDropdown";
 import type { PageMeta } from "../lib/ipc";
 
@@ -167,6 +169,13 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   useEffect(() => {
     if (tab === "references") setHasVisitedReferences(true);
   }, [tab]);
+  // SearchPanel follows the same lazy-mount + keep-alive pattern so its IPC
+  // effects don't run until the Search tab is first visited, and results
+  // survive tab switches afterwards.
+  const [hasVisitedSearch, setHasVisitedSearch] = useState(() => tab === "search");
+  useEffect(() => {
+    if (tab === "search") setHasVisitedSearch(true);
+  }, [tab]);
   // Bridge for reveal-bib events (editor citekey links, command palette,
   // context menu) that fire before ReferenceLibrary has ever mounted: stash the
   // event, mount ReferenceLibrary, and re-dispatch once its listeners exist
@@ -246,6 +255,34 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     return onSetSidebarTab((tab) => {
       setTab(tab);
     });
+  }, [setTab]);
+
+  // Allow programmatic switching to the search tab from anywhere (e.g. Shift+Cmd+F).
+  // SearchPanel focuses its own input: on first visit via its mount effect, and on
+  // later dispatches via its own lit:focus-search-panel listener.
+  useEffect(() => {
+    const handler = () => {
+      ensureSidebarVisible();
+      setTab("search");
+    };
+    window.addEventListener("lit:focus-search-panel", handler);
+    return () => window.removeEventListener("lit:focus-search-panel", handler);
+  }, [setTab]);
+
+  // Bridge: CommandPalette "Cmd+Enter" transfers query to search panel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { query } = (e as CustomEvent<{ query: string }>).detail;
+      ensureSidebarVisible();
+      setTab("search");
+      useSearchPanelStore.getState().setQuery(query);
+      // Focus the search input after React renders the tab switch
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("lit:focus-search-panel"));
+      });
+    };
+    window.addEventListener("lit:open-search-panel-with-query", handler);
+    return () => window.removeEventListener("lit:open-search-panel-with-query", handler);
   }, [setTab]);
 
   const pendingRevealRef = useRef<string | null>(null);
@@ -346,6 +383,18 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           }`}
         >
           <span className="nerd-font text-base" aria-hidden="true">{'󰠶'}</span>
+        </button>
+        <button
+          onClick={() => setTab("search")}
+          title="Search"
+          aria-label="Search"
+          className={`flex-1 px-3 py-2 text-xs font-medium ${
+            tab === "search"
+              ? "text-text-normal opacity-100"
+              : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
+          }`}
+        >
+          <span className="nerd-font text-base" aria-hidden="true">{''}</span>
         </button>
         <button
           onClick={() => setTab("references")}
@@ -452,6 +501,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           style={{ display: tab === "references" ? "flex" : "none" }}
         >
           <ReferenceLibrary />
+        </div>
+      )}
+      {hasVisitedSearch && (
+        <div
+          className="flex flex-1 flex-col overflow-hidden"
+          style={{ display: tab === "search" ? "flex" : "none" }}
+        >
+          <SearchPanel />
         </div>
       )}
     </aside>
