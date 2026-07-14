@@ -13,6 +13,7 @@ import { _resetForTesting as resetForwardSync } from "../lib/forwardSync";
 import { _resetMarkerCacheForTesting as resetMarkerCache } from "../lib/pageMarkers";
 import { Text } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import { setFlashHighlight } from "../editor/livePreview/flashHighlight";
 
 const mockView = {} as EditorView;
 
@@ -1123,6 +1124,63 @@ describe("EditorPane", () => {
       const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(tx.selection).toBeUndefined();
       expect(view.focus).not.toHaveBeenCalled();
+    });
+
+    it("scroll-to-line with flash flag dispatches a flash highlight on the target line", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const docText = "line one\nline two\nline three";
+      const view = fakeViewWithDoc(docText);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, flash: true } }),
+      );
+
+      const doc = Text.of(docText.split("\n"));
+      const targetLine = doc.line(2);
+      const dispatchMock = view.dispatch as ReturnType<typeof vi.fn>;
+      const flashCall = dispatchMock.mock.calls.find((call) => {
+        const effects = call[0]?.effects;
+        return effects != null && !Array.isArray(effects) && effects.is(setFlashHighlight);
+      });
+      expect(flashCall).toBeDefined();
+      expect(flashCall![0].effects.value).toEqual({
+        from: targetLine.from,
+        to: targetLine.to,
+      });
+    });
+
+    it("scroll-to-line without flash flag does not dispatch a flash highlight", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      const dispatchMock = view.dispatch as ReturnType<typeof vi.fn>;
+      const flashCall = dispatchMock.mock.calls.find((call) => {
+        const effects = call[0]?.effects;
+        return effects != null && !Array.isArray(effects) && effects.is(setFlashHighlight);
+      });
+      expect(flashCall).toBeUndefined();
     });
 
     it("request-editor-focus focuses the focused pane", async () => {

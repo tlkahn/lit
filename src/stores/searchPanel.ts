@@ -36,6 +36,8 @@ export const useSearchPanelStore = create<SearchPanelState>((set, get) => ({
     set({ query: q, selectedIndex: 0, navigatedResultId: null });
     if (debounceTimer) clearTimeout(debounceTimer);
     if (!q.trim()) {
+      // Invalidate any in-flight search so its response can't resurrect results.
+      requestId++;
       set({ results: [], totalCount: 0, isLoading: false });
       return;
     }

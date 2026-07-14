@@ -1,10 +1,15 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { useSearchPanelStore } from "../stores/searchPanel";
 import { useWorkspaceStore } from "../stores/workspace";
-import { mockInvoke } from "../test/tauri-mock";
+import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import type { GraphSearchResult } from "../lib/ipc";
+import { navigateToNote } from "../lib/navigateToNote";
 import { SearchPanel } from "./SearchPanel";
+
+vi.mock("../lib/navigateToNote", () => ({
+  navigateToNote: vi.fn(),
+}));
 
 function makeResult(id: string): GraphSearchResult {
   return { id, title: id, score: 1.0, excerpt: `<mark>${id}</mark>` };
@@ -140,6 +145,44 @@ describe("SearchPanel graphReady transition", () => {
     });
   });
 
+  it("Enter in the tag input adds the tag without navigating to a result", async () => {
+    const results = [makeResult("a.md"), makeResult("b.md")];
+    useWorkspaceStore.setState({ graphReady: true });
+    useSearchPanelStore.setState({
+      query: "test",
+      results,
+      totalCount: results.length,
+    });
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") return results;
+      if (cmd === "list_folders") return [];
+      if (cmd === "search_tags") return [{ tag: "math", count: 3 }];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    render(<SearchPanel />);
+
+    // Expand the facet bar to reveal the tag input.
+    fireEvent.click(screen.getByRole("button", { name: /filters/i }));
+    const tagInput = screen.getByPlaceholderText("Filter by tag...");
+
+    // Type and wait for the debounced suggestion fetch.
+    fireEvent.change(tagInput, { target: { value: "ma" } });
+    await waitFor(() => {
+      expect(screen.getByText("math")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(tagInput, { key: "Enter" });
+
+    // The tag was added...
+    await waitFor(() => {
+      expect(useSearchPanelStore.getState().filter.tags).toEqual(["math"]);
+    });
+    // ...and Enter did NOT bubble to the wrapper's navigation handler.
+    expect(navigateToNote).not.toHaveBeenCalled();
+    expect(useSearchPanelStore.getState().navigatedResultId).toBeNull();
+  });
+
   it("does not re-execute search on graphReady transition when query is empty", async () => {
     useSearchPanelStore.setState({ query: "" });
     let searchCalled = false;
@@ -161,5 +204,71 @@ describe("SearchPanel graphReady transition", () => {
     // Give any async calls time to fire
     await act(async () => {});
     expect(searchCalled).toBe(false);
+  });
+});
+
+describe("SearchPanel graph-updated gating (isActive)", () => {
+  let searchCalls: number;
+
+  beforeEach(() => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      graphReady: true,
+    });
+    useSearchPanelStore.setState({
+      query: "hello",
+      filter: {},
+      results: [],
+      selectedIndex: 0,
+      isLoading: false,
+      totalCount: 0,
+      navigatedResultId: null,
+    });
+    searchCalls = 0;
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") {
+        searchCalls++;
+        return [makeResult("a.md")];
+      }
+      if (cmd === "list_folders") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  });
+
+  afterEach(() => {
+    resetListenMock();
+  });
+
+  it("re-searches immediately on graph-updated while active", async () => {
+    render(<SearchPanel />);
+    await act(async () => {}); // let listen() register
+
+    act(() => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+    await waitFor(() => expect(searchCalls).toBe(1));
+  });
+
+  it("defers graph-updated re-search while hidden and refreshes once on activation", async () => {
+    const { rerender } = render(<SearchPanel isActive={false} />);
+    await act(async () => {}); // let listen() register
+
+    act(() => {
+      emitMockEvent("lit:graph-updated", {});
+    });
+    await act(async () => {});
+    expect(searchCalls).toBe(0);
+
+    // Activating the tab runs exactly one refresh search.
+    rerender(<SearchPanel isActive={true} />);
+    await waitFor(() => expect(searchCalls).toBe(1));
+
+    // Re-activating without new graph updates does not re-search again.
+    rerender(<SearchPanel isActive={false} />);
+    rerender(<SearchPanel isActive={true} />);
+    await act(async () => {});
+    expect(searchCalls).toBe(1);
   });
 });

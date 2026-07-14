@@ -1,13 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockSelectPageAtLine, mockRecordJump, mockWorkspaceState } = vi.hoisted(() => {
+const {
+  mockSelectPageAtLine,
+  mockRecordJump,
+  mockWorkspaceState,
+  mockSubscribeCalls,
+  emitWorkspaceState,
+} = vi.hoisted(() => {
   const mockSelectPageAtLine = vi.fn();
   const mockRecordJump = vi.fn();
   const mockWorkspaceState = {
     currentPagePath: "current-page.md" as string | null,
     selectPageAtLine: mockSelectPageAtLine,
   };
-  return { mockSelectPageAtLine, mockRecordJump, mockWorkspaceState };
+  type Listener = (s: typeof mockWorkspaceState) => void;
+  const mockSubscribeCalls: { listener: Listener; unsubscribed: boolean }[] = [];
+  const emitWorkspaceState = (partial: Partial<typeof mockWorkspaceState>) => {
+    Object.assign(mockWorkspaceState, partial);
+    for (const call of mockSubscribeCalls) {
+      if (!call.unsubscribed) call.listener(mockWorkspaceState);
+    }
+  };
+  return {
+    mockSelectPageAtLine,
+    mockRecordJump,
+    mockWorkspaceState,
+    mockSubscribeCalls,
+    emitWorkspaceState,
+  };
 });
 
 vi.mock("../stores/workspace", () => ({
@@ -16,6 +36,13 @@ vi.mock("../stores/workspace", () => ({
       selector(mockWorkspaceState),
     {
       getState: () => mockWorkspaceState,
+      subscribe: (listener: (s: typeof mockWorkspaceState) => void) => {
+        const record = { listener, unsubscribed: false };
+        mockSubscribeCalls.push(record);
+        return () => {
+          record.unsubscribed = true;
+        };
+      },
     },
   ),
 }));
@@ -33,6 +60,7 @@ describe("navigateToNote", () => {
     mockSelectPageAtLine.mockClear();
     mockRecordJump.mockClear();
     mockWorkspaceState.currentPagePath = "current-page.md";
+    mockSubscribeCalls.length = 0;
   });
 
   it("records a jump with correct from/to positions", () => {
@@ -109,6 +137,58 @@ describe("navigateToNote", () => {
       { notePath: "target.md", line: 1, col: 0 },
     );
     expect(mockSelectPageAtLine).toHaveBeenCalledWith("target.md", 1);
+  });
+
+  it("unsubscribes a pending flash subscription when superseded by a new navigation", () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+
+    navigateToNote("a.md", 5, { flash: true });
+    navigateToNote("b.md", 7, { flash: true });
+
+    expect(mockSubscribeCalls).toHaveLength(2);
+    expect(mockSubscribeCalls[0]!.unsubscribed).toBe(true);
+
+    // A later incidental state change lands on a.md: the superseded
+    // navigation must not fire a stale scroll+flash.
+    emitWorkspaceState({ currentPagePath: "a.md" });
+    const staleScroll = dispatchSpy.mock.calls.find(
+      (call) =>
+        (call[0] as CustomEvent).type === "lit:scroll-to-line" &&
+        (call[0] as CustomEvent).detail.line === 4,
+    );
+    expect(staleScroll).toBeUndefined();
+
+    dispatchSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("still fires the flash scroll for the latest navigation", () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+
+    navigateToNote("a.md", 5, { flash: true });
+    navigateToNote("b.md", 7, { flash: true });
+    emitWorkspaceState({ currentPagePath: "b.md" });
+
+    const scroll = dispatchSpy.mock.calls.find(
+      (call) => (call[0] as CustomEvent).type === "lit:scroll-to-line",
+    );
+    expect(scroll).toBeDefined();
+    expect((scroll![0] as CustomEvent).detail).toEqual({
+      line: 6,
+      cursor: false,
+      flash: true,
+    });
+
+    dispatchSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it("uses empty string for from notePath when currentPagePath is null", () => {

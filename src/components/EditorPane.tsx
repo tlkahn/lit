@@ -16,6 +16,7 @@ import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
 import { applySectionToView } from "../lib/sectionTarget";
 import { globalJumpTracker } from "../editor/jumpTracker";
+import { dispatchFlashHighlight } from "../editor/livePreview/flashHighlight";
 import { shouldEditorClaimFocus } from "../lib/editorFocus";
 import { applyJumpLine, applyPendingCursorLine } from "../lib/editorScroll";
 import {
@@ -132,13 +133,16 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       if (!leaf || (leaf.viewMode && leaf.viewMode !== "editor")) return;
       const view = getPaneView(paneId);
       if (!view) return;
-      const detail = (e as CustomEvent<{ line: number; cursor?: boolean }>).detail;
+      const detail = (e as CustomEvent<{ line: number; cursor?: boolean; flash?: boolean }>)
+        .detail;
       const lineNumber = Math.min(detail.line + 1, view.state.doc.lines);
-      const pos = view.state.doc.line(lineNumber).from;
+      const lineObj = view.state.doc.line(lineNumber);
+      const pos = lineObj.from;
       view.dispatch({
         effects: EditorView.scrollIntoView(pos, { y: "start" }),
         ...(detail.cursor ? { selection: EditorSelection.cursor(pos) } : {}),
       });
+      if (detail.flash) dispatchFlashHighlight(view, lineObj.from, lineObj.to);
       if (detail.cursor) view.focus();
     };
     window.addEventListener("lit:scroll-to-line", handler);

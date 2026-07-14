@@ -138,6 +138,9 @@ function TagInput({
           onKeyDown={(e) => {
             if (e.key === "Enter" && suggestions.length > 0) {
               e.preventDefault();
+              // Don't let Enter bubble to the panel wrapper, which would
+              // navigate to the selected search result.
+              e.stopPropagation();
               addTag(suggestions[0]!.tag);
             }
           }}
@@ -324,10 +327,16 @@ function ActiveFilterChips() {
 // SearchPanel
 // ---------------------------------------------------------------------------
 
-export function SearchPanel() {
+export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // The panel stays mounted (keep-alive) while its sidebar tab is hidden.
+  // Refs let the mount-once graph-updated listener see the current
+  // visibility, deferring re-searches until the tab is shown again.
+  const isActiveRef = useRef(isActive);
+  const staleRef = useRef(false);
 
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const query = useSearchPanelStore((s) => s.query);
@@ -379,21 +388,38 @@ export function SearchPanel() {
     return () => window.removeEventListener("lit:focus-search-panel", handler);
   }, []);
 
-  // Re-run search when the graph index updates (file saved, created, deleted)
+  // Re-run search when the graph index updates (file saved, created, deleted).
+  // While the tab is hidden, just mark the results stale instead of running
+  // ripgrep on every save; the activation effect below catches up.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("lit:graph-updated", () => {
       if (!useWorkspaceStore.getState().graphReady) return;
       const { query: q } = useSearchPanelStore.getState();
-      if (q.trim()) {
-        useSearchPanelStore.getState().executeSearch();
+      if (!q.trim()) return;
+      if (!isActiveRef.current) {
+        staleRef.current = true;
+        return;
       }
+      useSearchPanelStore.getState().executeSearch();
     }).then((fn) => {
       if (cancelled) { fn(); } else { unlisten = fn; }
     });
     return () => { cancelled = true; unlisten?.(); };
   }, []);
+
+  // On tab activation, re-run a search that went stale while hidden.
+  useEffect(() => {
+    isActiveRef.current = isActive;
+    if (!isActive || !staleRef.current) return;
+    staleRef.current = false;
+    if (!useWorkspaceStore.getState().graphReady) return;
+    const { query: q } = useSearchPanelStore.getState();
+    if (q.trim()) {
+      useSearchPanelStore.getState().executeSearch();
+    }
+  }, [isActive]);
 
   // Re-run search when graphReady transitions from false → true
   // (e.g. after "Rebuild Graph Index" completes)

@@ -1735,9 +1735,16 @@ fn build_lower_to_orig_map(original: &str, lowered: &str) -> Vec<usize> {
                 let orig_lower: String = orig_ch.to_lowercase().collect();
                 let orig_lower_bytes = orig_lower.len();
                 // Advance past all lowered chars that came from this single original char.
+                // Lowered chars beyond the first map to the *end* of the original char,
+                // so a match ending mid-expansion highlights the whole original char and
+                // the map stays monotonic.
+                let orig_end = orig_byte + orig_ch.len_utf8();
                 let mut consumed = 0;
                 while consumed < orig_lower_bytes {
-                    if let Some(&(_, lc)) = low_iter.peek() {
+                    if let Some(&(lb, lc)) = low_iter.peek() {
+                        if consumed > 0 {
+                            map[lb] = orig_end;
+                        }
                         consumed += lc.len_utf8();
                         low_iter.next();
                     } else {
@@ -1783,8 +1790,12 @@ fn highlight_terms_in_line(line: &str, terms: &[&str]) -> String {
             if let Some(pos) = line_lower[start..].find(&lower_term) {
                 let abs_start = start + pos;
                 let abs_end = abs_start + lt_len;
-                // Map back to original string byte offsets.
-                ranges.push((map[abs_start], map[abs_end]));
+                // Map back to original string byte offsets. Guard against
+                // degenerate ranges so a mapping quirk can never panic slicing.
+                let (s, e) = (map[abs_start], map[abs_end]);
+                if s < e {
+                    ranges.push((s, e));
+                }
                 // Advance past the first char of the match (char-aware).
                 start = abs_start
                     + line_lower[abs_start..]
@@ -4901,6 +4912,33 @@ mod tests {
     fn highlight_terms_multibyte_line() {
         let out = highlight_terms_in_line("日本語 quantum 中文", &["quantum"]);
         assert_eq!(out, "日本語 <mark>quantum</mark> 中文");
+    }
+
+    #[test]
+    fn highlight_terms_expanding_lowercase_no_panic() {
+        // 'İ' lowercases to "i\u{307}" (1 char -> 2 chars, 2 bytes -> 3 bytes).
+        // A term matching only part of the expansion must not panic and should
+        // highlight the whole original char.
+        let out = highlight_terms_in_line("aİb", &["i"]);
+        assert_eq!(out, "a<mark>İ</mark>b");
+    }
+
+    #[test]
+    fn build_lower_to_orig_map_monotonic_on_expansion() {
+        let original = "aİb İİ x";
+        let lowered = original.to_lowercase();
+        let map = build_lower_to_orig_map(original, &lowered);
+        // Only char-boundary offsets of `lowered` are ever looked up (term match
+        // offsets come from `str::find` on `lowered`), so monotonicity must hold
+        // across exactly those entries.
+        let boundaries: Vec<usize> = (0..=lowered.len())
+            .filter(|&i| lowered.is_char_boundary(i))
+            .map(|i| map[i])
+            .collect();
+        for w in boundaries.windows(2) {
+            assert!(w[0] <= w[1], "map not monotonic at char boundaries: {map:?}");
+        }
+        assert_eq!(*map.last().unwrap(), original.len());
     }
 
     // --- GraphIndex search_by_title ---

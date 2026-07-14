@@ -508,7 +508,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           className="flex flex-1 flex-col overflow-hidden"
           style={{ display: tab === "search" ? "flex" : "none" }}
         >
-          <SearchPanel />
+          <SearchPanel isActive={tab === "search"} />
         </div>
       )}
     </aside>

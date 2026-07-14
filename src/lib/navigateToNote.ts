@@ -5,6 +5,11 @@ export interface NavigateToNoteOpts {
   flash?: boolean;
 }
 
+// Unsubscribe for a flash navigation still waiting for its page to load.
+// A new navigation supersedes it so the stale subscription can't fire a
+// scroll+flash on a later incidental state change.
+let pendingFlashUnsub: (() => void) | null = null;
+
 /**
  * Record a jump and navigate to `targetId` at `targetLine` (1-based).
  *
@@ -36,9 +41,11 @@ export function navigateToNote(
   } else {
     selectPageAtLine(targetId, targetLine);
     if (opts.flash) {
+      pendingFlashUnsub?.();
       const unsub = useWorkspaceStore.subscribe((state) => {
         if (state.currentPagePath === targetId) {
           unsub();
+          if (pendingFlashUnsub === unsub) pendingFlashUnsub = null;
           requestAnimationFrame(() => {
             window.dispatchEvent(
               new CustomEvent("lit:scroll-to-line", {
@@ -48,6 +55,7 @@ export function navigateToNote(
           });
         }
       });
+      pendingFlashUnsub = unsub;
     }
   }
 }

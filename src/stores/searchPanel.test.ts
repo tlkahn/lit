@@ -275,6 +275,35 @@ describe("searchPanel store", () => {
     expect(results[0]!.id).toBe("fresh.md");
   });
 
+  it("clearing the query invalidates an in-flight search", async () => {
+    let resolveSearch: ((v: GraphSearchResult[]) => void) | null = null;
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") {
+        return new Promise<GraphSearchResult[]>((resolve) => {
+          resolveSearch = resolve;
+        });
+      }
+      return null;
+    });
+
+    // Fire a search and let the debounce dispatch the (pending) IPC call.
+    useSearchPanelStore.getState().setQuery("foo");
+    vi.advanceTimersByTime(200);
+    expect(resolveSearch).not.toBeNull();
+
+    // Clear the query while the search is still in flight.
+    useSearchPanelStore.getState().setQuery("");
+    expect(useSearchPanelStore.getState().results).toEqual([]);
+
+    // The stale response resolves after the clear -- results must stay empty.
+    resolveSearch!([makeResult("stale.md", "Stale")]);
+    await vi.runAllTimersAsync();
+
+    expect(useSearchPanelStore.getState().results).toEqual([]);
+    expect(useSearchPanelStore.getState().totalCount).toBe(0);
+    expect(useSearchPanelStore.getState().isLoading).toBe(false);
+  });
+
   // --- navigatedResultId ---
 
   it("setNavigatedResultId sets the navigated result", () => {
