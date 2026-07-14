@@ -58,61 +58,63 @@ describe("resolveLineColPos", () => {
 
 function fakeView(docContent: string) {
   const doc = Text.of(docContent.split("\n"));
-  return {
+  const dispatch = vi.fn();
+  const view = {
     state: { doc },
-    dispatch: vi.fn(),
+    dispatch,
   } as unknown as EditorView;
+  return { view, dispatch };
 }
 
 describe("applyJumpLine", () => {
   it("dispatches cursor at start of requested line with y:'start'", () => {
-    const view = fakeView("line one\nline two\nline three");
+    const { view, dispatch } = fakeView("line one\nline two\nline three");
     applyJumpLine(view, 2);
-    expect(view.dispatch).toHaveBeenCalledTimes(1);
-    const tx = view.dispatch.mock.calls[0][0];
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const tx = dispatch.mock.calls[0]![0];
     expect(tx.selection.head).toBe(view.state.doc.line(2).from);
     expect(tx.effects.value.range.head).toBe(view.state.doc.line(2).from);
   });
 
   it("clamps to last line when line exceeds document", () => {
-    const view = fakeView("only one line");
+    const { view, dispatch } = fakeView("only one line");
     applyJumpLine(view, 99);
-    expect(view.dispatch).toHaveBeenCalledTimes(1);
-    const tx = view.dispatch.mock.calls[0][0];
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const tx = dispatch.mock.calls[0]![0];
     expect(tx.selection.head).toBe(0);
   });
 });
 
 describe("applyPendingCursorLine", () => {
   it("dispatches cursor at line+col with y:'center'", () => {
-    const view = fakeView("line one\nline two\nline three");
+    const { view, dispatch } = fakeView("line one\nline two\nline three");
     applyPendingCursorLine(view, 2, 4, false, null);
-    expect(view.dispatch).toHaveBeenCalledTimes(1);
-    const tx = view.dispatch.mock.calls[0][0];
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const tx = dispatch.mock.calls[0]![0];
     const expected = view.state.doc.line(2).from + 4;
     expect(tx.selection.head).toBe(expected);
   });
 
   it("treats null col as 0", () => {
-    const view = fakeView("line one\nline two");
+    const { view, dispatch } = fakeView("line one\nline two");
     applyPendingCursorLine(view, 2, null, false, null);
-    const tx = view.dispatch.mock.calls[0][0];
+    const tx = dispatch.mock.calls[0]![0];
     expect(tx.selection.head).toBe(view.state.doc.line(2).from);
   });
 
   it("adjusts line for frontmatter when fileAbsolute", () => {
-    const view = fakeView("body line 1\nbody line 2\nbody line 3");
+    const { view, dispatch } = fakeView("body line 1\nbody line 2\nbody line 3");
     // rawYaml "title: X" → 3 frontmatter lines (1 content + 2 delimiters)
     // pendingCursorLine=5 (absolute) → adjusted to 5-3=2 (body line 2)
     applyPendingCursorLine(view, 5, 0, true, "title: X");
-    const tx = view.dispatch.mock.calls[0][0];
+    const tx = dispatch.mock.calls[0]![0];
     expect(tx.selection.head).toBe(view.state.doc.line(2).from);
   });
 
   it("clamps col to line length", () => {
-    const view = fakeView("short\nab");
+    const { view, dispatch } = fakeView("short\nab");
     applyPendingCursorLine(view, 2, 100, false, null);
-    const tx = view.dispatch.mock.calls[0][0];
+    const tx = dispatch.mock.calls[0]![0];
     expect(tx.selection.head).toBe(view.state.doc.line(2).from + 2);
   });
 });
