@@ -400,9 +400,124 @@ describe("EditorPane", () => {
       open("file.pdf");
       expect(openPath).toHaveBeenCalledWith("/ws/sub/file.pdf");
     });
+
+    it("resolves ../-traversing .md links against the note dir (finding 1)", async () => {
+      const invokes: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+      mockInvoke((cmd, args) => {
+        invokes.push({ cmd, args });
+        if (cmd === "read_page") return samplePage;
+        if (cmd === "resolve_wikilink") return { node_id: "other.md" };
+        return null;
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "sub/hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(fakeViewWithDoc("text"));
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.openFilePath).toBeDefined();
+      });
+      const open = capturedProps.openFilePath as (path: string, fragment: string | null) => void;
+      open("../other.md", "^id");
+      await waitFor(() => {
+        expect(invokes.some((c) => c.cmd === "resolve_wikilink" && c.args?.target === "other")).toBe(true);
+      });
+      expect(useWorkspaceStore.getState().pendingSection).toBe("^id");
+    });
+
+    it("routes vault-internal absolute .md links in-app, keeping the fragment (finding 3)", async () => {
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      vi.mocked(openPath).mockClear();
+      const invokes: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+      mockInvoke((cmd, args) => {
+        invokes.push({ cmd, args });
+        if (cmd === "read_page") return samplePage;
+        if (cmd === "resolve_wikilink") return { node_id: "target.md" };
+        return null;
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(fakeViewWithDoc("text"));
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.openFilePath).toBeDefined();
+      });
+      const open = capturedProps.openFilePath as (path: string, fragment: string | null) => void;
+      open("/ws/target.md", "^abc");
+      await waitFor(() => {
+        expect(invokes.some((c) => c.cmd === "resolve_wikilink" && c.args?.target === "target")).toBe(true);
+      });
+      expect(openPath).not.toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().pendingSection).toBe("^abc");
+    });
+
+    it("splits path-qualified targets into name + parentDir on page creation", async () => {
+      const invokes: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+      mockInvoke((cmd, args) => {
+        invokes.push({ cmd, args });
+        if (cmd === "read_page") return samplePage;
+        if (cmd === "resolve_wikilink") return { node_id: null };
+        if (cmd === "create_page") return { title: "missing", relative_path: "notes/deep/missing.md", frontmatter: {}, created_at: 0, modified_at: 0, file_type: "markdown" };
+        if (cmd === "list_pages") return [];
+        return null;
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "notes/deep/hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(fakeViewWithDoc("text"));
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.openFilePath).toBeDefined();
+      });
+      const open = capturedProps.openFilePath as (path: string, fragment: string | null) => void;
+      open("missing.md", null);
+      await waitFor(() => {
+        expect(invokes.some((c) => c.cmd === "create_page")).toBe(true);
+      });
+      const createCall = invokes.find((c) => c.cmd === "create_page")!;
+      expect(createCall.args?.name).toBe("missing");
+      expect(createCall.args?.parentDir).toBe("notes/deep");
+    });
   });
 
   describe("navigateToPage", () => {
+    it("scrolls in place for same-page section links (finding 2)", async () => {
+      const body = "intro\ntext ^abc";
+      mockInvoke((cmd) => {
+        if (cmd === "read_page") return { ...samplePage, body };
+        if (cmd === "resolve_wikilink") return { node_id: "hello.md" };
+        return null;
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws", currentPagePath: "hello.md", pendingSection: null });
+      const view = fakeViewWithDoc(body);
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.navigateToPage).toBeDefined();
+      });
+      const navigate = capturedProps.navigateToPage as (target: string, section?: string) => void;
+      navigate("hello", "^abc");
+      await vi.advanceTimersByTimeAsync(100);
+
+      // In-place scroll: the view is dispatched to the anchor's line start,
+      // and no pendingSection is left behind (nothing would consume it).
+      expect(useWorkspaceStore.getState().pendingSection).toBeNull();
+      const dispatched = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls;
+      const anchorLineStart = body.indexOf("text ^abc");
+      expect(dispatched.some((c) => c[0]?.selection?.head === anchorLineStart)).toBe(true);
+    });
+
     it("passes navigateToPage callback", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },

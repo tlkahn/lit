@@ -10,11 +10,11 @@ import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
-import { resolveRelativePath, getFileDir, isVaultInternalMarkdown } from "../lib/pathUtils";
+import { resolveRelativePath, getFileDir } from "../lib/pathUtils";
+import { routeFileLink } from "../lib/linkRouting";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
-import { resolvePendingSection } from "../lib/sectionTarget";
-import { dispatchFlashHighlight } from "../editor/livePreview/flashHighlight";
+import { applySectionToView } from "../lib/sectionTarget";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { shouldEditorClaimFocus } from "../lib/editorFocus";
 import { applyJumpLine, applyPendingCursorLine } from "../lib/editorScroll";
@@ -177,7 +177,12 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     navigateWikilink(target, section, {
       resolveWikilink,
       createPage: async (name: string) => {
-        const meta = await ipcCreatePage(name);
+        // Path-qualified targets (from md-link routing) become name + parentDir;
+        // create_page itself forbids slashes in names.
+        const slash = name.lastIndexOf("/");
+        const meta = slash >= 0
+          ? await ipcCreatePage(name.slice(slash + 1), name.slice(0, slash))
+          : await ipcCreatePage(name);
         await refreshPages();
         return meta;
       },
@@ -185,6 +190,12 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       setPendingSection: (s: string) => useWorkspaceStore.setState({ pendingSection: s }),
       currentPagePath: currentPathRef.current,
       triggerReload,
+      scrollToSection: (s: string) => {
+        requestAnimationFrame(() => {
+          const view = getPaneView(paneId);
+          if (view) applySectionToView(view, s);
+        });
+      },
       recordDeparture: () => {
         const view = getPaneView(paneId);
         const notePath = currentPathRef.current ?? "";
@@ -201,18 +212,13 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   }, [paneId, selectPage, triggerReload, refreshPages]);
 
   const openFilePath = useCallback((path: string, fragment: string | null = null) => {
-    if (path.startsWith("/")) {
-      openPath(path);
-      return;
+    const route = routeFileLink(path, fragment, noteDir, workspacePath ?? "");
+    if (route.kind === "page") {
+      navigateToPage(route.target, route.section);
+    } else if (route.kind === "os") {
+      openPath(route.absPath);
     }
-    if (isVaultInternalMarkdown(path)) {
-      const target = path.replace(/^\.\//, "").replace(/\.md$/i, "");
-      navigateToPage(target, fragment ?? undefined);
-      return;
-    }
-    if (!noteDir) return;
-    openPath("/" + resolveRelativePath(noteDir, path));
-  }, [noteDir, navigateToPage]);
+  }, [noteDir, workspacePath, navigateToPage]);
 
   const handleDocReplaced = useCallback(() => {
     const path = currentPathRef.current;
@@ -238,17 +244,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
       } else if (storeState.pendingSection != null) {
         const section = storeState.pendingSection;
         useWorkspaceStore.setState({ pendingSection: null });
-        const docBody = view.state.doc.toString();
-        const target = resolvePendingSection(docBody, section);
-        if (target) {
-          view.dispatch({
-            selection: EditorSelection.cursor(target.pos),
-            effects: EditorView.scrollIntoView(target.pos, { y: "start" }),
-          });
-          if (target.flash) {
-            dispatchFlashHighlight(view, target.flash.from, target.flash.to);
-          }
-        }
+        applySectionToView(view, section);
       } else {
         const vs = storeState.viewStates[path];
         view.scrollDOM.scrollTop = vs?.scrollTop ?? 0;

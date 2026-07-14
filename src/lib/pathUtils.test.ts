@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath, getAncestorPaths, basename, isVaultInternalMarkdown } from "./pathUtils";
+import { resolveRelativePath, getFileDir, frontmatterLineCount, isAbsolutePath, isOpenablePath, getAncestorPaths, basename } from "./pathUtils";
 
 describe("resolveRelativePath", () => {
   it("resolves simple relative path", () => {
@@ -189,27 +189,6 @@ describe("basename", () => {
 
   it("handles dotfiles", () => {
     expect(basename("dir/.gitignore")).toBe(".gitignore");
-  });
-});
-
-describe("isVaultInternalMarkdown", () => {
-  it("accepts .md paths", () => {
-    expect(isVaultInternalMarkdown("foo.md")).toBe(true);
-    expect(isVaultInternalMarkdown("notes/sub/foo.md")).toBe(true);
-  });
-
-  it("is case-insensitive on the extension", () => {
-    expect(isVaultInternalMarkdown("Foo.MD")).toBe(true);
-    expect(isVaultInternalMarkdown("Foo.Md")).toBe(true);
-  });
-
-  it("rejects non-markdown extensions", () => {
-    expect(isVaultInternalMarkdown("file.pdf")).toBe(false);
-    expect(isVaultInternalMarkdown("image.png")).toBe(false);
-  });
-
-  it("rejects paths without an extension", () => {
-    expect(isVaultInternalMarkdown("folder/name")).toBe(false);
   });
 });
 

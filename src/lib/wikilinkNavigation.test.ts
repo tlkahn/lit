@@ -152,6 +152,42 @@ describe("navigateWikilink", () => {
     expect(pendingSection).toBe("^abc123");
   });
 
+  it("empty-target section link scrolls in place when scrollToSection is provided", async () => {
+    // The triggerReload fallback fails on a dirty doc (the reload path only
+    // acknowledges the file hash), so in-place scroll must win when available.
+    const scrollToSection = vi.fn();
+    const deps = makeDeps({ scrollToSection });
+    await navigateWikilink("", "^anchor", deps);
+    expect(scrollToSection).toHaveBeenCalledWith("^anchor");
+    expect(deps.setPendingSection).not.toHaveBeenCalled();
+    expect(deps.triggerReload).not.toHaveBeenCalled();
+  });
+
+  it("scrolls in place when the resolved target is the current page (finding 2)", async () => {
+    // selectPage on the already-open path never replaces the doc, so a
+    // pendingSection would go unconsumed. The in-place scroll dep must be
+    // used instead.
+    const scrollToSection = vi.fn();
+    const deps = makeDeps({ currentPagePath: "Page.md", scrollToSection });
+    await navigateWikilink("Page", "^abc", deps);
+    expect(scrollToSection).toHaveBeenCalledWith("^abc");
+    expect(deps.setPendingSection).not.toHaveBeenCalled();
+  });
+
+  it("still uses pendingSection for same-page targets when scrollToSection is absent", async () => {
+    const deps = makeDeps({ currentPagePath: "Page.md" });
+    await navigateWikilink("Page", "^abc", deps);
+    expect(deps.setPendingSection).toHaveBeenCalledWith("^abc");
+  });
+
+  it("uses pendingSection for cross-page targets even when scrollToSection is provided", async () => {
+    const scrollToSection = vi.fn();
+    const deps = makeDeps({ currentPagePath: "Other.md", scrollToSection });
+    await navigateWikilink("Page", "^abc", deps);
+    expect(deps.setPendingSection).toHaveBeenCalledWith("^abc");
+    expect(scrollToSection).not.toHaveBeenCalled();
+  });
+
   it("handles IPC error gracefully (no crash, logs error)", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const deps = makeDeps({
