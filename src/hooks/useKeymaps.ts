@@ -65,6 +65,16 @@ export function ensureCommandsRegistered() {
     },
   });
   registerCommand({
+    id: "workbench.focusSearch",
+    label: "Search in Files",
+    keywords: ["search", "find", "grep", "content"],
+    icon: "",
+    when: () => useWorkspaceStore.getState().workspacePath !== null,
+    action: () => {
+      window.dispatchEvent(new CustomEvent("lit:focus-search-panel"));
+    },
+  });
+  registerCommand({
     id: "workbench.toggleSideBar",
     label: "Toggle Sidebar",
     keywords: ["sidebar", "side", "panel", "hide", "show"],

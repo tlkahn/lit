@@ -776,6 +776,33 @@ export async function searchPagesByTitle(query: string, limit?: number): Promise
   return invoke<GraphSearchResult[]>("search_pages_by_title", { query, limit: limit ?? null });
 }
 
+export interface SearchFilter {
+  folder_prefix?: string;
+  tags?: string[];
+  mtime_after?: number;
+  mtime_before?: number;
+}
+
+export type SearchMatchMode = "phrase" | "regex";
+
+export async function searchContentFiltered(
+  query: string,
+  filter?: SearchFilter,
+  limit?: number,
+  mode?: SearchMatchMode,
+): Promise<GraphSearchResult[]> {
+  return invoke<GraphSearchResult[]>("search_content_filtered", {
+    query,
+    filter: filter ?? null,
+    limit: limit ?? null,
+    mode: mode ?? "phrase",
+  });
+}
+
+export async function listFolders(limit?: number): Promise<string[]> {
+  return invoke<string[]>("list_folders", { limit: limit ?? null });
+}
+
 export async function getGraphStats(): Promise<GraphStats> {
   return invoke<GraphStats>("get_graph_stats");
 }

@@ -880,6 +880,33 @@ describe("Sidebar reveal and search interaction", () => {
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
 
+  it("auto-reveal does not switch tabs while the search tab is active", async () => {
+    const { usePreferencesStore } = await import("../stores/preferences");
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+      currentPagePath: null,
+      graphReady: false,
+    });
+    usePreferencesStore.setState({ autoRevealInSidebar: true, sidebarVisible: true });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // Switch to the Search tab (global search panel)
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+
+    // Navigating (e.g. clicking a search result) changes currentPagePath
+    act(() => {
+      useWorkspaceStore.setState({ currentPagePath: "Alpha.md" });
+    });
+
+    // Auto-reveal must NOT yank the user back to the files tab
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+
+    localStorage.removeItem("lit-sidebar-tab");
+  });
+
   it("manual reveal switches to files tab when on a non-files tab", async () => {
     useWorkspaceStore.setState({
       pages: [makePage("Alpha", "Alpha.md")],

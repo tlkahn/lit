@@ -84,6 +84,25 @@ pub struct SearchResult {
     pub first_match_line: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SearchFilter {
+    pub folder_prefix: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub mtime_after: Option<i64>,
+    pub mtime_before: Option<i64>,
+}
+
+/// How the raw query string is interpreted by `search_content_filtered`:
+/// as one literal case-insensitive phrase, or as a user-supplied regex
+/// (fancy-regex flavor: lookaround, backreferences, `(?P<name>...)`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchMatchMode {
+    #[default]
+    Phrase,
+    Regex,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Stats {
     pub nodes: i64,

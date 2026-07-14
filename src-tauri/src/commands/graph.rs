@@ -432,6 +432,66 @@ pub async fn search_pages(
 }
 
 #[tauri::command]
+pub async fn search_content_filtered(
+    window: tauri::Window,
+    workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<'_, Arc<GraphRegistry>>,
+    query: String,
+    filter: Option<crate::graph::types::SearchFilter>,
+    limit: Option<i64>,
+    mode: Option<crate::graph::types::SearchMatchMode>,
+) -> Result<serde_json::Value, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        Arc::clone(
+            indices
+                .get(&root)
+                .ok_or_else(|| "No graph index for this workspace".to_string())?,
+        )
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let results = gi
+            .search_content_filtered(
+                &query,
+                &filter.unwrap_or_default(),
+                limit.unwrap_or(100),
+                mode.unwrap_or_default(),
+            )
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(results).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_folders(
+    window: tauri::Window,
+    workspace_state: State<'_, crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<'_, Arc<GraphRegistry>>,
+    limit: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    let gi = {
+        let indices = graph_state.indices.lock().unwrap();
+        Arc::clone(
+            indices
+                .get(&root)
+                .ok_or_else(|| "No graph index for this workspace".to_string())?,
+        )
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let folders = gi.list_folders(limit.unwrap_or(500)).map_err(|e| e.to_string())?;
+        serde_json::to_value(folders).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn search_pages_by_title(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,

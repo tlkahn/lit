@@ -22,6 +22,7 @@
   --text-error: #d1242f;
   --text-on-accent: #ffffff;
   --text-selection: #e8e0d6;
+  --text-highlight-bg: rgba(255, 208, 0, 0.4);
   --text-section-header: #c17a50;
 
   /* Interactive */
@@ -98,6 +99,7 @@
   --text-error: #f85149;
   --text-on-accent: #ffffff;
   --text-selection: #3d3528;
+  --text-highlight-bg: rgba(210, 153, 34, 0.45);
   --text-section-header: #d4956a;
 
   /* Interactive */

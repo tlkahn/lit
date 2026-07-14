@@ -25,6 +25,14 @@ fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rus
     })
 }
 
+/// Escape LIKE metacharacters (`%`, `_`, `\`) in a term using `\` as the escape
+/// character.  The caller must add `ESCAPE '\'` to the SQL statement.
+fn escape_like_term(term: &str) -> String {
+    term.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 pub struct Store {
     pub(crate) conn: Connection,
 }
@@ -989,6 +997,58 @@ impl Store {
         let mut stmt = self.conn.prepare("SELECT path FROM sync ORDER BY path")?;
         let paths = stmt
             .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(paths)
+    }
+
+    /// Like `all_synced_paths`, but narrowed by a `SearchFilter`: folder
+    /// prefix (LIKE on the path), tags (AND semantics — the node must carry
+    /// every requested tag), and an mtime range on the sync table.
+    pub fn synced_paths_filtered(
+        &self,
+        filter: &super::types::SearchFilter,
+    ) -> Result<Vec<String>, GraphError> {
+        let mut sql = String::from("SELECT s.path FROM sync s WHERE 1=1");
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        let mut idx = 1usize;
+
+        if let Some(ref prefix) = filter.folder_prefix {
+            sql.push_str(&format!(" AND s.path LIKE ?{idx} ESCAPE '\\'"));
+            params.push(rusqlite::types::Value::Text(format!(
+                "{}%",
+                escape_like_term(prefix)
+            )));
+            idx += 1;
+        }
+
+        if let Some(ref tags) = filter.tags {
+            for tag in tags {
+                sql.push_str(&format!(
+                    " AND EXISTS (SELECT 1 FROM tags WHERE node_id = s.path AND tag = ?{idx})"
+                ));
+                params.push(rusqlite::types::Value::Text(tag.clone()));
+                idx += 1;
+            }
+        }
+
+        if let Some(after) = filter.mtime_after {
+            sql.push_str(&format!(" AND s.mtime >= ?{idx}"));
+            params.push(rusqlite::types::Value::Integer(after));
+            idx += 1;
+        }
+
+        if let Some(before) = filter.mtime_before {
+            sql.push_str(&format!(" AND s.mtime <= ?{idx}"));
+            params.push(rusqlite::types::Value::Integer(before));
+            idx += 1;
+        }
+        let _ = idx;
+
+        sql.push_str(" ORDER BY s.path");
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let paths = stmt
+            .query_map(rusqlite::params_from_iter(params), |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
         Ok(paths)
     }
@@ -2664,6 +2724,66 @@ mod tests {
 
         let paths = store.all_synced_paths().unwrap();
         assert_eq!(paths, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn synced_paths_filtered_no_filter_matches_all() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("b.md", "B", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+        let paths = store
+            .synced_paths_filtered(&super::super::types::SearchFilter::default())
+            .unwrap();
+        assert_eq!(paths, vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn synced_paths_filtered_folder_prefix() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("projects/a.md", "A", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("notes/b.md", "B", &[], json!({})), 1).unwrap();
+        let filter = super::super::types::SearchFilter {
+            folder_prefix: Some("projects/".into()),
+            ..Default::default()
+        };
+        assert_eq!(store.synced_paths_filtered(&filter).unwrap(), vec!["projects/a.md"]);
+    }
+
+    #[test]
+    fn synced_paths_filtered_escapes_like_metacharacters() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a_b/one.md", "One", &[], json!({})), 1).unwrap();
+        store.upsert_node(&make_node("axb/two.md", "Two", &[], json!({})), 1).unwrap();
+        let filter = super::super::types::SearchFilter {
+            folder_prefix: Some("a_b/".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            store.synced_paths_filtered(&filter).unwrap(),
+            vec!["a_b/one.md"],
+            "`_` must match literally, not as a LIKE wildcard"
+        );
+    }
+
+    #[test]
+    fn synced_paths_filtered_tags_and_mtime() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &["x", "y"], json!({})), 100).unwrap();
+        store.upsert_node(&make_node("b.md", "B", &["x"], json!({})), 200).unwrap();
+        store.upsert_node(&make_node("c.md", "C", &[], json!({})), 300).unwrap();
+
+        let both_tags = super::super::types::SearchFilter {
+            tags: Some(vec!["x".into(), "y".into()]),
+            ..Default::default()
+        };
+        assert_eq!(store.synced_paths_filtered(&both_tags).unwrap(), vec!["a.md"]);
+
+        let range = super::super::types::SearchFilter {
+            mtime_after: Some(150),
+            mtime_before: Some(250),
+            ..Default::default()
+        };
+        assert_eq!(store.synced_paths_filtered(&range).unwrap(), vec!["b.md"]);
     }
 
     #[test]
