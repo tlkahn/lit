@@ -20,13 +20,14 @@ vi.mock("../stores/workspace", () => ({
 }));
 
 import { useWorkspaceStore } from "../stores/workspace";
+import { trackView } from "../test/cmView";
 
 function createView(doc: string): EditorView {
   const state = EditorState.create({
     doc,
     extensions: [jumpHistoryExtension()],
   });
-  return new EditorView({ state, parent: document.createElement("div") });
+  return trackView(new EditorView({ state, parent: document.createElement("div") }));
 }
 
 function lines(n: number): string {

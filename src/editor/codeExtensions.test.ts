@@ -3,6 +3,7 @@ import { EditorState, Compartment } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createCodeExtensions } from "./codeExtensions";
 import { bibtex } from "./bibtex";
+import { trackView } from "../test/cmView";
 
 function freshCompartments() {
   return {
@@ -30,7 +31,7 @@ describe("createCodeExtensions", () => {
       doc: "",
       extensions: createCodeExtensions({ theme: "light", onChange, ...c }),
     });
-    const view = new EditorView({ state });
+    const view = trackView(new EditorView({ state }));
     view.dispatch({ changes: { from: 0, insert: "typed" } });
     expect(onChange).toHaveBeenCalledWith("typed");
     view.destroy();

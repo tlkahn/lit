@@ -21,6 +21,7 @@ import { mediaThumbnailsFacet } from "./livePreview";
 import { widgetSync } from "./livePreview/widgetSyncAnnotation";
 import { _clear, registerHandler, executeCommand } from "../lib/commandRegistry";
 import { resolveKeymaps } from "../lib/keymapResolver";
+import { trackView } from "../test/cmView";
 
 vi.mock("katex", () => ({
   default: {
@@ -91,7 +92,7 @@ describe("createExtensions", () => {
   it("includes history (undo/redo)", () => {
     const exts = createExtensions(makeConfig());
     const state = EditorState.create({ doc: "hello", extensions: exts });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     view.dispatch({ changes: { from: 5, insert: " world" } });
     expect(view.state.doc.toString()).toBe("hello world");
     undo(view);
@@ -103,7 +104,7 @@ describe("createExtensions", () => {
     const onChange = vi.fn();
     const exts = createExtensions(makeConfig({ onChange }));
     const state = EditorState.create({ doc: "", extensions: exts });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     view.dispatch({ changes: { from: 0, insert: "typed" } });
     expect(onChange).toHaveBeenCalledWith("typed");
     view.destroy();
@@ -112,7 +113,7 @@ describe("createExtensions", () => {
   it("includes livePreviewPlugin", () => {
     const exts = createExtensions(makeConfig());
     const state = EditorState.create({ doc: "# Hello", extensions: exts });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     expect(view.plugin(livePreviewPlugin)).toBeDefined();
     view.destroy();
   });
@@ -278,7 +279,7 @@ function createViewWithSearch(doc: string, onChange?: (content: string) => void)
   const state = EditorState.create({ doc, extensions: exts });
   const parent = document.createElement("div");
   document.body.appendChild(parent);
-  const view = new EditorView({ state, parent });
+  const view = trackView(new EditorView({ state, parent }));
   return { view, parent, destroy: () => { view.destroy(); parent.remove(); } };
 }
 
@@ -434,7 +435,7 @@ describe("search & replace", () => {
     const state = EditorState.create({ doc: "foo bar foo baz", extensions: exts });
     const parent = document.createElement("div");
     document.body.appendChild(parent);
-    const view = new EditorView({ state, parent });
+    const view = trackView(new EditorView({ state, parent }));
 
     view.dispatch({ selection: { anchor: 1 } });
     selectNextOccurrence(view);
@@ -467,7 +468,7 @@ describe("search & replace", () => {
     const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
     const parent = document.createElement("div");
     document.body.appendChild(parent);
-    const view = new EditorView({ state, parent });
+    const view = trackView(new EditorView({ state, parent }));
 
     view.dispatch({ selection: { anchor: 1 } });
     selectNextOccurrence(view);
@@ -500,7 +501,7 @@ describe("search & replace", () => {
     const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
     const parent = document.createElement("div");
     document.body.appendChild(parent);
-    const view = new EditorView({ state, parent });
+    const view = trackView(new EditorView({ state, parent }));
 
     view.dispatch({ selection: { anchor: 1 } });
 
@@ -534,7 +535,7 @@ describe("search & replace", () => {
     const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
     const parent = document.createElement("div");
     document.body.appendChild(parent);
-    const view = new EditorView({ state, parent });
+    const view = trackView(new EditorView({ state, parent }));
 
     view.dispatch({ selection: { anchor: 1 } });
 
@@ -575,7 +576,7 @@ describe("search & replace", () => {
     const state = EditorState.create({ doc: "foo bar foo baz foo", extensions: exts });
     const parent = document.createElement("div");
     document.body.appendChild(parent);
-    const view = new EditorView({ state, parent });
+    const view = trackView(new EditorView({ state, parent }));
 
     view.dispatch({ selection: { anchor: 1 } });
 
@@ -618,7 +619,7 @@ describe("widgetSync annotation bypasses hasFocus guard", () => {
     const onSelectionChange = vi.fn();
     const exts = createExtensions(makeConfig({ onSelectionChange }));
     const state = EditorState.create({ doc: "hello world", extensions: exts });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
 
     view.dispatch({
       selection: { anchor: 5 },
@@ -633,7 +634,7 @@ describe("widgetSync annotation bypasses hasFocus guard", () => {
     const onSelectionChange = vi.fn();
     const exts = createExtensions(makeConfig({ onSelectionChange }));
     const state = EditorState.create({ doc: "hello world", extensions: exts });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
 
     view.dispatch({ selection: { anchor: 5 } });
 

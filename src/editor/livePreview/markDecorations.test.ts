@@ -17,6 +17,7 @@ import {
   markDecorationExtension,
 } from "./markDecorations";
 import { setAnnotationData, annotationDataField } from "./annotationState";
+import { trackView } from "../../test/cmView";
 
 const mockResolve = resolveMarkScopes as ReturnType<typeof vi.fn>;
 
@@ -40,13 +41,13 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 /** Mount a real EditorView wired with the field + plugin and the data field it reads. */
 function mountView(doc = "hello world"): { view: EditorView; parent: HTMLElement } {
   const parent = document.createElement("div");
-  const view = new EditorView({
+  const view = trackView(new EditorView({
     state: EditorState.create({
       doc,
       extensions: [annotationDataField, markDecorationExtension()],
     }),
     parent,
-  });
+  }));
   return { view, parent };
 }
 
@@ -85,13 +86,13 @@ describe("markDecorationField", () => {
 
   it("renders the cm-mark-{code} class in the DOM", () => {
     const parent = document.createElement("div");
-    const view = new EditorView({
+    const view = trackView(new EditorView({
       state: EditorState.create({
         doc: "hello world",
         extensions: [markDecorationExtension()],
       }),
       parent,
-    });
+    }));
     view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "nb" }]) });
     expect(parent.querySelector(".cm-mark-nb")).not.toBeNull();
     view.destroy();
@@ -99,13 +100,13 @@ describe("markDecorationField", () => {
 
   it("renders the shared cm-mark base class alongside the code class on the same element", () => {
     const parent = document.createElement("div");
-    const view = new EditorView({
+    const view = trackView(new EditorView({
       state: EditorState.create({
         doc: "hello world",
         extensions: [markDecorationExtension()],
       }),
       parent,
-    });
+    }));
     view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "nb" }]) });
     expect(parent.querySelector(".cm-mark")).not.toBeNull();
     expect(parent.querySelector(".cm-mark.cm-mark-nb")).not.toBeNull();
@@ -114,13 +115,13 @@ describe("markDecorationField", () => {
 
   it("gives custom/unknown codes the shared cm-mark base class too", () => {
     const parent = document.createElement("div");
-    const view = new EditorView({
+    const view = trackView(new EditorView({
       state: EditorState.create({
         doc: "hello world",
         extensions: [markDecorationExtension()],
       }),
       parent,
-    });
+    }));
     view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "zzz" }]) });
     expect(parent.querySelector(".cm-mark.cm-mark-zzz")).not.toBeNull();
     view.destroy();
@@ -128,13 +129,13 @@ describe("markDecorationField", () => {
 
   it("multiple ranges with different codes produce distinct decorations sorted by from", () => {
     const parent = document.createElement("div");
-    const view = new EditorView({
+    const view = trackView(new EditorView({
       state: EditorState.create({
         doc: "hello world foo bar",
         extensions: [markDecorationExtension()],
       }),
       parent,
-    });
+    }));
     view.dispatch({
       effects: setMarkDecorations.of([
         { from: 12, to: 15, code: "sic" },
@@ -219,13 +220,13 @@ describe("markDecorationField", () => {
 
   it("emits cm-mark-{code} even for an unrecognized code (class derived from mark)", () => {
     const parent = document.createElement("div");
-    const view = new EditorView({
+    const view = trackView(new EditorView({
       state: EditorState.create({
         doc: "hello world",
         extensions: [markDecorationExtension()],
       }),
       parent,
-    });
+    }));
     view.dispatch({ effects: setMarkDecorations.of([{ from: 0, to: 5, code: "zzz" }]) });
     expect(parent.querySelector(".cm-mark-zzz")).not.toBeNull();
     view.destroy();

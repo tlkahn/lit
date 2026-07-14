@@ -4,6 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { getLinkUrlAtPos, getLinkInfoAtPos, createLinkClickHandler, classifyLinkTarget, splitLinkTarget } from "./linkHandler";
+import { trackView } from "../../test/cmView";
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -121,7 +122,7 @@ describe("createLinkClickHandler", () => {
       doc: "[test](url)",
       extensions: [markdown({ extensions: GFM }), handler],
     });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     expect(view).toBeDefined();
     view.destroy();
   });
@@ -137,7 +138,7 @@ describe("createLinkClickHandler", () => {
         createLinkClickHandler(handlers),
       ],
     });
-    const view = new EditorView({ state, parent: container });
+    const view = trackView(new EditorView({ state, parent: container }));
     vi.spyOn(view, "posAtCoords").mockReturnValue(mockPos);
     return view;
   }
@@ -274,7 +275,7 @@ describe("createLinkClickHandler", () => {
         createLinkClickHandler({ openUrl }),
       ],
     });
-    const view = new EditorView({ state, parent: container });
+    const view = trackView(new EditorView({ state, parent: container }));
     vi.spyOn(view, "posAtCoords").mockReturnValue(3);
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, bubbles: true }),
@@ -296,7 +297,7 @@ describe("createLinkClickHandler", () => {
         createLinkClickHandler({ openUrl }),
       ],
     });
-    const view = new EditorView({ state, parent: container });
+    const view = trackView(new EditorView({ state, parent: container }));
     vi.spyOn(view, "posAtCoords").mockReturnValue(20);
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, bubbles: true }),

@@ -4,10 +4,11 @@ import { EditorView } from "@codemirror/view";
 import { CiteprocWidget, type CiteprocLinkInfo } from "./citeprocWidget";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { globalJumpTracker } from "../jumpTracker";
+import { trackView } from "../../test/cmView";
 
 function makeView(doc = "test document"): EditorView {
   const state = EditorState.create({ doc });
-  return new EditorView({ state, parent: document.createElement("div") });
+  return trackView(new EditorView({ state, parent: document.createElement("div") }));
 }
 
 function singleLink(

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { focusModeExtension, focusModeFacet } from "./extension";
+import { trackView } from "../../test/cmView";
 
 function makeView(doc: string, active: boolean): EditorView {
   const state = EditorState.create({
@@ -9,7 +10,7 @@ function makeView(doc: string, active: boolean): EditorView {
     extensions: [focusModeExtension(active)],
   });
   const container = document.createElement("div");
-  return new EditorView({ state, parent: container });
+  return trackView(new EditorView({ state, parent: container }));
 }
 
 describe("focusModeExtension", () => {

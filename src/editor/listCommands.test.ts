@@ -3,6 +3,7 @@ import { EditorState, EditorSelection, Compartment } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createExtensions } from "./extensions";
 import { enterInList, indentListItem, outdentListItem } from "./listCommands";
+import { trackView } from "../test/cmView";
 
 vi.mock("katex", () => ({
   default: {
@@ -33,7 +34,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     extensions: createExtensions(config),
     selection: EditorSelection.cursor(cursorPos),
   });
-  return new EditorView({ state, parent: document.createElement("div") });
+  return trackView(new EditorView({ state, parent: document.createElement("div") }));
 }
 
 function endOfLine(doc: string, lineNum: number): number {

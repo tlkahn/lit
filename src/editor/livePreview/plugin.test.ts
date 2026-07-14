@@ -12,6 +12,7 @@ import { calloutFoldField, toggleCalloutEffect } from "./callout";
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import type { BlockReplacementState } from "./decorations";
+import { trackView } from "../../test/cmView";
 
 vi.mock("katex", () => ({
   default: {
@@ -42,7 +43,7 @@ function makeView(doc: string, cursor = 0): EditorView {
       blockReplacementField,
     ],
   });
-  const view = new EditorView({ state, parent: document.createElement("div") });
+  const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
   // Force full tree parse and rebuild state fields so block ranges are populated
   ensureSyntaxTree(view.state, view.state.doc.length);
   view.dispatch({ effects: flushTree.of(null) });
@@ -275,7 +276,7 @@ describe("livePreviewPlugin — effect filtering", () => {
         blockReplacementField,
       ],
     });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
 
     view.dispatch({ effects: compartment.reconfigure(imageResolverFacet.of((src) => `/resolved/${src}`)) });
@@ -298,7 +299,7 @@ describe("livePreviewPlugin — effect filtering", () => {
         blockReplacementField,
       ],
     });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
 
     view.dispatch({ effects: compartment.reconfigure(mediaThumbnailsFacet.of(false)) });

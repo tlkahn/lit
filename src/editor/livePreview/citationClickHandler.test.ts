@@ -15,6 +15,7 @@ import {
 import { globalJumpTracker } from "../jumpTracker";
 import { useWorkspaceStore } from "../../stores/workspace";
 import type { AllDecorations } from "../../lib/ipc";
+import { trackView } from "../../test/cmView";
 
 vi.mock("../../stores/workspace", () => ({
   useWorkspaceStore: {
@@ -93,7 +94,7 @@ function makeViewWithFields(doc: string): EditorView {
   });
   const container = document.createElement("div");
   document.body.appendChild(container);
-  return new EditorView({ state, parent: container });
+  return trackView(new EditorView({ state, parent: container }));
 }
 
 describe("citationClickHandler — crossref", () => {

@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getFileDir, isAbsolutePath, resolveRelativePath } from "../lib/pathUtils";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
+import { trackView } from "../test/cmView";
 
 vi.mock("../stores/workspace", () => ({
   useWorkspaceStore: {
@@ -184,7 +185,7 @@ function makeViewWithBibExt(doc: string, pagePath: string): EditorView {
   });
   const container = document.createElement("div");
   document.body.appendChild(container);
-  return new EditorView({ state, parent: container });
+  return trackView(new EditorView({ state, parent: container }));
 }
 
 describe("click handler — decoration hit-testing", () => {

@@ -14,6 +14,7 @@ import {
   generateWidgetHeavy,
   generateDeeplyNested,
 } from "../../test/fixtures/generate";
+import { trackView } from "../../test/cmView";
 
 vi.mock("katex", () => ({
   default: {
@@ -53,7 +54,7 @@ function makeView(doc: string): EditorView {
       blockReplacementField,
     ],
   });
-  return new EditorView({ state, parent: document.createElement("div") });
+  return trackView(new EditorView({ state, parent: document.createElement("div") }));
 }
 
 function measureDispatch(

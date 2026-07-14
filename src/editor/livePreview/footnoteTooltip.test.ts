@@ -6,6 +6,7 @@ import { ensureSyntaxTree } from "@codemirror/language";
 import { Footnote } from "../markdown/footnote";
 import { buildFootnoteMap } from "./footnoteNumbering";
 import { getFootnoteDefBody, renderFootnoteBody, footnoteTooltipSource } from "./footnoteTooltip";
+import { trackView } from "../../test/cmView";
 
 vi.mock("katex", () => ({
   default: { render: vi.fn() },
@@ -25,7 +26,7 @@ function makeView(doc: string, cursor = 0): EditorView {
     selection: { anchor: cursor },
     extensions: [markdown({ extensions: [Footnote] })],
   });
-  const view = new EditorView({ state, parent: document.createElement("div") });
+  const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
   ensureSyntaxTree(view.state, view.state.doc.length);
   return view;
 }

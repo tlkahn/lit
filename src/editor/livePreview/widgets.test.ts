@@ -18,6 +18,7 @@ import { stripQuotePrefixes } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { navigateToPageFacet } from "./navigateToPageFacet";
 import { getKatexSync } from "./katexLoader";
+import { trackView } from "../../test/cmView";
 
 const mockKatex = {
   render: vi.fn((tex: string, el: HTMLElement) => {
@@ -255,7 +256,7 @@ describe("CalloutHeaderWidget", () => {
       doc: "test",
       extensions: [calloutFoldField],
     });
-    return new EditorView({ state, parent: document.createElement("div") });
+    return trackView(new EditorView({ state, parent: document.createElement("div") }));
   }
 
   it("renders header with fold arrow, icon, and title", () => {
@@ -550,7 +551,7 @@ describe("EditableTableWidget", () => {
 
   function makeTableView(doc?: string): EditorView {
     const state = EditorState.create({ doc: doc ?? basicTable });
-    return new EditorView({ state, parent: document.createElement("div") });
+    return trackView(new EditorView({ state, parent: document.createElement("div") }));
   }
 
   it("toDOM returns a container div with correct class", () => {
@@ -852,7 +853,7 @@ describe("EditableTableWidget", () => {
         doc: wikiTable,
         extensions: [navigateToPageFacet.of(navigateToPage)],
       });
-      return new EditorView({ state, parent: document.createElement("div") });
+      return trackView(new EditorView({ state, parent: document.createElement("div") }));
     }
 
     function clickOn(span: Element): MouseEvent {
@@ -885,7 +886,7 @@ describe("EditableTableWidget", () => {
         doc: sectionTable,
         extensions: [navigateToPageFacet.of(nav)],
       });
-      const view = new EditorView({ state, parent: document.createElement("div") });
+      const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
       const widget = makeWidget(sectionTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
@@ -903,7 +904,7 @@ describe("EditableTableWidget", () => {
         doc: hashTable,
         extensions: [navigateToPageFacet.of(nav)],
       });
-      const view = new EditorView({ state, parent: document.createElement("div") });
+      const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
       const widget = makeWidget(hashTable, 0);
       const el = widget.toDOM(view);
       document.body.appendChild(el);
@@ -1015,7 +1016,7 @@ describe("EditableTableWidget", () => {
     it("dispatches selection at posAtDOM position with widgetSync annotation", () => {
       const doc = "prefix\n| a | b |\n| --- | --- |\n| 1 | 2 |";
       const state = EditorState.create({ doc });
-      const view = new EditorView({ state, parent: document.createElement("div") });
+      const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
       vi.spyOn(view, "posAtDOM").mockReturnValue(10);
       const dispatchSpy = vi.spyOn(view, "dispatch");
       const widget = makeWidget(basicTable, 10);
@@ -1043,7 +1044,7 @@ describe("EditableTableWidget", () => {
     it("uses posAtDOM at event time, not stale constructor from", () => {
       const doc = "some prefix text\n| a | b |\n| --- | --- |\n| 1 | 2 |";
       const state = EditorState.create({ doc });
-      const view = new EditorView({ state, parent: document.createElement("div") });
+      const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
       const posAtDOMSpy = vi.spyOn(view, "posAtDOM");
 
       posAtDOMSpy.mockReturnValue(10);
@@ -1074,7 +1075,7 @@ describe("EditableTableWidget", () => {
         doc: wikiTable,
         extensions: [navigateToPageFacet.of(nav)],
       });
-      const view = new EditorView({ state, parent: document.createElement("div") });
+      const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
       const dispatchSpy = vi.spyOn(view, "dispatch");
       const widget = makeWidget(wikiTable, 0);
       const el = widget.toDOM(view);

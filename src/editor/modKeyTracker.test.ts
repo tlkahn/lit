@@ -2,12 +2,13 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { modKeyTracker, modHeldLinkStyle } from "./modKeyTracker";
+import { trackView } from "../test/cmView";
 
 function makeView(doc: string): EditorView {
   const state = EditorState.create({ doc, extensions: [modKeyTracker] });
   const container = document.createElement("div");
   document.body.appendChild(container);
-  return new EditorView({ state, parent: container });
+  return trackView(new EditorView({ state, parent: container }));
 }
 
 describe("modKeyTracker", () => {

@@ -3,6 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { CrossrefWidget, DefinitionWidget, highlightLine } from "./crossrefWidgets";
 import { globalJumpTracker } from "../jumpTracker";
+import { trackView } from "../../test/cmView";
 
 vi.mock("../../stores/workspace", () => ({
   useWorkspaceStore: {
@@ -14,7 +15,7 @@ vi.mock("../../stores/workspace", () => ({
 
 function makeView(doc = "test document"): EditorView {
   const state = EditorState.create({ doc });
-  return new EditorView({ state, parent: document.createElement("div") });
+  return trackView(new EditorView({ state, parent: document.createElement("div") }));
 }
 
 describe("CrossrefWidget", () => {

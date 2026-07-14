@@ -6,6 +6,7 @@ import { annotationDataField, setAnnotationData } from "./annotationState";
 import { scopeHighlightField, setScopeHighlight } from "./scopeHighlight";
 import { Decoration } from "@codemirror/view";
 import type { Annotation } from "../../lib/ipc";
+import { trackView } from "../../test/cmView";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -39,7 +40,7 @@ function makeView(doc: string, cursorPos: number, annotations: Annotation[] = []
       keymap.of(escapeAnnotationKeymap),
     ],
   });
-  const view = new EditorView({ state, parent: document.createElement("div") });
+  const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
   if (annotations.length > 0) {
     view.dispatch({ effects: setAnnotationData.of(annotations) });
   }
@@ -84,7 +85,7 @@ describe("escapeAnnotationKeymap", () => {
         keymap.of(escapeAnnotationKeymap),
       ],
     });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     const handled = runEsc(view);

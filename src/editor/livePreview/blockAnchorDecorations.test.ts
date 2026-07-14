@@ -2,18 +2,19 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { blockAnchorDecorationsExtension, blockAnchorDimPlugin, computeDimRanges } from "./blockAnchorDecorations";
+import { trackView } from "../../test/cmView";
 
 function makeView(doc: string, anchor = 0) {
   const parent = document.createElement("div");
   document.body.appendChild(parent);
-  const view = new EditorView({
+  const view = trackView(new EditorView({
     state: EditorState.create({
       doc,
       selection: { anchor },
       extensions: [blockAnchorDecorationsExtension()],
     }),
     parent,
-  });
+  }));
   return { view, parent };
 }
 

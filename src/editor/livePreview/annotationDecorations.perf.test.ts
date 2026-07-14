@@ -19,6 +19,7 @@ import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import { generateAnnotationHeavy } from "../../test/fixtures/generate";
 import type { Annotation } from "../../lib/ipc";
+import { trackView } from "../../test/cmView";
 
 const HARD_LIMIT_MS = 100;
 const ADVISORY_MS = 16;
@@ -78,7 +79,7 @@ function makeAnnotationPerfView(doc: string): EditorView {
       annotationBlockDecorationField,
     ],
   });
-  const view = new EditorView({ state, parent: document.createElement("div") });
+  const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
   ensureSyntaxTree(view.state, view.state.doc.length);
   const annotations = annotationsFromTree(view);
   view.dispatch({ effects: setAnnotationData.of(annotations) });
@@ -262,7 +263,7 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = new EditorView({ state, parent: document.createElement("div") });
+    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
     ensureSyntaxTree(view.state, view.state.doc.length);
     view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view)) });
 

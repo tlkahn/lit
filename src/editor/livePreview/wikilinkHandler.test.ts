@@ -5,6 +5,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { WikiLink } from "../markdown/wikilink";
 import { getWikilinkTargetAtPos, createWikilinkClickHandler } from "./wikilinkHandler";
+import { trackView } from "../../test/cmView";
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -140,7 +141,7 @@ describe("createWikilinkClickHandler", () => {
         createWikilinkClickHandler(navigateToPage),
       ],
     });
-    const view = new EditorView({ state, parent: container });
+    const view = trackView(new EditorView({ state, parent: container }));
     vi.spyOn(view, "posAtCoords").mockReturnValue(mockPos);
     return view;
   }
@@ -234,7 +235,7 @@ describe("createWikilinkClickHandler", () => {
         createWikilinkClickHandler(navigateToPage),
       ],
     });
-    const view = new EditorView({ state, parent: container });
+    const view = trackView(new EditorView({ state, parent: container }));
     vi.spyOn(view, "posAtCoords").mockReturnValue(7);
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, bubbles: true }),
@@ -256,7 +257,7 @@ describe("createWikilinkClickHandler", () => {
         createWikilinkClickHandler(navigateToPage),
       ],
     });
-    const view = new EditorView({ state, parent: container });
+    const view = trackView(new EditorView({ state, parent: container }));
     vi.spyOn(view, "posAtCoords").mockReturnValue(12);
     view.contentDOM.dispatchEvent(
       new MouseEvent("mousedown", { button: 0, bubbles: true }),

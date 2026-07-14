@@ -16,6 +16,7 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import type { BibEntry } from "../../lib/ipc";
 import * as frontmatterBus from "../../lib/frontmatterBus";
 import { EditorView } from "@codemirror/view";
+import { trackView } from "../../test/cmView";
 
 function trigger(doc: string, cursorPos?: number): TriggerInfo | null {
   const state = EditorState.create({ doc });
@@ -406,7 +407,7 @@ describe("bibReconciliationPlugin -- manual-typing reconciliation", () => {
     let state = EditorState.create({ doc, extensions: exts });
     state = state.update({ effects: setBibData.of(bib) }).state;
     const parent = document.createElement("div");
-    return new EditorView({ state, parent });
+    return trackView(new EditorView({ state, parent }));
   }
 
   it("calls ensureInCompanionBib for unresolved keys that exist in workspace DB", async () => {
