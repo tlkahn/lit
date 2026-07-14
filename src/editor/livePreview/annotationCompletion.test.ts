@@ -3,7 +3,6 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { CompletionContext } from "@codemirror/autocomplete";
 import { annotationCompletionSource } from "./annotationCompletion";
-import { trackView } from "../../test/cmView";
 
 function getCompletions(doc: string, pos: number) {
   const state = EditorState.create({ doc });
@@ -24,10 +23,10 @@ describe("annotationCompletionSource", () => {
     expect(result!.options).toHaveLength(1);
     expect(result!.options[0]!.label).toBe("/llm");
 
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "/llm" }),
       parent: document.createElement("div"),
-    }));
+    });
 
     const apply = result!.options[0]!.apply as (view: EditorView, completion: unknown, from: number, to: number) => void;
     apply(view, null, 0, 4);
@@ -93,10 +92,10 @@ describe("annotationCompletionSource", () => {
     const result = getCompletions("/q", 2);
     expect(result).not.toBeNull();
 
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "/q" }),
       parent: document.createElement("div"),
-    }));
+    });
 
     const qOption = result!.options.find((o: { label: string }) => o.label === "/q")!;
     const apply = qOption.apply as (view: EditorView, completion: unknown, from: number, to: number) => void;

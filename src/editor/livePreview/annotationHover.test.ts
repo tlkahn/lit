@@ -17,7 +17,6 @@ vi.mock("../../lib/ipc", () => ({
 }));
 
 import { resolveAnnotationScope, resolveAnnotationScopeWithMode } from "../../lib/ipc";
-import { trackView } from "../../test/cmView";
 const mockResolve = resolveAnnotationScope as ReturnType<typeof vi.fn>;
 const mockResolveWithMode = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 
@@ -26,7 +25,7 @@ function makeView(doc = "hello world"): EditorView {
     doc,
     extensions: [scopeHighlightField],
   });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {

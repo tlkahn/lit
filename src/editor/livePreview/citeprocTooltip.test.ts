@@ -95,7 +95,6 @@ import { useStatusMessageStore } from "../../stores/statusMessage";
 import { materializeAndOpen } from "../../lib/materializeAndOpen";
 import { getCurrentEditorView } from "../../lib/editorViewRef";
 import { globalJumpTracker } from "../../editor/jumpTracker";
-import { trackView } from "../../test/cmView";
 
 function makeViewWithMatches(
   doc: string,
@@ -106,7 +105,7 @@ function makeViewWithMatches(
     selection: { anchor: cursor },
     extensions: [citeprocMatchesField],
   });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 function makeViewWithTracker(
@@ -118,7 +117,7 @@ function makeViewWithTracker(
     selection: { anchor: cursor },
     extensions: [citeprocMatchesField, citeprocHoverTracker],
   });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 describe("citeprocTooltipSource", () => {
@@ -361,7 +360,7 @@ describe("F5: listener-leak on early destroy", () => {
       doc,
       extensions: [citeprocMatchesField, citeprocTooltipExtension()],
     });
-    return trackView(new EditorView({ state, parent: document.createElement("div") }));
+    return new EditorView({ state, parent: document.createElement("div") });
   }
 
   afterEach(() => {
@@ -432,7 +431,7 @@ describe("F3: cache-invalidation-gaps", () => {
       doc,
       extensions: [citeprocMatchesField, citeprocTooltipExtension()],
     });
-    return trackView(new EditorView({ state, parent: document.createElement("div") }));
+    return new EditorView({ state, parent: document.createElement("div") });
   }
 
   afterEach(() => {
@@ -1401,7 +1400,7 @@ describe("C3: dedupe-global-listeners", () => {
         doc,
         extensions: [citeprocMatchesField, citeprocTooltipExtension()],
       });
-      return trackView(new EditorView({ state, parent: document.createElement("div") }));
+      return new EditorView({ state, parent: document.createElement("div") });
     }
 
     const view1 = makeViewWithListener("test1");

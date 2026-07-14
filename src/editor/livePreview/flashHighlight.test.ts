@@ -7,7 +7,6 @@ import {
   flashHighlightExtension,
   dispatchFlashHighlight,
 } from "./flashHighlight";
-import { trackView } from "../../test/cmView";
 
 describe("flashHighlightField", () => {
   it("initial state is Decoration.none", () => {
@@ -64,13 +63,13 @@ describe("flashHighlightField", () => {
 
   it("flashHighlightExtension renders .cm-block-flash in DOM", () => {
     const parent = document.createElement("div");
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({
         doc: "hello world",
         extensions: [flashHighlightExtension()],
       }),
       parent,
-    }));
+    });
     view.dispatch({ effects: setFlashHighlight.of({ from: 0, to: 5 }) });
     expect(parent.querySelector(".cm-block-flash")).not.toBeNull();
     view.destroy();
@@ -83,13 +82,13 @@ describe("dispatchFlashHighlight", () => {
   });
 
   function makeView() {
-    return trackView(new EditorView({
+    return new EditorView({
       state: EditorState.create({
         doc: "hello world flash target",
         extensions: [flashHighlightExtension()],
       }),
       parent: document.createElement("div"),
-    }));
+    });
   }
 
   it("sets the decoration immediately", () => {

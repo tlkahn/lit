@@ -10,7 +10,6 @@ import {
 } from "./crossref";
 import type { AllDecorations } from "../../lib/ipc";
 import { mockInvoke } from "../../test/tauri-mock";
-import { trackView } from "../../test/cmView";
 
 const EMPTY: AllDecorations = { citations: [], definition_tags: [] };
 
@@ -92,7 +91,7 @@ describe("decoration provider", () => {
       selection: { anchor: cursorPos },
       extensions: [crossrefExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     view.dispatch({ effects: setCrossrefData.of(data) });
     return view;
   }
@@ -255,7 +254,7 @@ describe("crossrefPlugin", () => {
       doc: "hello",
       extensions: [crossrefExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -287,7 +286,7 @@ describe("crossrefPlugin", () => {
       doc: "hello world",
       extensions: [crossrefExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
     const initialCalls = ipcCallCount;
@@ -316,7 +315,7 @@ describe("crossrefPlugin", () => {
       doc: "hello",
       extensions: [crossrefExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 

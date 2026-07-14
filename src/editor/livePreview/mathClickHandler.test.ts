@@ -4,7 +4,6 @@ import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { Math } from "../markdown/math";
 import { findMathRange, createMathClickHandler } from "./mathClickHandler";
-import { trackView } from "../../test/cmView";
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -47,7 +46,7 @@ describe("createMathClickHandler", () => {
       doc: "$x^2$",
       extensions: [markdown({ extensions: [Math] }), handler],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     expect(view).toBeDefined();
     view.destroy();
   });

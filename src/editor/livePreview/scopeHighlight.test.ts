@@ -9,7 +9,6 @@ import {
   scopeHighlightExtension,
 } from "./scopeHighlight";
 import { Decoration } from "@codemirror/view";
-import { trackView } from "../../test/cmView";
 
 describe("scopeHighlightField", () => {
   it("initial state is Decoration.none", () => {
@@ -72,7 +71,7 @@ describe("scopeHighlightField", () => {
       doc: "hello world",
       extensions: [scopeHighlightField],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     dispatchScopeHighlight(view, 0, 5);
     const decos = view.state.field(scopeHighlightField);
     const iter = decos.iter();
@@ -86,7 +85,7 @@ describe("scopeHighlightField", () => {
       doc: "hello world",
       extensions: [scopeHighlightField],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     dispatchScopeHighlight(view, 0, 5);
     clearScopeHighlight(view);
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
@@ -116,7 +115,7 @@ describe("scopeHighlightField", () => {
       doc: "hello world",
       extensions: [scopeHighlightField],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     dispatchScopeHighlight(view, 5, 5);
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
@@ -127,7 +126,7 @@ describe("scopeHighlightField", () => {
       doc: "hello world",
       extensions: [scopeHighlightField],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     dispatchScopeHighlight(view, 10, 3);
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
@@ -135,13 +134,13 @@ describe("scopeHighlightField", () => {
 
   it("scopeHighlightExtension renders .scope-highlight in DOM", () => {
     const parent = document.createElement("div");
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({
         doc: "hello world",
         extensions: [scopeHighlightExtension()],
       }),
       parent,
-    }));
+    });
     dispatchScopeHighlight(view, 0, 5);
     const highlight = parent.querySelector(".scope-highlight");
     expect(highlight).not.toBeNull();

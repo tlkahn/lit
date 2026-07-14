@@ -17,7 +17,6 @@ vi.mock("./annotationHover", () => ({
 }));
 
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
-import { trackView } from "../../test/cmView";
 const mockHandleHover = handleAnnotationHover as ReturnType<typeof vi.fn>;
 const mockHandleLeave = handleAnnotationLeave as ReturnType<typeof vi.fn>;
 
@@ -28,7 +27,7 @@ beforeEach(() => {
 
 function makeEditorView(doc = "hello world"): EditorView {
   const state = EditorState.create({ doc });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {

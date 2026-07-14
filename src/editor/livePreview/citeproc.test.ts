@@ -16,7 +16,6 @@ import {
 import { frontmatterFacet } from "./crossref";
 import { mockInvoke } from "../../test/tauri-mock";
 import type { BibEntry } from "../../lib/ipc";
-import { trackView } from "../../test/cmView";
 
 function makeBibData(entries: BibEntry[], rendered: Record<string, string>): BibData {
   const byKey = new Map(entries.map((e) => [e.key, e]));
@@ -285,7 +284,7 @@ describe("decoration provider", () => {
       selection: { anchor: cursorPos },
       extensions: [citeprocExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     view.dispatch({ effects: setBibData.of(bibData) });
     return view;
   }
@@ -421,7 +420,7 @@ describe("svatantraḥ kartā scenario: Unicode bib path + note switch", () => {
       selection: { anchor: SANSKRIT_DOC.length },
       extensions: [citeprocExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     view.dispatch({ effects: setBibData.of(bibData) });
 
     const data = view.state.field(bibEntriesField);
@@ -455,7 +454,7 @@ describe("svatantraḥ kartā scenario: Unicode bib path + note switch", () => {
         noteDirFacet.of("/vault"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
 
@@ -496,7 +495,7 @@ describe("svatantraḥ kartā scenario: Unicode bib path + note switch", () => {
         noteDirFacet.of("/vault"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     await vi.advanceTimersByTimeAsync(200);
 
     const oldData = view.state.field(bibEntriesField);
@@ -560,7 +559,7 @@ describe("svatantraḥ kartā scenario: Unicode bib path + note switch", () => {
         noteDirCompartment.of(noteDirFacet.of("")),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
 
@@ -619,7 +618,7 @@ describe("svatantraḥ kartā scenario: Unicode bib path + note switch", () => {
         noteDirFacet.of("/vault"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     await vi.advanceTimersByTimeAsync(200);
 
     // Old note loaded successfully
@@ -678,7 +677,7 @@ describe("citeprocPlugin bib fetch", () => {
         noteDirFacet.of("/notes"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
 
@@ -710,7 +709,7 @@ describe("citeprocPlugin bib fetch", () => {
         noteDirFacet.of("/notes"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
     const initialFetchCount = fetchCount;
@@ -750,7 +749,7 @@ describe("citeprocPlugin bib fetch", () => {
         noteDirFacet.of("/notes"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
     expect(view.state.field(bibEntriesField).entries).toHaveLength(1);
@@ -785,7 +784,7 @@ describe("citeprocPlugin bib fetch", () => {
         noteDirFacet.of("/notes"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
 
@@ -835,7 +834,7 @@ describe("refetchBib effect", () => {
         noteDirFacet.of("/notes"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     // Wait for initial fetch
     await vi.advanceTimersByTimeAsync(200);
@@ -868,7 +867,7 @@ describe("refetchBib effect", () => {
         noteDirFacet.of("/notes"),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(200);
 

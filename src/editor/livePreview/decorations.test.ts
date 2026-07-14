@@ -12,7 +12,6 @@ import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
 import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget } from "./widgets";
-import { trackView } from "../../test/cmView";
 
 vi.mock("katex", () => ({
   default: {
@@ -42,7 +41,7 @@ function makeView(doc: string, cursor: number): EditorView {
       calloutFoldField,
     ],
   });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 type DecoInfo = {
@@ -1344,7 +1343,7 @@ function makeViewWithFacet(doc: string, cursor: number, thumbnail: boolean): Edi
       mediaThumbnailsFacet.of(thumbnail),
     ],
   });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 describe("buildDecorations — image thumbnail facet", () => {

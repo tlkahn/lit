@@ -38,7 +38,6 @@ import { parseAnnotations, listAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
-import { trackView } from "../../test/cmView";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -148,7 +147,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -165,7 +164,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -192,7 +191,7 @@ describe("annotationPlugin", () => {
       doc: "hello world",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -216,7 +215,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -244,7 +243,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -261,7 +260,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -285,7 +284,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -311,7 +310,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -339,7 +338,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -364,7 +363,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -386,7 +385,7 @@ describe("annotationPlugin", () => {
       doc: "hello world!!!",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -406,7 +405,7 @@ describe("annotationPlugin", () => {
       doc: "hello world",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -428,7 +427,7 @@ describe("annotationPlugin", () => {
       doc: "hello world",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -453,7 +452,7 @@ describe("annotationPlugin", () => {
       doc: "hello world!!! more text here",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -481,7 +480,7 @@ describe("annotationPlugin", () => {
       doc: "hello",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -514,7 +513,7 @@ describe("annotationPlugin", () => {
       doc: "some padded text with annotation here",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -541,7 +540,7 @@ describe("annotationPlugin", () => {
       doc: "x".repeat(70),
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -566,7 +565,7 @@ describe("annotationPlugin", () => {
       doc: "hello text",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     // Initial fireIPC
     await vi.advanceTimersByTimeAsync(0);
@@ -603,7 +602,7 @@ describe("annotationPlugin", () => {
       doc: "hello text",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
     expect(mockListAnnotations).toHaveBeenCalledTimes(1);
@@ -640,7 +639,7 @@ describe("annotationPlugin", () => {
       doc: "hello text",
       extensions: [annotationExtension()],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     await vi.advanceTimersByTimeAsync(0);
     expect(mockListAnnotations).toHaveBeenCalledTimes(1);
@@ -679,7 +678,7 @@ describe("annotationDecorationPlugin", () => {
         annotationFoldField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
     return view;
   }
@@ -859,7 +858,7 @@ describe("annotationDecorationPlugin", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
 
     const ann = makeAnnotation({
@@ -895,7 +894,7 @@ describe("annotationDecorationPlugin", () => {
         annotationFoldField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
 
     view.dispatch({ effects: setDisplayMode.of("footnote") });
@@ -924,7 +923,7 @@ describe("annotationDecorationPlugin", () => {
         annotationFoldField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
 
     view.dispatch({ effects: setDisplayMode.of("pill") });
@@ -956,7 +955,7 @@ describe("annotationDecorationPlugin", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
 
     view.dispatch({ effects: setDisplayMode.of("footnote") });
@@ -1011,7 +1010,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
     return view;
   }
@@ -1212,7 +1211,7 @@ describe("syntax-tree progression triggers rebuild", () => {
         annotationBlockDecorationField,
       ],
     });
-    return trackView(new EditorView({ state, parent: document.createElement("div") }));
+    return new EditorView({ state, parent: document.createElement("div") });
   }
 
   function pluginSet(view: EditorView): DecorationSet {
@@ -1363,7 +1362,7 @@ describe("shouldRebuildBlocksOnTreeChange", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
 
     // Parse enough to cover the annotation but not the entire doc.
     ensureSyntaxTree(view.state, INLINE.length + 100);
@@ -1405,7 +1404,7 @@ describe("buildAnnotationDecorations", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
     return view;
   }
@@ -1663,12 +1662,12 @@ describe("annotationExtension", () => {
   });
 
   it("instantiates a resolvable annotationDecorationPlugin in an EditorView", () => {
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({
         doc: "hello",
         extensions: [annotationExtension()],
       }),
-    }));
+    });
     try {
       expect(view.plugin(annotationDecorationPlugin)).not.toBeNull();
     } finally {
@@ -1700,7 +1699,7 @@ describe("annotationExtension multiline block rendering (regression)", () => {
         annotationExtension(),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     await vi.advanceTimersByTimeAsync(0);
     ensureSyntaxTree(view.state, view.state.doc.length);
 
@@ -1765,7 +1764,7 @@ describe("annotationBlockDecorationField selection guard", () => {
         annotationExtension(),
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     await vi.advanceTimersByTimeAsync(0);
     ensureSyntaxTree(view.state, view.state.doc.length);
     const ann = makeAnnotation({ form: "block", char_start: BLOCK_START, char_end: BLOCK_END, original: "<!---\nbody\n--->" });
@@ -1855,10 +1854,10 @@ describe("llmLockBridgePlugin", () => {
   it("does not dispatch synchronously in constructor when store is already locked", () => {
     useModalLockStore.setState({ llmLocked: true });
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
       parent: document.createElement("div"),
-    }));
+    });
     expect(view.state.field(llmLockedField)).toBe(false);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
@@ -1867,10 +1866,10 @@ describe("llmLockBridgePlugin", () => {
 
   it("deferred dispatch sets llmLockedField after microtask when store is already locked", async () => {
     useModalLockStore.setState({ llmLocked: true });
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
       parent: document.createElement("div"),
-    }));
+    });
     expect(view.state.field(llmLockedField)).toBe(false);
     await new Promise<void>((r) => queueMicrotask(r));
     expect(view.state.field(llmLockedField)).toBe(true);
@@ -1878,20 +1877,20 @@ describe("llmLockBridgePlugin", () => {
   });
 
   it("sets llmLockedField when store.llmLocked changes to true", () => {
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
       parent: document.createElement("div"),
-    }));
+    });
     useModalLockStore.getState().setLlmLocked(true);
     expect(view.state.field(llmLockedField)).toBe(true);
     view.destroy();
   });
 
   it("sets llmLockedField=false when store.llmLocked goes false", () => {
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
       parent: document.createElement("div"),
-    }));
+    });
     useModalLockStore.getState().setLlmLocked(true);
     expect(view.state.field(llmLockedField)).toBe(true);
     useModalLockStore.getState().setLlmLocked(false);
@@ -1900,20 +1899,20 @@ describe("llmLockBridgePlugin", () => {
   });
 
   it("unsubscribes on destroy (no throw)", () => {
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
       parent: document.createElement("div"),
-    }));
+    });
     view.destroy();
     expect(() => useModalLockStore.getState().setLlmLocked(true)).not.toThrow();
   });
 
   it("does not dispatch on destroyed view when microtask fires after destroy", async () => {
     useModalLockStore.setState({ llmLocked: true });
-    const view = trackView(new EditorView({
+    const view = new EditorView({
       state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
       parent: document.createElement("div"),
-    }));
+    });
     view.destroy();
     await new Promise<void>((r) => queueMicrotask(r));
     // If the destroyed guard is missing, dispatching on a destroyed view would crash.
@@ -1937,7 +1936,7 @@ describe("buildAnnotationBlockDecorations thread routing", () => {
         annotationBlockDecorationField,
       ],
     });
-    const view = trackView(new EditorView({ state, parent: document.createElement("div") }));
+    const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
     return view;
   }

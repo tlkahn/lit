@@ -2,14 +2,13 @@ import { describe, it, expect } from "vitest";
 import { EditorState, EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { toggleBold, toggleItalic, insertLink, toggleComment } from "./editorCommands";
-import { trackView } from "../test/cmView";
 
 function makeView(doc: string, from: number, to: number): EditorView {
   const state = EditorState.create({
     doc,
     selection: EditorSelection.single(from, to),
   });
-  return trackView(new EditorView({ state, parent: document.createElement("div") }));
+  return new EditorView({ state, parent: document.createElement("div") });
 }
 
 function getText(view: EditorView): string {
