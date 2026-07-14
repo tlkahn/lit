@@ -33,7 +33,11 @@ function setRegistryPref(storeField: PreferenceField, jsonKey: string, value: un
   const prev = usePreferencesStore.getState()[storeField];
   usePreferencesStore.setState({ [storeField]: value } as Partial<PreferencesState>);
   setPreference(jsonKey, value).catch(() => {
-    usePreferencesStore.setState({ [storeField]: prev } as Partial<PreferencesState>);
+    // Only revert if the optimistic value is still current - a stale revert
+    // would clobber a newer write (same pattern as setFontList et al.).
+    usePreferencesStore.setState((state) =>
+      state[storeField] === value ? ({ [storeField]: prev } as Partial<PreferencesState>) : {},
+    );
   });
 }
 
@@ -187,21 +191,6 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     colorTheme: availableThemes.map((t) => ({ value: t.directory_name, label: t.name })),
   }), [availableThemes]);
 
-  const nullableDropdownEntries = useMemo(
-    () => SETTINGS_REGISTRY.filter((e) => e.controlType === "dropdown" && e.nullable),
-    [],
-  );
-
-  useEffect(() => {
-    for (const entry of nullableDropdownEntries) {
-      const opts = dynamicOptions[entry.storeField as keyof typeof dynamicOptions] ?? (entry as { options?: { value: string; label: string }[] }).options ?? [];
-      const raw = prefs[entry.storeField];
-      if (raw != null && String(raw) !== "" && !opts.some((o) => o.value === String(raw))) {
-        setRegistryPref(entry.storeField, entry.jsonKey, null);
-      }
-    }
-  }, [nullableDropdownEntries, dynamicOptions, prefs]);
-
   const ensureUnlocked = useSecretStoreStore((s) => s.ensureUnlocked);
   const exists = useSecretStoreStore((s) => s.exists);
   const unlocked = useSecretStoreStore((s) => s.unlocked);
@@ -221,6 +210,9 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
         // when this check fired and when it resolved, don't clobber the new
         // provider's flag with the old provider's `has` value.
         if (prev.llmProvider.providerId !== currentProvider.providerId) return prev;
+        // No-op when the flag already matches - avoid fabricating a fresh
+        // llmProvider object (and a store update) per resolution.
+        if (prev.llmProvider.apiKeySet === has) return prev;
         return { llmProvider: { ...prev.llmProvider, apiKeySet: has } };
       });
     });

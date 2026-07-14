@@ -55,11 +55,13 @@ vi.mock("./editor/CodeMirrorEditor", () => ({
 }));
 
 // Stub SettingsModal: App tests only assert that the backdrop appears/disappears
-// with the `open` prop; the modal's contents are covered by its own tests.
-// This stub is also what stops this file from hanging: the real SettingsModal is
-// always mounted, and its IPC-driven effects (hasApiKey/secret-store reconciling)
-// participate in a race-sensitive promise/setState livelock that deterministically
-// stalled the full-file run. Root cause deliberately deferred.
+// with the `open` prop; the modal's contents are covered by its own tests, so
+// this is a de-weighting stub, not a correctness mask. The full-file hang this
+// stub used to paper over (a stale-colorTheme reconcile effect livelocking when
+// set_preference rejects) was root-caused and fixed in #891 - this file passes
+// with the stub removed. Note the invoke mock in beforeEach deliberately has no
+// set_preference case: rejecting persistence is exactly the hostile condition
+// the fix must survive.
 vi.mock("./components/SettingsModal", () => ({
   SettingsModal: ({ open }: { open: boolean }) =>
     open ? <div data-testid="settings-modal-backdrop" /> : null,

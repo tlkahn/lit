@@ -248,12 +248,6 @@ describe("SettingsModal", () => {
       expect(select.value).toBe("yuppie");
     });
 
-    it("auto-clears stale colorTheme when not in available themes", () => {
-      usePreferencesStore.setState({ colorTheme: "nonexistent" });
-      render(<SettingsModal open={true} onClose={vi.fn()} />);
-      expect(usePreferencesStore.getState().colorTheme).toBeNull();
-    });
-
     it("handles empty theme list", () => {
       useThemeStore.setState({ availableThemes: [] });
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);

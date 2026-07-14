@@ -441,7 +441,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
           // Skip if the provider changed during the async window (e.g. a
           // preferences://changed event or user provider switch).
           set((prev) =>
-            prev.llmProvider.providerId === checkedProviderId
+            prev.llmProvider.providerId === checkedProviderId && !prev.llmProvider.apiKeySet
               ? { llmProvider: { ...prev.llmProvider, apiKeySet: true } }
               : {},
           );
