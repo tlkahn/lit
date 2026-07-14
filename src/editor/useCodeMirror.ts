@@ -24,7 +24,7 @@ export interface UseCodeMirrorProps {
   frontmatter?: Record<string, unknown>;
   noteDir?: string;
   notePath?: string;
-  openFilePath?: (path: string) => void;
+  openFilePath?: (path: string, fragment: string | null) => void;
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
 
@@ -93,7 +93,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
         }
       },
       onSelectionChange: (line, col) => onSelectionChangeRef.current?.(line, col),
-      openFilePath: (path) => openFilePathRef.current?.(path),
+      openFilePath: (path, fragment) => openFilePathRef.current?.(path, fragment),
       resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? src,
       navigateToPage: (target, section, departurePos) => navigateToPageRef.current?.(target, section, departurePos),
     });

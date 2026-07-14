@@ -1012,6 +1012,20 @@ impl GraphIndex {
         Ok(extract_headings(&page.body))
     }
 
+    pub fn page_block_anchors(
+        &self,
+        target: &str,
+    ) -> Result<Vec<super::types::BlockAnchorInfo>, GraphError> {
+        let resolved = self.resolve_wikilink(target)?;
+        let node_id = resolved.node_id.ok_or_else(|| GraphError::NodeNotFound {
+            id: target.to_string(),
+        })?;
+        let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
+        let page = crate::workspace::ops::read_page(&self.workspace_root, &node_id, &noop_registry)
+            .map_err(|e| GraphError::Other(e.to_string()))?;
+        Ok(super::extract::extract_block_anchors(&page.body))
+    }
+
     pub fn backlinks(&self, page_id: &str) -> Result<Vec<BacklinkEntry>, GraphError> {
         let knowledge = self.knowledge.lock().unwrap();
         match knowledge.backlinks(page_id) {
@@ -3725,6 +3739,37 @@ mod tests {
         write_md(dir.path(), "a.md", "Content.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let result = gi.page_headings("NonExistent");
+        assert!(result.is_err());
+    }
+
+    // --- GraphIndex page_block_anchors ---
+
+    #[test]
+    fn page_block_anchors_returns_anchors() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Some paragraph. ^3141e2\n\nAnother line.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anchors = gi.page_block_anchors("a").unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].id, "3141e2");
+        assert_eq!(anchors[0].line, 1);
+    }
+
+    #[test]
+    fn page_block_anchors_empty_for_no_anchors() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Just plain text.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let anchors = gi.page_block_anchors("a").unwrap();
+        assert!(anchors.is_empty());
+    }
+
+    #[test]
+    fn page_block_anchors_unresolved_errors() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Content.");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let result = gi.page_block_anchors("NonExistent");
         assert!(result.is_err());
     }
 

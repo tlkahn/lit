@@ -138,6 +138,26 @@ pub fn extract_headings(body: &str) -> Vec<super::types::HeadingInfo> {
     headings
 }
 
+pub fn extract_block_anchors(body: &str) -> Vec<super::types::BlockAnchorInfo> {
+    static ANCHOR_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?:^|\s)\^([A-Za-z0-9-]+)[ \t]*$").unwrap()
+    });
+
+    let blanked = super::links::blank_code(body);
+    let mut anchors = Vec::new();
+
+    for (idx, line) in blanked.lines().enumerate() {
+        if let Some(caps) = ANCHOR_RE.captures(line) {
+            anchors.push(super::types::BlockAnchorInfo {
+                id: caps.get(1).unwrap().as_str().to_string(),
+                line: idx + 1,
+            });
+        }
+    }
+
+    anchors
+}
+
 pub fn strip_for_mention_scan(body: &str) -> String {
     let mut text = body.to_string();
 
@@ -618,6 +638,71 @@ mod tests {
         let result = extract_headings(body);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].text, "Outside");
+    }
+
+    // --- extract_block_anchors ---
+
+    #[test]
+    fn extract_block_anchors_trailing_form() {
+        let result = extract_block_anchors("Some text ^abc");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "abc");
+        assert_eq!(result[0].line, 1);
+    }
+
+    #[test]
+    fn extract_block_anchors_standalone_line() {
+        let body = "| a | b |\n| - | - |\n| 1 | 2 |\n^tbl-1";
+        let result = extract_block_anchors(body);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "tbl-1");
+        assert_eq!(result[0].line, 4);
+    }
+
+    #[test]
+    fn extract_block_anchors_allows_hyphens() {
+        let result = extract_block_anchors("paragraph text ^my-block-1");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "my-block-1");
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_midline() {
+        assert!(extract_block_anchors("text ^abc more text").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_no_leading_whitespace() {
+        assert!(extract_block_anchors("foo^abc").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_escaped() {
+        assert!(extract_block_anchors(r"text \^abc").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_invalid_chars() {
+        assert!(extract_block_anchors("text ^ab_cd").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_bare_caret() {
+        assert!(extract_block_anchors("text ^").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_ignores_inline_code_wrapped() {
+        assert!(extract_block_anchors("text `^abc`").is_empty());
+    }
+
+    #[test]
+    fn extract_block_anchors_skips_fenced_code() {
+        let body = "```\ncode ^abc\n```\nreal text ^def";
+        let result = extract_block_anchors(body);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "def");
+        assert_eq!(result[0].line, 4);
     }
 
     // --- extract_sentence_context ---

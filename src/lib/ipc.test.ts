@@ -70,6 +70,7 @@ import {
   listPagesByTag,
   resolveWikilink,
   getPageHeadings,
+  getPageBlockAnchors,
   getPagerank,
   getBacklinks,
   getForwardLinks,
@@ -635,6 +636,8 @@ describe("ipc", () => {
             { text: "Introduction", level: 1 },
             { text: "Details", level: 2 },
           ];
+        case "get_page_block_anchors":
+          return [{ id: "3141e2", line: 4 }];
         case "rebuild_graph_index":
           return "Rebuilt: 5 nodes, 3 edges, 1 stubs";
         case "reset_graph_layout":
@@ -1197,6 +1200,15 @@ describe("ipc", () => {
     await getPageHeadings("My Page");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("get_page_headings", { target: "My Page" });
+  });
+
+  it("getPageBlockAnchors returns anchors and passes target", async () => {
+    const anchors = await getPageBlockAnchors("My Page");
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]!.id).toBe("3141e2");
+    expect(anchors[0]!.line).toBe(4);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("get_page_block_anchors", { target: "My Page" });
   });
 
   it("rebuildGraphIndex calls correct command", async () => {

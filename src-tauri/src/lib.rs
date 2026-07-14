@@ -383,6 +383,7 @@ pub fn run() {
             commands::graph::get_bib_key_states,
             commands::graph::resolve_wikilink,
             commands::graph::get_page_headings,
+            commands::graph::get_page_block_anchors,
             commands::graph::get_unlinked_mentions,
             commands::graph::link_unlinked_mention,
             commands::graph::search_tags,

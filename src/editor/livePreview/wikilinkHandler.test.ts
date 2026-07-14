@@ -43,6 +43,12 @@ describe("getWikilinkTargetAtPos", () => {
     expect(result).toMatchObject({ target: "Target", section: null });
   });
 
+  it("parses block-anchor section from [[Page#^3141e2]]", () => {
+    const state = makeState("go to [[Page#^3141e2]]");
+    const result = getWikilinkTargetAtPos(state, 10);
+    expect(result).toMatchObject({ target: "Page", section: "^3141e2" });
+  });
+
   it("parses target with section and alias [[Page#Section|Display]]", () => {
     const state = makeState("see [[Page#Section|Display]]");
     const result = getWikilinkTargetAtPos(state, 8);

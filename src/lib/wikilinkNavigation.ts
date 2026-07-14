@@ -8,6 +8,12 @@ export interface NavigationDeps {
   currentPagePath: string | null;
   triggerReload: () => void;
   recordDeparture?: () => void;
+  /**
+   * Scroll the already-loaded doc to a section in place. Used when navigation
+   * stays on the current page: selectPage won't replace the doc there, so the
+   * pendingSection handoff (consumed on doc replacement) would never fire.
+   */
+  scrollToSection?: (section: string) => void;
 }
 
 export async function navigateWikilink(
@@ -19,8 +25,12 @@ export async function navigateWikilink(
 
   if (target === "") {
     if (section) {
-      deps.setPendingSection(section);
-      deps.triggerReload();
+      if (deps.scrollToSection) {
+        deps.scrollToSection(section);
+      } else {
+        deps.setPendingSection(section);
+        deps.triggerReload();
+      }
     }
     return;
   }
@@ -28,15 +38,21 @@ export async function navigateWikilink(
   try {
     const resolved = await deps.resolveWikilink(target);
 
-    if (section) {
-      deps.setPendingSection(section);
-    }
-
+    let selectedPath: string;
     if (resolved.node_id) {
-      deps.selectPage(resolved.node_id);
+      selectedPath = resolved.node_id;
     } else {
       const meta = await deps.createPage(target);
-      deps.selectPage(meta.relative_path);
+      selectedPath = meta.relative_path;
+    }
+    deps.selectPage(selectedPath);
+
+    if (section) {
+      if (selectedPath === deps.currentPagePath && deps.scrollToSection) {
+        deps.scrollToSection(section);
+      } else {
+        deps.setPendingSection(section);
+      }
     }
   } catch (err) {
     console.error("[navigateWikilink] failed:", err);

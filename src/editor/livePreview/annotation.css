@@ -503,6 +503,26 @@
   background: rgba(68, 138, 255, 0.20);
 }
 
+/* Block-reference flash — set on navigation to a ^block-id anchor, cleared
+   by a timer; the transition makes the removal read as a fade-out. */
+.cm-block-flash {
+  background: rgba(255, 200, 60, 0.30);
+  border-radius: 2px;
+  transition: background 600ms ease;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.dark .cm-block-flash {
+  background: rgba(255, 200, 60, 0.22);
+}
+
+/* Block anchor marker (^block-id) — dimmed when the cursor is off its line,
+   plain editable text when the cursor is on it. */
+.cm-block-anchor-dim {
+  opacity: 0.35;
+  font-size: 0.85em;
+}
+
 /* Minimal mark pill — compact badge holding only the mark icon. Inherits
    flex/border-radius/cursor from .cm-annotation-pill. */
 .cm-annotation-pill-minimal {

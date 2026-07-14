@@ -114,6 +114,13 @@ pub struct HeadingInfo {
     pub level: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockAnchorInfo {
+    pub id: String,
+    /// 1-based line number, matching the TS `BlockAnchor.line` and CM6 `Line.number`.
+    pub line: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UnlinkedMention {
     pub source_id: String,

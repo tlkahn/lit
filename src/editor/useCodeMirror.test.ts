@@ -372,6 +372,25 @@ describe("useCodeMirror", () => {
     });
   });
 
+  it("forwards both path and fragment from a plain-link click to openFilePath", () => {
+    const openFilePath = vi.fn();
+    const { result } = renderHook(() =>
+      useCodeMirror({
+        containerRef: container.ref,
+        doc: "txt [Click](notes/foo.md#^3141e2)",
+        openFilePath,
+      }),
+    );
+    const view = result.current.view!;
+    vi.spyOn(view, "posAtCoords").mockReturnValue(7);
+    act(() => {
+      view.contentDOM.dispatchEvent(
+        new MouseEvent("mousedown", { button: 0, bubbles: true }),
+      );
+    });
+    expect(openFilePath).toHaveBeenCalledWith("notes/foo.md", "^3141e2");
+  });
+
   it("reconfigures theme when dark class changes on document element", () => {
     renderHook(() =>
       useCodeMirror({
