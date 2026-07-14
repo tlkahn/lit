@@ -2,6 +2,24 @@
 members = [".", "crates/turboref-core", "crates/keygen"]
 resolver = "2"
 
+# Optimize dependencies (regex, grep-searcher, rayon, rusqlite, ...) even in
+# dev builds: full-text search and unlinked mentions scan the whole workspace
+# per query, and unoptimized regex/grep is ~25x slower (a no-hit search over a
+# 345 MB workspace: ~950ms dev vs ~35ms release). Workspace-member crates are
+# unaffected by the "*" glob, so incremental compiles stay fast; sibling path
+# deps that change often are pinned back to opt-level 0 below.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.research-hub]
+opt-level = 0
+
+[profile.dev.package.lit-cli]
+opt-level = 0
+
+[profile.dev.package.turboref-core]
+opt-level = 0
+
 [package]
 name = "lit"
 version = "0.0.0"

@@ -1270,16 +1270,19 @@ impl GraphIndex {
                     crate::workspace::ops::read_page(&self.workspace_root, id, &noop_registry)
                         .ok()?;
 
-                // The `\n` separator keeps a phrase (which never contains a
-                // newline) from straddling title and body; `.` doesn't cross
-                // `\n` by default. fancy-regex match calls return Result
-                // (backtrack-limit errors) — treat errors as non-matches.
-                let haystack = format!("{}\n{}", title, page.body);
-                if !re.is_match(&haystack).unwrap_or(false) {
+                // fancy-regex match calls return Result (backtrack-limit
+                // errors) — treat errors as non-matches. The raw-file
+                // prefilter can pass on a frontmatter-only match, so confirm
+                // against title or body before emitting anything.
+                if !title_hit && !re.is_match(&page.body).unwrap_or(false) {
                     return None;
                 }
 
-                let lines = find_matching_lines_re(&page.body, &re);
+                // Highlighting is capped at `limit` lines per file: the final
+                // result list is truncated to `limit` anyway, so lines beyond
+                // that can never be shown. The cap also floors the score, so
+                // files with more than `limit` matching lines tie.
+                let lines = find_matching_lines_re(&page.body, &re, limit.max(0) as usize);
                 let score = -(lines.len().max(1) as f64);
                 let results = if lines.is_empty() {
                     vec![SearchResult {
@@ -1770,14 +1773,17 @@ fn highlight_line_with_regex(line: &str, re: &fancy_regex::Regex) -> Option<Stri
     Some(out)
 }
 
-/// Return every line in `body` with a non-empty match of `re`, 1-based,
-/// with `<mark>` highlights in an HTML-escaped excerpt.
-fn find_matching_lines_re(body: &str, re: &fancy_regex::Regex) -> Vec<(u64, String)> {
+/// Return lines in `body` with a non-empty match of `re`, 1-based, with
+/// `<mark>` highlights in an HTML-escaped excerpt. Stops after `max_lines`
+/// matching lines — callers truncate to a global limit anyway, so highlighting
+/// an entire book's worth of matches would be wasted work.
+fn find_matching_lines_re(body: &str, re: &fancy_regex::Regex, max_lines: usize) -> Vec<(u64, String)> {
     body.split('\n')
         .enumerate()
         .filter_map(|(i, line)| {
             highlight_line_with_regex(line, re).map(|h| ((i as u64) + 1, h))
         })
+        .take(max_lines)
         .collect()
 }
 
@@ -4930,12 +4936,21 @@ mod tests {
     #[test]
     fn find_matching_lines_re_multi() {
         let body = "line one\nquantum here\nline three\nnew quantum";
-        let lines = find_matching_lines_re(body, &re_i("quantum"));
+        let lines = find_matching_lines_re(body, &re_i("quantum"), 100);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].0, 2);
         assert!(lines[0].1.contains("<mark>quantum</mark>"));
         assert_eq!(lines[1].0, 4);
         assert!(lines[1].1.contains("<mark>quantum</mark>"));
+    }
+
+    #[test]
+    fn find_matching_lines_re_caps_at_max_lines() {
+        let body = "quantum\nquantum\nquantum\nquantum";
+        let lines = find_matching_lines_re(body, &re_i("quantum"), 2);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].0, 1);
+        assert_eq!(lines[1].0, 2);
     }
 
     // --- GraphIndex search_by_title ---
