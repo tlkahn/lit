@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { Text } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { adjustLineForFrontmatter, resolveLineColPos, applyJumpLine, applyPendingCursorLine } from "./editorScroll";
 
 describe("adjustLineForFrontmatter", () => {
@@ -60,7 +61,7 @@ function fakeView(docContent: string) {
   return {
     state: { doc },
     dispatch: vi.fn(),
-  } as any;
+  } as unknown as EditorView;
 }
 
 describe("applyJumpLine", () => {

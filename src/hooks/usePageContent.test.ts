@@ -7,6 +7,7 @@ import {
   _resetForTesting,
 } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetSharedDocs, getPaneIds } from "../lib/sharedDocs";
+import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePageContent } from "./usePageContent";
 
@@ -28,6 +29,7 @@ beforeEach(() => {
   _resetForTesting();
   resetSharedDocs();
   resetInvokeMock();
+  usePaneStore.setState({ focusedPaneId: "p1" });
   useWorkspaceStore.setState({
     currentPageHeadings: [],
     isDirty: false,

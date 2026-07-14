@@ -12,10 +12,6 @@ interface BottomPanelProps {
   direction?: "bottom" | "left" | "right";
 }
 
-function getShadowClass(_direction: "bottom" | "left" | "right"): string {
-  return "";
-}
-
 function clampPanelSize(
   panelRef: RefObject<HTMLDivElement | null>,
   config: ResizeConfig,
@@ -88,8 +84,6 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
     ? { width: contentSize }
     : { height: contentSize };
 
-  const shadowClass = unfolded ? ` ${getShadowClass(direction)}` : "";
-
   const tabWrapperStyle = (tabId: string): React.CSSProperties => ({
     display: activeTab === tabId ? (isVertical ? "flex" : undefined) : "none",
     ...(isVertical
@@ -101,7 +95,7 @@ export function BottomPanel({ pageId, direction = "bottom" }: BottomPanelProps) 
     <div
       ref={panelRef}
       data-testid="bottom-panel"
-      className={`relative z-10 flex-shrink-0 overflow-hidden${isVertical ? " h-full text-sm" : ""}${shadowClass}`}
+      className={`relative z-10 flex-shrink-0 overflow-hidden${isVertical ? " h-full text-sm" : ""}`}
       style={panelStyle}
     >
       <ResizeHandle
