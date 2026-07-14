@@ -1,10 +1,10 @@
 import { EditorView } from "@codemirror/view";
 
 export const livePreviewThemeSpec: Record<string, Record<string, string | Record<string, string>>> = {
-  ".cm-preview-h1": { fontWeight: "bold" },
-  ".cm-preview-h2": { fontWeight: "bold" },
-  ".cm-preview-h3": { fontWeight: "bold" },
-  ".cm-preview-h4": { fontWeight: "bold" },
+  ".cm-preview-h1": { fontWeight: "bold", fontSize: "1.5em" },
+  ".cm-preview-h2": { fontWeight: "bold", fontSize: "1.3em" },
+  ".cm-preview-h3": { fontWeight: "bold", fontSize: "1.15em" },
+  ".cm-preview-h4": { fontWeight: "bold", fontSize: "1.05em" },
   ".cm-preview-h5": { fontWeight: "bold" },
   ".cm-preview-h6": { fontWeight: "bold" },
   ".cm-preview-bold": { fontWeight: "bold" },
