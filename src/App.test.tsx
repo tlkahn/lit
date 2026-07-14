@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { useEffect } from "react";
+import { EditorState } from "@codemirror/state";
 import App from "./App";
 import { mockInvoke, mockListen, emitMockEvent, mockWindowListen, emitWindowEvent } from "./test/tauri-mock";
 import { save, open } from "@tauri-apps/plugin-dialog";
@@ -18,6 +20,50 @@ import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
 import type { Annotation } from "./lib/ipc";
 import type { EditorView } from "@codemirror/view";
+
+// Same CodeMirrorEditor stand-in as ContentArea.test.tsx: no App test inspects
+// the CM instance (the annotation-builder tests inject their own mock view via
+// setCurrentEditorView, and the Ctrl-W PDF test only checks the editor testid's
+// presence), so the few tests that open a page don't need to mount a live
+// EditorView. PaneContainer calls view.focus() on a viewMode->"editor"
+// transition, and ContentArea reads view.scrollDOM/view.state (doc/selection)
+// on page switch - so the mock view carries a real EditorState (kept in sync
+// with the current doc prop) rather than a bare object.
+const mockCmView = {
+  focus: vi.fn(),
+  scrollDOM: { scrollTop: 0 },
+  state: EditorState.create({ doc: "" }),
+} as unknown as EditorView;
+
+vi.mock("./editor/CodeMirrorEditor", () => ({
+  CodeMirrorEditor: (props: {
+    doc: string;
+    style?: React.CSSProperties;
+    onViewChange?: (view: EditorView | null) => void;
+  }) => {
+    (mockCmView as unknown as { state: EditorState }).state = EditorState.create({ doc: props.doc });
+    useEffect(() => {
+      props.onViewChange?.(mockCmView);
+      return () => { props.onViewChange?.(null); };
+    }, []);
+    return (
+      <div data-testid="editor" className="flex-1 overflow-hidden" style={props.style}>
+        {props.doc}
+      </div>
+    );
+  },
+}));
+
+// Stub SettingsModal: App tests only assert that the backdrop appears/disappears
+// with the `open` prop; the modal's contents are covered by its own tests.
+// This stub is also what stops this file from hanging: the real SettingsModal is
+// always mounted, and its IPC-driven effects (hasApiKey/secret-store reconciling)
+// participate in a race-sensitive promise/setState livelock that deterministically
+// stalled the full-file run. Root cause deliberately deferred.
+vi.mock("./components/SettingsModal", () => ({
+  SettingsModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="settings-modal-backdrop" /> : null,
+}));
 
 // Mock pdfjs for PdfViewer (which no longer uses pdfium IPC)
 vi.mock("./lib/pdfjs", () => {
