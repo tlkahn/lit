@@ -92,6 +92,17 @@ pub struct SearchFilter {
     pub mtime_before: Option<i64>,
 }
 
+/// How the raw query string is interpreted by `search_content_filtered`:
+/// as one literal case-insensitive phrase, or as a user-supplied regex
+/// (fancy-regex flavor: lookaround, backreferences, `(?P<name>...)`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchMatchMode {
+    #[default]
+    Phrase,
+    Regex,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Stats {
     pub nodes: i64,

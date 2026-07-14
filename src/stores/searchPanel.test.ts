@@ -15,11 +15,13 @@ describe("searchPanel store", () => {
     useSearchPanelStore.setState({
       query: "",
       filter: {},
+      matchMode: "phrase",
       results: [],
       selectedIndex: 0,
       isLoading: false,
       totalCount: 0,
       navigatedResultId: null,
+      error: null,
     });
   });
 
@@ -33,11 +35,13 @@ describe("searchPanel store", () => {
     const state = useSearchPanelStore.getState();
     expect(state.query).toBe("");
     expect(state.filter).toEqual({});
+    expect(state.matchMode).toBe("phrase");
     expect(state.results).toEqual([]);
     expect(state.selectedIndex).toBe(0);
     expect(state.isLoading).toBe(false);
     expect(state.totalCount).toBe(0);
     expect(state.navigatedResultId).toBeNull();
+    expect(state.error).toBeNull();
   });
 
   // --- setQuery ---
@@ -415,5 +419,92 @@ describe("searchPanel store", () => {
     expect(callCount).toBe(2);
     expect(useSearchPanelStore.getState().results).toHaveLength(2);
     expect(useSearchPanelStore.getState().results[1]!.id).toBe("v2.md");
+  });
+
+  // --- matchMode / regex errors ---
+
+  it("setMatchMode re-runs the search immediately (no debounce)", async () => {
+    let receivedArgs: Record<string, unknown> | undefined;
+    mockInvoke((cmd, args) => {
+      if (cmd === "search_content_filtered") {
+        receivedArgs = args;
+        return [makeResult("a.md", "A")];
+      }
+      return null;
+    });
+
+    useSearchPanelStore.setState({ query: "test" });
+    useSearchPanelStore.getState().setMatchMode("regex");
+    await vi.runAllTimersAsync();
+
+    expect(useSearchPanelStore.getState().matchMode).toBe("regex");
+    expect(receivedArgs).toBeDefined();
+    expect(receivedArgs!.mode).toBe("regex");
+    expect(useSearchPanelStore.getState().results).toHaveLength(1);
+  });
+
+  it("backend rejection in regex mode sets error and empties results", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") {
+        return Promise.reject("invalid regex: unclosed group");
+      }
+      return null;
+    });
+
+    useSearchPanelStore.setState({
+      query: "foo(",
+      matchMode: "regex",
+      results: [makeResult("a.md", "A")],
+      totalCount: 1,
+    });
+    await useSearchPanelStore.getState().executeSearch();
+
+    const state = useSearchPanelStore.getState();
+    expect(state.error).toContain("invalid regex");
+    expect(state.results).toEqual([]);
+    expect(state.totalCount).toBe(0);
+    expect(state.isLoading).toBe(false);
+  });
+
+  it("backend rejection in phrase mode does not set error", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") {
+        return Promise.reject("some backend failure");
+      }
+      return null;
+    });
+
+    useSearchPanelStore.setState({ query: "test", matchMode: "phrase" });
+    await useSearchPanelStore.getState().executeSearch();
+
+    expect(useSearchPanelStore.getState().error).toBeNull();
+    expect(useSearchPanelStore.getState().results).toEqual([]);
+  });
+
+  it("error clears on next successful search", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") return [makeResult("a.md", "A")];
+      return null;
+    });
+
+    useSearchPanelStore.setState({
+      query: "valid",
+      matchMode: "regex",
+      error: "invalid regex: unclosed group",
+    });
+    await useSearchPanelStore.getState().executeSearch();
+
+    expect(useSearchPanelStore.getState().error).toBeNull();
+    expect(useSearchPanelStore.getState().results).toHaveLength(1);
+  });
+
+  it("error clears when the query is emptied", () => {
+    useSearchPanelStore.setState({
+      query: "foo(",
+      matchMode: "regex",
+      error: "invalid regex: unclosed group",
+    });
+    useSearchPanelStore.getState().setQuery("");
+    expect(useSearchPanelStore.getState().error).toBeNull();
   });
 });

@@ -14,7 +14,7 @@ use super::links::{blank_code, extract_wikilinks_blanked, WikiLink};
 use super::resolve::StemLookup;
 use super::cardbox_layout::load_layout_links;
 use super::store::Store;
-use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchFilter, SearchResult, Stats, UnlinkedMention};
+use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchFilter, SearchMatchMode, SearchResult, Stats, UnlinkedMention};
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -1200,62 +1200,68 @@ impl GraphIndex {
 
     /// Faceted full-text search returning **one result per matching body line**
     /// (1-based, body-relative — frontmatter excluded, matching what the
-    /// editor's `selectPageAtLine` expects). A file qualifies when its title +
-    /// body contain **all** query terms (AND semantics); within a qualifying
-    /// file every line containing at least one term is emitted (OR semantics),
-    /// with `<mark>` highlights in an HTML-escaped excerpt. Files where all
-    /// terms sit in the title but no body line matches yield a single
-    /// title-excerpt result anchored to line 1.
+    /// editor's `selectPageAtLine` expects). In `Phrase` mode the entire raw
+    /// query is one literal, case-insensitive substring; in `Regex` mode it is
+    /// compiled as a case-insensitive fancy-regex pattern (lookaround,
+    /// backreferences, `(?P<name>...)` supported), and an invalid pattern
+    /// returns `Err`. A file qualifies when its title + body match the
+    /// pattern; within a qualifying file every matching line is emitted, with
+    /// `<mark>` highlights in an HTML-escaped excerpt. Files where the match
+    /// sits only in the title yield a single title-excerpt result anchored to
+    /// line 1.
     pub fn search_content_filtered(
         &self,
         query: &str,
         filter: &SearchFilter,
         limit: i64,
+        mode: SearchMatchMode,
     ) -> Result<Vec<SearchResult>, GraphError> {
         use grep_regex::RegexMatcherBuilder;
         use rayon::prelude::*;
 
-        let terms = parse_search_query(query);
-        if terms.is_empty() {
+        let q = query.trim();
+        if q.is_empty() {
             return Ok(vec![]);
         }
 
-        let pattern = terms
-            .iter()
-            .map(|t| regex::escape(t))
-            .collect::<Vec<_>>()
-            .join("|");
+        // Inline (?i) rather than a builder flag: fancy-regex's builder-level
+        // case-insensitivity API isn't stable across versions.
+        let pattern = match mode {
+            SearchMatchMode::Phrase => format!("(?i){}", regex::escape(q)),
+            SearchMatchMode::Regex => format!("(?i){}", q),
+        };
+        let re = fancy_regex::Regex::new(&pattern)
+            .map_err(|e| GraphError::Other(format!("invalid regex: {e}")))?;
 
-        let matcher = match RegexMatcherBuilder::new()
+        // Raw-file prefilter. Patterns using fancy-only features (lookaround,
+        // backrefs) won't compile under grep-regex; None disables the
+        // prefilter and every candidate gets a full scan.
+        let matcher = RegexMatcherBuilder::new()
             .case_insensitive(true)
             .build(&pattern)
-        {
-            Ok(m) => m,
-            Err(_) => return Ok(vec![]),
-        };
+            .ok();
 
         let store = self.store.lock().unwrap();
         let candidates = store.synced_paths_filtered(filter)?;
         let titles = store.node_titles()?;
         drop(store);
 
-        let term_refs: Vec<&str> = terms.iter().map(|t| t.as_str()).collect();
-        let terms_lower: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
         let noop_registry = crate::workspace::write_hash::WriteHashRegistry::new();
 
         let mut file_hits: Vec<Vec<SearchResult>> = candidates
             .par_iter()
             .filter_map(|id| {
                 let title = titles.get(id).cloned().unwrap_or_default();
-                let title_lower = title.to_lowercase();
                 // Cheap raw-file prefilter; a title hit (possibly derived from
                 // the filename, absent from the file contents) also qualifies.
-                let title_has_any = terms_lower.iter().any(|t| title_lower.contains(t.as_str()));
-                if !title_has_any
-                    && !file_contains_any_name_with_matcher(
-                        &self.workspace_root.join(id.as_str()),
-                        &matcher,
-                    )
+                let title_hit = re.is_match(&title).unwrap_or(false);
+                if !title_hit
+                    && !matcher.as_ref().is_none_or(|m| {
+                        file_contains_any_name_with_matcher(
+                            &self.workspace_root.join(id.as_str()),
+                            m,
+                        )
+                    })
                 {
                     return None;
                 }
@@ -1264,19 +1270,24 @@ impl GraphIndex {
                     crate::workspace::ops::read_page(&self.workspace_root, id, &noop_registry)
                         .ok()?;
 
-                let haystack = format!("{}\n{}", title_lower, page.body.to_lowercase());
-                if !terms_lower.iter().all(|t| haystack.contains(t.as_str())) {
+                // The `\n` separator keeps a phrase (which never contains a
+                // newline) from straddling title and body; `.` doesn't cross
+                // `\n` by default. fancy-regex match calls return Result
+                // (backtrack-limit errors) — treat errors as non-matches.
+                let haystack = format!("{}\n{}", title, page.body);
+                if !re.is_match(&haystack).unwrap_or(false) {
                     return None;
                 }
 
-                let lines = find_matching_lines(&page.body, &term_refs);
+                let lines = find_matching_lines_re(&page.body, &re);
                 let score = -(lines.len().max(1) as f64);
                 let results = if lines.is_empty() {
                     vec![SearchResult {
                         id: id.clone(),
                         title: title.clone(),
                         score,
-                        excerpt: highlight_terms_in_line(&title, &term_refs),
+                        excerpt: highlight_line_with_regex(&title, &re)
+                            .unwrap_or_else(|| html_escape(&title)),
                         first_match_line: Some(1),
                     }]
                 } else {
@@ -1715,52 +1726,6 @@ fn parse_search_query(raw: &str) -> Vec<String> {
     trimmed.split_whitespace().map(|s| s.to_string()).collect()
 }
 
-/// Build a mapping from each byte offset in `lowered` back to the corresponding
-/// byte offset in `original`.  Entry `map[i]` (for `i` in `0..=lowered.len()`)
-/// gives the byte offset in `original` that corresponds to lowered byte `i`.
-///
-/// Both strings must have been produced from the same source via
-/// `original` -> `original.to_lowercase()` == `lowered`.
-fn build_lower_to_orig_map(original: &str, lowered: &str) -> Vec<usize> {
-    let mut map = vec![0usize; lowered.len() + 1];
-    let mut orig_iter = original.char_indices().peekable();
-    let mut low_iter = lowered.char_indices().peekable();
-
-    loop {
-        match (orig_iter.peek(), low_iter.peek()) {
-            (Some(&(orig_byte, orig_ch)), Some(&(low_byte, _))) => {
-                // Map the start of this lowered char to the start of the original char.
-                map[low_byte] = orig_byte;
-                // A single original char may lowercase into multiple chars (e.g. 'İ' → "i\u{307}").
-                let orig_lower: String = orig_ch.to_lowercase().collect();
-                let orig_lower_bytes = orig_lower.len();
-                // Advance past all lowered chars that came from this single original char.
-                // Lowered chars beyond the first map to the *end* of the original char,
-                // so a match ending mid-expansion highlights the whole original char and
-                // the map stays monotonic.
-                let orig_end = orig_byte + orig_ch.len_utf8();
-                let mut consumed = 0;
-                while consumed < orig_lower_bytes {
-                    if let Some(&(lb, lc)) = low_iter.peek() {
-                        if consumed > 0 {
-                            map[lb] = orig_end;
-                        }
-                        consumed += lc.len_utf8();
-                        low_iter.next();
-                    } else {
-                        break;
-                    }
-                }
-                orig_iter.next();
-            }
-            _ => break,
-        }
-    }
-    // Sentinel: map the end-of-lowered to end-of-original.
-    map[lowered.len()] = original.len();
-    map
-}
-
 fn html_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -1774,84 +1739,45 @@ fn html_escape(s: &str) -> String {
     out
 }
 
-fn highlight_terms_in_line(line: &str, terms: &[&str]) -> String {
-    let line_lower = line.to_lowercase();
-    let map = build_lower_to_orig_map(line, &line_lower);
-    // Collect ranges in *original* line byte offsets.
-    let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for term in terms {
-        let lower_term = term.to_lowercase();
-        if lower_term.is_empty() {
+/// HTML-escape `line` and wrap every non-empty match of `re` in `<mark>`.
+/// Returns `None` when the line has no non-empty match — zero-width matches
+/// (e.g. from patterns like `a*`) are skipped so they neither emit empty
+/// `<mark>`s nor make every line count as matching.
+fn highlight_line_with_regex(line: &str, re: &fancy_regex::Regex) -> Option<String> {
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    let mut matched = false;
+    for m in re.find_iter(line).flatten() {
+        let (s, e) = (m.start(), m.end());
+        if s >= e {
             continue;
         }
-        let lt_len = lower_term.len();
-        let mut start = 0usize; // byte offset in line_lower
-        while start + lt_len <= line_lower.len() {
-            if let Some(pos) = line_lower[start..].find(&lower_term) {
-                let abs_start = start + pos;
-                let abs_end = abs_start + lt_len;
-                // Map back to original string byte offsets. Guard against
-                // degenerate ranges so a mapping quirk can never panic slicing.
-                let (s, e) = (map[abs_start], map[abs_end]);
-                if s < e {
-                    ranges.push((s, e));
-                }
-                // Advance past the first char of the match (char-aware).
-                start = abs_start
-                    + line_lower[abs_start..]
-                        .chars()
-                        .next()
-                        .map_or(1, |c| c.len_utf8());
-            } else {
-                break;
-            }
-        }
-    }
-    if ranges.is_empty() {
-        return html_escape(line);
-    }
-    ranges.sort_by_key(|&(a, _)| a);
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (s, e) in ranges {
-        if let Some(last) = merged.last_mut() {
-            if s <= last.1 {
-                last.1 = last.1.max(e);
-                continue;
-            }
-        }
-        merged.push((s, e));
-    }
-    let mut out = String::new();
-    let mut cursor = 0;
-    for (s, e) in &merged {
-        if cursor < *s {
-            out.push_str(&html_escape(&line[cursor..*s]));
+        matched = true;
+        if cursor < s {
+            out.push_str(&html_escape(&line[cursor..s]));
         }
         out.push_str("<mark>");
-        out.push_str(&html_escape(&line[*s..*e]));
+        out.push_str(&html_escape(&line[s..e]));
         out.push_str("</mark>");
-        cursor = *e;
+        cursor = e;
+    }
+    if !matched {
+        return None;
     }
     if cursor < line.len() {
         out.push_str(&html_escape(&line[cursor..]));
     }
-    out
+    Some(out)
 }
 
-/// Return every line in `body` that contains **any** of the given terms (OR semantics).
-///
-/// This is intentional: `search_content_filtered` already narrows results to documents
-/// where **all** terms appear (AND semantics), so within a matched document we highlight
-/// every line that mentions at least one term to give the user full context.
-fn find_matching_lines(body: &str, terms: &[&str]) -> Vec<(u64, String)> {
-    let lower_terms: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+/// Return every line in `body` with a non-empty match of `re`, 1-based,
+/// with `<mark>` highlights in an HTML-escaped excerpt.
+fn find_matching_lines_re(body: &str, re: &fancy_regex::Regex) -> Vec<(u64, String)> {
     body.split('\n')
         .enumerate()
-        .filter(|(_, line)| {
-            let lower = line.to_lowercase();
-            lower_terms.iter().any(|lt| lower.contains(lt.as_str()))
+        .filter_map(|(i, line)| {
+            highlight_line_with_regex(line, re).map(|h| ((i as u64) + 1, h))
         })
-        .map(|(i, line)| ((i as u64) + 1, highlight_terms_in_line(line, terms)))
         .collect()
 }
 
@@ -4633,7 +4559,7 @@ mod tests {
         );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("quantum", &SearchFilter::default(), 20)
+            .search_content_filtered("quantum", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
         assert_eq!(results.len(), 2, "one result per matching body line");
         assert_eq!(
@@ -4650,22 +4576,20 @@ mod tests {
     #[test]
     fn search_content_filtered_multi_term_and() {
         let dir = create_workspace();
-        write_md(dir.path(), "both.md", "quantum on this line\ncomputing on that line");
-        write_md(dir.path(), "one.md", "quantum mechanics only");
+        write_md(dir.path(), "split.md", "quantum on this line\ncomputing on that line");
+        write_md(dir.path(), "contiguous.md", "intro line\nquantum computing here");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("quantum computing", &SearchFilter::default(), 20)
+            .search_content_filtered("quantum computing", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
-        assert!(!results.is_empty());
-        assert!(
-            results.iter().all(|r| r.id == "both.md"),
-            "only the file containing all terms should match"
-        );
         assert_eq!(
             results.len(),
-            2,
-            "each line containing at least one term is a result"
+            1,
+            "phrase mode requires the literal contiguous phrase"
         );
+        assert_eq!(results[0].id, "contiguous.md");
+        assert_eq!(results[0].first_match_line, Some(2));
+        assert!(results[0].excerpt.contains("<mark>quantum computing</mark>"));
     }
 
     #[test]
@@ -4678,7 +4602,7 @@ mod tests {
             folder_prefix: Some("projects/".into()),
             ..Default::default()
         };
-        let results = gi.search_content_filtered("quantum", &filter, 20).unwrap();
+        let results = gi.search_content_filtered("quantum", &filter, 20, SearchMatchMode::Phrase).unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.id == "projects/a.md"));
     }
@@ -4699,7 +4623,7 @@ mod tests {
             tags: Some(vec!["physics".into()]),
             ..Default::default()
         };
-        let results = gi.search_content_filtered("quantum", &one_tag, 20).unwrap();
+        let results = gi.search_content_filtered("quantum", &one_tag, 20, SearchMatchMode::Phrase).unwrap();
         let ids: HashSet<&str> = results.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, HashSet::from(["a.md", "b.md"]));
 
@@ -4707,7 +4631,7 @@ mod tests {
             tags: Some(vec!["physics".into(), "draft".into()]),
             ..Default::default()
         };
-        let results = gi.search_content_filtered("quantum", &two_tags, 20).unwrap();
+        let results = gi.search_content_filtered("quantum", &two_tags, 20, SearchMatchMode::Phrase).unwrap();
         assert!(results.iter().all(|r| r.id == "a.md"));
         assert!(!results.is_empty(), "a.md carries both tags");
     }
@@ -4726,7 +4650,7 @@ mod tests {
             mtime_after: Some(1_500_000),
             ..Default::default()
         };
-        let results = gi.search_content_filtered("quantum", &after, 20).unwrap();
+        let results = gi.search_content_filtered("quantum", &after, 20, SearchMatchMode::Phrase).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "new.md");
 
@@ -4734,7 +4658,7 @@ mod tests {
             mtime_before: Some(1_500_000),
             ..Default::default()
         };
-        let results = gi.search_content_filtered("quantum", &before, 20).unwrap();
+        let results = gi.search_content_filtered("quantum", &before, 20, SearchMatchMode::Phrase).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "old.md");
     }
@@ -4745,7 +4669,7 @@ mod tests {
         write_md(dir.path(), "a.md", "<b>bold</b> & quantum text");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("quantum", &SearchFilter::default(), 10)
+            .search_content_filtered("quantum", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
         assert_eq!(results.len(), 1);
         let excerpt = &results[0].excerpt;
@@ -4767,7 +4691,7 @@ mod tests {
         );
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("Quantum", &SearchFilter::default(), 10)
+            .search_content_filtered("Quantum", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].first_match_line, Some(1));
@@ -4782,7 +4706,7 @@ mod tests {
         write_md(dir.path(), "zanzibar-notes.md", "no match in body");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("zanzibar", &SearchFilter::default(), 10)
+            .search_content_filtered("zanzibar", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "zanzibar-notes.md");
@@ -4795,7 +4719,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Content.");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("", &SearchFilter::default(), 10)
+            .search_content_filtered("", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
         assert!(results.is_empty());
     }
@@ -4808,7 +4732,7 @@ mod tests {
         write_md(dir.path(), "b.md", body);
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("quantum", &SearchFilter::default(), 3)
+            .search_content_filtered("quantum", &SearchFilter::default(), 3, SearchMatchMode::Phrase)
             .unwrap();
         assert_eq!(results.len(), 3, "limit caps total line-level results");
     }
@@ -4820,7 +4744,7 @@ mod tests {
         write_md(dir.path(), "few.md", "rust once");
         let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
         let results = gi
-            .search_content_filtered("rust", &SearchFilter::default(), 20)
+            .search_content_filtered("rust", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
         assert_eq!(results.len(), 4);
         assert!(
@@ -4863,82 +4787,155 @@ mod tests {
         assert_eq!(folders, vec!["a/", "b/"]);
     }
 
-    // --- find_matching_lines / highlight_terms_in_line (pure) ---
+    // --- phrase / regex match modes ---
 
     #[test]
-    fn find_matching_lines_multi() {
+    fn phrase_mode_multiword_ignores_bare_term() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "I love Lean 4 proofs\nsee section 4 notes",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("Lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
+            .unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "lines containing only a bare \"4\" must not match the phrase"
+        );
+        assert_eq!(results[0].first_match_line, Some(1));
+        assert!(results[0].excerpt.contains("<mark>Lean 4</mark>"));
+    }
+
+    #[test]
+    fn phrase_mode_case_insensitive() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Studying Lean 4 today");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].excerpt.contains("<mark>Lean 4</mark>"));
+    }
+
+    #[test]
+    fn phrase_mode_requires_contiguous() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Lean proofs here\nsection 4 there");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("Lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "terms on separate lines are not a phrase match"
+        );
+    }
+
+    #[test]
+    fn regex_mode_matches() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "I love Lean 4 proofs\nplain text line");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered(r"Lean\s+\d", &SearchFilter::default(), 20, SearchMatchMode::Regex)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+        assert!(results[0].excerpt.contains("<mark>Lean 4</mark>"));
+    }
+
+    #[test]
+    fn regex_mode_lookahead() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "Lean 4 rocks\nLean proofs elsewhere");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered(r"Lean(?=\s+4)", &SearchFilter::default(), 20, SearchMatchMode::Regex)
+            .unwrap();
+        assert_eq!(results.len(), 1, "lookahead must exclude the non-4 line");
+        assert_eq!(results[0].first_match_line, Some(1));
+        assert!(results[0].excerpt.contains("<mark>Lean</mark> 4"));
+    }
+
+    #[test]
+    fn regex_mode_invalid_returns_err() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "content");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let result =
+            gi.search_content_filtered("foo(", &SearchFilter::default(), 20, SearchMatchMode::Regex);
+        assert!(result.is_err(), "invalid regex must surface as Err");
+    }
+
+    #[test]
+    fn phrase_title_only_fallback() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "---\ntitle: Lean 4 Cookbook\n---\nno match in body",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let results = gi
+            .search_content_filtered("Lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].first_match_line, Some(1));
+        assert!(results[0].excerpt.contains("<mark>Lean 4</mark>"));
+    }
+
+    // --- highlight_line_with_regex / find_matching_lines_re (pure) ---
+
+    fn re_i(pattern: &str) -> fancy_regex::Regex {
+        fancy_regex::Regex::new(&format!("(?i){pattern}")).unwrap()
+    }
+
+    #[test]
+    fn highlight_line_with_regex_basic_mark() {
+        let out = highlight_line_with_regex("Quantum leap", &re_i("quantum"));
+        assert_eq!(out.as_deref(), Some("<mark>Quantum</mark> leap"));
+    }
+
+    #[test]
+    fn highlight_line_with_regex_no_match_is_none() {
+        assert_eq!(highlight_line_with_regex("hello world", &re_i("quantum")), None);
+    }
+
+    #[test]
+    fn highlight_line_with_regex_escapes_html_everywhere() {
+        let out = highlight_line_with_regex("<i>x</i> term", &re_i("term"));
+        assert_eq!(out.as_deref(), Some("&lt;i&gt;x&lt;/i&gt; <mark>term</mark>"));
+        let marked = highlight_line_with_regex("a <b> c", &re_i("<b>"));
+        assert_eq!(marked.as_deref(), Some("a <mark>&lt;b&gt;</mark> c"));
+    }
+
+    #[test]
+    fn highlight_line_with_regex_multibyte_line() {
+        let out = highlight_line_with_regex("日本語 quantum 中文", &re_i("quantum"));
+        assert_eq!(out.as_deref(), Some("日本語 <mark>quantum</mark> 中文"));
+    }
+
+    #[test]
+    fn highlight_line_with_regex_zero_width_is_none() {
+        // `x*` matches (zero-width) at every position of a line with no `x`;
+        // those must not count as matches nor emit empty <mark>s.
+        assert_eq!(highlight_line_with_regex("no letter here!", &re_i("x*")), None);
+    }
+
+    #[test]
+    fn find_matching_lines_re_multi() {
         let body = "line one\nquantum here\nline three\nnew quantum";
-        let lines = find_matching_lines(body, &["quantum"]);
+        let lines = find_matching_lines_re(body, &re_i("quantum"));
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].0, 2);
         assert!(lines[0].1.contains("<mark>quantum</mark>"));
         assert_eq!(lines[1].0, 4);
         assert!(lines[1].1.contains("<mark>quantum</mark>"));
-    }
-
-    #[test]
-    fn find_matching_lines_none() {
-        let body = "hello world\nnothing here";
-        let lines = find_matching_lines(body, &["quantum"]);
-        assert!(lines.is_empty());
-    }
-
-    #[test]
-    fn find_matching_lines_single() {
-        let lines = find_matching_lines("quantum", &["quantum"]);
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], (1, "<mark>quantum</mark>".to_string()));
-    }
-
-    #[test]
-    fn highlight_terms_case_insensitive_preserves_original() {
-        let out = highlight_terms_in_line("Quantum leap", &["quantum"]);
-        assert_eq!(out, "<mark>Quantum</mark> leap");
-    }
-
-    #[test]
-    fn highlight_terms_merges_overlapping_ranges() {
-        let out = highlight_terms_in_line("abcd", &["abc", "bcd"]);
-        assert_eq!(out, "<mark>abcd</mark>");
-    }
-
-    #[test]
-    fn highlight_terms_escapes_html_outside_marks() {
-        let out = highlight_terms_in_line("<i>x</i> term", &["term"]);
-        assert_eq!(out, "&lt;i&gt;x&lt;/i&gt; <mark>term</mark>");
-    }
-
-    #[test]
-    fn highlight_terms_multibyte_line() {
-        let out = highlight_terms_in_line("日本語 quantum 中文", &["quantum"]);
-        assert_eq!(out, "日本語 <mark>quantum</mark> 中文");
-    }
-
-    #[test]
-    fn highlight_terms_expanding_lowercase_no_panic() {
-        // 'İ' lowercases to "i\u{307}" (1 char -> 2 chars, 2 bytes -> 3 bytes).
-        // A term matching only part of the expansion must not panic and should
-        // highlight the whole original char.
-        let out = highlight_terms_in_line("aİb", &["i"]);
-        assert_eq!(out, "a<mark>İ</mark>b");
-    }
-
-    #[test]
-    fn build_lower_to_orig_map_monotonic_on_expansion() {
-        let original = "aİb İİ x";
-        let lowered = original.to_lowercase();
-        let map = build_lower_to_orig_map(original, &lowered);
-        // Only char-boundary offsets of `lowered` are ever looked up (term match
-        // offsets come from `str::find` on `lowered`), so monotonicity must hold
-        // across exactly those entries.
-        let boundaries: Vec<usize> = (0..=lowered.len())
-            .filter(|&i| lowered.is_char_boundary(i))
-            .map(|i| map[i])
-            .collect();
-        for w in boundaries.windows(2) {
-            assert!(w[0] <= w[1], "map not monotonic at char boundaries: {map:?}");
-        }
-        assert_eq!(*map.last().unwrap(), original.len());
     }
 
     // --- GraphIndex search_by_title ---

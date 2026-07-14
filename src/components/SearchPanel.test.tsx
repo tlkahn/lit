@@ -315,3 +315,92 @@ describe("SearchPanel loading spinner", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
+
+describe("SearchPanel regex toggle", () => {
+  beforeEach(() => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      graphReady: true,
+    });
+    useSearchPanelStore.setState({
+      query: "hello",
+      filter: {},
+      matchMode: "phrase",
+      results: [makeResult("a.md")],
+      selectedIndex: 0,
+      isLoading: false,
+      totalCount: 1,
+      navigatedResultId: null,
+      error: null,
+    });
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") return [makeResult("a.md")];
+      if (cmd === "list_folders") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  });
+
+  afterEach(() => {
+    resetListenMock();
+  });
+
+  it("renders the .* toggle unpressed in phrase mode", () => {
+    render(<SearchPanel />);
+
+    const toggle = screen.getByRole("button", { name: "Use regular expression" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("clicking the toggle switches to regex mode and re-runs the search", async () => {
+    const setMatchModeSpy = vi.spyOn(useSearchPanelStore.getState(), "setMatchMode");
+    render(<SearchPanel />);
+
+    const toggle = screen.getByRole("button", { name: "Use regular expression" });
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+
+    expect(setMatchModeSpy).toHaveBeenCalledWith("regex");
+    expect(useSearchPanelStore.getState().matchMode).toBe("regex");
+    await waitFor(() => {
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+    });
+    setMatchModeSpy.mockRestore();
+  });
+
+  it("clicking the toggle again switches back to phrase mode", async () => {
+    useSearchPanelStore.setState({ matchMode: "regex" });
+    render(<SearchPanel />);
+
+    const toggle = screen.getByRole("button", { name: "Use regular expression" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+
+    expect(useSearchPanelStore.getState().matchMode).toBe("phrase");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("renders the inline error message when the store has an error", () => {
+    useSearchPanelStore.setState({
+      matchMode: "regex",
+      error: "invalid regex: unclosed group",
+      results: [],
+      totalCount: 0,
+    });
+    render(<SearchPanel />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("invalid regex: unclosed group");
+    expect(screen.queryByText("No results")).not.toBeInTheDocument();
+  });
+
+  it("does not render an error message when error is null", () => {
+    render(<SearchPanel />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});

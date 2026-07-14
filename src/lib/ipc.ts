@@ -783,15 +783,19 @@ export interface SearchFilter {
   mtime_before?: number;
 }
 
+export type SearchMatchMode = "phrase" | "regex";
+
 export async function searchContentFiltered(
   query: string,
   filter?: SearchFilter,
   limit?: number,
+  mode?: SearchMatchMode,
 ): Promise<GraphSearchResult[]> {
   return invoke<GraphSearchResult[]>("search_content_filtered", {
     query,
     filter: filter ?? null,
     limit: limit ?? null,
+    mode: mode ?? "phrase",
   });
 }
 

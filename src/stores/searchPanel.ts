@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { searchContentFiltered, type SearchFilter, type GraphSearchResult } from "../lib/ipc";
+import { searchContentFiltered, type SearchFilter, type SearchMatchMode, type GraphSearchResult } from "../lib/ipc";
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let requestId = 0;
@@ -7,15 +7,18 @@ let requestId = 0;
 export interface SearchPanelState {
   query: string;
   filter: SearchFilter;
+  matchMode: SearchMatchMode;
   results: GraphSearchResult[];
   selectedIndex: number;
   isLoading: boolean;
   totalCount: number;
   navigatedResultId: string | null;
+  error: string | null;
 
   setQuery: (q: string) => void;
   setFilter: (f: Partial<SearchFilter>) => void;
   clearFilter: () => void;
+  setMatchMode: (m: SearchMatchMode) => void;
   executeSearch: () => Promise<void>;
   selectIndex: (i: number) => void;
   selectNext: () => void;
@@ -26,11 +29,13 @@ export interface SearchPanelState {
 export const useSearchPanelStore = create<SearchPanelState>((set, get) => ({
   query: "",
   filter: {},
+  matchMode: "phrase",
   results: [],
   selectedIndex: 0,
   isLoading: false,
   totalCount: 0,
   navigatedResultId: null,
+  error: null,
 
   setQuery: (q: string) => {
     set({ query: q, selectedIndex: 0, navigatedResultId: null });
@@ -38,7 +43,7 @@ export const useSearchPanelStore = create<SearchPanelState>((set, get) => ({
     if (!q.trim()) {
       // Invalidate any in-flight search so its response can't resurrect results.
       requestId++;
-      set({ results: [], totalCount: 0, isLoading: false });
+      set({ results: [], totalCount: 0, isLoading: false, error: null });
       return;
     }
     set({ isLoading: true });
@@ -64,21 +69,30 @@ export const useSearchPanelStore = create<SearchPanelState>((set, get) => ({
     get().executeSearch();
   },
 
+  setMatchMode: (m: SearchMatchMode) => {
+    set({ matchMode: m });
+    if (debounceTimer) clearTimeout(debounceTimer);
+    get().executeSearch();
+  },
+
   executeSearch: async () => {
-    const { query, filter } = get();
+    const { query, filter, matchMode } = get();
     if (!query.trim()) {
-      set({ results: [], totalCount: 0, isLoading: false });
+      set({ results: [], totalCount: 0, isLoading: false, error: null });
       return;
     }
     const id = ++requestId;
     set({ isLoading: true });
     try {
-      const results = await searchContentFiltered(query, filter, 100);
+      const results = await searchContentFiltered(query, filter, 100, matchMode);
       if (id !== requestId) return;
-      set({ results, totalCount: results.length, isLoading: false, selectedIndex: 0, navigatedResultId: null });
-    } catch {
+      set({ results, totalCount: results.length, isLoading: false, selectedIndex: 0, navigatedResultId: null, error: null });
+    } catch (e) {
       if (id !== requestId) return;
-      set({ results: [], totalCount: 0, isLoading: false });
+      // The backend is the single regex validator (fancy-regex flavor);
+      // surface its message inline instead of pre-validating in JS.
+      const error = get().matchMode === "regex" ? String(e) : null;
+      set({ results: [], totalCount: 0, isLoading: false, error });
     }
   },
 

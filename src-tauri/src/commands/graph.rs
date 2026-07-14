@@ -439,6 +439,7 @@ pub async fn search_content_filtered(
     query: String,
     filter: Option<crate::graph::types::SearchFilter>,
     limit: Option<i64>,
+    mode: Option<crate::graph::types::SearchMatchMode>,
 ) -> Result<serde_json::Value, String> {
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
     let gi = {
@@ -452,7 +453,12 @@ pub async fn search_content_filtered(
 
     tauri::async_runtime::spawn_blocking(move || {
         let results = gi
-            .search_content_filtered(&query, &filter.unwrap_or_default(), limit.unwrap_or(100))
+            .search_content_filtered(
+                &query,
+                &filter.unwrap_or_default(),
+                limit.unwrap_or(100),
+                mode.unwrap_or_default(),
+            )
             .map_err(|e| e.to_string())?;
         serde_json::to_value(results).map_err(|e| e.to_string())
     })

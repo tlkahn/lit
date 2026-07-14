@@ -1302,6 +1302,7 @@ describe("ipc", () => {
       query: "query",
       filter,
       limit: null,
+      mode: "phrase",
     });
   });
 
@@ -1312,6 +1313,7 @@ describe("ipc", () => {
       query: "query",
       filter: null,
       limit: null,
+      mode: "phrase",
     });
   });
 
@@ -1322,6 +1324,18 @@ describe("ipc", () => {
       query: "query",
       filter: null,
       limit: 5,
+      mode: "phrase",
+    });
+  });
+
+  it("searchContentFiltered passes regex mode through", async () => {
+    await searchContentFiltered("Lean\\s+\\d", undefined, undefined, "regex");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_content_filtered", {
+      query: "Lean\\s+\\d",
+      filter: null,
+      limit: null,
+      mode: "regex",
     });
   });
 

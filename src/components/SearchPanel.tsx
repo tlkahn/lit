@@ -357,6 +357,9 @@ export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
 
   const navigatedResultId = useSearchPanelStore((s) => s.navigatedResultId);
   const setNavigatedResultId = useSearchPanelStore((s) => s.setNavigatedResultId);
+  const matchMode = useSearchPanelStore((s) => s.matchMode);
+  const setMatchMode = useSearchPanelStore((s) => s.setMatchMode);
+  const searchError = useSearchPanelStore((s) => s.error);
 
   // Load folders on first expand
   useEffect(() => {
@@ -507,19 +510,38 @@ export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search content..."
-            className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+            className="w-full rounded border border-border bg-bg-primary px-2 py-1 pr-9 text-sm text-text-normal"
             aria-label="Search content"
           />
           {isLoading && (
             <span
               role="status"
               aria-label="Searching"
-              className="absolute right-2 top-1/2 -translate-y-1/2"
+              className="absolute right-9 top-1/2 -translate-y-1/2"
             >
               <SpinnerSvg className="h-3.5 w-3.5 text-text-faint" />
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => setMatchMode(matchMode === "regex" ? "phrase" : "regex")}
+            aria-pressed={matchMode === "regex"}
+            aria-label="Use regular expression"
+            title="Use regular expression"
+            className={`absolute right-1 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 font-mono text-xs leading-none ${
+              matchMode === "regex"
+                ? "bg-bg-tertiary text-text-accent"
+                : "text-text-faint hover:text-text-normal"
+            }`}
+          >
+            .*
+          </button>
         </div>
+        {searchError && (
+          <div role="alert" className="mt-1 px-0.5 text-xs text-red-500">
+            {searchError}
+          </div>
+        )}
       </div>
 
       {/* Facet toggle */}
@@ -597,6 +619,10 @@ export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
       {!query.trim() && results.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
           Type to search
+        </div>
+      ) : searchError ? (
+        <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
+          Fix the pattern to search
         </div>
       ) : query.trim() && !isLoading && results.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-text-muted">
