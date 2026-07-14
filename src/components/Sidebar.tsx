@@ -7,6 +7,9 @@ import { ensureSidebarVisible } from "../lib/sidebarVisibility";
 import {
   onRevealInFileTree,
   onSetSidebarTab,
+  onRevealBibEntry,
+  onRevealBibEntryForPage,
+  dispatchRevealBibEntry,
   dispatchRevealBibEntryForPage,
 } from "../lib/sidebarEvents";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -156,6 +159,43 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const deletePageAction = useWorkspaceStore((s) => s.deletePage);
   const { tab, setTab } = useSidebarTab();
+  // ReferenceLibrary is heavy (bib parsing, file watching, virtualizer), so it
+  // stays unmounted until the References tab is first visited; after that it is
+  // kept alive and hidden via display:none so its watchers and expanded state
+  // survive tab switches.
+  const [hasVisitedReferences, setHasVisitedReferences] = useState(() => tab === "references");
+  useEffect(() => {
+    if (tab === "references") setHasVisitedReferences(true);
+  }, [tab]);
+  // Bridge for reveal-bib events (editor citekey links, command palette,
+  // context menu) that fire before ReferenceLibrary has ever mounted: stash the
+  // event, mount ReferenceLibrary, and re-dispatch once its listeners exist
+  // (child effects run before this parent's hasVisitedReferences effect).
+  const hasVisitedReferencesRef = useRef(hasVisitedReferences);
+  hasVisitedReferencesRef.current = hasVisitedReferences;
+  const pendingBibRevealRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const offEntry = onRevealBibEntry(({ citekey, bibFile }) => {
+      if (hasVisitedReferencesRef.current) return;
+      pendingBibRevealRef.current = () => dispatchRevealBibEntry(citekey, bibFile);
+      setHasVisitedReferences(true);
+    });
+    const offForPage = onRevealBibEntryForPage(({ relativePath }) => {
+      if (hasVisitedReferencesRef.current) return;
+      pendingBibRevealRef.current = () => dispatchRevealBibEntryForPage(relativePath);
+      setHasVisitedReferences(true);
+    });
+    return () => {
+      offEntry();
+      offForPage();
+    };
+  }, []);
+  useEffect(() => {
+    if (!hasVisitedReferences || !pendingBibRevealRef.current) return;
+    const redispatch = pendingBibRevealRef.current;
+    pendingBibRevealRef.current = null;
+    redispatch();
+  }, [hasVisitedReferences]);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -406,12 +446,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
       ) : tab === "outline" ? (
         <Outline />
       ) : null}
-      <div
-        className="flex flex-1 flex-col overflow-hidden"
-        style={{ display: tab === "references" ? "flex" : "none" }}
-      >
-        <ReferenceLibrary />
-      </div>
+      {hasVisitedReferences && (
+        <div
+          className="flex flex-1 flex-col overflow-hidden"
+          style={{ display: tab === "references" ? "flex" : "none" }}
+        >
+          <ReferenceLibrary />
+        </div>
+      )}
     </aside>
   );
 }

@@ -51,6 +51,8 @@ See `doc/architecture.md` for full module map, state registry, startup flow, and
 - Tauri 2 has no `app.title` — window title goes in `app.windows[].title`.
 - Local file serving requires: `assetProtocol.enable` + `protocol-asset` Cargo feature + runtime `allow_directory`.
 - Windows are created dynamically in code, not in `tauri.conf.json`'s `windows` array.
+- **If `bun run test` ever hangs** (worker pegged at 100% CPU, no vitest timeout firing): it's a promise/setState microtask livelock, NOT memory pressure - do not reintroduce sharding/memory-limit workarounds. Capture stderr and look for an endlessly repeating `act(...)` warning (it names the host component), then stub that component. Full playbook and history: `doc/reports/2026-07-14-vitest-suite-hang-settingsmodal-livelock.md`. Known deferred root cause: SettingsModal's IPC effects loop under some interleavings; `App.test.tsx` masks it with a stub.
+- **Components mounted unconditionally by `App` (or hidden via `display:none`/an `open` prop) run their effects in every `render(<App />)` test.** Mount lazily in prod (see ReferenceLibrary in `Sidebar.tsx`), and stub heavy children in app-level wiring tests - they all have their own test files.
 
 ## Releasing
 
