@@ -1,5 +1,6 @@
 export interface BlockAnchor {
   id: string;
+  /** 1-based line number, matching Rust `BlockAnchorInfo.line` and CM6 `Line.number`. */
   line: number;
   from: number;
   to: number;
@@ -46,7 +47,7 @@ export function extractBlockAnchors(body: string): BlockAnchor[] {
       const caretInLine = match.index + (match[0]!.startsWith("^") ? 0 : 1);
       anchors.push({
         id,
-        line: i,
+        line: i + 1,
         from: offset + caretInLine,
         to: offset + caretInLine + 1 + id.length,
       });

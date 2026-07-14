@@ -7,7 +7,7 @@ describe("extractBlockAnchors", () => {
     const anchors = extractBlockAnchors(body);
     expect(anchors).toHaveLength(1);
     expect(anchors[0]!.id).toBe("abc");
-    expect(anchors[0]!.line).toBe(0);
+    expect(anchors[0]!.line).toBe(1);
     expect(body.slice(anchors[0]!.from, anchors[0]!.to)).toBe("^abc");
   });
 
@@ -16,7 +16,7 @@ describe("extractBlockAnchors", () => {
     const anchors = extractBlockAnchors(body);
     expect(anchors).toHaveLength(1);
     expect(anchors[0]!.id).toBe("tbl-1");
-    expect(anchors[0]!.line).toBe(3);
+    expect(anchors[0]!.line).toBe(4);
     expect(body.slice(anchors[0]!.from, anchors[0]!.to)).toBe("^tbl-1");
   });
 
@@ -32,8 +32,8 @@ describe("extractBlockAnchors", () => {
     const body = "first line ^one\nplain\nlast ^two";
     const anchors = extractBlockAnchors(body);
     expect(anchors).toHaveLength(2);
-    expect(anchors[0]!.line).toBe(0);
-    expect(anchors[1]!.line).toBe(2);
+    expect(anchors[0]!.line).toBe(1);
+    expect(anchors[1]!.line).toBe(3);
     expect(body.slice(anchors[0]!.from, anchors[0]!.to)).toBe("^one");
     expect(body.slice(anchors[1]!.from, anchors[1]!.to)).toBe("^two");
   });
@@ -74,7 +74,7 @@ describe("extractBlockAnchors", () => {
     const anchors = extractBlockAnchors(body);
     expect(anchors).toHaveLength(1);
     expect(anchors[0]!.id).toBe("def");
-    expect(anchors[0]!.line).toBe(3);
+    expect(anchors[0]!.line).toBe(4);
     expect(body.slice(anchors[0]!.from, anchors[0]!.to)).toBe("^def");
   });
 
@@ -90,7 +90,7 @@ describe("findBlockAnchor", () => {
     const anchor = findBlockAnchor(body, "3141e2");
     expect(anchor).not.toBeNull();
     expect(anchor!.id).toBe("3141e2");
-    expect(anchor!.line).toBe(0);
+    expect(anchor!.line).toBe(1);
   });
 
   it("matches case-insensitively, preserving original id", () => {

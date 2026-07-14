@@ -852,6 +852,7 @@ export async function getPageHeadings(target: string): Promise<HeadingInfo[]> {
 
 export interface BlockAnchorInfo {
   id: string;
+  /** 1-based line number, matching TS `BlockAnchor.line` and CM6 `Line.number`. */
   line: number;
 }
 

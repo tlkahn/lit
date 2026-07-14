@@ -117,6 +117,7 @@ pub struct HeadingInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockAnchorInfo {
     pub id: String,
+    /// 1-based line number, matching the TS `BlockAnchor.line` and CM6 `Line.number`.
     pub line: usize,
 }
 
