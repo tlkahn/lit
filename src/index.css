@@ -75,6 +75,7 @@
   --color-interactive-accent-hover: var(--interactive-accent-hover);
   --color-interactive-hover: var(--interactive-hover);
   --color-text-section-header: var(--text-section-header);
+  --color-text-highlight-bg: var(--text-highlight-bg);
   --color-border-subtle: var(--background-modifier-border-subtle);
   --color-destructive: var(--color-red);
   --color-nav-active-bg: var(--nav-item-background-active);

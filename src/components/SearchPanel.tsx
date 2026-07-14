@@ -7,6 +7,7 @@ import { listFolders, searchTags, type TagSearchResult } from "../lib/ipc";
 import { navigateToNote } from "../lib/navigateToNote";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { IndexBuildingPlaceholder } from "./IndexBuildingPlaceholder";
+import { SpinnerSvg } from "./SpinnerSvg";
 
 // ---------------------------------------------------------------------------
 // SearchResultRow
@@ -499,15 +500,26 @@ export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
     >
       {/* Search input */}
       <div className="p-2">
-        <input
-          ref={inputRef}
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search content..."
-          className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
-          aria-label="Search content"
-        />
+        <div className="relative">
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search content..."
+            className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-sm text-text-normal"
+            aria-label="Search content"
+          />
+          {isLoading && (
+            <span
+              role="status"
+              aria-label="Searching"
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+            >
+              <SpinnerSvg className="h-3.5 w-3.5 text-text-faint" />
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Facet toggle */}
@@ -578,7 +590,6 @@ export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
         <div className="px-2 py-1 text-xs text-text-muted">
           {totalCount} result{totalCount !== 1 ? "s" : ""}
           {hasActiveFilters ? " (filtered)" : ""}
-          {isLoading ? " ..." : ""}
         </div>
       )}
 
@@ -604,9 +615,10 @@ export function SearchPanel({ isActive = true }: { isActive?: boolean }) {
         <div
           ref={scrollRef}
           data-virtual-scroll
-          className="flex-1 overflow-y-auto overscroll-contain"
+          className={`flex-1 overflow-y-auto overscroll-contain transition-opacity ${isLoading ? "opacity-60" : ""}`}
           role="listbox"
           aria-label="Search results"
+          aria-busy={isLoading}
         >
           <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
             {virtualizer.getVirtualItems().map((virtualRow) => {

@@ -323,8 +323,15 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   }, [rows, revealPath, triggerReveal, setFocusedIndex]);
 
   const autoRevealInSidebar = usePreferencesStore((s) => s.autoRevealInSidebar);
+  // Read via ref so tab switches alone don't re-trigger the reveal effect.
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   useEffect(() => {
     if (!autoRevealInSidebar || !currentPagePath) return;
+
+    // Navigating from a search result changes currentPagePath; switching to
+    // the files tab here would yank the user out of their search results.
+    if (tabRef.current === "search") return;
 
     // Auto-reveal directly instead of dispatching lit:reveal-in-file-tree,
     // so we can preserve any active search filter. If the page is filtered
@@ -394,7 +401,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
               : "text-text-faint opacity-60 hover:text-text-muted hover:opacity-80"
           }`}
         >
-          <span className="nerd-font text-base" aria-hidden="true">{''}</span>
+          <span className="nerd-font text-base" aria-hidden="true">{'󰍉'}</span>
         </button>
         <button
           onClick={() => setTab("references")}

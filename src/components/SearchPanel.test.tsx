@@ -272,3 +272,46 @@ describe("SearchPanel graph-updated gating (isActive)", () => {
     expect(searchCalls).toBe(1);
   });
 });
+
+describe("SearchPanel loading spinner", () => {
+  beforeEach(() => {
+    mockListen();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: null,
+      graphReady: true,
+    });
+    useSearchPanelStore.setState({
+      query: "hello",
+      filter: {},
+      results: [makeResult("a.md")],
+      selectedIndex: 0,
+      isLoading: false,
+      totalCount: 1,
+      navigatedResultId: null,
+    });
+    mockInvoke((cmd) => {
+      if (cmd === "search_content_filtered") return [makeResult("a.md")];
+      if (cmd === "list_folders") return [];
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+  });
+
+  afterEach(() => {
+    resetListenMock();
+  });
+
+  it("shows the spinner while loading and keeps the input enabled", () => {
+    useSearchPanelStore.setState({ isLoading: true });
+    render(<SearchPanel />);
+
+    expect(screen.getByRole("status", { name: "Searching" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Search content")).not.toBeDisabled();
+  });
+
+  it("hides the spinner when not loading", () => {
+    render(<SearchPanel />);
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
