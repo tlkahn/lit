@@ -283,7 +283,7 @@ release_upload_dmg() {
 release_upload_free_distribution_dmg() {
   local tag="$1"
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-    echo "── [DRY RUN] Would upload Lit_${tag}_aarch64.dmg to s3://${S3_BUCKET}/free-distribution/"
+    echo "── [DRY RUN] Would upload Lit_${tag}_aarch64.dmg to S3 (free-distribution/)"
     return 0
   fi
   echo "── Uploading free-distribution DMG to S3..."
@@ -357,8 +357,14 @@ release_deploy_website() {
     echo "── Skipping website deploy (--skip-website)"
     return 0
   fi
-  echo "── Deploying website..."
-  bash "$REPO_ROOT/scripts/deploy-website.sh" "$tag"
+  local extra_args=()
+  if [[ "${FREE_DISTRIBUTION:-0}" -eq 1 ]]; then
+    echo "── Deploying website (free-distribution)..."
+    extra_args=(--free-distribution)
+  else
+    echo "── Deploying website..."
+  fi
+  bash "$REPO_ROOT/scripts/deploy-website.sh" "${extra_args[@]}" "$tag"
 }
 
 release_clean_artifacts() {

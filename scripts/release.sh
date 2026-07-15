@@ -8,9 +8,12 @@
 # free-distribution/ S3 prefix, never to releases/latest.json — that manifest
 # drives every installed copy's auto-updater, so publishing a free-distribution
 # build there would silently grant free access to any unlicensed user who
-# updates while it's live. --free-distribution implies skipping the full
-# website deploy (see scripts/deploy-website.sh); update hugo.toml's
-# freeDistribution param and deploy the site separately.
+# updates while it's live. The website deploy still runs (unless
+# --skip-website), but only flips hugo.toml's freeDistribution param on and
+# points the download button at the free-distribution DMG — it skips release
+# notes generation and the version bump, since this isn't a new numbered
+# release. Deploying any normal (non-free) tag afterwards automatically ends
+# the campaign and restores the regular download button.
 #
 # Prerequisites:
 #   Tools: bun, cargo, codesign, aws, hugo, gh, jq
@@ -56,9 +59,9 @@ release_check_tools
 if [[ "$FREE_DISTRIBUTION" -eq 1 ]]; then
   release_check_free_distribution_key
 fi
-# free-distribution builds always skip the full website deploy (a separate,
-# deliberate step — see scripts/deploy-website.sh), so don't require its
-# env vars (e.g. ANTHROPIC_API_KEY) here.
+# free-distribution deploys never generate release notes (see
+# deploy-website.sh), so they don't need ANTHROPIC_API_KEY even though the
+# site deploy itself still runs.
 release_check_env "$DRY_RUN" "$(( SKIP_WEBSITE || FREE_DISTRIBUTION ))"
 release_detect_signing_id
 release_sync_version "$TAG"
@@ -76,6 +79,7 @@ release_copy_dmg "$TAG"
 if [[ "$FREE_DISTRIBUTION" -eq 1 ]]; then
   release_compute_checksums "$TAG"
   release_upload_free_distribution_dmg "$TAG"
+  release_deploy_website "$TAG"
 else
   release_generate_update_manifest "$TAG"
   release_compute_checksums "$TAG"
@@ -95,7 +99,12 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "  DMG: $REPO_ROOT/Lit_${TAG}_aarch64.dmg"
 elif [[ "$FREE_DISTRIBUTION" -eq 1 ]]; then
   echo "  Free-distribution DMG uploaded to: s3://$S3_BUCKET/free-distribution/Lit_free_aarch64.dmg"
-  echo "  Next: set freeDistribution = true in the website's hugo.toml and deploy the site separately."
+  if [[ "$SKIP_WEBSITE" -eq 0 ]]; then
+    echo "  Website updated: freeDistribution = true, download button points at the free-distribution DMG."
+    echo "  To end the campaign: deploy any normal (non-free) tag — it restores the regular download button."
+  else
+    echo "  Website deploy skipped (--skip-website). Run 'deploy-website.sh --free-distribution $TAG' when ready."
+  fi
 else
   echo "  DMG uploaded to: s3://$S3_BUCKET/releases/Lit_${TAG}_aarch64.dmg"
   if [[ "$SKIP_WEBSITE" -eq 0 ]]; then
