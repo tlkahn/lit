@@ -168,9 +168,22 @@ pub fn run() {
                 VerifyingKey::from_bytes(license::LICENSE_VERIFYING_KEY_BYTES)
                     .expect("invalid embedded license verifying key");
             app.manage(LicenseManager {
-                data_dir,
+                data_dir: data_dir.clone(),
                 license_verifying_key,
             });
+
+            #[cfg(feature = "free-distribution")]
+            {
+                let mgr: &LicenseManager = &*app.state::<LicenseManager>();
+                license::ensure_free_grant(
+                    &mgr.data_dir,
+                    &mgr.license_verifying_key,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                );
+            }
 
             {
                 use tauri::Emitter;

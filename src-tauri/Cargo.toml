@@ -26,6 +26,9 @@ version = "0.0.0"
 edition = "2021"
 default-run = "lit"
 
+[features]
+free-distribution = []
+
 [lib]
 name = "lit_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
