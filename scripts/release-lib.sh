@@ -9,11 +9,13 @@ release_parse_args() {
   TAG=""
   DRY_RUN=0
   SKIP_WEBSITE=0
+  FREE_DISTRIBUTION=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run)   DRY_RUN=1; shift ;;
       --skip-website) SKIP_WEBSITE=1; shift ;;
+      --free-distribution) FREE_DISTRIBUTION=1; shift ;;
       --*)
         echo "Error: unknown flag $1" >&2
         return 1
@@ -60,6 +62,19 @@ release_check_tools() {
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo "Error: missing required tools: ${missing[*]}" >&2
+    return 1
+  fi
+}
+
+release_check_free_distribution_key() {
+  local pem="$REPO_ROOT/src-tauri/keys/free_distribution.pem"
+  if [[ ! -f "$pem" ]]; then
+    echo "Error: $pem not found. Generate a campaign key with:" >&2
+    echo "  cargo run -p keygen -- --name \"Free Distribution\" --email \"free@lit.solar\" --type free_distribution --id <campaign-id> --key <prod-signing-key> > src-tauri/keys/free_distribution.pem" >&2
+    return 1
+  fi
+  if grep -q "PLACEHOLDER" "$pem"; then
+    echo "Error: $pem still contains the placeholder. Generate a real campaign key before building --free-distribution." >&2
     return 1
   fi
 }
@@ -160,8 +175,15 @@ release_codesign_pdfium() {
 release_tauri_build() {
   echo "── Cleaning stale DMGs..."
   find "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin" -name '*.dmg' -type f -delete 2>/dev/null || true
-  echo "── Building Tauri app..."
+  local feature_args=()
+  if [[ "${FREE_DISTRIBUTION:-0}" -eq 1 ]]; then
+    echo "── Building Tauri app (free-distribution)..."
+    feature_args=(--features free-distribution)
+  else
+    echo "── Building Tauri app..."
+  fi
   bun tauri build --target aarch64-apple-darwin \
+    "${feature_args[@]}" \
     --config '{"build":{"beforeBuildCommand":"bun run build"}}'
 }
 
@@ -250,6 +272,26 @@ release_upload_dmg() {
   fi
   echo "── Uploading DMG to S3..."
   aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.dmg"
+}
+
+# Free-distribution DMGs are a standalone artifact, deliberately kept out of
+# the releases/ prefix and latest.json: that manifest drives every installed
+# copy's auto-updater, and publishing a free-distribution build there would
+# hand free access to any unlicensed user who happens to update while it's
+# live, with no way to bound the giveaway to a campaign window. The website's
+# "Download Free" button should link directly to this fixed URL instead.
+release_upload_free_distribution_dmg() {
+  local tag="$1"
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "── [DRY RUN] Would upload Lit_${tag}_aarch64.dmg to s3://${S3_BUCKET}/free-distribution/"
+    return 0
+  fi
+  echo "── Uploading free-distribution DMG to S3..."
+  aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg" "s3://${S3_BUCKET}/free-distribution/Lit_free_aarch64.dmg"
+  if [[ -f "$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256" ]]; then
+    aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256" "s3://${S3_BUCKET}/free-distribution/Lit_free_aarch64.dmg.sha256"
+  fi
+  echo "Free-distribution DMG: https://lit.solar/free-distribution/Lit_free_aarch64.dmg"
 }
 
 release_compute_checksums() {
