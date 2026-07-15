@@ -143,6 +143,15 @@ pub fn get_license_status(
         return Ok(LicenseStatusResponse::from_dev_override(ov));
     }
 
+    #[cfg(feature = "free-distribution")]
+    {
+        let _ = license::ensure_free_grant(
+            &state.data_dir,
+            &state.license_verifying_key,
+            now_secs(),
+        );
+    }
+
     let status = license::get_status(
         &state.data_dir,
         &state.license_verifying_key,

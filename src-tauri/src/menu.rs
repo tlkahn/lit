@@ -335,10 +335,13 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     )?;
 
     let help_menu = Submenu::new(app, "Help", true)?;
-    help_menu.append(&MenuItem::with_id(app, MENU_ID_BUY_LICENSE, "Buy License", true, None::<&str>)?)?;
-    help_menu.append(&MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", true, None::<&str>)?)?;
-    help_menu.append(&MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", true, None::<&str>)?)?;
-    help_menu.append(&PredefinedMenuItem::separator(app)?)?;
+    #[cfg(not(feature = "free-distribution"))]
+    {
+        help_menu.append(&MenuItem::with_id(app, MENU_ID_BUY_LICENSE, "Buy License", true, None::<&str>)?)?;
+        help_menu.append(&MenuItem::with_id(app, MENU_ID_ENTER_LICENSE_KEY, "Enter License Key\u{2026}", true, None::<&str>)?)?;
+        help_menu.append(&MenuItem::with_id(app, MENU_ID_LICENSE_INFO, "License\u{2026}", true, None::<&str>)?)?;
+        help_menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
     help_menu.append(&MenuItem::with_id(app, MENU_ID_ACKNOWLEDGEMENTS, "Acknowledgements\u{2026}", true, None::<&str>)?)?;
     help_menu.append(&MenuItem::with_id(app, MENU_ID_ABOUT, "About Lit\u{2026}", true, None::<&str>)?)?;
 

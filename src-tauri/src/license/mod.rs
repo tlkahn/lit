@@ -99,6 +99,26 @@ pub fn dev_mode_override() -> Option<DevOverride> {
     None
 }
 
+#[cfg(feature = "free-distribution")]
+pub const FREE_DISTRIBUTION_LICENSE_PEM: &str =
+    include_str!("../../keys/free_distribution.pem");
+
+#[cfg(feature = "free-distribution")]
+pub fn ensure_free_grant(
+    dir: &Path,
+    vk: &VerifyingKey,
+    now: u64,
+) -> LicenseStatus {
+    let current = get_status(dir, vk, now);
+    if matches!(current, LicenseStatus::Licensed(_)) {
+        return current;
+    }
+    match activate_key(dir, FREE_DISTRIBUTION_LICENSE_PEM, vk, now) {
+        Ok(status) => status,
+        Err(_) => current,
+    }
+}
+
 pub fn activate_key(
     dir: &Path,
     pem: &str,
