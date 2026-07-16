@@ -1068,5 +1068,33 @@ describe("StatusBar", () => {
       const el = screen.getByTestId("status-bar-message");
       expect(el.className).not.toContain("status-toast-enter");
     });
+
+    it("right-side buttons stay in a shrink-0 container following the toast (regression #900)", () => {
+      useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "p1", pagePath: "notes/hello.md" },
+        focusedPaneId: "p1",
+      });
+      useCursorInfoStore.setState({ line: 5, col: 10 });
+      useStatusMessageStore.setState({ message: "Downloading update... 45%", variant: "progress" });
+      render(<StatusBar />);
+
+      const toastEl = screen.getByTestId("status-bar-message");
+      const cursorEl = screen.getByTestId("status-bar-cursor");
+      const tabsEl = screen.getByTestId("bottom-panel-tabs");
+
+      // Tabs and cursor must share a common shrink-0 wrapper
+      const buttonsWrapper = cursorEl.parentElement!;
+      expect(buttonsWrapper.className).toContain("shrink-0");
+      expect(buttonsWrapper.contains(tabsEl)).toBe(true);
+
+      // That wrapper must be a following sibling of the toast
+      expect(toastEl.nextElementSibling).toBe(buttonsWrapper);
+
+      // Right group must carry flex-1 and justify-end
+      const rightGroup = buttonsWrapper.parentElement!;
+      expect(rightGroup.className).toContain("flex-1");
+      expect(rightGroup.className).toContain("justify-end");
+    });
   });
 });
