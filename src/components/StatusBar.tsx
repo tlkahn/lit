@@ -316,13 +316,13 @@ export function StatusBar() {
         <BufferStack />
         <SwapPanesButton />
       </div>
-      <div className="flex items-center">
+      <div className="flex min-w-0 flex-1 items-center justify-end">
         {toast && (
           <span
             role="status"
             aria-live="polite"
             data-testid="status-bar-message"
-            className={`mr-2 flex max-w-[40%] items-center ${toast.variant === "error" ? "text-text-error" : "text-text-muted"}${toast.variant === "progress" ? " animate-pulse" : ""}${animClass}`}
+            className={`mr-2 flex min-w-0 items-center ${toast.variant === "error" ? "text-text-error" : "text-text-muted"}${toast.variant === "progress" ? " animate-pulse" : ""}${animClass}`}
           >
             <span className="truncate">{toast.message}</span>
             {toast.action && (
@@ -336,10 +336,12 @@ export function StatusBar() {
             )}
           </span>
         )}
-        <BottomPanelTabs />
-        <PdfPageNav />
-        {langName && <span data-testid="status-bar-language" className="ml-3 text-text-muted">{langName}</span>}
-        {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
+        <div className="flex shrink-0 items-center">
+          <BottomPanelTabs />
+          <PdfPageNav />
+          {langName && <span data-testid="status-bar-language" className="ml-3 text-text-muted">{langName}</span>}
+          {line > 0 && <span data-testid="status-bar-cursor" className="ml-3">Ln {line}, Col {col}</span>}
+        </div>
       </div>
     </div>
   );
