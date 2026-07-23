@@ -795,6 +795,157 @@ describe("citeprocPlugin bib fetch", () => {
   });
 });
 
+describe("citeprocPlugin out-of-order bib fetch", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("newer bib fetch wins when responses arrive out of order", async () => {
+    type BibResolver = { resolve: (v: BibEntry[]) => void };
+    const bibResolvers: BibResolver[] = [];
+
+    mockInvoke((cmd) => {
+      if (cmd === "resolve_all_decorations") return { citations: [], definition_tags: [] };
+      if (cmd === "resolve_bib_entries") {
+        return new Promise<BibEntry[]>((resolve) => {
+          bibResolvers.push({ resolve });
+        });
+      }
+      if (cmd === "render_bib_citations") return {};
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const entry1: BibEntry = {
+      key: "old2020",
+      authors: ["Old"],
+      title: "Old Paper",
+      year: "2020",
+      entry_type: "article",
+      line_number: 0,
+      bib_file: "refs.bib",
+    };
+
+    const entry2: BibEntry = {
+      key: "new2021",
+      authors: ["New"],
+      title: "New Paper",
+      year: "2021",
+      entry_type: "article",
+      line_number: 5,
+      bib_file: "refs.bib",
+    };
+
+    const state = EditorState.create({
+      doc: "See [@old2020] here",
+      extensions: [
+        citeprocExtension(),
+        frontmatterFacet.of({ bibliography: "refs.bib" }),
+        noteDirFacet.of("/notes"),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // Initial fetch #1 in flight
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bibResolvers).toHaveLength(1);
+
+    // Dispatch refetchBib -> fetch #2 in flight
+    view.dispatch({ effects: refetchBib.of(null) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bibResolvers).toHaveLength(2);
+
+    // Resolve #2 first (newer) with updated entry
+    bibResolvers[1]!.resolve([entry2]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(bibEntriesField).byKey.has("new2021")).toBe(true);
+
+    // Resolve #1 late (older) with old entry - must NOT overwrite
+    bibResolvers[0]!.resolve([entry1]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(bibEntriesField).byKey.has("new2021")).toBe(true);
+    expect(view.state.field(bibEntriesField).byKey.has("old2020")).toBe(false);
+
+    view.destroy();
+  });
+
+  it("newer bib data wins when renderBibCitations resolves out of order", async () => {
+    let bibFetchCount = 0;
+    const entry1: BibEntry = {
+      key: "old2020",
+      authors: ["Old"],
+      title: "Old Paper",
+      year: "2020",
+      entry_type: "article",
+      line_number: 0,
+      bib_file: "refs.bib",
+    };
+    const entry2: BibEntry = {
+      key: "new2021",
+      authors: ["New"],
+      title: "New Paper",
+      year: "2021",
+      entry_type: "article",
+      line_number: 5,
+      bib_file: "refs.bib",
+    };
+
+    type RenderResolver = { resolve: (v: Record<string, string>) => void };
+    const renderResolvers: RenderResolver[] = [];
+
+    mockInvoke((cmd) => {
+      if (cmd === "resolve_all_decorations") return { citations: [], definition_tags: [] };
+      if (cmd === "resolve_bib_entries") {
+        bibFetchCount++;
+        return bibFetchCount === 1 ? [entry1] : [entry2];
+      }
+      if (cmd === "render_bib_citations") {
+        return new Promise<Record<string, string>>((resolve) => {
+          renderResolvers.push({ resolve });
+        });
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const state = EditorState.create({
+      doc: "See [@old2020] here",
+      extensions: [
+        citeprocExtension(),
+        frontmatterFacet.of({ bibliography: "refs.bib" }),
+        noteDirFacet.of("/notes"),
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // Flush: fetch#1 entries resolved immediately, render#1 pending
+    await vi.advanceTimersByTimeAsync(0);
+    expect(renderResolvers).toHaveLength(1);
+
+    // Dispatch refetchBib -> fetch#2 entries resolved immediately, render#2 pending
+    view.dispatch({ effects: refetchBib.of(null) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(renderResolvers).toHaveLength(2);
+
+    // Resolve render#2 first (newer)
+    renderResolvers[1]!.resolve({ new2021: "New 2021" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(bibEntriesField).byKey.has("new2021")).toBe(true);
+    expect(view.state.field(bibEntriesField).renderedCitations["new2021"]).toBe("New 2021");
+
+    // Resolve render#1 late (older) - must NOT overwrite
+    renderResolvers[0]!.resolve({ old2020: "Old 2020" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(bibEntriesField).byKey.has("new2021")).toBe(true);
+    expect(view.state.field(bibEntriesField).byKey.has("old2020")).toBe(false);
+    expect(view.state.field(bibEntriesField).renderedCitations["old2020"]).toBeUndefined();
+
+    view.destroy();
+  });
+});
+
 describe("refetchBib effect", () => {
   beforeEach(() => {
     vi.useFakeTimers();

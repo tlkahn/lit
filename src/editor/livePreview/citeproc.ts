@@ -128,6 +128,7 @@ const citeprocPlugin = ViewPlugin.fromClass(
   class {
     private lastBibPaths = "";
     private lastNoteDir = "";
+    private fetchGeneration = 0;
 
     constructor(private view: EditorView) {
       this.checkBibChange();
@@ -149,7 +150,6 @@ const citeprocPlugin = ViewPlugin.fromClass(
         this.fetchBib();
         return;
       }
-      // Explicit refetch signal (e.g. after companion bib append)
       for (const tr of update.transactions) {
         for (const e of tr.effects) {
           if (e.is(refetchBib)) {
@@ -171,26 +171,22 @@ const citeprocPlugin = ViewPlugin.fromClass(
     }
 
     private fetchBib() {
+      const gen = ++this.fetchGeneration;
       const paths = this.lastBibPaths.split("\0").filter(Boolean);
       if (paths.length === 0) {
-        const snapshot = this.lastBibPaths;
         Promise.resolve().then(() => {
-          if (this.lastBibPaths !== snapshot) return;
+          if (gen !== this.fetchGeneration) return;
           this.view.dispatch({ effects: setBibData.of(EMPTY_BIB) });
         });
         return;
       }
       const noteDir = this.view.state.facet(noteDirFacet);
-      const snapshotPaths = this.lastBibPaths;
-      const snapshotDir = noteDir;
 
       resolveBibEntries(paths, noteDir)
         .then((entries) => {
-          if (this.lastBibPaths !== snapshotPaths) return;
-          if (this.lastNoteDir !== snapshotDir) return;
+          if (gen !== this.fetchGeneration) return;
           return renderBibCitations(entries).then((rendered) => {
-            if (this.lastBibPaths !== snapshotPaths) return;
-            if (this.lastNoteDir !== snapshotDir) return;
+            if (gen !== this.fetchGeneration) return;
             const byKey = new Map(entries.map((e) => [e.key, e]));
             this.view.dispatch({
               effects: setBibData.of({ entries, renderedCitations: rendered, byKey }),
