@@ -81,8 +81,10 @@ const crossrefPlugin = ViewPlugin.fromClass(
         .then((data) => {
           if (this.destroyed || gen !== this.generation) return;
           if (!data) return;
-          if (this.view.state.doc.toString() !== docStr) {
-            // Stale: doc changed during IPC flight - retry (#912)
+          if (
+            this.view.state.doc.toString() !== docStr ||
+            this.view.state.facet(frontmatterFacet) !== frontmatter
+          ) {
             this.scheduleIPC();
             return;
           }

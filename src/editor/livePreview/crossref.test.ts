@@ -525,6 +525,94 @@ describe("crossrefPlugin", () => {
     expect(crossrefDispatches).toHaveLength(0);
   });
 
+  it("stale check: discards IPC result if frontmatter changed during flight and converges", async () => {
+    type Resolver = {
+      content: string;
+      frontmatter: Record<string, unknown>;
+      resolve: (v: AllDecorations) => void;
+    };
+    const resolvers: Resolver[] = [];
+
+    mockInvoke((cmd, args) => {
+      if (cmd === "resolve_all_decorations") {
+        return new Promise<AllDecorations>((resolve) => {
+          resolvers.push({
+            content: (args as { content: string }).content,
+            frontmatter: (args as { frontmatter: Record<string, unknown> }).frontmatter,
+            resolve,
+          });
+        });
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+
+    const fmCompartment = new Compartment();
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [crossrefExtension(), fmCompartment.of(frontmatterFacet.of({ a: 1 }))],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    // IPC#1 fires immediately on construction
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolvers).toHaveLength(1);
+    expect(resolvers[0]!.frontmatter).toEqual({ a: 1 });
+
+    // Reconfigure frontmatter without doc change - do NOT advance past debounce
+    view.dispatch({
+      effects: fmCompartment.reconfigure(frontmatterFacet.of({ a: 2 })),
+    });
+
+    // Resolve IPC#1 with stale frontmatter data
+    const staleData: AllDecorations = {
+      citations: [
+        {
+          char_start: 0,
+          char_end: 5,
+          rendered_text: "Stale",
+          is_valid: true,
+          original: "[@fig:stale]",
+          target_line: null,
+          target_char_offset: null,
+        },
+      ],
+      definition_tags: [],
+    };
+    resolvers[0]!.resolve(staleData);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Stale data should be discarded
+    expect(view.state.field(crossrefField)).toEqual(EMPTY);
+
+    // Advance past debounce to let retry fire
+    await vi.advanceTimersByTimeAsync(150);
+
+    // A new resolver should have fired with updated frontmatter
+    const retryResolver = resolvers.find((r) => r.frontmatter.a === 2);
+    expect(retryResolver).toBeDefined();
+
+    // Resolve with fresh data
+    const freshData: AllDecorations = {
+      citations: [
+        {
+          char_start: 0,
+          char_end: 5,
+          rendered_text: "Fresh",
+          is_valid: true,
+          original: "[@fig:fresh]",
+          target_line: null,
+          target_char_offset: null,
+        },
+      ],
+      definition_tags: [],
+    };
+    retryResolver!.resolve(freshData);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(crossrefField)).toBe(freshData);
+
+    view.destroy();
+  });
+
   it("stale check: discards IPC result if doc changed during flight", async () => {
     let resolveIPC: (v: AllDecorations) => void = () => {};
 
