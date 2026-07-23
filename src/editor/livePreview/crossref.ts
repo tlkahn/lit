@@ -51,15 +51,17 @@ export function isInEditableRange(
 const crossrefPlugin = ViewPlugin.fromClass(
   class {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    private lastDocStr = "";
+    private generation = 0;
+    private destroyed = false;
 
     constructor(private view: EditorView) {
-      this.lastDocStr = view.state.doc.toString();
       this.fireIPC();
     }
 
     update(update: ViewUpdate) {
-      if (!update.docChanged) return;
+      const fmChanged =
+        update.state.facet(frontmatterFacet) !== update.startState.facet(frontmatterFacet);
+      if (!update.docChanged && !fmChanged) return;
       this.scheduleIPC();
     }
 
@@ -72,19 +74,25 @@ const crossrefPlugin = ViewPlugin.fromClass(
     }
 
     private fireIPC() {
+      const gen = ++this.generation;
       const docStr = this.view.state.doc.toString();
-      this.lastDocStr = docStr;
       const frontmatter = this.view.state.facet(frontmatterFacet);
       resolveAllDecorations(docStr, frontmatter)
         .then((data) => {
+          if (this.destroyed || gen !== this.generation) return;
           if (!data) return;
-          if (this.view.state.doc.toString() !== this.lastDocStr) return;
+          if (this.view.state.doc.toString() !== docStr) {
+            // Stale: doc changed during IPC flight - retry (#912)
+            this.scheduleIPC();
+            return;
+          }
           this.view.dispatch({ effects: setCrossrefData.of(data) });
         })
         .catch(() => {});
     }
 
     destroy() {
+      this.destroyed = true;
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
     }
   },
