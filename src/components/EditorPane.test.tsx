@@ -405,17 +405,13 @@ describe("EditorPane", () => {
       });
       render(<EditorPane paneId="pane-1" />);
       await waitFor(() => {
-        expect(capturedProps.resolveImageSrc).toBeDefined();
-        expect(capturedProps.frontmatter).toBeDefined();
+        expect(capturedProps.frontmatter).toEqual(expect.objectContaining({ image_dir: "media" }));
       });
-      const fm = capturedProps.frontmatter as Record<string, unknown>;
-      if (fm.image_dir === "media") {
-        const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
-        expect(resolve("stem/img.png")).toEqual([
-          "asset://localhost//ws/stem/img.png",
-          "asset://localhost//ws/media/stem/img.png",
-        ]);
-      }
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+      expect(resolve("stem/img.png")).toEqual([
+        "asset://localhost//ws/stem/img.png",
+        "asset://localhost//ws/media/stem/img.png",
+      ]);
     });
 
     it("uses preference defaultImageDir when no frontmatter", async () => {

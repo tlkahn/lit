@@ -1,7 +1,13 @@
+import { isAbsolutePath, resolveRelativePath } from "./pathUtils";
+
 // Keep in sync with DEFAULT_IMAGE_DIR in src-tauri/src/commands/academic_export.rs
 export const DEFAULT_IMAGE_DIR = "assets/images";
 
-import { isAbsolutePath, resolveRelativePath } from "./pathUtils";
+export function asImageDirString(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 function resolveAgainst(base: string, rel: string): string {
   const wasAbsolute = base.startsWith("/");
@@ -23,7 +29,7 @@ export function resolveImageDirBase(
 ): string {
   const trimmed = imageDir.replace(/\/+$/, "");
   if (!trimmed) return workspacePath;
-  if (trimmed.startsWith("/")) return trimmed;
+  if (isAbsolutePath(trimmed)) return trimmed;
   if (trimmed.startsWith("./") || trimmed.startsWith("../")) {
     return resolveAgainst(noteDir, trimmed);
   }

@@ -2259,6 +2259,24 @@ describe("PreferencesStore", () => {
     expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
   });
 
+  it("coerces whitespace-only defaultImageDir back to default", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "editor.defaultImageDir": "   ",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+  });
+
   it("coerces non-string defaultImageDir back to default", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_preferences") {

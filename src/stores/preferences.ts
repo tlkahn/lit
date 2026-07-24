@@ -5,6 +5,7 @@ import { getPreferences, setPreference, deleteApiKey, hasApiKey, isViewMode, lis
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
+import { DEFAULT_IMAGE_DIR } from "../lib/imageSrcCandidates";
 import type { CustomProviderDef } from "../lib/providerRegistry";
 
 export type FoldingShowControls = "mouseover" | "always" | "never";
@@ -169,8 +170,8 @@ function applyFontSize(val: unknown): number {
 }
 
 function applyImageDir(val: unknown): string {
-  if (typeof val === "string" && val !== "") return val;
-  return "assets/images";
+  if (typeof val === "string" && val.trim() !== "") return val;
+  return DEFAULT_IMAGE_DIR;
 }
 
 function applyCompanionSearchPath(val: unknown): string[] {

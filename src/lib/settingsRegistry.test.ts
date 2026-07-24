@@ -64,6 +64,15 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.testId).toBe("settings-defaultImageDir");
   });
 
+  it("defaultImageDir entry has normalize that maps empty/whitespace to default", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "defaultImageDir");
+    expect(entry).toBeDefined();
+    expect(entry!.normalize).toBeDefined();
+    expect(entry!.normalize!("")).toBe("assets/images");
+    expect(entry!.normalize!("  ")).toBe("assets/images");
+    expect(entry!.normalize!("media")).toBe("media");
+  });
+
   it("companionSearchPath entry exists with controlType 'custom' in Editor category", () => {
     const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "companionSearchPath");
     expect(entry).toBeDefined();

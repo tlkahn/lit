@@ -2123,4 +2123,21 @@ describe("SettingsModal", () => {
       expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
   });
+
+  describe("defaultImageDir normalization", () => {
+    it("committing empty Default Image Directory writes the default, not empty string", async () => {
+      usePreferencesStore.setState({ defaultImageDir: "custom/dir" });
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-defaultImageDir']") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "" } });
+      fireEvent.blur(input);
+      expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "editor.defaultImageDir", value: "assets/images" },
+        });
+      });
+    });
+  });
 });

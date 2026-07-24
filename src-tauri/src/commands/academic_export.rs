@@ -894,6 +894,18 @@ pub fn build_pandoc_args(
 
     args.push("--resource-path".to_string());
     let joined = std::env::join_paths(resource_paths)
+        .or_else(|_| {
+            let valid: Vec<_> = resource_paths.iter()
+                .filter(|p| std::env::join_paths(std::iter::once(p)).is_ok())
+                .collect();
+            if valid.len() < resource_paths.len() {
+                tracing::warn!(
+                    "Skipped {} resource path(s) containing invalid characters",
+                    resource_paths.len() - valid.len()
+                );
+            }
+            std::env::join_paths(valid)
+        })
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
@@ -1073,7 +1085,8 @@ pub async fn export_document(
 
     let image_dir_str = frontmatter.image_dir
         .as_deref()
-        .or_else(|| prefs.extra.get("editor.defaultImageDir").and_then(|v| v.as_str()))
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| prefs.extra.get("editor.defaultImageDir").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()))
         .unwrap_or(DEFAULT_IMAGE_DIR);
     let resolved_image_dir = resolve_image_dir(image_dir_str, &note_dir, &workspace_root);
     let mut resource_paths = vec![note_dir];
@@ -2662,6 +2675,19 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_export_frontmatter_image_dir_empty_falls_through() {
+        let dir = std::env::temp_dir().join("test_fm_imgdir_empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nimage_dir: \"\"\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        // Empty string should be stored as Some("") by the parser,
+        // but the export path must filter it out (tested separately).
+        assert_eq!(fm.image_dir.as_deref(), Some(""));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn test_resolve_image_dir_absolute() {
         assert_eq!(
             resolve_image_dir("/abs/images", Path::new("/note/dir"), Path::new("/ws")),
@@ -2712,5 +2738,19 @@ mod tests {
         let rp_val = &args[rp_idx + 1];
         assert!(rp_val.contains("/ws/notes"), "resource-path should contain note dir");
         assert!(rp_val.contains("/ws/assets/images"), "resource-path should contain image dir");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_build_pandoc_args_colon_in_path_keeps_valid_paths() {
+        let args = build_pandoc_args(
+            Path::new("/input.md"), Path::new("/output.docx"), "docx",
+            &[PathBuf::from("/ws/notes"), PathBuf::from("/ws/file:with:colons")],
+            None, None, None, None,
+        );
+        let rp_idx = args.iter().position(|a| a == "--resource-path").unwrap();
+        let rp_val = &args[rp_idx + 1];
+        assert!(rp_val.contains("/ws/notes"), "valid note dir must survive when a sibling path contains colons");
+        assert!(!rp_val.is_empty(), "resource-path must not be empty");
     }
 }

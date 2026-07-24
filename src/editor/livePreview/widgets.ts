@@ -12,9 +12,53 @@ import "katex/dist/katex.min.css";
 const SPINNER_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>.spinner{transform-origin:center;animation:rotate .75s linear infinite}@keyframes rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style><g class="spinner"><circle cx="12" cy="2.5" r="1.5" opacity=".14"/><circle cx="16.75" cy="3.77" r="1.5" opacity=".29"/><circle cx="20.23" cy="7.25" r="1.5" opacity=".43"/><circle cx="21.5" cy="12" r="1.5" opacity=".57"/><circle cx="20.23" cy="16.75" r="1.5" opacity=".71"/><circle cx="16.75" cy="20.23" r="1.5" opacity=".86"/><circle cx="12" cy="21.5" r="1.5"/></g></svg>`;
 
 const failedImageSrcs = new Set<string>();
+const boundHandlers = new WeakMap<HTMLImageElement, { onError: (e: Event) => void; onLoad: (e: Event) => void }>();
 
 export function clearFailedImageCache(): void {
   failedImageSrcs.clear();
+}
+
+function nextViableSrc(srcs: string[], afterIdx: number): number {
+  for (let i = afterIdx + 1; i < srcs.length; i++) {
+    if (!failedImageSrcs.has(srcs[i]!)) return i;
+  }
+  return -1;
+}
+
+function bindCandidateWalk(img: HTMLImageElement, srcs: string[]): void {
+  const prev = boundHandlers.get(img);
+  if (prev) {
+    img.removeEventListener("error", prev.onError);
+    img.removeEventListener("load", prev.onLoad);
+  }
+
+  let idx = srcs.indexOf(img.getAttribute("src") ?? "");
+  if (idx < 0) idx = 0;
+
+  const onError = () => {
+    const current = img.getAttribute("src") ?? "";
+    failedImageSrcs.add(current);
+    const next = nextViableSrc(srcs, idx);
+    if (next >= 0) {
+      idx = next;
+      img.src = srcs[next]!;
+    } else {
+      img.removeAttribute("src");
+      img.classList.add("cm-preview-image-error");
+      img.removeEventListener("error", onError);
+      img.removeEventListener("load", onLoad);
+      boundHandlers.delete(img);
+    }
+  };
+
+  const onLoad = () => {
+    const loaded = img.getAttribute("src");
+    if (loaded) failedImageSrcs.delete(loaded);
+  };
+
+  img.addEventListener("error", onError);
+  img.addEventListener("load", onLoad);
+  boundHandlers.set(img, { onError, onLoad });
 }
 
 export class ImageWidget extends WidgetType {
@@ -30,34 +74,21 @@ export class ImageWidget extends WidgetType {
   }
 
   private firstViableSrc(): string | undefined {
-    for (const s of this.srcs) {
-      if (!failedImageSrcs.has(s)) return s;
-    }
-    return undefined;
+    return nextViableSrc(this.srcs, -1) >= 0
+      ? this.srcs[nextViableSrc(this.srcs, -1)]
+      : undefined;
   }
 
-  private setupCandidateWalk(img: HTMLImageElement): void {
-    const srcs = this.srcs;
-    let idx = srcs.indexOf(img.getAttribute("src") ?? "");
-    if (idx < 0) idx = 0;
-
-    img.addEventListener("error", function onErr() {
-      const current = img.getAttribute("src") ?? "";
-      failedImageSrcs.add(current);
-      const next = idx + 1;
-      if (next < srcs.length && !failedImageSrcs.has(srcs[next]!)) {
-        idx = next;
-        img.src = srcs[next]!;
-      } else {
-        img.removeAttribute("src");
-        img.classList.add("cm-preview-image-error");
-        img.removeEventListener("error", onErr);
-      }
-    });
-    img.addEventListener("load", () => {
-      const loaded = img.getAttribute("src");
-      if (loaded) failedImageSrcs.delete(loaded);
-    }, { once: true });
+  private applyCandidates(img: HTMLImageElement): void {
+    const viable = this.firstViableSrc();
+    if (viable) {
+      img.classList.remove("cm-preview-image-error");
+      img.src = viable;
+      bindCandidateWalk(img, this.srcs);
+    } else {
+      img.removeAttribute("src");
+      img.classList.add("cm-preview-image-error");
+    }
   }
 
   toDOM(): HTMLElement {
@@ -66,13 +97,7 @@ export class ImageWidget extends WidgetType {
       container.className = "cm-preview-image-thumbnail";
       const img = document.createElement("img");
       img.alt = this.alt;
-      const viable = this.firstViableSrc();
-      if (viable) {
-        img.src = viable;
-        this.setupCandidateWalk(img);
-      } else {
-        img.classList.add("cm-preview-image-error");
-      }
+      this.applyCandidates(img);
       container.appendChild(img);
       container.addEventListener("mousedown", (e) => {
         e.preventDefault();
@@ -87,13 +112,7 @@ export class ImageWidget extends WidgetType {
     img.style.maxWidth = "100%";
     img.style.maxHeight = "300px";
     img.style.display = "block";
-    const viable = this.firstViableSrc();
-    if (viable) {
-      img.src = viable;
-      this.setupCandidateWalk(img);
-    } else {
-      img.classList.add("cm-preview-image-error");
-    }
+    this.applyCandidates(img);
     return img;
   }
 
@@ -102,28 +121,12 @@ export class ImageWidget extends WidgetType {
       const img = dom.querySelector("img");
       if (!img) return false;
       img.alt = this.alt;
-      const viable = this.firstViableSrc();
-      if (viable) {
-        img.classList.remove("cm-preview-image-error");
-        img.src = viable;
-        this.setupCandidateWalk(img);
-      } else {
-        img.removeAttribute("src");
-        img.classList.add("cm-preview-image-error");
-      }
+      this.applyCandidates(img);
       return true;
     }
     const img = dom as HTMLImageElement;
     img.alt = this.alt;
-    const viable = this.firstViableSrc();
-    if (viable) {
-      img.classList.remove("cm-preview-image-error");
-      img.src = viable;
-      this.setupCandidateWalk(img);
-    } else {
-      img.removeAttribute("src");
-      img.classList.add("cm-preview-image-error");
-    }
+    this.applyCandidates(img);
     return true;
   }
 

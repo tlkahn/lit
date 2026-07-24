@@ -89,7 +89,8 @@ function renderControl(params: RenderControlParams) {
           onChange={(v) => setLocalTextValues((prev) => ({ ...prev, [entry.storeField]: v }))}
           onCommit={() => {
             const raw = localTextValues[entry.storeField] ?? "";
-            const val = entry.nullable && raw.trim() === "" ? null : raw.trim();
+            const trimmed = raw.trim();
+            const val = entry.nullable && trimmed === "" ? null : entry.normalize?.(trimmed) ?? trimmed;
             setRegistryPref(entry.storeField, entry.jsonKey, val);
           }}
         />

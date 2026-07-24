@@ -1,4 +1,5 @@
 import type { PreferencesState } from "../stores/preferences";
+import { DEFAULT_IMAGE_DIR } from "./imageSrcCandidates";
 import { fuzzyMatch } from "./fuzzyMatch";
 
 export const CATEGORIES = [
@@ -28,6 +29,7 @@ interface SettingEntryBase {
   /** Extra search-only terms; never rendered. Lets an entry surface for
    *  related queries whose words are absent from its visible label. */
   keywords?: string[];
+  normalize?: (trimmed: string) => string;
 }
 
 interface ToggleEntry extends SettingEntryBase { controlType: "toggle"; }
@@ -196,6 +198,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     controlType: "text",
     testId: "settings-defaultImageDir",
     keywords: ["image", "images", "assets", "media", "pictures", "directory", "fallback"],
+    normalize: (v) => v.trim() || DEFAULT_IMAGE_DIR,
   },
   // Cross-references
   {

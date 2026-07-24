@@ -11,7 +11,7 @@ import { useKeymaps } from "../hooks/useKeymaps";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 import { getFileDir } from "../lib/pathUtils";
-import { imageSrcCandidates } from "../lib/imageSrcCandidates";
+import { imageSrcCandidates, asImageDirString } from "../lib/imageSrcCandidates";
 import { usePreferencesStore } from "../stores/preferences";
 import { routeFileLink } from "../lib/linkRouting";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
@@ -174,7 +174,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   }, [workspacePath, pagePath]);
 
   const defaultImageDir = usePreferencesStore((s) => s.defaultImageDir);
-  const imageDir = (frontmatter?.image_dir ?? frontmatter?.["image-dir"] ?? defaultImageDir) as string;
+  const imageDir = asImageDirString(frontmatter?.image_dir) ?? asImageDirString(frontmatter?.["image-dir"]) ?? defaultImageDir;
 
   const resolveImageSrc = useCallback((src: string): string[] => {
     if (/^(https?:|data:|blob:)/.test(src)) return [src];

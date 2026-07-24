@@ -348,6 +348,70 @@ describe("ImageWidget - candidate walk", () => {
     const el3 = w3.toDOM() as HTMLImageElement;
     expect(el3.getAttribute("src")).toBe("a.png");
   });
+
+  it("toDOM -> updateDOM (alt-only) -> error advances to fallback", () => {
+    const w1 = new ImageWidget(["primary.png", "fallback.png"], "old alt");
+    const el = w1.toDOM() as HTMLImageElement;
+    expect(el.getAttribute("src")).toBe("primary.png");
+
+    const w2 = new ImageWidget(["primary.png", "fallback.png"], "new alt");
+    w2.updateDOM(el);
+
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("fallback.png");
+  });
+
+  it("updateDOM rebind does not poison fallback into failedImageSrcs", () => {
+    const w1 = new ImageWidget(["primary.png", "fallback.png"], "old alt");
+    const el = w1.toDOM() as HTMLImageElement;
+
+    const w2 = new ImageWidget(["primary.png", "fallback.png"], "new alt");
+    w2.updateDOM(el);
+
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("fallback.png");
+
+    const fresh = new ImageWidget(["fallback.png"], "check");
+    const el2 = fresh.toDOM() as HTMLImageElement;
+    expect(el2.getAttribute("src")).toBe("fallback.png");
+  });
+
+  it("skips pre-failed candidate in the middle of the list", () => {
+    const setup = new ImageWidget(["b.png"], "alt");
+    const setupEl = setup.toDOM() as HTMLImageElement;
+    setupEl.dispatchEvent(new Event("error"));
+
+    const w = new ImageWidget(["a.png", "b.png", "c.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    expect(el.getAttribute("src")).toBe("a.png");
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("c.png");
+  });
+
+  it("updateDOM with different candidate list walks the new list", () => {
+    const w1 = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w1.toDOM() as HTMLImageElement;
+    expect(el.getAttribute("src")).toBe("a.png");
+
+    const w2 = new ImageWidget(["x.png", "y.png"], "alt");
+    w2.updateDOM(el);
+    expect(el.getAttribute("src")).toBe("x.png");
+
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("y.png");
+  });
+
+  it("terminal failure removes src, adds error class, and detaches handler", () => {
+    const w = new ImageWidget(["only.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBeNull();
+    expect(el.classList.contains("cm-preview-image-error")).toBe(true);
+
+    el.classList.remove("cm-preview-image-error");
+    el.dispatchEvent(new Event("error"));
+    expect(el.classList.contains("cm-preview-image-error")).toBe(false);
+  });
 });
 
 describe("CalloutHeaderWidget", () => {

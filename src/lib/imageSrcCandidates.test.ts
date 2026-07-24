@@ -3,6 +3,7 @@ import {
   isNakedImagePath,
   resolveImageDirBase,
   imageSrcCandidates,
+  asImageDirString,
   DEFAULT_IMAGE_DIR,
 } from "./imageSrcCandidates";
 
@@ -93,6 +94,52 @@ describe("resolveImageDirBase", () => {
 
   it("handles empty imageDir by returning workspacePath", () => {
     expect(resolveImageDirBase("", "/ws/notes", "/ws")).toBe("/ws");
+  });
+
+  it("returns Windows drive path as-is", () => {
+    expect(resolveImageDirBase("C:/imgs", "/ws/notes", "/ws")).toBe("C:/imgs");
+  });
+
+  it("returns UNC path as-is", () => {
+    expect(resolveImageDirBase("\\\\server\\share", "/ws/notes", "/ws")).toBe("\\\\server\\share");
+  });
+});
+
+describe("asImageDirString", () => {
+  it("returns the string for a non-empty string", () => {
+    expect(asImageDirString("media")).toBe("media");
+  });
+
+  it("returns undefined for a number", () => {
+    expect(asImageDirString(42)).toBeUndefined();
+  });
+
+  it("returns undefined for a boolean", () => {
+    expect(asImageDirString(true)).toBeUndefined();
+  });
+
+  it("returns undefined for an object", () => {
+    expect(asImageDirString({ path: "x" })).toBeUndefined();
+  });
+
+  it("returns undefined for empty string", () => {
+    expect(asImageDirString("")).toBeUndefined();
+  });
+
+  it("returns undefined for whitespace-only string", () => {
+    expect(asImageDirString("   ")).toBeUndefined();
+  });
+
+  it("returns undefined for undefined", () => {
+    expect(asImageDirString(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for null", () => {
+    expect(asImageDirString(null)).toBeUndefined();
+  });
+
+  it("returns trimmed string for padded input", () => {
+    expect(asImageDirString("  media  ")).toBe("media");
   });
 });
 
