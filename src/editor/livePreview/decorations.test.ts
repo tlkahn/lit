@@ -567,6 +567,46 @@ describe("buildDecorations — plain brackets (cm-plain-brackets)", () => {
     view.destroy();
   });
 
+  it("does NOT apply cm-plain-brackets to ![foo] with matching def", () => {
+    const doc = "[foo]: https://example.com\n\nSee ![foo] here";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to ![foo][] with matching def", () => {
+    const doc = "[foo]: https://example.com\n\nSee ![foo][] here";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to ![alt][foo] with matching def", () => {
+    const doc = "[foo]: https://example.com\n\nSee ![alt][foo] here";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to GFM task - [x] done", () => {
+    const doc = "- [x] done\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to GFM task - [ ] todo", () => {
+    const doc = "- [ ] todo\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
   it("applies cm-plain-brackets to bare [3]", () => {
     const doc = "See item [3] below.\n\nother";
     const view = makeView(doc, doc.length - 1);
@@ -1771,6 +1811,54 @@ describe("buildDecorations — cursorSensitiveLines", () => {
     const { cursorSensitiveLines } = buildDecorations(view);
     expect(cursorSensitiveLines.has(1)).toBe(false);
     expect(cursorSensitiveLines.has(2)).toBe(true);
+    view.destroy();
+  });
+
+  it("bare [sic] line is NOT cursor-sensitive", () => {
+    const doc = "This [sic] is text\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    view.destroy();
+  });
+
+  it("[bar] with def elsewhere is NOT cursor-sensitive", () => {
+    const doc = "[bar]: https://example.com\n\nSee [bar] here";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(3)).toBe(false);
+    view.destroy();
+  });
+
+  it("[@key] citation line is NOT cursor-sensitive", () => {
+    const doc = "See [@key2024foo] here\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    view.destroy();
+  });
+
+  it("[x](url) inline link line IS cursor-sensitive", () => {
+    const doc = "Click [x](https://example.com) here\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(true);
+    view.destroy();
+  });
+
+  it("![alt](src) image line IS cursor-sensitive", () => {
+    const doc = "See ![alt](img.png) here\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(true);
+    view.destroy();
+  });
+
+  it("**bold [sic]** line is still cursor-sensitive (from Emphasis)", () => {
+    const doc = "**bold [sic]**\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(true);
     view.destroy();
   });
 });

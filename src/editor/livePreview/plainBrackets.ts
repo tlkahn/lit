@@ -1,27 +1,35 @@
-import { type EditorState } from "@codemirror/state";
+import { type EditorState, type Text } from "@codemirror/state";
 import { Decoration } from "@codemirror/view";
-import { syntaxTree } from "@codemirror/language";
-import { isCitationBracket } from "./citeproc";
+import { isCitationBracket } from "./citeBracket";
 
 export function normalizeRefLabel(label: string): string {
   return label.trim().replace(/[\s]+/g, " ").toLowerCase();
 }
 
-export function collectRefDefLabels(state: EditorState): Set<string> {
+const REF_DEF_RE = /^ {0,3}\[((?:\\.|[^[\]\\]){1,999})\]:/;
+
+const labelCache = new WeakMap<Text, Set<string>>();
+
+export function getRefDefLabels(state: EditorState): Set<string> {
+  const doc = state.doc;
+  const cached = labelCache.get(doc);
+  if (cached) return cached;
+
   const labels = new Set<string>();
-  syntaxTree(state).iterate({
-    enter: (node) => {
-      if (node.name === "LinkReference") {
-        const linkLabel = node.node.getChild("LinkLabel");
-        if (linkLabel) {
-          const raw = state.doc.sliceString(linkLabel.from + 1, linkLabel.to - 1);
-          labels.add(normalizeRefLabel(raw));
-        }
-        return false;
-      }
-    },
-  });
+  const iter = doc.iterLines();
+  while (!iter.done) {
+    const m = REF_DEF_RE.exec(iter.value);
+    if (m) {
+      labels.add(normalizeRefLabel(m[1]!));
+    }
+    iter.next();
+  }
+  labelCache.set(doc, labels);
   return labels;
+}
+
+export function collectRefDefLabels(state: EditorState): Set<string> {
+  return getRefDefLabels(state);
 }
 
 const plainBracketMark = Decoration.mark({ class: "cm-plain-brackets" });
@@ -51,12 +59,12 @@ export function addPlainBracketDecos(
     } else if (linkMarks.length >= 2) {
       refText = state.doc.sliceString(linkMarks[0]!.to, linkMarks[1]!.from);
     } else {
-      refText = text.slice(1, -1);
+      refText = text.startsWith("![") ? text.slice(2, -1) : text.slice(1, -1);
     }
   } else if (linkMarks.length >= 2) {
     refText = state.doc.sliceString(linkMarks[0]!.to, linkMarks[1]!.from);
   } else {
-    refText = text.slice(1, -1);
+    refText = text.startsWith("![") ? text.slice(2, -1) : text.slice(1, -1);
   }
 
   if (refLabels.has(normalizeRefLabel(refText))) return;

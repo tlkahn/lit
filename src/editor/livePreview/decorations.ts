@@ -11,7 +11,7 @@ import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
-import { collectRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
+import { getRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -28,7 +28,7 @@ export interface BuildDecorationsResult {
 }
 
 const cursorSensitiveNodeNames = new Set([
-  "StrongEmphasis", "Emphasis", "Image", "Link", "WikiLink",
+  "StrongEmphasis", "Emphasis", "WikiLink",
   "FencedCode", "Blockquote", "InlineCode", "InlineMath",
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
   "Strikethrough", "FootnoteRef", "FootnoteDef",
@@ -40,8 +40,6 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const cursorSensitiveLines = new Set<number>();
   const footnoteMap = buildFootnoteMap(state);
-
-  let refLabels: Set<string> | undefined;
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -71,11 +69,11 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           return false;
         }
         if (node.name === "Image") {
-          addImageDecos(state, node.from, node.to, node.node, decos);
+          addImageDecos(state, node.from, node.to, node.node, decos, cursorSensitiveLines);
           return false;
         }
         if (node.name === "Link") {
-          addLinkDecos(state, node.from, node.to, node.node, decos);
+          addLinkDecos(state, node.from, node.to, node.node, decos, cursorSensitiveLines);
           return false;
         }
         if (node.name === "FencedCode") {
@@ -132,23 +130,10 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           return false;
         }
         if (node.name === "DisplayMath") {
-          // Multi-line display math must be handled by a StateField (line-break-crossing replace).
-          // Single-line $$...$$ is fine here.
           if (!state.doc.sliceString(node.from, node.to).includes("\n")) {
             addDisplayMathDecos(state, node.from, node.to, decos);
           }
           return false;
-        }
-      },
-    });
-
-    syntaxTree(state).iterate({
-      from,
-      to,
-      enter: (node) => {
-        if (node.name === "Link" || node.name === "Image") {
-          if (!refLabels) refLabels = collectRefDefLabels(state);
-          addPlainBracketDecos(state, node.from, node.to, node.node, refLabels, decos);
         }
       },
     });
@@ -385,11 +370,20 @@ function addImageDecos(
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines?: Set<number>,
 ) {
-  if (isCursorInRange(state, from, to)) return;
+  addPlainBracketDecos(state, from, to, node, getRefDefLabels(state), decos);
 
   const urlNode = node.getChild("URL");
   const src = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : "";
+
+  if (cursorSensitiveLines && urlNode && src) {
+    const startLine = state.doc.lineAt(from).number;
+    const endLine = state.doc.lineAt(to).number;
+    for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+  }
+
+  if (isCursorInRange(state, from, to)) return;
 
   // Alt text is between the first LinkMark "![" and the second LinkMark "]"
   const linkMarks = node.getChildren("LinkMark");
@@ -415,11 +409,21 @@ function addLinkDecos(
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines?: Set<number>,
 ) {
-  if (isCursorInRange(state, from, to)) return;
+  addPlainBracketDecos(state, from, to, node, getRefDefLabels(state), decos);
 
   const linkMarks = node.getChildren("LinkMark");
   const urlNode = node.getChild("URL");
+
+  if (cursorSensitiveLines && linkMarks.length >= 4 && urlNode) {
+    const startLine = state.doc.lineAt(from).number;
+    const endLine = state.doc.lineAt(to).number;
+    for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+  }
+
+  if (isCursorInRange(state, from, to)) return;
+
   if (linkMarks.length < 4 || !urlNode) return;
 
   const openBracket = linkMarks[0]!;

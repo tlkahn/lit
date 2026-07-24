@@ -8,7 +8,7 @@ import { Comment as CommentExt } from "../markdown/comment";
 import { Footnote } from "../markdown/footnote";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration } from "@codemirror/view";
-import { normalizeRefLabel, collectRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
+import { normalizeRefLabel, collectRefDefLabels, addPlainBracketDecos, getRefDefLabels } from "./plainBrackets";
 
 vi.mock("katex", () => ({
   default: {
@@ -204,5 +204,99 @@ describe("addPlainBracketDecos - classification", () => {
     const nodes = classifyNodes("See [-@a; @b] here");
     expect(nodes).toHaveLength(1);
     expect(nodes[0]!.neutralized).toBe(false);
+  });
+});
+
+describe("getRefDefLabels - doc-scan with WeakMap cache", () => {
+  it("finds ref def at end of large doc on bare state (no ensureSyntaxTree)", () => {
+    const filler = Array.from({ length: 20000 }, (_, i) => `filler line ${i} with some text`).join("\n");
+    const doc = `[foo]\n\n${filler}\n\n[foo]: /target\n`;
+    const state = makeState(doc);
+    const labels = getRefDefLabels(state);
+    expect(labels.has("foo")).toBe(true);
+  });
+
+  it("returns same Set instance for same state.doc (WeakMap cache)", () => {
+    const state = makeState("[bar]: https://example.com\n\nsome text");
+    const labels1 = getRefDefLabels(state);
+    const labels2 = getRefDefLabels(state);
+    expect(labels1).toBe(labels2);
+  });
+
+  it("returns new Set after doc edit", () => {
+    const doc = "[bar]: https://example.com\n\nsome text";
+    const state1 = makeState(doc);
+    const labels1 = getRefDefLabels(state1);
+    const state2 = state1.update({ changes: { from: doc.length, insert: "\nmore" } }).state;
+    const labels2 = getRefDefLabels(state2);
+    expect(labels2).not.toBe(labels1);
+    expect(labels2.has("bar")).toBe(true);
+  });
+
+  it("does NOT count def-looking line inside fenced code block (divergence: fail-open)", () => {
+    const state = makeState("```\n[foo]: /target\n```\n\nsome text");
+    const labels = getRefDefLabels(state);
+    expect(labels.has("foo")).toBe(true);
+  });
+
+  it("does NOT count mid-paragraph [foo]: x as a def", () => {
+    const state = makeState("This is not a def [foo]: something in the middle.\n\ntext");
+    const labels = getRefDefLabels(state);
+    expect(labels.has("foo")).toBe(false);
+  });
+
+  it("collectRefDefLabels also uses doc-scan (backward compat)", () => {
+    const filler = Array.from({ length: 20000 }, (_, i) => `filler line ${i}`).join("\n");
+    const doc = `[bar]\n\n${filler}\n\n[bar]: /url\n`;
+    const state = makeState(doc);
+    const labels = collectRefDefLabels(state);
+    expect(labels.has("bar")).toBe(true);
+  });
+});
+
+describe("addPlainBracketDecos - image fallback slice (S5)", () => {
+  it("does NOT neutralize ![foo] when def for 'foo' exists", () => {
+    const state = makeState("[foo]: /target\n\n![foo]");
+    const tree = syntaxTree(state);
+    const refLabels = getRefDefLabels(state);
+    const decos: { from: number; to: number; deco: Decoration }[] = [];
+    tree.iterate({
+      enter: (node) => {
+        if (node.name === "Image") {
+          addPlainBracketDecos(state, node.from, node.to, node.node, refLabels, decos);
+          return false;
+        }
+      },
+    });
+    expect(decos.length).toBe(0);
+  });
+
+  it("neutralizes ![foo] when NO def for 'foo' exists", () => {
+    const state = makeState("![foo]");
+    const tree = syntaxTree(state);
+    const refLabels = getRefDefLabels(state);
+    const decos: { from: number; to: number; deco: Decoration }[] = [];
+    tree.iterate({
+      enter: (node) => {
+        if (node.name === "Image") {
+          addPlainBracketDecos(state, node.from, node.to, node.node, refLabels, decos);
+          return false;
+        }
+      },
+    });
+    expect(decos.length).toBe(1);
+  });
+
+  it("image fallback path: stub node with ![foo] text and 'foo' def is NOT neutralized", () => {
+    const doc = "![foo]";
+    const state = makeState(doc);
+    const stubNode = {
+      getChildren: () => [] as { from: number; to: number }[],
+      getChild: () => null,
+    };
+    const refLabels = new Set(["foo"]);
+    const decos: { from: number; to: number; deco: Decoration }[] = [];
+    addPlainBracketDecos(state, 0, 6, stubNode, refLabels, decos);
+    expect(decos.length).toBe(0);
   });
 });
