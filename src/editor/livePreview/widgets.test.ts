@@ -249,6 +249,107 @@ describe("ImageWidget — failed image caching", () => {
   });
 });
 
+describe("ImageWidget - candidate walk", () => {
+  beforeEach(() => {
+    clearFailedImageCache();
+  });
+
+  it("constructor accepts string[] and stores as srcs", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    expect(w.srcs).toEqual(["a.png", "b.png"]);
+  });
+
+  it("constructor wraps single string into srcs array", () => {
+    const w = new ImageWidget("a.png", "alt");
+    expect(w.srcs).toEqual(["a.png"]);
+  });
+
+  it("toDOM renders first candidate", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w.toDOM();
+    expect(el.getAttribute("src")).toBe("a.png");
+  });
+
+  it("error on candidate 0 advances to candidate 1", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("b.png");
+  });
+
+  it("all candidates failed shows error state", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    el.dispatchEvent(new Event("error"));
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBeNull();
+    expect(el.classList.contains("cm-preview-image-error")).toBe(true);
+  });
+
+  it("skips known-failed candidates on fresh toDOM", () => {
+    const w1 = new ImageWidget(["a.png", "b.png"], "alt");
+    const el1 = w1.toDOM() as HTMLImageElement;
+    el1.dispatchEvent(new Event("error"));
+
+    const w2 = new ImageWidget(["a.png", "b.png"], "alt");
+    const el2 = w2.toDOM() as HTMLImageElement;
+    expect(el2.getAttribute("src")).toBe("b.png");
+  });
+
+  it("eq compares src arrays element-wise", () => {
+    const a = new ImageWidget(["x.png", "y.png"], "alt");
+    const b = new ImageWidget(["x.png", "y.png"], "alt");
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different length arrays", () => {
+    const a = new ImageWidget(["x.png"], "alt");
+    const b = new ImageWidget(["x.png", "y.png"], "alt");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns false for different elements", () => {
+    const a = new ImageWidget(["x.png", "y.png"], "alt");
+    const b = new ImageWidget(["x.png", "z.png"], "alt");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("thumbnail: error advances to next candidate", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt", true);
+    const el = w.toDOM();
+    const img = el.querySelector("img")!;
+    img.dispatchEvent(new Event("error"));
+    expect(img.getAttribute("src")).toBe("b.png");
+  });
+
+  it("thumbnail: all candidates failed shows error state", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt", true);
+    const el = w.toDOM();
+    const img = el.querySelector("img")!;
+    img.dispatchEvent(new Event("error"));
+    img.dispatchEvent(new Event("error"));
+    expect(img.getAttribute("src")).toBeNull();
+    expect(img.classList.contains("cm-preview-image-error")).toBe(true);
+  });
+
+  it("load clears the loaded candidate from failed cache", () => {
+    const w1 = new ImageWidget(["a.png"], "alt");
+    const el1 = w1.toDOM() as HTMLImageElement;
+    el1.dispatchEvent(new Event("error"));
+
+    clearFailedImageCache();
+
+    const w2 = new ImageWidget(["a.png"], "alt");
+    const el2 = w2.toDOM() as HTMLImageElement;
+    expect(el2.getAttribute("src")).toBe("a.png");
+    el2.dispatchEvent(new Event("load"));
+
+    const w3 = new ImageWidget(["a.png"], "alt");
+    const el3 = w3.toDOM() as HTMLImageElement;
+    expect(el3.getAttribute("src")).toBe("a.png");
+  });
+});
+
 describe("CalloutHeaderWidget", () => {
   function makeView(): EditorView {
     const state = EditorState.create({

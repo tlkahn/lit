@@ -57,6 +57,7 @@ export interface PreferencesState {
   annotationBuilderDefaults: AnnotationBuilderDefaults | null;
   companionSearchPath: string[];
   citationNotesDir: string;
+  defaultImageDir: string;
   searchEnabledProviders: string[];
   searchCrossrefEmail: string;
   searchUnpaywallEmail: string;
@@ -167,6 +168,11 @@ function applyFontSize(val: unknown): number {
   return Math.max(10, Math.min(30, Math.round(val)));
 }
 
+function applyImageDir(val: unknown): string {
+  if (typeof val === "string" && val !== "") return val;
+  return "assets/images";
+}
+
 function applyCompanionSearchPath(val: unknown): string[] {
   if (!Array.isArray(val)) return ["."];
   const filtered = val.filter((entry): entry is string => typeof entry === "string");
@@ -234,6 +240,7 @@ function mapPreferences(prefs: Preferences) {
     fontTextSize: applyFontSize(prefs["appearance.baseFontSize"]),
     companionSearchPath: applyCompanionSearchPath(prefs["companion.searchPath"]),
     citationNotesDir: (prefs["citation.notesDir"] as string) ?? "references",
+    defaultImageDir: applyImageDir(prefs["editor.defaultImageDir"]),
     autoRevealInSidebar: (prefs["workbench.autoRevealInSidebar"] as boolean) ?? false,
     ...(searchProviders !== null ? { searchEnabledProviders: searchProviders } : {}),
     searchCrossrefEmail: (prefs["search.crossrefEmail"] as string) ?? "",
@@ -371,6 +378,7 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   annotationBuilderDefaults: null,
   companionSearchPath: ["."],
   citationNotesDir: "references",
+  defaultImageDir: "assets/images",
   // Synchronous fallback -- overridden by Rust canonical list via IPC on fresh install.
   // Keep in sync with PROVIDER_INFO / LEGAL_PROVIDER_IDS in src-tauri/src/bib/research_hub.rs.
   searchEnabledProviders: ALL_SEARCH_PROVIDERS,

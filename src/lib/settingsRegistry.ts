@@ -188,6 +188,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-citationNotesDir",
     keywords: ["citation", "references", "notes", "bibliography", "citekey", "directory"],
   },
+  {
+    category: "Editor",
+    label: "Default Image Directory",
+    storeField: "defaultImageDir",
+    jsonKey: "editor.defaultImageDir",
+    controlType: "text",
+    testId: "settings-defaultImageDir",
+    keywords: ["image", "images", "assets", "media", "pictures", "directory", "fallback"],
+  },
   // Cross-references
   {
     category: "Cross-references",

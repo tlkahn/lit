@@ -48,7 +48,11 @@ pub struct ExportFrontmatter {
     pub cjk_mainfont: Option<String>,
     pub indic_font: Option<String>,
     pub indic_fonts: HashMap<String, String>,
+    pub image_dir: Option<String>,
 }
+
+// Keep in sync with DEFAULT_IMAGE_DIR in src/lib/imageSrcCandidates.ts
+const DEFAULT_IMAGE_DIR: &str = "assets/images";
 
 /// Returns true if `text` contains any CJK characters (Chinese, Japanese, Korean).
 pub fn contains_cjk(text: &str) -> bool {
@@ -537,6 +541,7 @@ pub fn extract_export_frontmatter(file_path: &Path) -> ExportFrontmatter {
         cjk_mainfont: get_str("CJKmainfont"),
         indic_font: get_str("indic-font"),
         indic_fonts,
+        image_dir: get_str("image_dir").or_else(|| get_str("image-dir")),
     }
 }
 
@@ -847,11 +852,26 @@ pub fn validate_pandoc(
 }
 
 /// Build the argument list for a pandoc invocation.
+pub fn resolve_image_dir(image_dir: &str, note_dir: &Path, workspace_root: &Path) -> PathBuf {
+    let trimmed = image_dir.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return workspace_root.to_path_buf();
+    }
+    let p = Path::new(trimmed);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    if trimmed.starts_with("./") || trimmed.starts_with("../") {
+        return note_dir.join(trimmed);
+    }
+    workspace_root.join(trimmed)
+}
+
 pub fn build_pandoc_args(
     input_path: &Path,
     output_path: &Path,
     format: &str,
-    resource_path: &Path,
+    resource_paths: &[PathBuf],
     crossref_path: Option<&Path>,
     reference_doc: Option<&Path>,
     csl: Option<&Path>,
@@ -873,7 +893,11 @@ pub fn build_pandoc_args(
     }
 
     args.push("--resource-path".to_string());
-    args.push(resource_path.to_string_lossy().to_string());
+    let joined = std::env::join_paths(resource_paths)
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    args.push(joined);
 
     if format == "html" {
         args.push("--mathjax".to_string());
@@ -956,7 +980,7 @@ pub async fn export_document(
         "latex" | "html" | "docx" => {}
         _ => return Err(format!("unsupported format: {format}")),
     }
-    let resource_path = input_path.parent().unwrap_or(&workspace_root).to_path_buf();
+    let note_dir = input_path.parent().unwrap_or(&workspace_root).to_path_buf();
 
     let prefs = preferences::read_preferences(&app_handle);
     let pandoc_path = validate_pandoc(&format!("{format} export"), &prefs)?;
@@ -1047,6 +1071,16 @@ pub async fn export_document(
     // Resolve bundled Lua filter for escaping bare & in Math/RawInline nodes
     let ampersand_filter = resolve_ampersand_filter(&format, resource_dir.as_deref());
 
+    let image_dir_str = frontmatter.image_dir
+        .as_deref()
+        .or_else(|| prefs.extra.get("editor.defaultImageDir").and_then(|v| v.as_str()))
+        .unwrap_or(DEFAULT_IMAGE_DIR);
+    let resolved_image_dir = resolve_image_dir(image_dir_str, &note_dir, &workspace_root);
+    let mut resource_paths = vec![note_dir];
+    if !resource_paths.contains(&resolved_image_dir) {
+        resource_paths.push(resolved_image_dir);
+    }
+
     let win = window.clone();
     let fmt_for_event = format.clone();
 
@@ -1060,7 +1094,7 @@ pub async fn export_document(
             &input_path,
             &output_path,
             &format,
-            &resource_path,
+            &resource_paths,
             crossref_path.as_deref(),
             reference_doc.as_deref(),
             csl.as_deref(),
@@ -1180,7 +1214,7 @@ mod tests {
             Path::new("/input.md"),
             Path::new("/output.tex"),
             "latex",
-            Path::new("/workspace/notes"),
+            &[PathBuf::from("/workspace/notes")],
             None,
             None,
             None,
@@ -1201,7 +1235,7 @@ mod tests {
             Path::new("/input.md"),
             Path::new("/output.tex"),
             "latex",
-            Path::new("/notes"),
+            &[PathBuf::from("/notes")],
             Some(Path::new("/usr/local/bin/pandoc-crossref")),
             None,
             None,
@@ -1258,7 +1292,7 @@ mod tests {
     fn test_build_pandoc_args_html_includes_mathjax() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.html"), "html",
-            Path::new("/notes"), None, None, None, None,
+            &[PathBuf::from("/notes")], None, None, None, None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"html".to_string()));
@@ -1270,7 +1304,7 @@ mod tests {
     fn test_build_pandoc_args_docx_skips_standalone() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, None, None,
+            &[PathBuf::from("/notes")], None, None, None, None,
         );
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"docx".to_string()));
@@ -1281,7 +1315,7 @@ mod tests {
     fn test_build_pandoc_args_docx_with_reference_doc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, Some(Path::new("/resources/ref.docx")),
+            &[PathBuf::from("/notes")], None, Some(Path::new("/resources/ref.docx")),
             None, None,
         );
         assert!(args.contains(&"--reference-doc=/resources/ref.docx".to_string()));
@@ -1291,7 +1325,7 @@ mod tests {
     fn test_build_pandoc_args_docx_without_reference_doc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.docx"), "docx",
-            Path::new("/notes"), None, None, None, None,
+            &[PathBuf::from("/notes")], None, None, None, None,
         );
         assert!(!args.iter().any(|a| a.starts_with("--reference-doc")));
     }
@@ -1300,7 +1334,7 @@ mod tests {
     fn test_build_pandoc_args_latex_no_mathjax() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None,
+            &[PathBuf::from("/notes")], None, None, None, None,
         );
         assert!(!args.contains(&"--mathjax".to_string()));
     }
@@ -1343,7 +1377,7 @@ mod tests {
     fn test_build_pandoc_args_with_csl() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, Some(Path::new("/styles/ieee.csl")), None,
+            &[PathBuf::from("/notes")], None, None, Some(Path::new("/styles/ieee.csl")), None,
         );
         assert!(args.contains(&"--citeproc".to_string()));
         assert!(args.contains(&"--csl=/styles/ieee.csl".to_string()));
@@ -1353,7 +1387,7 @@ mod tests {
     fn test_build_pandoc_args_with_template() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, Some(Path::new("/templates/my.tex")),
+            &[PathBuf::from("/notes")], None, None, None, Some(Path::new("/templates/my.tex")),
         );
         assert!(args.contains(&"--template=/templates/my.tex".to_string()));
     }
@@ -1362,7 +1396,7 @@ mod tests {
     fn test_build_pandoc_args_with_csl_and_template() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None,
+            &[PathBuf::from("/notes")], None, None,
             Some(Path::new("/s/apa.csl")), Some(Path::new("/t/my.tex")),
         );
         assert!(args.contains(&"--citeproc".to_string()));
@@ -1374,7 +1408,7 @@ mod tests {
     fn test_build_pandoc_args_without_csl_no_citeproc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, None,
+            &[PathBuf::from("/notes")], None, None, None, None,
         );
         assert!(!args.contains(&"--citeproc".to_string()));
     }
@@ -1383,7 +1417,7 @@ mod tests {
     fn test_build_pandoc_args_crossref_before_citeproc() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"),
+            &[PathBuf::from("/notes")],
             Some(Path::new("/usr/local/bin/pandoc-crossref")),
             None,
             Some(Path::new("/s/apa.csl")), None,
@@ -1711,7 +1745,7 @@ mod tests {
         for fmt in &["latex"] {
             let args = build_pandoc_args(
                 Path::new("/input.md"), Path::new("/output"), fmt,
-                Path::new("/notes"), None, None, None, None,
+                &[PathBuf::from("/notes")], None, None, None, None,
             );
             assert!(args.contains(&"--variable=geometry:margin=1in".to_string()), "{fmt}: missing geometry");
             assert!(args.contains(&"--variable=fontsize=12pt".to_string()), "{fmt}: missing fontsize");
@@ -1727,7 +1761,7 @@ mod tests {
     fn test_build_pandoc_args_custom_template_still_has_variables() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.tex"), "latex",
-            Path::new("/notes"), None, None, None, Some(Path::new("/t/custom.tex")),
+            &[PathBuf::from("/notes")], None, None, None, Some(Path::new("/t/custom.tex")),
         );
         assert!(args.contains(&"--template=/t/custom.tex".to_string()));
         assert!(args.contains(&"--variable=geometry:margin=1in".to_string()));
@@ -1737,7 +1771,7 @@ mod tests {
     fn test_build_pandoc_args_html_no_variables() {
         let args = build_pandoc_args(
             Path::new("/input.md"), Path::new("/output.html"), "html",
-            Path::new("/notes"), None, None, None, None,
+            &[PathBuf::from("/notes")], None, None, None, None,
         );
         assert!(!args.iter().any(|a| a.starts_with("--variable=")));
     }
@@ -2590,5 +2624,93 @@ mod tests {
                 }
             }
         }
+    }
+
+    // --- image_dir / resolve_image_dir tests ---
+
+    #[test]
+    fn test_extract_export_frontmatter_image_dir() {
+        let dir = std::env::temp_dir().join("test_fm_imgdir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nimage_dir: media/pics\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert_eq!(fm.image_dir.as_deref(), Some("media/pics"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_extract_export_frontmatter_image_dir_kebab() {
+        let dir = std::env::temp_dir().join("test_fm_imgdir_kebab");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nimage-dir: attachments\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert_eq!(fm.image_dir.as_deref(), Some("attachments"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_extract_export_frontmatter_image_dir_underscore_preferred() {
+        let dir = std::env::temp_dir().join("test_fm_imgdir_both");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "---\nimage_dir: winner\nimage-dir: loser\n---\nBody\n").unwrap();
+        let fm = extract_export_frontmatter(&file);
+        assert_eq!(fm.image_dir.as_deref(), Some("winner"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_resolve_image_dir_absolute() {
+        assert_eq!(
+            resolve_image_dir("/abs/images", Path::new("/note/dir"), Path::new("/ws")),
+            PathBuf::from("/abs/images"),
+        );
+    }
+
+    #[test]
+    fn test_resolve_image_dir_dot_relative() {
+        assert_eq!(
+            resolve_image_dir("./imgs", Path::new("/ws/notes"), Path::new("/ws")),
+            PathBuf::from("/ws/notes/./imgs"),
+        );
+    }
+
+    #[test]
+    fn test_resolve_image_dir_dotdot_relative() {
+        assert_eq!(
+            resolve_image_dir("../imgs", Path::new("/ws/sub/notes"), Path::new("/ws")),
+            PathBuf::from("/ws/sub/notes/../imgs"),
+        );
+    }
+
+    #[test]
+    fn test_resolve_image_dir_bare() {
+        assert_eq!(
+            resolve_image_dir("assets/images", Path::new("/ws/notes"), Path::new("/ws")),
+            PathBuf::from("/ws/assets/images"),
+        );
+    }
+
+    #[test]
+    fn test_resolve_image_dir_empty() {
+        assert_eq!(
+            resolve_image_dir("", Path::new("/ws/notes"), Path::new("/ws")),
+            PathBuf::from("/ws"),
+        );
+    }
+
+    #[test]
+    fn test_build_pandoc_args_multiple_resource_paths() {
+        let args = build_pandoc_args(
+            Path::new("/input.md"), Path::new("/output.docx"), "docx",
+            &[PathBuf::from("/ws/notes"), PathBuf::from("/ws/assets/images")],
+            None, None, None, None,
+        );
+        let rp_idx = args.iter().position(|a| a == "--resource-path").unwrap();
+        let rp_val = &args[rp_idx + 1];
+        assert!(rp_val.contains("/ws/notes"), "resource-path should contain note dir");
+        assert!(rp_val.contains("/ws/assets/images"), "resource-path should contain image dir");
     }
 }

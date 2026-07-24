@@ -17,23 +17,47 @@ export function clearFailedImageCache(): void {
   failedImageSrcs.clear();
 }
 
-function attachImageHandlers(img: HTMLImageElement, src: string): void {
-  img.addEventListener("error", () => {
-    failedImageSrcs.add(src);
-    img.classList.add("cm-preview-image-error");
-  }, { once: true });
-  img.addEventListener("load", () => {
-    failedImageSrcs.delete(src);
-  }, { once: true });
-}
-
 export class ImageWidget extends WidgetType {
+  readonly srcs: string[];
+
   constructor(
-    readonly src: string,
+    srcs: string | string[],
     readonly alt: string,
     readonly thumbnail: boolean = false,
   ) {
     super();
+    this.srcs = Array.isArray(srcs) ? srcs : [srcs];
+  }
+
+  private firstViableSrc(): string | undefined {
+    for (const s of this.srcs) {
+      if (!failedImageSrcs.has(s)) return s;
+    }
+    return undefined;
+  }
+
+  private setupCandidateWalk(img: HTMLImageElement): void {
+    const srcs = this.srcs;
+    let idx = srcs.indexOf(img.getAttribute("src") ?? "");
+    if (idx < 0) idx = 0;
+
+    img.addEventListener("error", function onErr() {
+      const current = img.getAttribute("src") ?? "";
+      failedImageSrcs.add(current);
+      const next = idx + 1;
+      if (next < srcs.length && !failedImageSrcs.has(srcs[next]!)) {
+        idx = next;
+        img.src = srcs[next]!;
+      } else {
+        img.removeAttribute("src");
+        img.classList.add("cm-preview-image-error");
+        img.removeEventListener("error", onErr);
+      }
+    });
+    img.addEventListener("load", () => {
+      const loaded = img.getAttribute("src");
+      if (loaded) failedImageSrcs.delete(loaded);
+    }, { once: true });
   }
 
   toDOM(): HTMLElement {
@@ -42,16 +66,18 @@ export class ImageWidget extends WidgetType {
       container.className = "cm-preview-image-thumbnail";
       const img = document.createElement("img");
       img.alt = this.alt;
-      if (failedImageSrcs.has(this.src)) {
-        img.classList.add("cm-preview-image-error");
+      const viable = this.firstViableSrc();
+      if (viable) {
+        img.src = viable;
+        this.setupCandidateWalk(img);
       } else {
-        img.src = this.src;
-        attachImageHandlers(img, this.src);
+        img.classList.add("cm-preview-image-error");
       }
       container.appendChild(img);
       container.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        showMediaLightbox({ type: "image", src: this.src });
+        const currentSrc = img.getAttribute("src") ?? this.srcs[0] ?? "";
+        showMediaLightbox({ type: "image", src: currentSrc });
       });
       return container;
     }
@@ -61,11 +87,12 @@ export class ImageWidget extends WidgetType {
     img.style.maxWidth = "100%";
     img.style.maxHeight = "300px";
     img.style.display = "block";
-    if (failedImageSrcs.has(this.src)) {
-      img.classList.add("cm-preview-image-error");
+    const viable = this.firstViableSrc();
+    if (viable) {
+      img.src = viable;
+      this.setupCandidateWalk(img);
     } else {
-      img.src = this.src;
-      attachImageHandlers(img, this.src);
+      img.classList.add("cm-preview-image-error");
     }
     return img;
   }
@@ -75,31 +102,37 @@ export class ImageWidget extends WidgetType {
       const img = dom.querySelector("img");
       if (!img) return false;
       img.alt = this.alt;
-      if (failedImageSrcs.has(this.src)) {
+      const viable = this.firstViableSrc();
+      if (viable) {
+        img.classList.remove("cm-preview-image-error");
+        img.src = viable;
+        this.setupCandidateWalk(img);
+      } else {
         img.removeAttribute("src");
         img.classList.add("cm-preview-image-error");
-      } else {
-        img.classList.remove("cm-preview-image-error");
-        img.src = this.src;
-        attachImageHandlers(img, this.src);
       }
       return true;
     }
     const img = dom as HTMLImageElement;
     img.alt = this.alt;
-    if (failedImageSrcs.has(this.src)) {
+    const viable = this.firstViableSrc();
+    if (viable) {
+      img.classList.remove("cm-preview-image-error");
+      img.src = viable;
+      this.setupCandidateWalk(img);
+    } else {
       img.removeAttribute("src");
       img.classList.add("cm-preview-image-error");
-    } else {
-      img.classList.remove("cm-preview-image-error");
-      img.src = this.src;
-      attachImageHandlers(img, this.src);
     }
     return true;
   }
 
   eq(other: ImageWidget): boolean {
-    return this.src === other.src && this.alt === other.alt && this.thumbnail === other.thumbnail;
+    if (this.srcs.length !== other.srcs.length) return false;
+    for (let i = 0; i < this.srcs.length; i++) {
+      if (this.srcs[i] !== other.srcs[i]) return false;
+    }
+    return this.alt === other.alt && this.thumbnail === other.thumbnail;
   }
 
   ignoreEvent(event: Event): boolean {

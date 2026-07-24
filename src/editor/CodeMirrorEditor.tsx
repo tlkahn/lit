@@ -6,7 +6,7 @@ interface CodeMirrorEditorProps {
   doc: string;
   onChange?: (content: string) => void;
   onSelectionChange?: (line: number, col: number) => void;
-  resolveImageSrc?: (src: string) => string;
+  resolveImageSrc?: (src: string) => string[];
   viewRef?: React.RefObject<EditorView | null>;
   onViewChange?: (view: EditorView | null) => void;
   onDocReplaced?: () => void;

@@ -10,7 +10,9 @@ import { usePageContent } from "../hooks/usePageContent";
 import { useKeymaps } from "../hooks/useKeymaps";
 import { useEmptyPaneFocus } from "../hooks/useEmptyPaneFocus";
 import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
-import { resolveRelativePath, getFileDir } from "../lib/pathUtils";
+import { getFileDir } from "../lib/pathUtils";
+import { imageSrcCandidates } from "../lib/imageSrcCandidates";
+import { usePreferencesStore } from "../stores/preferences";
 import { routeFileLink } from "../lib/linkRouting";
 import { navigateWikilink } from "../lib/wikilinkNavigation";
 import { resolveWikilink, createPage as ipcCreatePage } from "../lib/ipc";
@@ -171,11 +173,18 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     return fileDir ? workspacePath + "/" + fileDir : workspacePath;
   }, [workspacePath, pagePath]);
 
-  const resolveImageSrc = useCallback((src: string): string => {
-    if (/^(https?:|data:|blob:)/.test(src)) return src;
-    if (!noteDir) return src;
-    return convertFileSrc("/" + resolveRelativePath(noteDir, src));
-  }, [noteDir]);
+  const defaultImageDir = usePreferencesStore((s) => s.defaultImageDir);
+  const imageDir = (frontmatter?.image_dir ?? frontmatter?.["image-dir"] ?? defaultImageDir) as string;
+
+  const resolveImageSrc = useCallback((src: string): string[] => {
+    if (/^(https?:|data:|blob:)/.test(src)) return [src];
+    if (!noteDir) return [src];
+    const candidates = imageSrcCandidates({ src, noteDir, workspacePath: workspacePath ?? "", imageDir });
+    return candidates.map((c) => {
+      if (/^(https?:|data:|blob:)/.test(c)) return c;
+      return convertFileSrc(c.startsWith("/") ? c : "/" + c);
+    });
+  }, [noteDir, workspacePath, imageDir]);
 
   const navigateToPage = useCallback((target: string, section?: string, departurePos?: number) => {
     navigateWikilink(target, section, {

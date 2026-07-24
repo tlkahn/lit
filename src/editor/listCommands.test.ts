@@ -24,6 +24,7 @@ function makeView(doc: string, cursorPos: number): EditorView {
     noteDirCompartment: new Compartment(),
     notePathCompartment: new Compartment(),
     annotationCompartment: new Compartment(),
+    imageResolverCompartment: new Compartment(),
     mediaThumbnailsCompartment: new Compartment(),
     focusModeCompartment: new Compartment(),
     editableCompartment: new Compartment(),

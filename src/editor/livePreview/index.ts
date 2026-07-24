@@ -3,7 +3,6 @@ import { livePreviewPlugin, blockReplacementField } from "./plugin";
 import { createLinkClickHandler } from "./linkHandler";
 import { createWikilinkClickHandler, type NavigateToPage } from "./wikilinkHandler";
 import { livePreviewBaseTheme } from "./theme";
-import { imageResolverFacet, type ImageResolver } from "./imageResolver";
 import { navigateToPageFacet } from "./navigateToPageFacet";
 import { calloutFoldField } from "./callout";
 import { createCalloutClickHandler } from "./calloutClickHandler";
@@ -33,7 +32,6 @@ export { navigateToPageFacet } from "./navigateToPageFacet";
 export interface LivePreviewConfig {
   openUrl?: (url: string) => void;
   openFilePath?: (path: string, fragment: string | null) => void;
-  resolveImageSrc?: ImageResolver;
   navigateToPage?: NavigateToPage;
 }
 
@@ -62,9 +60,6 @@ export function livePreviewExtension(config?: LivePreviewConfig): Extension {
     flashHighlightExtension(),
     blockAnchorDecorationsExtension(),
   ];
-  if (config?.resolveImageSrc) {
-    exts.push(imageResolverFacet.of(config.resolveImageSrc));
-  }
   if (config?.navigateToPage) {
     exts.push(navigateToPageFacet.of(config.navigateToPage));
   }

@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCursorInfoStore } from "../stores/cursorInfo";
+import { usePreferencesStore } from "../stores/preferences";
 import { mockInvoke } from "../test/tauri-mock";
 import * as editorViewRef from "../lib/editorViewRef";
 import * as pdfPaneRef from "../lib/pdfPaneRef";
@@ -27,7 +28,7 @@ vi.mock("../editor/CodeMirrorEditor", () => ({
     onSelectionChange?: (line: number, col: number) => void;
     keymapBindings?: unknown[];
     noteDir?: string;
-    resolveImageSrc?: (src: string) => string;
+    resolveImageSrc?: (src: string) => string[];
     openFilePath?: (path: string) => void;
     navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
     onDocReplaced?: () => void;
@@ -325,7 +326,7 @@ describe("EditorPane", () => {
   });
 
   describe("resolveImageSrc", () => {
-    it("resolves relative path via convertFileSrc", async () => {
+    it("resolves naked path with primary + fallback candidates", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "sub/hello.md" },
         focusedPaneId: "pane-1",
@@ -335,11 +336,14 @@ describe("EditorPane", () => {
       await waitFor(() => {
         expect(capturedProps.resolveImageSrc).toBeDefined();
       });
-      const resolve = capturedProps.resolveImageSrc as (src: string) => string;
-      expect(resolve("img.png")).toBe("asset://localhost//ws/sub/img.png");
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+      expect(resolve("img.png")).toEqual([
+        "asset://localhost//ws/sub/img.png",
+        "asset://localhost//ws/assets/images/img.png",
+      ]);
     });
 
-    it("resolves relative path for absolute pagePath", async () => {
+    it("resolves naked path for absolute pagePath", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "/external/dir/hello.md" },
         focusedPaneId: "pane-1",
@@ -349,11 +353,14 @@ describe("EditorPane", () => {
       await waitFor(() => {
         expect(capturedProps.resolveImageSrc).toBeDefined();
       });
-      const resolve = capturedProps.resolveImageSrc as (src: string) => string;
-      expect(resolve("img.png")).toBe("asset://localhost//external/dir/img.png");
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+      expect(resolve("img.png")).toEqual([
+        "asset://localhost//external/dir/img.png",
+        "asset://localhost//ws/assets/images/img.png",
+      ]);
     });
 
-    it("passes through absolute URLs", async () => {
+    it("passes through absolute URLs as single-element array", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
         focusedPaneId: "pane-1",
@@ -363,9 +370,70 @@ describe("EditorPane", () => {
       await waitFor(() => {
         expect(capturedProps.resolveImageSrc).toBeDefined();
       });
-      const resolve = capturedProps.resolveImageSrc as (src: string) => string;
-      expect(resolve("https://example.com/img.png")).toBe("https://example.com/img.png");
-      expect(resolve("data:image/png;base64,abc")).toBe("data:image/png;base64,abc");
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+      expect(resolve("https://example.com/img.png")).toEqual(["https://example.com/img.png"]);
+      expect(resolve("data:image/png;base64,abc")).toEqual(["data:image/png;base64,abc"]);
+    });
+
+    it("./prefixed src yields single candidate", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "sub/hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.resolveImageSrc).toBeDefined();
+      });
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+      expect(resolve("./img.png")).toEqual(["asset://localhost//ws/sub/img.png"]);
+    });
+
+    it("respects frontmatter image_dir override", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      mockInvoke((cmd) => {
+        if (cmd === "read_page") return { ...samplePage, meta: { ...samplePage.meta, frontmatter: { image_dir: "media" } } };
+        throw new Error(`Unknown command: ${cmd}`);
+      });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.resolveImageSrc).toBeDefined();
+        expect(capturedProps.frontmatter).toBeDefined();
+      });
+      const fm = capturedProps.frontmatter as Record<string, unknown>;
+      if (fm.image_dir === "media") {
+        const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+        expect(resolve("stem/img.png")).toEqual([
+          "asset://localhost//ws/stem/img.png",
+          "asset://localhost//ws/media/stem/img.png",
+        ]);
+      }
+    });
+
+    it("uses preference defaultImageDir when no frontmatter", async () => {
+      usePreferencesStore.setState({ defaultImageDir: "custom/imgs" });
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ workspacePath: "/ws" });
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.resolveImageSrc).toBeDefined();
+      });
+      const resolve = capturedProps.resolveImageSrc as (src: string) => string[];
+      expect(resolve("stem/img.png")).toEqual([
+        "asset://localhost//ws/stem/img.png",
+        "asset://localhost//ws/custom/imgs/stem/img.png",
+      ]);
     });
   });
 
