@@ -11,6 +11,7 @@ import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
+import { collectRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -39,6 +40,8 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const cursorSensitiveLines = new Set<number>();
   const footnoteMap = buildFootnoteMap(state);
+
+  let refLabels: Set<string> | undefined;
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -135,6 +138,17 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
             addDisplayMathDecos(state, node.from, node.to, decos);
           }
           return false;
+        }
+      },
+    });
+
+    syntaxTree(state).iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (node.name === "Link" || node.name === "Image") {
+          if (!refLabels) refLabels = collectRefDefLabels(state);
+          addPlainBracketDecos(state, node.from, node.to, node.node, refLabels, decos);
         }
       },
     });

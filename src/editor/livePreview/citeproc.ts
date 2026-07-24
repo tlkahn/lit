@@ -64,6 +64,12 @@ export interface CiteprocMatch {
 const CITE_BRACKET_RE = /\[([^\]]*@[^\]]+)\]/g;
 const CITE_ITEM_RE = /(-?)@([a-zA-Z0-9_][a-zA-Z0-9_:.#$%&\-+?<>~/]*)/g;
 
+const CITE_BRACKET_ANCHORED_RE = /^\[([^\]]*@[^\]]+)\]$/;
+
+export function isCitationBracket(text: string): boolean {
+  return CITE_BRACKET_ANCHORED_RE.test(text);
+}
+
 export function scanCiteprocCitations(text: string): CiteprocMatch[] {
   const results: CiteprocMatch[] = [];
   CITE_BRACKET_RE.lastIndex = 0;

@@ -477,6 +477,108 @@ describe("buildDecorations — links", () => {
   });
 });
 
+describe("buildDecorations — plain brackets (cm-plain-brackets)", () => {
+  it("applies cm-plain-brackets to bare [sic] with cursor elsewhere", () => {
+    const doc = "This [sic] was surprising.\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.class === "cm-plain-brackets");
+    expect(pb).toBeDefined();
+    expect(pb!.from).toBe(5);
+    expect(pb!.to).toBe(10);
+    view.destroy();
+  });
+
+  it("applies cm-plain-brackets even when cursor is inside the bracket range", () => {
+    const view = makeView("This [sic] was surprising.", 7);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.class === "cm-plain-brackets");
+    expect(pb).toBeDefined();
+    view.destroy();
+  });
+
+  it("applies cm-plain-brackets to bare link nested in **bold [sic] text**", () => {
+    const doc = "**bold [sic] text**\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.class === "cm-plain-brackets");
+    expect(pb).toBeDefined();
+    expect(pb!.from).toBe(7);
+    expect(pb!.to).toBe(12);
+    view.destroy();
+  });
+
+  it("applies cm-plain-brackets to bare link in # Head [sic] with cursor on heading", () => {
+    const doc = "# Head [sic]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.class === "cm-plain-brackets");
+    expect(pb).toBeDefined();
+    expect(pb!.from).toBe(7);
+    expect(pb!.to).toBe(12);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to real links", () => {
+    const doc = "[Click me](https://example.com)\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to wikilinks", () => {
+    const doc = "[[WikiLink]]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to footnote refs", () => {
+    const doc = "Text [^1] here\n\n[^1]: footnote def";
+    const view = makeView(doc, 0);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to escaped \\[foo\\]", () => {
+    const doc = "\\[foo\\]\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to citation [@key]", () => {
+    const doc = "See [@key2024foo] here\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("does NOT apply cm-plain-brackets to shortcut ref with matching def", () => {
+    const doc = "[bar]: https://example.com\n\nSee [bar] here";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-plain-brackets")).toBe(false);
+    view.destroy();
+  });
+
+  it("applies cm-plain-brackets to bare [3]", () => {
+    const doc = "See item [3] below.\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const pb = decos.find((d) => d.class === "cm-plain-brackets");
+    expect(pb).toBeDefined();
+    expect(pb!.from).toBe(9);
+    expect(pb!.to).toBe(12);
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — images", () => {
   it("replaces entire image with ImageWidget when cursor elsewhere", () => {
     const doc = "![alt text](img.png)\n\nother";
