@@ -249,6 +249,171 @@ describe("ImageWidget — failed image caching", () => {
   });
 });
 
+describe("ImageWidget - candidate walk", () => {
+  beforeEach(() => {
+    clearFailedImageCache();
+  });
+
+  it("constructor accepts string[] and stores as srcs", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    expect(w.srcs).toEqual(["a.png", "b.png"]);
+  });
+
+  it("constructor wraps single string into srcs array", () => {
+    const w = new ImageWidget("a.png", "alt");
+    expect(w.srcs).toEqual(["a.png"]);
+  });
+
+  it("toDOM renders first candidate", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w.toDOM();
+    expect(el.getAttribute("src")).toBe("a.png");
+  });
+
+  it("error on candidate 0 advances to candidate 1", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("b.png");
+  });
+
+  it("all candidates failed shows error state", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    el.dispatchEvent(new Event("error"));
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBeNull();
+    expect(el.classList.contains("cm-preview-image-error")).toBe(true);
+  });
+
+  it("skips known-failed candidates on fresh toDOM", () => {
+    const w1 = new ImageWidget(["a.png", "b.png"], "alt");
+    const el1 = w1.toDOM() as HTMLImageElement;
+    el1.dispatchEvent(new Event("error"));
+
+    const w2 = new ImageWidget(["a.png", "b.png"], "alt");
+    const el2 = w2.toDOM() as HTMLImageElement;
+    expect(el2.getAttribute("src")).toBe("b.png");
+  });
+
+  it("eq compares src arrays element-wise", () => {
+    const a = new ImageWidget(["x.png", "y.png"], "alt");
+    const b = new ImageWidget(["x.png", "y.png"], "alt");
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different length arrays", () => {
+    const a = new ImageWidget(["x.png"], "alt");
+    const b = new ImageWidget(["x.png", "y.png"], "alt");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("eq returns false for different elements", () => {
+    const a = new ImageWidget(["x.png", "y.png"], "alt");
+    const b = new ImageWidget(["x.png", "z.png"], "alt");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("thumbnail: error advances to next candidate", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt", true);
+    const el = w.toDOM();
+    const img = el.querySelector("img")!;
+    img.dispatchEvent(new Event("error"));
+    expect(img.getAttribute("src")).toBe("b.png");
+  });
+
+  it("thumbnail: all candidates failed shows error state", () => {
+    const w = new ImageWidget(["a.png", "b.png"], "alt", true);
+    const el = w.toDOM();
+    const img = el.querySelector("img")!;
+    img.dispatchEvent(new Event("error"));
+    img.dispatchEvent(new Event("error"));
+    expect(img.getAttribute("src")).toBeNull();
+    expect(img.classList.contains("cm-preview-image-error")).toBe(true);
+  });
+
+  it("load clears the loaded candidate from failed cache", () => {
+    const w1 = new ImageWidget(["a.png"], "alt");
+    const el1 = w1.toDOM() as HTMLImageElement;
+    el1.dispatchEvent(new Event("error"));
+
+    clearFailedImageCache();
+
+    const w2 = new ImageWidget(["a.png"], "alt");
+    const el2 = w2.toDOM() as HTMLImageElement;
+    expect(el2.getAttribute("src")).toBe("a.png");
+    el2.dispatchEvent(new Event("load"));
+
+    const w3 = new ImageWidget(["a.png"], "alt");
+    const el3 = w3.toDOM() as HTMLImageElement;
+    expect(el3.getAttribute("src")).toBe("a.png");
+  });
+
+  it("toDOM -> updateDOM (alt-only) -> error advances to fallback", () => {
+    const w1 = new ImageWidget(["primary.png", "fallback.png"], "old alt");
+    const el = w1.toDOM() as HTMLImageElement;
+    expect(el.getAttribute("src")).toBe("primary.png");
+
+    const w2 = new ImageWidget(["primary.png", "fallback.png"], "new alt");
+    w2.updateDOM(el);
+
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("fallback.png");
+  });
+
+  it("updateDOM rebind does not poison fallback into failedImageSrcs", () => {
+    const w1 = new ImageWidget(["primary.png", "fallback.png"], "old alt");
+    const el = w1.toDOM() as HTMLImageElement;
+
+    const w2 = new ImageWidget(["primary.png", "fallback.png"], "new alt");
+    w2.updateDOM(el);
+
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("fallback.png");
+
+    const fresh = new ImageWidget(["fallback.png"], "check");
+    const el2 = fresh.toDOM() as HTMLImageElement;
+    expect(el2.getAttribute("src")).toBe("fallback.png");
+  });
+
+  it("skips pre-failed candidate in the middle of the list", () => {
+    const setup = new ImageWidget(["b.png"], "alt");
+    const setupEl = setup.toDOM() as HTMLImageElement;
+    setupEl.dispatchEvent(new Event("error"));
+
+    const w = new ImageWidget(["a.png", "b.png", "c.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    expect(el.getAttribute("src")).toBe("a.png");
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("c.png");
+  });
+
+  it("updateDOM with different candidate list walks the new list", () => {
+    const w1 = new ImageWidget(["a.png", "b.png"], "alt");
+    const el = w1.toDOM() as HTMLImageElement;
+    expect(el.getAttribute("src")).toBe("a.png");
+
+    const w2 = new ImageWidget(["x.png", "y.png"], "alt");
+    w2.updateDOM(el);
+    expect(el.getAttribute("src")).toBe("x.png");
+
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBe("y.png");
+  });
+
+  it("terminal failure removes src, adds error class, and detaches handler", () => {
+    const w = new ImageWidget(["only.png"], "alt");
+    const el = w.toDOM() as HTMLImageElement;
+    el.dispatchEvent(new Event("error"));
+    expect(el.getAttribute("src")).toBeNull();
+    expect(el.classList.contains("cm-preview-image-error")).toBe(true);
+
+    el.classList.remove("cm-preview-image-error");
+    el.dispatchEvent(new Event("error"));
+    expect(el.classList.contains("cm-preview-image-error")).toBe(false);
+  });
+});
+
 describe("CalloutHeaderWidget", () => {
   function makeView(): EditorView {
     const state = EditorState.create({

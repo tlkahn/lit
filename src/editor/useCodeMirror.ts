@@ -7,6 +7,7 @@ import { getThemeExtension } from "./theme";
 import { foldExtension } from "./fold";
 import { focusModeExtension } from "./focusMode";
 import { frontmatterFacet, noteDirFacet, notePathFacet, mediaThumbnailsFacet } from "./livePreview";
+import { imageResolverFacet } from "./livePreview/imageResolver";
 import { docReplaced } from "./jumpHistory";
 import { usePreferencesStore } from "../stores/preferences";
 import { useFocusModeStore } from "../stores/focusMode";
@@ -18,7 +19,7 @@ export interface UseCodeMirrorProps {
   doc: string;
   onChange?: (content: string) => void;
   onSelectionChange?: (line: number, col: number) => void;
-  resolveImageSrc?: (src: string) => string;
+  resolveImageSrc?: (src: string) => string[];
   onDocReplaced?: () => void;
   keymapBindings?: CM6KeyBinding[];
   frontmatter?: Record<string, unknown>;
@@ -41,6 +42,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   const noteDirCompartment = useRef(new Compartment());
   const notePathCompartment = useRef(new Compartment());
   const annotationCompartment = useRef(new Compartment());
+  const imageResolverCompartment = useRef(new Compartment());
   const mediaThumbnailsCompartment = useRef(new Compartment());
   const focusModeCompartment = useRef(new Compartment());
   const editableCompartment = useRef(new Compartment());
@@ -76,6 +78,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       notePathCompartment: notePathCompartment.current,
       annotationCompartment: annotationCompartment.current,
       annotationEnabled,
+      imageResolverCompartment: imageResolverCompartment.current,
       mediaThumbnailsCompartment: mediaThumbnailsCompartment.current,
       focusModeCompartment: focusModeCompartment.current,
       focusModeActive: useFocusModeStore.getState().active,
@@ -94,7 +97,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       },
       onSelectionChange: (line, col) => onSelectionChangeRef.current?.(line, col),
       openFilePath: (path, fragment) => openFilePathRef.current?.(path, fragment),
-      resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? src,
+      resolveImageSrc: (src) => resolveImageSrcRef.current?.(src) ?? [src],
       navigateToPage: (target, section, departurePos) => navigateToPageRef.current?.(target, section, departurePos),
     });
 
@@ -279,6 +282,18 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       ),
     });
   }, [notePath]);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!v) return;
+    v.dispatch({
+      effects: imageResolverCompartment.current.reconfigure(
+        resolveImageSrc
+          ? imageResolverFacet.of(resolveImageSrc)
+          : [],
+      ),
+    });
+  }, [resolveImageSrc]);
 
   return { view };
 }

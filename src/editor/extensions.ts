@@ -8,6 +8,7 @@ import { GFM } from "@lezer/markdown";
 import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
 import { search, searchKeymap } from "@codemirror/search";
 import { livePreviewExtension, frontmatterFacet, noteDirFacet, notePathFacet, mediaThumbnailsFacet } from "./livePreview";
+import { imageResolverFacet } from "./livePreview/imageResolver";
 import { foldExtension, type FoldConfig } from "./fold";
 import { focusModeExtension } from "./focusMode";
 import { annotationExtension } from "./livePreview/annotationState";
@@ -30,6 +31,7 @@ export interface ExtensionConfig {
   crossrefCompartment: Compartment;
   noteDirCompartment: Compartment;
   notePathCompartment: Compartment;
+  imageResolverCompartment: Compartment;
   mediaThumbnailsCompartment: Compartment;
   annotationCompartment: Compartment;
   annotationEnabled?: boolean;
@@ -46,7 +48,7 @@ export interface ExtensionConfig {
   onSelectionChange?: (line: number, col: number) => void;
   openUrl?: (url: string) => void;
   openFilePath?: (path: string, fragment: string | null) => void;
-  resolveImageSrc?: (src: string) => string;
+  resolveImageSrc?: (src: string) => string[];
   navigateToPage?: (target: string, section?: string, departurePos?: number) => void;
 }
 
@@ -59,7 +61,10 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     }),
     config.themeCompartment.of(getThemeExtension(config.theme)),
     highlightExtension,
-    livePreviewExtension({ openUrl: config.openUrl, openFilePath: config.openFilePath, resolveImageSrc: config.resolveImageSrc, navigateToPage: config.navigateToPage }),
+    livePreviewExtension({ openUrl: config.openUrl, openFilePath: config.openFilePath, navigateToPage: config.navigateToPage }),
+    config.imageResolverCompartment.of(
+      config.resolveImageSrc ? imageResolverFacet.of(config.resolveImageSrc) : [],
+    ),
     config.crossrefCompartment.of(frontmatterFacet.of(config.frontmatter ?? {})),
     config.noteDirCompartment.of(noteDirFacet.of(config.noteDir ?? "")),
     config.notePathCompartment.of(notePathFacet.of(config.notePath ?? "")),

@@ -2199,4 +2199,99 @@ describe("PreferencesStore", () => {
       expect(setCall?.args?.value).toEqual([]);
     });
   });
+
+  // --- Default image directory ---
+
+  it("defaults defaultImageDir to 'assets/images'", () => {
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+  });
+
+  it("maps editor.defaultImageDir from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "editor.defaultImageDir": "media/pics",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("media/pics");
+  });
+
+  it("defaults defaultImageDir to 'assets/images' when key missing from IPC", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+  });
+
+  it("coerces empty string defaultImageDir back to default", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "editor.defaultImageDir": "",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+  });
+
+  it("coerces whitespace-only defaultImageDir back to default", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "editor.defaultImageDir": "   ",
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+  });
+
+  it("coerces non-string defaultImageDir back to default", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences") {
+        return {
+          "workbench.colorTheme": null,
+          "workbench.darkMode": "auto",
+          "workbench.sideBar.location": "left",
+          "editor.defaultImageDir": 42,
+        };
+      }
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    mockListen();
+
+    await usePreferencesStore.getState().loadPreferences();
+    expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
+  });
 });

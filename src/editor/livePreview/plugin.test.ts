@@ -270,7 +270,7 @@ describe("livePreviewPlugin — effect filtering", () => {
       extensions: [
         markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
         calloutFoldField,
-        compartment.of(imageResolverFacet.of((src) => src)),
+        compartment.of(imageResolverFacet.of((src) => [src])),
         livePreviewPlugin,
         blockReplacementField,
       ],
@@ -278,7 +278,7 @@ describe("livePreviewPlugin — effect filtering", () => {
     const view = new EditorView({ state, parent: document.createElement("div") });
     const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
 
-    view.dispatch({ effects: compartment.reconfigure(imageResolverFacet.of((src) => `/resolved/${src}`)) });
+    view.dispatch({ effects: compartment.reconfigure(imageResolverFacet.of((src) => [`/resolved/${src}`])) });
     const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
 
     expect(decosAfter).not.toBe(decosBefore);

@@ -55,6 +55,24 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.controlType).toBe("segmented");
   });
 
+  it("defaultImageDir entry exists with controlType 'text' in Editor category", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "defaultImageDir");
+    expect(entry).toBeDefined();
+    expect(entry!.controlType).toBe("text");
+    expect(entry!.category).toBe("Editor");
+    expect(entry!.jsonKey).toBe("editor.defaultImageDir");
+    expect(entry!.testId).toBe("settings-defaultImageDir");
+  });
+
+  it("defaultImageDir entry has normalize that maps empty/whitespace to default", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "defaultImageDir");
+    expect(entry).toBeDefined();
+    expect(entry!.normalize).toBeDefined();
+    expect(entry!.normalize!("")).toBe("assets/images");
+    expect(entry!.normalize!("  ")).toBe("assets/images");
+    expect(entry!.normalize!("media")).toBe("media");
+  });
+
   it("companionSearchPath entry exists with controlType 'custom' in Editor category", () => {
     const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "companionSearchPath");
     expect(entry).toBeDefined();
@@ -96,7 +114,7 @@ describe("groupByCategory", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
     expect(grouped.size).toBe(9);
     expect(grouped.get("Appearance")).toHaveLength(9);
-    expect(grouped.get("Editor")).toHaveLength(5);
+    expect(grouped.get("Editor")).toHaveLength(6);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
     expect(grouped.get("LLM")).toHaveLength(7);
