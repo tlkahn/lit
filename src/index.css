@@ -179,6 +179,7 @@ select:disabled {
 .tok-emphasis { font-style: italic; }
 .tok-strong { font-weight: bold; }
 .tok-link { color: var(--text-accent); text-decoration: underline; }
+.cm-plain-brackets.tok-link, .cm-plain-brackets .tok-link { color: inherit; text-decoration: none; }
 .tok-url { color: var(--text-accent); }
 .tok-monospace { background-color: var(--code-background); border-radius: 3px; font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace); }
 .tok-meta { color: var(--text-faint); }

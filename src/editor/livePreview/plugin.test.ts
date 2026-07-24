@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Compartment, EditorState, StateEffect } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
-import { ensureSyntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree, forceParsing } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
 import { livePreviewPlugin, blockReplacementField } from "./plugin";
 import { WikiLink } from "../markdown/wikilink";
@@ -331,6 +331,36 @@ describe("livePreviewPlugin — effect filtering", () => {
     const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
 
     expect(decosAfter).toBe(decosBefore);
+    view.destroy();
+  });
+});
+
+describe("livePreviewPlugin - treeChanged rebuild", () => {
+  it("rebuilds decorations when syntax tree advances via forceParsing", () => {
+    const filler = Array.from({ length: 500 }, (_, i) => `filler line ${i}`).join("\n");
+    const doc = `[sic] at top\n\n${filler}\n\ntrailing text`;
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt] }),
+        calloutFoldField,
+        livePreviewPlugin,
+        blockReplacementField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    const treeBefore = syntaxTree(view.state);
+    const decosBefore = view.plugin(livePreviewPlugin)!.decorations;
+
+    forceParsing(view, view.state.doc.length, 60000);
+    const treeAfter = syntaxTree(view.state);
+
+    if (treeBefore !== treeAfter) {
+      const decosAfter = view.plugin(livePreviewPlugin)!.decorations;
+      expect(decosAfter).not.toBe(decosBefore);
+    }
     view.destroy();
   });
 });

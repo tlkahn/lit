@@ -1,6 +1,7 @@
 import { type DecorationSet, EditorView } from "@codemirror/view";
 import { ViewPlugin, type ViewUpdate, type PluginValue } from "@codemirror/view";
 import { StateField, RangeSet } from "@codemirror/state";
+import { syntaxTree } from "@codemirror/language";
 import { buildDecorations, buildBlockReplacements, type BlockReplacementState } from "./decorations";
 import { toggleCalloutEffect } from "./callout";
 import { imageResolverFacet } from "./imageResolver";
@@ -32,8 +33,9 @@ class LivePreviewPluginValue implements PluginValue {
 
   update(update: ViewUpdate) {
     perfMark("livePreview:update:start");
-    if (update.docChanged || update.viewportChanged) {
-      this.rebuild(update.view, update.docChanged ? "docChanged" : "viewportChanged");
+    const treeChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
+    if (update.docChanged || update.viewportChanged || treeChanged) {
+      this.rebuild(update.view, update.docChanged ? "docChanged" : update.viewportChanged ? "viewportChanged" : "syntaxTree");
     } else if (update.transactions.some(tr => tr.effects.some(e => e.is(toggleCalloutEffect)))) {
       this.rebuild(update.view, "toggleEffect");
     } else if (
