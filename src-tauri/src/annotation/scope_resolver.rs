@@ -99,6 +99,11 @@ pub struct ScopeResolveCtx<'a> {
     lang: &'a str,
     u16map: std::cell::OnceCell<Utf16ByteMap>,
     segs: std::cell::OnceCell<Vec<RawSeg>>,
+    /// Test-only counter of cached segments inspected by the sentence
+    /// selectors. Lets a test assert the per-annotation work is bounded
+    /// without resorting to a flaky timing assertion.
+    #[cfg(test)]
+    segs_visited: std::cell::Cell<usize>,
 }
 
 impl<'a> ScopeResolveCtx<'a> {
@@ -108,7 +113,16 @@ impl<'a> ScopeResolveCtx<'a> {
             lang,
             u16map: std::cell::OnceCell::new(),
             segs: std::cell::OnceCell::new(),
+            #[cfg(test)]
+            segs_visited: std::cell::Cell::new(0),
         }
+    }
+
+    /// Bumped once per segment the sentence selectors inspect; a no-op outside
+    /// tests. See `segs_visited`.
+    fn visit(&self) {
+        #[cfg(test)]
+        self.segs_visited.set(self.segs_visited.get() + 1);
     }
 
     fn u16map(&self) -> &Utf16ByteMap {
@@ -251,30 +265,58 @@ impl<'a> ScopeResolveCtx<'a> {
         Some((self.to_u16(scope_start_byte), self.to_u16(scope_end_byte)))
     }
 
-    /// Trimmed non-empty sentences of `content[..te]`, reconstructed from the
-    /// cached full-body segmentation instead of re-segmenting the prefix:
-    /// complete segments ending at or before the cut, plus the trailing
-    /// fragment of the segment the cut lands in. Mirrors
-    /// `split_sentences(content[..te])`.
-    fn prefix_sentences(&self, te: usize) -> Vec<&'a str> {
-        let mut sentences = Vec::new();
-        for seg in self.segs() {
-            let end = if seg.raw_end <= te {
-                seg.raw_end
-            } else if seg.raw_start < te {
-                te
-            } else {
-                break;
+    /// Trimmed byte span of `content[start..end]`, or `None` when that slice
+    /// is whitespace-only (a dropped paragraph separator, or the empty
+    /// remainder of a segment clipped at a cut).
+    fn trimmed_span(&self, start: usize, end: usize) -> Option<(usize, usize)> {
+        let slice = &self.content[start..end];
+        let body = slice.trim();
+        if body.is_empty() {
+            return None;
+        }
+        let lead = slice.len() - slice.trim_start().len();
+        Some((start + lead, start + lead + body.len()))
+    }
+
+    /// Byte span covering the last `n` sentences ending at or before the cut
+    /// `te`, selected directly out of the cached full-body segmentation.
+    ///
+    /// Binary-searches for the cut, then walks backwards over at most `n`
+    /// non-empty segments, so the cost is `O(log #segs + n)` rather than
+    /// `O(doc)` — and, because each segment carries its own byte position, a
+    /// sentence whose text recurs earlier in the document still resolves to
+    /// the occurrence adjacent to the cut. The segment the cut lands inside is
+    /// clipped at `te`, matching `split_sentences(content[..te])`. Fewer than
+    /// `n` available sentences yields the span of all of them; `None` when
+    /// there are none, and `None` for `n == 0`: an empty window has no span,
+    /// and returning early keeps a zero `n` from walking the whole prefix.
+    fn prefix_sentence_span(&self, te: usize, n: usize) -> Option<(usize, usize)> {
+        if n == 0 {
+            return None;
+        }
+        let segs = self.segs();
+        let cut = segs.partition_point(|s| s.raw_start < te);
+
+        let mut span_start = 0;
+        let mut span_end = 0;
+        let mut taken = 0usize;
+
+        for seg in segs[..cut].iter().rev() {
+            self.visit();
+            let Some((start, end)) = self.trimmed_span(seg.raw_start, seg.raw_end.min(te)) else {
+                continue;
             };
-            let s = self.content[seg.raw_start..end].trim();
-            if !s.is_empty() {
-                sentences.push(s);
+            if taken == 0 {
+                span_end = end;
             }
-            if end == te {
+            span_start = start;
+            taken += 1;
+            if taken == n {
                 break;
             }
         }
-        sentences
+
+        (taken > 0).then_some((span_start, span_end))
     }
 
     fn resolve_sentence(&self, char_start: usize, n: usize) -> Option<(usize, usize)> {
@@ -288,20 +330,7 @@ impl<'a> ScopeResolveCtx<'a> {
             return None;
         }
 
-        let sentences = self.prefix_sentences(trimmed.len());
-        if sentences.is_empty() {
-            return None;
-        }
-
-        let take = n.min(sentences.len());
-        let first_sentence = sentences[sentences.len() - take];
-        let last_sentence = sentences[sentences.len() - 1];
-
-        let (first_start, _) = ws_flexible_find(trimmed, first_sentence, 0)?;
-        let (_, last_end) = ws_flexible_find(trimmed, last_sentence, first_start)?;
-
-        let scope_start_byte = first_start;
-        let scope_end_byte = last_end.min(trimmed.len());
+        let (scope_start_byte, scope_end_byte) = self.prefix_sentence_span(trimmed.len(), n)?;
 
         Some((self.to_u16(scope_start_byte), self.to_u16(scope_end_byte)))
     }
@@ -375,23 +404,41 @@ impl<'a> ScopeResolveCtx<'a> {
         Some((self.to_u16(scope_start_byte), self.to_u16(scope_end_byte)))
     }
 
-    /// Forward mirror of `prefix_sentences`: trimmed non-empty sentences of
-    /// `content[ts..]`, reconstructed from the cached segmentation — the
-    /// trailing part of the segment the cut lands in, then whole later
-    /// segments. Mirrors `split_sentences(content[ts..])`.
-    fn suffix_sentences(&self, ts: usize) -> Vec<&'a str> {
-        let mut sentences = Vec::new();
-        for seg in self.segs() {
-            if seg.raw_end <= ts {
+    /// Forward mirror of [`Self::prefix_sentence_span`]: byte offset of the end
+    /// of the `n`-th sentence starting at or after the cut `ts`, selected
+    /// directly out of the cached full-body segmentation.
+    ///
+    /// Binary-searches for the cut, then walks forward over at most `n`
+    /// non-empty segments — `O(log #segs + n)`, and positionally exact even
+    /// when the target sentence's text recurs between the cut and itself. The
+    /// segment the cut lands inside is clipped at `ts`, matching
+    /// `split_sentences(content[ts..])`. Fewer than `n` available sentences
+    /// yields the end of the last one; `None` when there are none, and `None`
+    /// for `n == 0`: an empty window has no end, and returning early keeps a
+    /// zero `n` from walking the whole suffix.
+    fn suffix_sentence_end(&self, ts: usize, n: usize) -> Option<usize> {
+        if n == 0 {
+            return None;
+        }
+        let segs = self.segs();
+        let cut = segs.partition_point(|s| s.raw_end <= ts);
+
+        let mut span_end = 0;
+        let mut taken = 0usize;
+
+        for seg in &segs[cut..] {
+            self.visit();
+            let Some((_, end)) = self.trimmed_span(seg.raw_start.max(ts), seg.raw_end) else {
                 continue;
-            }
-            let start = seg.raw_start.max(ts);
-            let s = self.content[start..seg.raw_end].trim();
-            if !s.is_empty() {
-                sentences.push(s);
+            };
+            span_end = end;
+            taken += 1;
+            if taken == n {
+                break;
             }
         }
-        sentences
+
+        (taken > 0).then_some(span_end)
     }
 
     fn resolve_forward_words(&self, char_start: usize, n: usize) -> Option<usize> {
@@ -446,17 +493,9 @@ impl<'a> ScopeResolveCtx<'a> {
         }
         let trim_offset = text_after.len() - trimmed.len();
 
-        let sentences = self.suffix_sentences(byte_start + trim_offset);
-        if sentences.is_empty() {
-            return None;
-        }
+        let sent_end = self.suffix_sentence_end(byte_start + trim_offset, n)?;
 
-        let take = n.min(sentences.len());
-        let target_sentence = sentences[take - 1];
-
-        let (_, sent_end) = ws_flexible_find(trimmed, target_sentence, 0)?;
-
-        Some(self.to_u16(byte_start + trim_offset + sent_end))
+        Some(self.to_u16(sent_end))
     }
 
     fn resolve_forward_paragraphs(&self, char_start: usize, n: usize) -> Option<usize> {
@@ -599,45 +638,6 @@ impl<'a> ScopeResolveCtx<'a> {
         Some((self.to_u16(section_byte_start), self.to_u16(section_byte_end)))
     }
 }
-fn ws_flexible_find(haystack: &str, needle: &str, start_from: usize) -> Option<(usize, usize)> {
-    let parts: Vec<&str> = needle.split_whitespace().collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let mut offset = start_from;
-    loop {
-        let rel_pos = haystack[offset..].find(parts[0])?;
-        let match_start = offset + rel_pos;
-        let mut cursor = match_start + parts[0].len();
-
-        let mut ok = true;
-        for part in &parts[1..] {
-            let rest = &haystack[cursor..];
-            let ws = rest.len() - rest.trim_start().len();
-            if ws == 0 {
-                ok = false;
-                break;
-            }
-            cursor += ws;
-            if haystack[cursor..].starts_with(part) {
-                cursor += part.len();
-            } else {
-                ok = false;
-                break;
-            }
-        }
-
-        if ok {
-            return Some((match_start, cursor));
-        }
-
-        match haystack[offset + rel_pos..].char_indices().nth(1) {
-            Some((next, _)) => offset += rel_pos + next,
-            None => return None,
-        }
-    }
-}
 
 /// One-shot wrapper over [`ScopeResolveCtx::extract_text_for_range`].
 pub fn extract_text_for_range(content: &str, range: &ScopeRange) -> String {
@@ -661,11 +661,76 @@ mod tests {
     use crate::annotation::scanner::utf16_len;
 
     // -----------------------------------------------------------------------
-    // Reference implementations: the pre-ScopeResolveCtx resolver bodies,
-    // kept verbatim so the ctx parity tests stay a genuine independent lock
-    // (they re-segment the prefix/suffix per call instead of reconstructing
-    // from the shared full-body segmentation).
+    // Reference implementations for the ctx parity tests: they re-segment the
+    // prefix/suffix per call instead of selecting spans out of the shared
+    // full-body segmentation. What they lock is that independence from
+    // `segs()`, not the historical first-occurrence `ws_flexible_find`
+    // semantics: `locate_sentences` carries the same sequential cursor this
+    // PR introduced, deliberately replacing first-occurrence lookup. The
+    // repeated-text tests below are what pin that correctness fix.
     // -----------------------------------------------------------------------
+
+    /// Whitespace-flexible substring search: matches `needle`'s non-whitespace
+    /// runs against `haystack`, allowing any whitespace between them. Only the
+    /// reference implementations need it now that production selects sentences
+    /// by their cached byte spans.
+    fn ws_flexible_find(haystack: &str, needle: &str, start_from: usize) -> Option<(usize, usize)> {
+        let parts: Vec<&str> = needle.split_whitespace().collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let mut offset = start_from;
+        loop {
+            let rel_pos = haystack[offset..].find(parts[0])?;
+            let match_start = offset + rel_pos;
+            let mut cursor = match_start + parts[0].len();
+
+            let mut ok = true;
+            for part in &parts[1..] {
+                let rest = &haystack[cursor..];
+                let ws = rest.len() - rest.trim_start().len();
+                if ws == 0 {
+                    ok = false;
+                    break;
+                }
+                cursor += ws;
+                if haystack[cursor..].starts_with(part) {
+                    cursor += part.len();
+                } else {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if ok {
+                return Some((match_start, cursor));
+            }
+
+            match haystack[offset + rel_pos..].char_indices().nth(1) {
+                Some((next, _)) => offset += rel_pos + next,
+                None => return None,
+            }
+        }
+    }
+
+    /// Byte spans of `split_sentences(text)` within `text`, located with a
+    /// sequential cursor. `split_sentences` returns an ordered partition of its
+    /// input, so advancing the cursor past each match pins every sentence to
+    /// its own position — a plain first-occurrence search would mislocate a
+    /// sentence whose text recurs earlier in `text`.
+    fn locate_sentences(text: &str, lang: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let mut cursor = 0usize;
+        for sentence in split_sentences(text, lang) {
+            let Some((start, end)) = ws_flexible_find(text, &sentence, cursor) else {
+                continue;
+            };
+            cursor = end;
+            spans.push((start, end));
+        }
+        spans
+    }
 
     fn split_sentences(text: &str, lang: &str) -> Vec<String> {
         sentencex::segment(lang, text)
@@ -697,17 +762,14 @@ mod tests {
             return None;
         }
 
-        let sentences = split_sentences(trimmed, lang);
-        if sentences.is_empty() {
+        let spans = locate_sentences(trimmed, lang);
+        if spans.is_empty() {
             return None;
         }
 
-        let take = n.min(sentences.len());
-        let first_sentence = &sentences[sentences.len() - take];
-        let last_sentence = &sentences[sentences.len() - 1];
-
-        let (first_start, _) = ws_flexible_find(trimmed, first_sentence, 0)?;
-        let (_, last_end) = ws_flexible_find(trimmed, last_sentence, first_start)?;
+        let take = n.min(spans.len());
+        let (first_start, _) = spans[spans.len() - take];
+        let (_, last_end) = spans[spans.len() - 1];
 
         let scope_start_byte = first_start;
         let scope_end_byte = last_end.min(trimmed.len());
@@ -771,17 +833,15 @@ mod tests {
             return None;
         }
 
-        let sentences = split_sentences(trimmed, lang);
-        if sentences.is_empty() {
+        let spans = locate_sentences(trimmed, lang);
+        if spans.is_empty() {
             return None;
         }
 
-        let take = n.min(sentences.len());
-        let target_sentence = &sentences[take - 1];
+        let take = n.min(spans.len());
+        let (_, sent_end) = spans[take - 1];
 
         let trim_offset = text_after.len() - trimmed.len();
-        let (_, sent_end) = ws_flexible_find(trimmed, target_sentence, 0)?;
-
         let abs_byte = byte_start + trim_offset + sent_end;
         Some(utf16_len(&content[..abs_byte]))
     }
@@ -1345,6 +1405,79 @@ mod tests {
         assert!(result.is_some());
     }
 
+    // --- Repeated sentence text: select the nearest sentence, not the first
+    // textual occurrence of its text (issue #853) ---
+
+    #[test]
+    fn sentence_backward_repeated_text_selects_nearest() {
+        let content = "The dog ran. The cat sat. The dog ran. A last line.";
+        let char_start = utf16_len(content);
+        let range = resolve_scope_range(content, char_start, &Scope::Sentence(2), "en").unwrap();
+        assert_eq!(extract_text_for_range(content, &range), "The dog ran. A last line.");
+    }
+
+    #[test]
+    fn sentence_backward_repeated_text_cjk() {
+        let content = "第一句话。第二句话。第一句话。最后一句。";
+        let char_start = utf16_len(content);
+        let range = resolve_scope_range(content, char_start, &Scope::Sentence(2), "zh").unwrap();
+        assert_eq!(extract_text_for_range(content, &range), "第一句话。最后一句。");
+    }
+
+    #[test]
+    fn forward_sentence_repeated_text_selects_nearest() {
+        let content = "Start here. The dog ran. Middle bit. The dog ran. Tail end.";
+        let char_start = utf16_len(&content[..content.find("The dog ran.").unwrap()]);
+        let range = resolve_scope_range_with_mode(
+            content,
+            char_start,
+            &Scope::Sentence(3),
+            "en",
+            &ResolutionMode::Bidirectional,
+        )
+        .unwrap();
+        assert_eq!(
+            extract_text_for_range(content, &range),
+            "Start here. The dog ran. Middle bit. The dog ran."
+        );
+    }
+
+    /// Pure-forward companion to the bidirectional test above: asserts the
+    /// forward end offset on its own, so a first-occurrence regression reports
+    /// `Some(24)` vs `Some(49)` instead of a conflated whole-range string diff.
+    #[test]
+    fn forward_sentence_repeated_text_end_offset_is_nearest() {
+        let content = "Start here. The dog ran. Middle bit. The dog ran. Tail end.";
+        let cut = content.find("The dog ran.").unwrap();
+        let ctx = ScopeResolveCtx::new(content, "en");
+        // Third sentence forward from the cut is the *second* "The dog ran.";
+        // a first-occurrence search collapses the window onto the first.
+        let second_occurrence_end = content.rfind("The dog ran.").unwrap() + "The dog ran.".len();
+        assert_eq!(
+            ctx.resolve_forward_sentences(utf16_len(&content[..cut]), 3),
+            Some(utf16_len(&content[..second_occurrence_end]))
+        );
+    }
+
+    #[test]
+    fn asymmetric_sentence_repeated_text() {
+        // "The dog ran." recurs before the cut and "Echo now." after it; both
+        // windows must land on the occurrence adjacent to the cut.
+        let content = "The dog ran. Alpha bit. The dog ran. Beta two. Echo now. Echo now. Zulu end.";
+        let char_start = utf16_len(&content[..content.find(" Echo now.").unwrap()]);
+        let range = resolve_scope_range(
+            content,
+            char_start,
+            &Scope::Asymmetric { unit: ScopeKind::Sentence, before: 2, after: 2 },
+            "en",
+        )
+        .unwrap();
+        assert_eq!(
+            extract_text_for_range(content, &range),
+            "The dog ran. Beta two. Echo now. Echo now."
+        );
+    }
+
     #[test]
     fn extract_text_for_range_ascii() {
         assert_eq!(
@@ -1571,8 +1704,11 @@ mod tests {
         let mut corpus: Vec<(String, &'static str)> = vec![
             // multi-sentence English, cuts at boundaries and mid-sentence
             ("The dog ran. The cat sat. A third sentence here. <!--- n --->".into(), "en"),
-            // repeated identical sentence text (first-occurrence ws_flexible_find path)
+            // repeated identical sentence text: the span selector must pick the
+            // occurrence adjacent to the cut, not the first one in the document
             ("Repeat me. Something else. Repeat me. Final one. <!--- n --->".into(), "en"),
+            ("The dog ran. The cat sat. The dog ran. A last line. <!--- n --->".into(), "en"),
+            ("第一句话。第二句话。第一句话。最后一句。<!--- n --->".into(), "zh"),
             // double-space whitespace inside sentences
             ("Maximum depth  $d = 5$  and  more. Second  has  double  spaces. <!--- n --->".into(), "en"),
             // CJK
@@ -1740,6 +1876,78 @@ mod tests {
                 extract_text_for_range(content, &range),
             );
         }
+    }
+
+    // --- ScopeResolveCtx: sentence selection is bounded, not O(doc) ---
+
+    fn many_sentences(count: usize) -> String {
+        (0..count)
+            .map(|i| format!("Sentence number {i} is right here today. "))
+            .collect()
+    }
+
+    #[test]
+    fn sentence_span_selection_work_is_independent_of_doc_size() {
+        let small = many_sentences(50);
+        let large = many_sentences(5000);
+
+        let mut visits = Vec::new();
+        for content in [small.as_str(), large.as_str()] {
+            let ctx = ScopeResolveCtx::new(content, "en");
+            // Prime the segmentation so only selection work is counted.
+            ctx.segs();
+            ctx.segs_visited.set(0);
+            assert!(ctx.resolve_sentence(utf16_len(content), 2).is_some());
+            visits.push(ctx.segs_visited.get());
+        }
+
+        assert_eq!(
+            visits[0], visits[1],
+            "sentence selection must inspect the same number of segments regardless of doc size"
+        );
+        assert!(
+            visits[0] <= 8,
+            "sentence selection must inspect a bounded number of segments, got {}",
+            visits[0]
+        );
+    }
+
+    #[test]
+    fn forward_sentence_span_selection_work_is_independent_of_doc_size() {
+        let small = many_sentences(50);
+        let large = many_sentences(5000);
+
+        let mut visits = Vec::new();
+        for content in [small.as_str(), large.as_str()] {
+            let ctx = ScopeResolveCtx::new(content, "en");
+            ctx.segs();
+            ctx.segs_visited.set(0);
+            assert!(ctx.resolve_forward_sentences(0, 2).is_some());
+            visits.push(ctx.segs_visited.get());
+        }
+
+        assert_eq!(
+            visits[0], visits[1],
+            "forward sentence selection must inspect the same number of segments regardless of doc size"
+        );
+        assert!(
+            visits[0] <= 8,
+            "forward sentence selection must inspect a bounded number of segments, got {}",
+            visits[0]
+        );
+    }
+
+    #[test]
+    fn sentence_span_selectors_reject_zero_n() {
+        let content = "One. Two. Three. Four. Five.";
+        let ctx = ScopeResolveCtx::new(content, "en");
+        assert_eq!(ctx.prefix_sentence_span(content.len(), 0), None);
+        assert_eq!(ctx.suffix_sentence_end(0, 0), None);
+        assert_eq!(
+            ctx.segs_visited.get(),
+            0,
+            "n == 0 must short-circuit before walking any segment"
+        );
     }
 
     #[test]

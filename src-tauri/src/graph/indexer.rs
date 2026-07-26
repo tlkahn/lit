@@ -65,7 +65,12 @@ pub fn parse_md_file(
 /// construction: `body` is the exact string the annotations were extracted
 /// from. Unresolvable scopes and empty extractions leave `original` as None.
 /// One `ScopeResolveCtx` is shared across the file's annotations so sentence
-/// segmentation and the UTF-16 offset map are computed once per body.
+/// segmentation and the UTF-16 offset map are computed once per body. Sentence
+/// scopes then select their span out of that shared segmentation at
+/// `O(log #segs + n)` per annotation, so a file's sentence work is
+/// `O(body + annotations x n)`. Section / paragraph / page / word scopes are
+/// unchanged: each still scans the document (or rebuilds the heading list) per
+/// annotation, so those remain `O(doc)` each: out of scope per #853.
 fn resolve_annotation_originals(body: &str, anns: &mut [super::types::IndexableAnnotation]) {
     let ctx = crate::annotation::scope_resolver::ScopeResolveCtx::new(body, "en");
     for ann in anns.iter_mut() {
@@ -1984,6 +1989,33 @@ mod tests {
             Some("The cat sat."),
             "sentence-scoped original must be resolved and persisted at index time"
         );
+    }
+
+    /// Pins the repeated-sentence fix (issue #853) on the production path
+    /// rather than only at the `scope_resolver` unit layer: `\s2` from the end
+    /// of a body whose first sentence recurs must select the two sentences
+    /// adjacent to the cut, not stretch back to the earlier occurrence.
+    #[test]
+    fn resolve_originals_repeated_sentence_selects_nearest() {
+        let body = "The dog ran. The cat sat. The dog ran. A last line.";
+        let char_start = crate::annotation::scanner::utf16_len(body);
+        let mut anns = vec![crate::graph::types::IndexableAnnotation {
+            annotation_type: "note".to_string(),
+            certainty: "certain".to_string(),
+            body: Some("a note".to_string()),
+            date: None,
+            source_line: 1,
+            char_start,
+            char_end: char_start,
+            scope_kind: "sentence".to_string(),
+            scope_value: "2".to_string(),
+            uuid: None,
+            original: None,
+        }];
+
+        resolve_annotation_originals(body, &mut anns);
+
+        assert_eq!(anns[0].original.as_deref(), Some("The dog ran. A last line."));
     }
 
     /// Timing smoke for the shared-segmentation fast path: many sentence-scoped
