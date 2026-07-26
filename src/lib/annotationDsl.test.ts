@@ -10,6 +10,7 @@ function fields(overrides: Partial<AnnotationFields> = {}): AnnotationFields {
     scope: null,
     body: "",
     date: null,
+    lang: null,
     ...overrides,
   };
 }
@@ -879,5 +880,93 @@ describe("annotationToFields", () => {
         ),
       ).toBe("<!---\nn\n---\nline one\nline two\n--->");
     });
+  });
+});
+
+describe("lang field", () => {
+  it("compact form emits lang= after the scope token", () => {
+    expect(
+      generateDsl(
+        fields({
+          type: "note",
+          certainty: "tentative",
+          scope: { kind: "sentence", value: 2 },
+          lang: "fr",
+          body: "même sens ?",
+          date: "2026-07",
+        }),
+      ),
+    ).toBe("<!--- n? \\ss lang=fr | même sens ? @2026-07 --->");
+  });
+
+  it("compact form emits lang= with no scope and no body", () => {
+    expect(generateDsl(fields({ type: "translation", lang: "ja" }))).toBe(
+      "<!--- tr lang=ja --->",
+    );
+  });
+
+  it("block form emits a lang: header line after the scope", () => {
+    expect(
+      generateDsl(
+        fields({
+          type: "note",
+          certainty: "firm",
+          scope: { kind: "paragraph", value: 1 },
+          lang: "fr",
+          date: "2026-03-28",
+          body: "Le corps.",
+        }),
+        { form: "block" },
+      ),
+    ).toBe("<!---\nn!\n\\p\nlang: fr\n@2026-03-28\n---\nLe corps.\n--->");
+  });
+
+  it("emits nothing for an empty or null lang (inherit)", () => {
+    expect(generateDsl(fields({ type: "note", lang: null, body: "a note" }))).toBe(
+      "<!--- n | a note --->",
+    );
+    expect(generateDsl(fields({ type: "note", lang: "", body: "a note" }))).toBe(
+      "<!--- n | a note --->",
+    );
+    expect(
+      generateDsl(fields({ type: "note", lang: null, body: "line one\nline two" })),
+    ).toBe("<!---\nn\n---\nline one\nline two\n--->");
+  });
+
+  it("annotationToFields reads the annotation's lang", () => {
+    expect(annotationToFields(makeAnnotation({ lang: "fr" })).lang).toBe("fr");
+    expect(annotationToFields(makeAnnotation()).lang).toBeNull();
+    expect(annotationToFields(makeAnnotation({ lang: null })).lang).toBeNull();
+  });
+
+  it("round-trips an annotation carrying a lang back to the same DSL", () => {
+    const ann = makeAnnotation({
+      annotation_type: "note",
+      scope: { kind: "sentence", value: 1 },
+      lang: "fr",
+      body: "une note",
+      original: "<!--- n \\s lang=fr | une note --->",
+    });
+    expect(generateDsl(annotationToFields(ann))).toBe(
+      "<!--- n \\s lang=fr | une note --->",
+    );
+  });
+
+  it("normalizes lang in compact emit (FR-CA -> fr)", () => {
+    expect(
+      generateDsl(fields({ type: "note", lang: "FR-CA", body: "hello" })),
+    ).toBe("<!--- n lang=fr | hello --->");
+  });
+
+  it("normalizes lang in block emit (FR-CA -> fr)", () => {
+    expect(
+      generateDsl(fields({ type: "note", lang: "FR-CA", body: "line\ntwo" })),
+    ).toBe("<!---\nn\nlang: fr\n---\nline\ntwo\n--->");
+  });
+
+  it("omits unnormalizable lang (english -> nothing)", () => {
+    expect(
+      generateDsl(fields({ type: "note", lang: "english", body: "hello" })),
+    ).toBe("<!--- n | hello --->");
   });
 });

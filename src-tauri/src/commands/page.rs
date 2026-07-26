@@ -32,12 +32,12 @@ pub(super) fn reindex_and_emit(
     graph_state: &State<Arc<GraphRegistry>>,
     app_handle: &tauri::AppHandle,
     root: &std::path::PathBuf,
-    op: impl FnOnce(&GraphIndex, bool) -> Result<Vec<(String, String)>, crate::graph::error::GraphError>,
+    op: impl FnOnce(&GraphIndex, &crate::annotation::lang::AnnotationIndexOpts) -> Result<Vec<(String, String)>, crate::graph::error::GraphError>,
 ) {
     let gi = lookup_graph_index(graph_state, root);
     if let Some(gi) = gi {
-        let ann = crate::preferences::annotations_enabled(app_handle);
-        let result = op(&gi, ann);
+        let ann = crate::preferences::annotation_index_opts(app_handle);
+        let result = op(&gi, &ann);
         crate::commands::graph::emit_reindex_side_effects(app_handle, &result);
     }
 }
@@ -82,13 +82,16 @@ pub fn write_page(
     // Reindex off the hot path: rapid autosaves coalesce in the background
     // queue instead of serializing 100ms+ reindexes onto the main thread.
     if let Some(gi) = lookup_graph_index(&graph_state, &root) {
-        let ann = crate::preferences::annotations_enabled(&app_handle);
+        let opts_handle = app_handle.clone();
         let handle = app_handle.clone();
         queue.inner().schedule(
             root.clone(),
             ChangeKind::Changed,
             relative_path.clone(),
-            move |diff| gi.batch_reindex(diff, ann),
+            crate::commands::reindex_queue::fresh_opts_run(
+                move || crate::preferences::annotation_index_opts(&opts_handle),
+                move |diff, ann| gi.batch_reindex(diff, ann),
+            ),
             move |result| crate::commands::graph::emit_reindex_side_effects(&handle, result),
         );
     }
@@ -245,14 +248,14 @@ pub fn rewrite_vault_links(
     let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
 
     let gi = lookup_graph_index(&graph_state, &root);
-    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+    let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
 
     let mut reindex_err: Option<crate::graph::error::GraphError> = None;
     let mut all_removed: Vec<(String, String)> = Vec::new();
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            match gi.reindex_file(&pr.relative_path, ann_enabled) {
+            match gi.reindex_file(&pr.relative_path, &ann_opts) {
                 Ok(removed) => all_removed.extend(removed),
                 Err(e) => { reindex_err = Some(e); }
             }
@@ -474,7 +477,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_file(tmp.path(), "a.md", "[[Target]]");
 
-        let gi = GraphIndex::build(tmp.path().to_path_buf(), false).unwrap();
+        let gi = GraphIndex::build(tmp.path().to_path_buf(), &crate::annotation::lang::AnnotationIndexOpts::disabled()).unwrap();
         let registry = GraphRegistry::new();
         registry
             .indices

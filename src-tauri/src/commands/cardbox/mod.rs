@@ -778,6 +778,7 @@ pub fn batch_unpin_cards(
 mod tests {
     use std::collections::HashMap;
     use crate::graph::indexer::GraphIndex;
+    use crate::annotation::lang::AnnotationIndexOpts;
 
     fn create_workspace() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
@@ -795,7 +796,7 @@ mod tests {
     fn cmd_list_all_annotations_empty_workspace() {
         let dir = create_workspace();
         write_md(dir.path(), "empty.md", "no annotations here");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert!(results.is_empty());
     }
@@ -806,7 +807,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Some text <!--- n: _ | Silk Road flourished ---> more.");
         write_md(dir.path(), "b.md", "Question <!--- q: _ | What happened? ---> end.");
         write_md(dir.path(), "c.md", "Todo <!--- t: _ | Fix this ---> done.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 3);
         let page_ids: Vec<&str> = results.iter().map(|r| r.source_page_id.as_str()).collect();
@@ -825,7 +826,7 @@ mod tests {
     fn cmd_list_all_annotations_sorted_by_page_then_position() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | first ---> text <!--- q: _ | second --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].char_start < results[1].char_start);
@@ -835,7 +836,7 @@ mod tests {
     fn cmd_read_cardbox_layout_missing_file() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
-        let _gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let _gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         // No .lit/cardbox.json exists
         let layout_path = dir.path().join(".lit").join("cardbox.json");
@@ -883,7 +884,7 @@ mod tests {
     fn cmd_read_cardbox_layout_prunes_stale_uuids() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         // Get the real UUID of the annotation
         let anns = gi.list_all_cardbox_annotations().unwrap();
@@ -940,7 +941,7 @@ mod tests {
     fn cmd_original_resolved_for_sentence_scope() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "First sentence. Second sentence.<!--- n: \\s | note --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].original.as_deref(), Some("Second sentence."));
@@ -951,7 +952,7 @@ mod tests {
         let dir = create_workspace();
         let file_path = dir.path().join("a.md");
         std::fs::write(&file_path, "Some text <!--- n: _ | note --->").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         std::fs::remove_file(&file_path).unwrap();
 
         // original is resolved at index time, so the DB snapshot survives the
@@ -960,7 +961,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].original.as_deref(), Some("text"));
 
-        gi.remove_file("a.md", true).unwrap();
+        gi.remove_file("a.md", &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert!(results.is_empty(), "reindex after deletion should drop the annotation entirely");
     }
@@ -969,7 +970,7 @@ mod tests {
     fn cmd_original_resolved_multiple_annotations_same_file() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "alpha <!--- n: _ | first ---> beta <!--- n: _ | second --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].original.as_deref(), Some("alpha"));
@@ -980,7 +981,7 @@ mod tests {
     fn cmd_original_resolved_with_frontmatter() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: Test\n---\nSome text <!--- n: _ | note --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].original.as_deref(), Some("text"));
@@ -1120,7 +1121,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
         write_md(dir.path(), "b.md", "<!--- n: _ | note2 --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let anns = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(anns.len(), 2);
         let uuid_a = anns[0].uuid.clone();
@@ -1153,7 +1154,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
         write_md(dir.path(), "b.md", "<!--- n: _ | note2 --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let anns = gi.list_all_cardbox_annotations().unwrap();
         let uuid_a = anns[0].uuid.clone();
         let uuid_b = anns[1].uuid.clone();
@@ -1978,7 +1979,7 @@ mod tests {
     fn read_layout_prunes_stale_pinned() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note1 --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let anns = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(anns.len(), 1);
         let real_uuid = anns[0].uuid.clone();
@@ -2112,7 +2113,7 @@ mod tests {
     fn test_notes_pruned_on_read() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let anns = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(anns.len(), 1);
         let real_uuid = anns[0].uuid.clone();
@@ -2949,7 +2950,7 @@ mod tests {
     fn cardbox_load_does_no_file_io_after_files_deleted() {
         let dir = create_workspace();
         write_md(dir.path(), "renxue.md", &generate_renxue_md(60));
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         let before = gi.list_all_cardbox_annotations().unwrap();
         assert_eq!(before.len(), 60);
@@ -2976,7 +2977,7 @@ mod tests {
     fn cardbox_load_time_under_budget_200_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "renxue.md", &generate_renxue_md(200));
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         let t = std::time::Instant::now();
         let anns = gi.list_all_cardbox_annotations().unwrap();
@@ -3000,7 +3001,7 @@ mod tests {
         write_md(dir.path(), "renxue.md", &generate_renxue_md(200));
 
         let t = std::time::Instant::now();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let elapsed = t.elapsed();
 
         assert_eq!(gi.list_all_cardbox_annotations().unwrap().len(), 200);

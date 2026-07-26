@@ -205,9 +205,9 @@ pub fn rebuild_graph_index(
     graph_state: State<Arc<GraphRegistry>>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+    let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
     let result = with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        gi.full_rebuild(ann_enabled)
+        gi.full_rebuild(&ann_opts)
     })?;
     let msg = format!(
         "Rebuilt: {} nodes, {} edges, {} stubs",
@@ -238,7 +238,7 @@ pub(crate) fn load_or_build_graph_sync(
     root: PathBuf,
     build_state: &GraphBuildState,
     graph_reg: &GraphRegistry,
-    annotations_enabled: bool,
+    ann_opts: &crate::annotation::lang::AnnotationIndexOpts,
     on_progress: impl Fn(crate::graph::progress::IndexProgress),
 ) -> Result<Arc<GraphIndex>, String> {
     // Reuse an already-registered index instead of opening a second DB
@@ -261,7 +261,7 @@ pub(crate) fn load_or_build_graph_sync(
         Err(e) => tracing::warn!(error = %e, "load_from_store failed, falling back to cold start"),
     }
 
-    match GraphIndex::build_with_progress(root.clone(), &on_progress, annotations_enabled) {
+    match GraphIndex::build_with_progress(root.clone(), &on_progress, ann_opts) {
         Ok(gi) => {
             let gi = Arc::new(gi);
             graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&gi));
@@ -279,15 +279,15 @@ pub(crate) fn initialize_graph_index_with_callbacks(
     root: PathBuf,
     build_state: &GraphBuildState,
     graph_reg: &GraphRegistry,
-    annotations_enabled: bool,
+    ann_opts: &crate::annotation::lang::AnnotationIndexOpts,
     on_progress: impl Fn(crate::graph::progress::IndexProgress),
     on_graph_updated: impl Fn(&Arc<GraphIndex>),
     on_layout: impl FnOnce(Arc<GraphIndex>),
 ) {
-    match load_or_build_graph_sync(root.clone(), build_state, graph_reg, annotations_enabled, on_progress) {
+    match load_or_build_graph_sync(root.clone(), build_state, graph_reg, ann_opts, on_progress) {
         Ok(gi) => {
             on_graph_updated(&gi);
-            match gi.sync_with_disk(annotations_enabled) {
+            match gi.sync_with_disk(ann_opts) {
                 Ok(true) => on_graph_updated(&gi),
                 Ok(false) => {}
                 Err(e) => tracing::error!(error = %e, "background graph sync failed"),
@@ -304,14 +304,14 @@ pub(crate) fn initialize_graph_index(
     graph_reg: Arc<GraphRegistry>,
     handle: tauri::AppHandle,
 ) {
-    let ann_enabled = crate::preferences::annotations_enabled(&handle);
+    let ann_opts = crate::preferences::annotation_index_opts(&handle);
     let emit_handle = handle.clone();
     let layout_handle = handle.clone();
     initialize_graph_index_with_callbacks(
         root,
         &build_state,
         &graph_reg,
-        ann_enabled,
+        &ann_opts,
         move |p| { let _ = emit_handle.emit("lit:index-progress", &p); },
         |_gi| { let _ = layout_handle.emit("lit:graph-updated", ()); },
         |gi| spawn_layout(gi, handle),
@@ -720,8 +720,8 @@ pub fn link_unlinked_mention(
         indices.get(&root).cloned()
     };
     if let Some(gi) = gi {
-        let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-        let result = gi.reindex_file(&source_id, ann_enabled);
+        let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
+        let result = gi.reindex_file(&source_id, &ann_opts);
         emit_reindex_side_effects(&app_handle, &result);
     }
 
@@ -786,6 +786,7 @@ pub async fn ensure_graph_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::lang::AnnotationIndexOpts;
 
     #[test]
     fn reindex_event_name_ok_returns_graph_updated() {
@@ -810,7 +811,7 @@ mod tests {
 
         std::fs::write(dir.path().join("test.md"), "Content.").unwrap();
 
-        let gi = Arc::new(GraphIndex::build(root.clone(), true).unwrap());
+        let gi = Arc::new(GraphIndex::build(root.clone(), &AnnotationIndexOpts::default()).unwrap());
         registry.indices.lock().unwrap().insert(root.clone(), gi);
 
         let indices = registry.indices.lock().unwrap();
@@ -824,7 +825,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let scores = gi.pagerank().unwrap();
         assert_eq!(scores.len(), 2);
         let sum: f64 = scores.values().sum();
@@ -836,7 +837,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let top = gi.top_by_pagerank(2).unwrap();
         assert_eq!(top.len(), 2);
         assert!(top[0].1 >= top[1].1);
@@ -847,7 +848,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let bl = gi.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].source_id, "a.md");
@@ -858,7 +859,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let fl = gi.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
         assert_eq!(fl[0].target_id, "b.md");
@@ -869,7 +870,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "As shown in [@smith2024].").unwrap();
         std::fs::write(dir.path().join("b.md"), "No citations here.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let citing = gi.citing_pages("smith2024").unwrap();
         assert_eq!(citing.len(), 1);
         assert_eq!(citing[0].source_id, "a.md");
@@ -880,7 +881,7 @@ mod tests {
     fn cmd_search_pages() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "---\ntitle: Quantum\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.search("Quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -897,7 +898,7 @@ mod tests {
             };
             std::fs::write(dir.path().join(format!("n{i}.md")), content).unwrap();
         }
-        let gi = Arc::new(GraphIndex::build(dir.path().to_path_buf(), true).unwrap());
+        let gi = Arc::new(GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap());
         let results = gi.search("concurrency", 100).unwrap();
         assert_eq!(results.len(), 5);
         for r in &results {
@@ -910,7 +911,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);
@@ -921,7 +922,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let result = gi.neighbors("a.md", 1, true).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -935,7 +936,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
         std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let paths = gi.paths("a.md", "c.md", 3, true).unwrap();
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0], vec!["a.md", "b.md", "c.md"]);
@@ -945,7 +946,7 @@ mod tests {
     fn cmd_resolve_wikilink_returns_resolved_link() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Content.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let resolved = gi.resolve_wikilink("a").unwrap();
         assert_eq!(resolved.node_id, Some("a.md".to_string()));
         let json = serde_json::to_value(&resolved).unwrap();
@@ -958,7 +959,7 @@ mod tests {
     fn cmd_resolve_wikilink_unresolved_returns_null_node_id() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Content.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let resolved = gi.resolve_wikilink("NonExistent").unwrap();
         assert_eq!(resolved.node_id, None);
         let json = serde_json::to_value(&resolved).unwrap();
@@ -969,7 +970,7 @@ mod tests {
     fn cmd_get_page_headings() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "# Intro\n\n## Details").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let headings = gi.page_headings("a").unwrap();
         assert_eq!(headings.len(), 2);
         assert_eq!(headings[0].text, "Intro");
@@ -980,7 +981,7 @@ mod tests {
     fn cmd_get_page_block_anchors() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "First block. ^3141e2\n\nPlain line.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let anchors = gi.page_block_anchors("a").unwrap();
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].id, "3141e2");
@@ -993,7 +994,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "[[c]]").unwrap();
         std::fs::write(dir.path().join("c.md"), "Leaf.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let result = gi.subgraph(&["a.md"], 1, true, false, false).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -1007,7 +1008,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         assert_eq!(bundle.subgraph.nodes.len(), 2);
         assert!(bundle.pagerank.contains_key("a.md"));
@@ -1032,7 +1033,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
             .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].source_id, "other.md");
@@ -1048,7 +1049,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("quantum.md"), "---\ntitle: Quantum Physics\n---\nBody.").unwrap();
         std::fs::write(dir.path().join("classic.md"), "---\ntitle: Classical Mechanics\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.search_by_title("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "quantum.md");
@@ -1063,7 +1064,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "---\ntags: [rust, coding]\n---\nBody.").unwrap();
         std::fs::write(dir.path().join("b.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
         std::fs::write(dir.path().join("c.md"), "---\ntags: [python]\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.search_tags("rust", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tag, "rust");
@@ -1074,7 +1075,7 @@ mod tests {
     fn cmd_search_tags_empty_query() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         assert!(gi.search_tags("", 10).unwrap().is_empty());
     }
 
@@ -1084,7 +1085,7 @@ mod tests {
         std::fs::write(dir.path().join("b.md"), "---\ntitle: Beta\ntags: [rust]\n---\nBeta body.").unwrap();
         std::fs::write(dir.path().join("a.md"), "---\ntitle: Alpha\ntags: [rust, coding]\n---\nAlpha body.").unwrap();
         std::fs::write(dir.path().join("c.md"), "---\ntitle: Charlie\ntags: [python]\n---\nCharlie body.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_pages_by_tag("rust", 10).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Alpha");
@@ -1095,7 +1096,7 @@ mod tests {
     fn cmd_list_pages_by_tag_no_match() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "---\ntags: [rust]\n---\nBody.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         assert!(gi.list_pages_by_tag("nonexistent", 10).unwrap().is_empty());
     }
 
@@ -1109,7 +1110,7 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("other.md"), "I met Alice yesterday.")
             .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         // Read the source page, replace, and write back
         let registry = crate::workspace::write_hash::WriteHashRegistry::new();
@@ -1121,7 +1122,7 @@ mod tests {
         let fm: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
         crate::workspace::ops::write_page(dir.path(), "other.md", &new_body, &fm, &registry)
             .unwrap();
-        gi.reindex_file("other.md", true).unwrap();
+        gi.reindex_file("other.md", &AnnotationIndexOpts::default()).unwrap();
 
         // Verify the file was updated
         let content = std::fs::read_to_string(dir.path().join("other.md")).unwrap();
@@ -1233,7 +1234,7 @@ mod tests {
             dir.path().to_path_buf(),
             &build_state,
             &graph_reg,
-            true,
+            &AnnotationIndexOpts::default(),
             |_| {},
         )
         .unwrap();
@@ -1246,7 +1247,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "[[b]]").unwrap();
         std::fs::write(dir.path().join("b.md"), "Target.").unwrap();
         // Cold build first to populate the store
-        let _gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let _gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         let build_state = GraphBuildState::new();
         let graph_reg = GraphRegistry::new();
@@ -1255,7 +1256,7 @@ mod tests {
             dir.path().to_path_buf(),
             &build_state,
             &graph_reg,
-            true,
+            &AnnotationIndexOpts::default(),
             |_| {},
         )
         .unwrap();
@@ -1274,7 +1275,7 @@ mod tests {
             dir.path().to_path_buf(),
             &build_state,
             &graph_reg,
-            true,
+            &AnnotationIndexOpts::default(),
             |_| {},
         )
         .unwrap();
@@ -1289,13 +1290,13 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "content").unwrap();
         let root = dir.path().to_path_buf();
 
-        let registered = Arc::new(GraphIndex::build(root.clone(), true).unwrap());
+        let registered = Arc::new(GraphIndex::build(root.clone(), &AnnotationIndexOpts::default()).unwrap());
         let build_state = GraphBuildState::new();
         let graph_reg = GraphRegistry::new();
         graph_reg.indices.lock().unwrap().insert(root.clone(), Arc::clone(&registered));
 
         build_state.start_build(root.clone());
-        let gi = load_or_build_graph_sync(root.clone(), &build_state, &graph_reg, true, |_| {}).unwrap();
+        let gi = load_or_build_graph_sync(root.clone(), &build_state, &graph_reg, &AnnotationIndexOpts::default(), |_| {}).unwrap();
 
         assert!(
             Arc::ptr_eq(&gi, &registered),
@@ -1321,7 +1322,7 @@ mod tests {
             dir.path().to_path_buf(),
             &build_state,
             &graph_reg,
-            true,
+            &AnnotationIndexOpts::default(),
             |_| {},
             |_| {},
             move |_gi| {
@@ -1338,7 +1339,7 @@ mod tests {
         std::fs::write(dir.path().join("linker.md"), "See [[target]].").unwrap();
         std::fs::write(dir.path().join("bystander.md"), "See [[other]].").unwrap();
 
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
         let stems = vec![crate::graph::indexer::normalize_stem("target")];
         let affected = gi.affected_sources(&stems);
@@ -1389,7 +1390,7 @@ mod tests {
             "@article{smith2024, author={Smith}, title={Test}, year={2024}}",
         )
         .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         let node_ids: std::collections::HashSet<&str> =
             bundle.subgraph.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -1425,7 +1426,7 @@ mod tests {
             "@article{smith2024, author={Smith}, title={Test}, year={2024}}",
         )
         .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let bundle = gi.subgraph_bundle(&[], 0, false, true, false).unwrap();
         let node_ids: std::collections::HashSet<&str> =
             bundle.subgraph.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -1471,7 +1472,7 @@ mod tests {
              @article{doe2021, author={Doe}, title={Other}, year={2021}}",
         )
         .unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let store = gi.store();
         // Verify shadow node bib:smith2024 exists
         let nodes = store.all_nodes_metadata().unwrap();
@@ -1499,7 +1500,7 @@ mod tests {
         // Create a .md file citing [@jones2024] but no .bib yet
         std::fs::write(dir.path().join("a.md"), "As shown in [@jones2024].").unwrap();
 
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
 
         // No shadow initially
         {
@@ -1578,14 +1579,14 @@ pub fn rewrite_links(
 
     let summary = crate::graph::rewriter::apply_planned_rewrites(&root, &planned)?;
 
-    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+    let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
 
     let mut reindex_err: Option<GraphError> = None;
     let mut all_removed: Vec<(String, String)> = Vec::new();
     for pr in &planned.rewrites {
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
         if let Some(ref gi) = gi {
-            match gi.reindex_file(&pr.relative_path, ann_enabled) {
+            match gi.reindex_file(&pr.relative_path, &ann_opts) {
                 Ok(removed) => all_removed.extend(removed),
                 Err(e) => { reindex_err = Some(e); }
             }

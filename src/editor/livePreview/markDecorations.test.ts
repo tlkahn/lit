@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { Decoration, EditorView } from "@codemirror/view";
 import type { Annotation } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
@@ -17,6 +17,7 @@ import {
   markDecorationExtension,
 } from "./markDecorations";
 import { setAnnotationData, annotationDataField } from "./annotationState";
+import { frontmatterFacet } from "./crossref";
 
 const mockResolve = resolveMarkScopes as ReturnType<typeof vi.fn>;
 
@@ -38,16 +39,24 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 }
 
 /** Mount a real EditorView wired with the field + plugin and the data field it reads. */
-function mountView(doc = "hello world"): { view: EditorView; parent: HTMLElement } {
+function mountView(
+  doc = "hello world",
+  frontmatter?: Record<string, unknown>,
+): { view: EditorView; parent: HTMLElement; fmCompartment: Compartment } {
   const parent = document.createElement("div");
+  const fmCompartment = new Compartment();
   const view = new EditorView({
     state: EditorState.create({
       doc,
-      extensions: [annotationDataField, markDecorationExtension()],
+      extensions: [
+        annotationDataField,
+        markDecorationExtension(),
+        fmCompartment.of(frontmatterFacet.of(frontmatter ?? {})),
+      ],
     }),
     parent,
   });
-  return { view, parent };
+  return { view, parent, fmCompartment };
 }
 
 /** Collect [from, to] pairs from a DecorationSet. */
@@ -339,6 +348,191 @@ describe("markScopePlugin", () => {
     await vi.runAllTimersAsync();
 
     expect(parent.querySelector(".cm-mark-nb")).not.toBeNull();
+    view.destroy();
+  });
+
+  // --- three-scope segmentation language (#854) ---
+
+  it("sends each mark's own lang and the document language as the batch fallback", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }, { start: 0, end: 4 }]);
+    const { view } = mountView("word rest", { "annotation-lang": "fr-CA" });
+
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({ char_start: 4, lang: "ja" }),
+        makeAnnotation({ char_start: 4 }),
+      ]),
+    });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "word rest",
+      [
+        { charStart: 4, scope: { kind: "words", value: 1 }, lang: "ja" },
+        { charStart: 4, scope: { kind: "words", value: 1 } },
+      ],
+      "fr",
+    );
+    view.destroy();
+  });
+
+  it("normalizes a mark's own lang before sending it", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
+    const { view } = mountView("word rest");
+
+    view.dispatch({
+      effects: setAnnotationData.of([makeAnnotation({ char_start: 4, lang: "FR-CA" })]),
+    });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "word rest",
+      [{ charStart: 4, scope: { kind: "words", value: 1 }, lang: "fr" }],
+      "en",
+    );
+    view.destroy();
+  });
+
+  // --- Fix 1: re-resolve on language changes ---
+
+  it("re-resolves when frontmatterFacet changes without a doc change", async () => {
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
+    const { view, fmCompartment } = mountView("word rest", { "annotation-lang": "en" });
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ char_start: 4 })]) });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    expect(mockResolve).toHaveBeenLastCalledWith(
+      "word rest",
+      [{ charStart: 4, scope: { kind: "words", value: 1 } }],
+      "en",
+    );
+
+    mockResolve.mockClear();
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
+
+    view.dispatch({
+      effects: fmCompartment.reconfigure(frontmatterFacet.of({ "annotation-lang": "fr" })),
+    });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    expect(mockResolve).toHaveBeenLastCalledWith(
+      "word rest",
+      [{ charStart: 4, scope: { kind: "words", value: 1 } }],
+      "fr",
+    );
+    view.destroy();
+  });
+
+  it("re-resolves when annotationDefaultLang preference changes", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
+    const { view } = mountView("word rest");
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ char_start: 4 })]) });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    expect(mockResolve).toHaveBeenLastCalledWith(
+      "word rest",
+      [{ charStart: 4, scope: { kind: "words", value: 1 } }],
+      "en",
+    );
+
+    mockResolve.mockClear();
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
+
+    usePreferencesStore.setState({ annotationDefaultLang: "fr" });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    expect(mockResolve).toHaveBeenLastCalledWith(
+      "word rest",
+      [{ charStart: 4, scope: { kind: "words", value: 1 } }],
+      "fr",
+    );
+    view.destroy();
+  });
+
+  it("discards a stale in-flight result when annotation data changes during the debounce window", async () => {
+    let resolveFirst!: (v: Array<{ start: number; end: number } | null>) => void;
+    mockResolve
+      .mockReturnValueOnce(new Promise((res) => { resolveFirst = res; }))
+      .mockResolvedValueOnce([{ start: 0, end: 4 }]);
+
+    const { view, parent } = mountView("word rest");
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "sic" })]) });
+    await vi.advanceTimersByTimeAsync(200);
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "nb" })]) });
+
+    resolveFirst!([{ start: 5, end: 9 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(parent.querySelector(".cm-mark-sic")).toBeNull();
+    expect(view.state.field(markDecorationField)).toBe(Decoration.none);
+
+    await vi.runAllTimersAsync();
+
+    expect(parent.querySelector(".cm-mark-nb")).not.toBeNull();
+    expect(ranges(view.state.field(markDecorationField))).toEqual([[0, 4]]);
+    view.destroy();
+  });
+
+  it("a stale result never paints even when the replacement IPC rejects", async () => {
+    let resolveFirst!: (v: Array<{ start: number; end: number } | null>) => void;
+    mockResolve
+      .mockReturnValueOnce(new Promise((res) => { resolveFirst = res; }))
+      .mockRejectedValueOnce(new Error("IPC channel closed"));
+
+    const { view, parent } = mountView("word rest");
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "sic" })]) });
+    await vi.advanceTimersByTimeAsync(200);
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "nb" })]) });
+
+    resolveFirst!([{ start: 5, end: 9 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(parent.querySelector(".cm-mark-sic")).toBeNull();
+    expect(view.state.field(markDecorationField)).toBe(Decoration.none);
+
+    await vi.runAllTimersAsync();
+
+    expect(view.state.field(markDecorationField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("discards stale result when language changes during in-flight IPC", async () => {
+    let resolveFirst: (v: Array<{ start: number; end: number } | null>) => void;
+    mockResolve
+      .mockReturnValueOnce(new Promise((res) => { resolveFirst = res; }))
+      .mockResolvedValueOnce([{ start: 0, end: 4 }]);
+
+    const { view, fmCompartment } = mountView("word rest", { "annotation-lang": "en" });
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ char_start: 4 })]) });
+    await vi.advanceTimersByTimeAsync(200);
+
+    view.dispatch({
+      effects: fmCompartment.reconfigure(frontmatterFacet.of({ "annotation-lang": "fr" })),
+    });
+    await vi.runAllTimersAsync();
+
+    resolveFirst!([{ start: 5, end: 9 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const decos = view.state.field(markDecorationField);
+    expect(ranges(decos)).toEqual([[0, 4]]);
     view.destroy();
   });
 });

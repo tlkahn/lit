@@ -19,7 +19,7 @@ import { serializeThreadBody } from "./threadBody";
  *   - otherwise -> the source body, or "Answer" when the body is empty/whitespace
  */
 export function buildThreadDsl(sourceAnnotation: Annotation, responseText: string): string {
-  const scope = annotationToFields(sourceAnnotation).scope;
+  const { scope, lang } = annotationToFields(sourceAnnotation);
 
   const sourceBody = (sourceAnnotation.body ?? "").trim();
   let question: string;
@@ -43,6 +43,7 @@ export function buildThreadDsl(sourceAnnotation: Annotation, responseText: strin
     scope,
     body,
     date: null,
+    lang,
   });
 }
 
@@ -53,6 +54,7 @@ export function buildCompanionDsl(responseText: string, scope?: Scope | null): s
     certainty: "neutral",
     scope: scope ?? null,
     body: responseText,
+    lang: null,
     date: null,
   });
 }

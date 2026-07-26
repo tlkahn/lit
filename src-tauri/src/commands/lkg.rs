@@ -286,7 +286,7 @@ mod tests {
         std::fs::write(src.join("b.md"), "# B").unwrap();
         std::fs::write(src.join("img.png"), b"fake png").unwrap();
 
-        let gi = GraphIndex::build(src.to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(src.to_path_buf(), &crate::annotation::lang::AnnotationIndexOpts::default()).unwrap();
         let bundle = src.join("out.lkg");
         let export_summary =
             crate::lkg::export::export_lkg(src, &gi, "My Graph", Some("desc"), &bundle, |_, _| {})

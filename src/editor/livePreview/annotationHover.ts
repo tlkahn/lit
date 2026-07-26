@@ -2,6 +2,8 @@ import type { EditorView } from "@codemirror/view";
 import type { Annotation } from "../../lib/ipc";
 import { resolveAnnotationScope, resolveAnnotationScopeWithMode } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
+import { effectiveAnnotationLang } from "../../lib/annotationLang";
+import { frontmatterFacet } from "./crossref";
 import { dispatchScopeHighlight, clearScopeHighlight } from "./scopeHighlight";
 
 const generationMap = new WeakMap<EditorView, number>();
@@ -30,7 +32,11 @@ export async function handleAnnotationHover(
 
   const generation = bumpGen(view);
   const content = view.state.doc.toString();
-  const lang = prefs.annotationDefaultLang;
+  const lang = effectiveAnnotationLang(
+    annotation.lang,
+    view.state.facet(frontmatterFacet),
+    prefs.annotationDefaultLang,
+  );
 
   let range: { start: number; end: number } | null;
   try {

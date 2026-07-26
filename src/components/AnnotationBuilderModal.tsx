@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { generateDsl, type AnnotationFields, type AnnotationForm, type EditRawInfo } from "../lib/annotationDsl";
+import { normalizeLang } from "../lib/annotationLang";
 import { SegmentedControl } from "./SegmentedControl";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import type { AnnotationType, Certainty, Scope, ScopeKind as IpcScopeKind } from "../lib/ipc";
@@ -101,6 +102,10 @@ export function AnnotationBuilderModal({
     if (mode !== "edit") return new Date().toISOString().slice(0, 10);
     return "";
   });
+  // Empty means "inherit": the document's frontmatter, then the global
+  // `annotations.defaultLang`. Deliberately never prefilled from the
+  // preference, so "inherit" is what an untouched field looks like (#854).
+  const [lang, setLang] = useState(initialFields?.lang ?? "");
   const [mark] = useState<string | undefined>(initialFields?.mark);
   const [formChoice, setFormChoice] = useState<AnnotationForm>("inline");
 
@@ -121,16 +126,22 @@ export function AnnotationBuilderModal({
   const [defaultDate] = useState(date);
   const [defaultId] = useState(id);
 
+  const langTrimmed = lang.trim();
+  const langNorm = langTrimmed ? normalizeLang(langTrimmed) : null;
+  const langInvalid = langTrimmed !== "" && langNorm == null;
+
   const hasNonDefaultAdvanced =
     certainty !== "neutral" ||
     date !== defaultDate ||
     id !== defaultId ||
+    langTrimmed !== "" ||
     (showFormToggle && effectiveForm !== "inline");
 
   const [showAdvanced, setShowAdvanced] = useState(() => {
     if (initialFields?.certainty && initialFields.certainty !== "neutral") return true;
     if (initialFields?.date) return true;
     if (initialFields?.id) return true;
+    if (initialFields?.lang) return true;
     if (defaults?.certainty && defaults.certainty !== "neutral") return true;
     return false;
   });
@@ -155,8 +166,9 @@ export function AnnotationBuilderModal({
       scope,
       body,
       date: date || null,
+      lang: langNorm ?? null,
     }),
-    [id, type, mark, certainty, scope, body, date],
+    [id, type, mark, certainty, scope, body, date, langNorm],
   );
 
   const preview = useMemo(() => generateDsl(fields, { form: effectiveForm }), [fields, effectiveForm]);
@@ -295,6 +307,23 @@ export function AnnotationBuilderModal({
                   onChange={(e) => setDate(e.target.value)}
                   placeholder="YYYY-MM or YYYY-MM-DD"
                 />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">Language</span>
+                <input
+                  type="text"
+                  className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                  data-testid="annotation-lang-input"
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value)}
+                  placeholder="inherit"
+                />
+                {langInvalid && (
+                  <span className="text-xs text-text-muted" data-testid="annotation-lang-hint">
+                    Not a recognized BCP-47 tag; will be omitted.
+                  </span>
+                )}
               </label>
 
               <label className="col-span-2 flex flex-col gap-1">

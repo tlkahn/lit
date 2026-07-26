@@ -11,6 +11,10 @@ static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"^\^"((?:[^"\\]|\\.)+)"$"#).unwrap()
 });
 
+static LANG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?i)lang\s*[:=]\s*(\S+)$").unwrap()
+});
+
 pub fn parse_block(inner: &str, mark_codes: &[String]) -> Annotation {
     let (head, body) = split_head_body(inner);
 
@@ -19,6 +23,7 @@ pub fn parse_block(inner: &str, mark_codes: &[String]) -> Annotation {
     let mut scope = Scope::Sentence(1);
     let mut date = None;
     let mut mark: Option<String> = None;
+    let mut lang: Option<String> = None;
 
     for line in head.lines() {
         let line = line.trim();
@@ -33,6 +38,13 @@ pub fn parse_block(inner: &str, mark_codes: &[String]) -> Annotation {
 
         if let Some(caps) = ANCHOR_RE.captures(line) {
             scope = Scope::Anchor(caps.get(1).unwrap().as_str().replace("\\\"", "\""));
+            continue;
+        }
+
+        // A `lang:` line only carries meaning in the header; after the `---`
+        // separator it is body text, which `split_head_body` already excludes.
+        if let Some(caps) = LANG_RE.captures(line) {
+            lang = super::lang::normalize_lang(caps.get(1).unwrap().as_str());
             continue;
         }
 
@@ -82,6 +94,7 @@ pub fn parse_block(inner: &str, mark_codes: &[String]) -> Annotation {
         original: String::new(),
         uuid: None,
         mark,
+        lang,
     }
 }
 
@@ -334,5 +347,65 @@ mod tests {
         let ann = parse_block(inner, marks::builtin_mark_codes());
         assert_eq!(ann.annotation_type, AnnotationType::Bare);
         assert_eq!(ann.mark, None);
+    }
+
+    // --- lang: header line ---
+
+    #[test]
+    fn block_lang_header_line() {
+        let inner = "n\n\\s\nlang: fr\n@2026-07\n---\nune note";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.scope, Scope::Sentence(1));
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.date, Some("2026-07".to_string()));
+        assert_eq!(ann.body, Some("une note".to_string()));
+    }
+
+    #[test]
+    fn block_lang_accepts_equals_and_case_insensitive_key() {
+        let inner = "n\nLang = ja\n---\nbody";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.lang, Some("ja".to_string()));
+    }
+
+    #[test]
+    fn block_lang_is_normalized() {
+        let inner = "n\nlang: zh-Hant-TW\n---\nbody";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.lang, Some("zh-hant".to_string()));
+    }
+
+    #[test]
+    fn block_without_lang_header_leaves_none() {
+        let inner = "n\n\\s\n---\nbody";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+    }
+
+    #[test]
+    fn block_unnormalizable_lang_header_leaves_none() {
+        let inner = "n\nlang: x\n---\nbody";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+    }
+
+    #[test]
+    fn block_lang_line_after_separator_stays_body_text() {
+        let inner = "n\n---\nlang: fr\nis how you set it";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+        assert_eq!(ann.body, Some("lang: fr\nis how you set it".to_string()));
+    }
+
+    #[test]
+    fn block_lang_header_does_not_shadow_the_type_line() {
+        // `lang: fr` must not be mistaken for a type/mark line and leave the
+        // annotation typeless.
+        let inner = "q?\nlang: fr\n---\nbody";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Question);
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.lang, Some("fr".to_string()));
     }
 }

@@ -71,9 +71,26 @@ describe("SettingsTextInput", () => {
       <SettingsTextInput value="en" onChange={vi.fn()} testId="txt" label="Language" />,
     );
     const root = container.firstElementChild!;
-    const label = root.querySelector("span.text-sm")!;
-    const input = root.querySelector("[data-testid='txt']")!;
-    const children = Array.from(root.children);
+    const row = root.firstElementChild!;
+    const label = row.querySelector("span.text-sm")!;
+    const input = row.querySelector("[data-testid='txt']")!;
+    const children = Array.from(row.children);
     expect(children.indexOf(label)).toBeLessThan(children.indexOf(input));
+  });
+
+  it("renders hint text when provided", () => {
+    const { container } = render(
+      <SettingsTextInput value="en" onChange={vi.fn()} testId="txt" hint="Some hint text" />,
+    );
+    const hint = container.querySelector("[data-testid='txt-hint']");
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toBe("Some hint text");
+  });
+
+  it("omits hint element when not provided", () => {
+    const { container } = render(
+      <SettingsTextInput value="en" onChange={vi.fn()} testId="txt" />,
+    );
+    expect(container.querySelector("[data-testid='txt-hint']")).toBeNull();
   });
 });

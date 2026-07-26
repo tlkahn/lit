@@ -2,7 +2,12 @@ import { type Extension, type Range, StateEffect, StateField } from "@codemirror
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { resolveMarkScopes, type ScopeRange } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
+import {
+  effectiveAnnotationLang,
+  normalizeLang,
+} from "../../lib/annotationLang";
 import { annotationDataField, setAnnotationData } from "./annotationState";
+import { frontmatterFacet } from "./crossref";
 
 /** A resolved mark span: a document range plus the mark code driving its CSS class. */
 export interface MarkRange {
@@ -53,25 +58,37 @@ const DEBOUNCE_MS = 150;
  * Watches `annotationDataField` for mark-type annotations, resolves all their
  * scopes in a single batched `resolveMarkScopes` IPC call, and dispatches
  * `setMarkDecorations`. Stale async results are discarded via a per-view
- * generation counter, mirroring the pattern in `annotationHover.ts`.
+ * generation counter bumped at schedule time, so any in-flight IPC is
+ * invalidated the moment a superseding schedule lands.
  */
 const markScopePlugin = ViewPlugin.fromClass(
   class {
     private generation = 0;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private unsubscribe: (() => void) | null = null;
 
     constructor(private view: EditorView) {
       this.schedule();
+
+      let prev = usePreferencesStore.getState().annotationDefaultLang;
+      this.unsubscribe = usePreferencesStore.subscribe((s) => {
+        if (s.annotationDefaultLang === prev) return;
+        prev = s.annotationDefaultLang;
+        this.schedule();
+      });
     }
 
     update(update: ViewUpdate) {
       const dataChanged = update.transactions.some((t) =>
         t.effects.some((e) => e.is(setAnnotationData)),
       );
-      if (dataChanged || update.docChanged) this.schedule();
+      const fmChanged =
+        update.state.facet(frontmatterFacet) !== update.startState.facet(frontmatterFacet);
+      if (dataChanged || update.docChanged || fmChanged) this.schedule();
     }
 
     private schedule() {
+      this.generation++;
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
       this.debounceTimer = setTimeout(() => {
         this.debounceTimer = null;
@@ -97,11 +114,19 @@ const markScopePlugin = ViewPlugin.fromClass(
         return;
       }
 
-      const lang = usePreferencesStore.getState().annotationDefaultLang;
-      const requests = marks.map((ann) => ({
-        charStart: ann.char_start,
-        scope: ann.scope,
-      }));
+      const lang = effectiveAnnotationLang(
+        null,
+        this.view.state.facet(frontmatterFacet),
+        usePreferencesStore.getState().annotationDefaultLang,
+      );
+      const requests = marks.map((ann) => {
+        const markLang = normalizeLang(ann.lang);
+        return {
+          charStart: ann.char_start,
+          scope: ann.scope,
+          ...(markLang ? { lang: markLang } : {}),
+        };
+      });
 
       let results: Array<ScopeRange | null>;
       try {
@@ -112,6 +137,13 @@ const markScopePlugin = ViewPlugin.fromClass(
 
       if (this.generation !== generation) return;
       if (this.view.state.doc.toString() !== content) return;
+
+      const currentLang = effectiveAnnotationLang(
+        null,
+        this.view.state.facet(frontmatterFacet),
+        usePreferencesStore.getState().annotationDefaultLang,
+      );
+      if (currentLang !== lang) return;
 
       const ranges = marks.flatMap((ann, i) => {
         const range = results[i];
@@ -124,6 +156,7 @@ const markScopePlugin = ViewPlugin.fromClass(
 
     destroy() {
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
+      this.unsubscribe?.();
     }
   },
 );

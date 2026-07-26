@@ -174,6 +174,11 @@ pub struct IndexableAnnotation {
     pub uuid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub original: Option<String>,
+    /// Annotation-scope segmentation language from the DSL. In-memory only:
+    /// it feeds `original` resolution at index time and is never persisted,
+    /// since nothing re-segments from DB rows after #849.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lang: Option<String>,
 }
 
 impl From<FullAnnotationRecord> for IndexableAnnotation {
@@ -190,6 +195,7 @@ impl From<FullAnnotationRecord> for IndexableAnnotation {
             scope_value: r.scope_value,
             uuid: Some(r.uuid),
             original: None,
+            lang: None,
         }
     }
 }
@@ -556,6 +562,7 @@ mod tests {
             scope_value: "2".into(),
             uuid: None,
             original: None,
+            lang: None,
         };
         let json_str = serde_json::to_string(&ia).expect("serialize");
         let back: IndexableAnnotation = serde_json::from_str(&json_str).expect("deserialize");

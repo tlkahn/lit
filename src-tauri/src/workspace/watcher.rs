@@ -169,8 +169,8 @@ impl FileWatcher {
                     if let Some(graph_reg) = app_handle.try_state::<std::sync::Arc<GraphRegistry>>() {
                         let indices = graph_reg.indices.lock().unwrap();
                         if let Some(gi) = indices.get(&root_clone) {
-                            let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
-                            let result = gi.batch_reindex(&diff, ann_enabled);
+                            let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
+                            let result = gi.batch_reindex(&diff, &ann_opts);
                             drop(indices);
                             crate::commands::graph::emit_reindex_side_effects(&app_handle, &result);
                         } else {

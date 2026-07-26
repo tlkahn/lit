@@ -1190,6 +1190,8 @@ export interface Annotation {
   original: string;
   uuid?: string | null;
   mark?: string | null;
+  /** Annotation-scope segmentation language; absent means "inherit". */
+  lang?: string | null;
 }
 
 export interface ScopeRange {
@@ -1235,6 +1237,8 @@ export async function resolveAnnotationScopeWithMode(
 export interface MarkScopeRequest {
   charStart: number;
   scope: Scope;
+  /** Per-mark segmentation language; omitted marks fall back to `lang`. */
+  lang?: string;
 }
 
 /**
@@ -1242,6 +1246,8 @@ export interface MarkScopeRequest {
  * index-aligned with `marks` (`null` for marks whose scope did not resolve). The
  * per-mark `charStart` is emitted as snake_case `char_start` because Tauri's arg
  * casing only converts top-level command keys, not keys inside array payloads.
+ * A mark's own `lang` is emitted only when set; the top-level `lang` is the
+ * batch fallback.
  */
 export async function resolveMarkScopes(
   content: string,
@@ -1250,7 +1256,11 @@ export async function resolveMarkScopes(
 ): Promise<Array<ScopeRange | null>> {
   return invoke<Array<ScopeRange | null>>("resolve_mark_scopes", {
     content,
-    marks: marks.map((m) => ({ char_start: m.charStart, scope: m.scope })),
+    marks: marks.map((m) => ({
+      char_start: m.charStart,
+      scope: m.scope,
+      ...(m.lang ? { lang: m.lang } : {}),
+    })),
     lang,
   });
 }

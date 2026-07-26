@@ -69,7 +69,7 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
     onDone: ({ responseText, markFiringCleared, liveRange }) => {
       try {
         const newBody = appendTurn(annotation.body ?? "", question, responseText);
-        const scope = annotationToFields(annotation).scope;
+        const { scope, lang } = annotationToFields(annotation);
         const dsl = generateDsl({
           id: annotation.uuid ?? crypto.randomUUID(),
           type: "thread",
@@ -77,6 +77,7 @@ export async function threadFollowup(args: ThreadFollowupArgs): Promise<void> {
           scope,
           body: newBody,
           date: annotation.date,
+          lang,
         });
         const newTurnIndex = parseThreadBody(newBody).length - 1;
         const changes = view.state.changes({

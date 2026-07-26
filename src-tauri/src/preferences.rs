@@ -126,12 +126,44 @@ pub fn read_preferences(app_handle: &AppHandle) -> Preferences {
     read_preferences_from_path(&path)
 }
 
-pub fn annotations_enabled(app_handle: &AppHandle) -> bool {
-    read_preferences(app_handle)
+pub fn annotations_enabled_from_prefs(prefs: &Preferences) -> bool {
+    prefs
         .extra
         .get("annotations.enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(true)
+}
+
+pub fn annotations_enabled(app_handle: &AppHandle) -> bool {
+    annotations_enabled_from_prefs(&read_preferences(app_handle))
+}
+
+/// App-global segmentation language: the lowest-precedence scope behind an
+/// annotation's own `lang=` and the document's frontmatter (issue #854).
+pub fn annotation_default_lang_from_prefs(prefs: &Preferences) -> String {
+    let raw = prefs
+        .extra
+        .get("annotations.defaultLang")
+        .and_then(|v| v.as_str());
+    crate::annotation::lang::effective_lang(None, None, raw)
+}
+
+pub fn annotation_default_lang(app_handle: &AppHandle) -> String {
+    annotation_default_lang_from_prefs(&read_preferences(app_handle))
+}
+
+pub fn annotation_index_opts_from_prefs(
+    prefs: &Preferences,
+) -> crate::annotation::lang::AnnotationIndexOpts {
+    crate::annotation::lang::AnnotationIndexOpts {
+        enabled: annotations_enabled_from_prefs(prefs),
+        default_lang: annotation_default_lang_from_prefs(prefs),
+    }
+}
+
+/// The annotation-indexing settings for every `GraphIndex` entry point.
+pub fn annotation_index_opts(app_handle: &AppHandle) -> crate::annotation::lang::AnnotationIndexOpts {
+    annotation_index_opts_from_prefs(&read_preferences(app_handle))
 }
 
 pub fn auto_update_enabled(app_handle: &AppHandle) -> bool {
@@ -716,14 +748,6 @@ mod tests {
         assert_eq!(config.eq_prefix, vec!["Equation"]);
     }
 
-    fn annotations_enabled_from_prefs(prefs: &Preferences) -> bool {
-        prefs
-            .extra
-            .get("annotations.enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
-    }
-
     #[test]
     fn annotations_enabled_defaults_to_true() {
         let prefs = Preferences::default();
@@ -742,6 +766,46 @@ mod tests {
         let json = r#"{"annotations.enabled": true}"#;
         let prefs: Preferences = serde_json::from_str(json).unwrap();
         assert!(annotations_enabled_from_prefs(&prefs));
+    }
+
+    #[test]
+    fn annotation_default_lang_defaults_to_en() {
+        let prefs = Preferences::default();
+        assert_eq!(annotation_default_lang_from_prefs(&prefs), "en");
+    }
+
+    #[test]
+    fn annotation_default_lang_reads_and_normalizes_the_preference() {
+        let json = r#"{"annotations.defaultLang": "fr-CA"}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        assert_eq!(annotation_default_lang_from_prefs(&prefs), "fr");
+    }
+
+    #[test]
+    fn annotation_default_lang_falls_back_on_unusable_values() {
+        for json in [
+            r#"{"annotations.defaultLang": ""}"#,
+            r#"{"annotations.defaultLang": "  "}"#,
+            r#"{"annotations.defaultLang": 42}"#,
+        ] {
+            let prefs: Preferences = serde_json::from_str(json).unwrap();
+            assert_eq!(annotation_default_lang_from_prefs(&prefs), "en", "for {json}");
+        }
+    }
+
+    #[test]
+    fn annotation_index_opts_combines_enabled_and_lang() {
+        let json = r#"{"annotations.enabled": false, "annotations.defaultLang": "zh-Hant"}"#;
+        let prefs: Preferences = serde_json::from_str(json).unwrap();
+        let opts = annotation_index_opts_from_prefs(&prefs);
+        assert!(!opts.enabled);
+        assert_eq!(opts.default_lang, "zh-hant");
+    }
+
+    #[test]
+    fn annotation_index_opts_defaults_match_the_struct_default() {
+        let opts = annotation_index_opts_from_prefs(&Preferences::default());
+        assert_eq!(opts, crate::annotation::lang::AnnotationIndexOpts::default());
     }
 
     fn auto_update_enabled_from_prefs(prefs: &Preferences) -> bool {

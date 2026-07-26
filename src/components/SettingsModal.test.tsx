@@ -591,18 +591,53 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("trims whitespace-only input to empty string on blur", async () => {
+    it("commits en for whitespace-only input", async () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
       const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
       fireEvent.change(input, { target: { value: "  " } });
       fireEvent.blur(input);
-      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("");
+      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("en");
       await vi.waitFor(() => {
         expect(invokeCalls).toContainEqual({
           cmd: "set_preference",
-          args: { key: "annotations.defaultLang", value: "" },
+          args: { key: "annotations.defaultLang", value: "en" },
         });
       });
+    });
+
+    it("normalizes a region-tagged value on commit", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "FR-fr" } });
+      fireEvent.blur(input);
+      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("fr");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "annotations.defaultLang", value: "fr" },
+        });
+      });
+    });
+
+    it("falls back to en for an unnormalizable value", async () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "garbage!" } });
+      fireEvent.blur(input);
+      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("en");
+      await vi.waitFor(() => {
+        expect(invokeCalls).toContainEqual({
+          cmd: "set_preference",
+          args: { key: "annotations.defaultLang", value: "en" },
+        });
+      });
+    });
+
+    it("renders a hint below the Default Language input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const hint = container.querySelector("[data-testid='settings-annotationDefaultLang-hint']");
+      expect(hint).not.toBeNull();
+      expect(hint!.textContent).toContain("Rebuild Index");
     });
   });
 
