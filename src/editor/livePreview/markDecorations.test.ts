@@ -458,6 +458,59 @@ describe("markScopePlugin", () => {
     view.destroy();
   });
 
+  it("discards a stale in-flight result when annotation data changes during the debounce window", async () => {
+    let resolveFirst!: (v: Array<{ start: number; end: number } | null>) => void;
+    mockResolve
+      .mockReturnValueOnce(new Promise((res) => { resolveFirst = res; }))
+      .mockResolvedValueOnce([{ start: 0, end: 4 }]);
+
+    const { view, parent } = mountView("word rest");
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "sic" })]) });
+    await vi.advanceTimersByTimeAsync(200);
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "nb" })]) });
+
+    resolveFirst!([{ start: 5, end: 9 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(parent.querySelector(".cm-mark-sic")).toBeNull();
+    expect(view.state.field(markDecorationField)).toBe(Decoration.none);
+
+    await vi.runAllTimersAsync();
+
+    expect(parent.querySelector(".cm-mark-nb")).not.toBeNull();
+    expect(ranges(view.state.field(markDecorationField))).toEqual([[0, 4]]);
+    view.destroy();
+  });
+
+  it("a stale result never paints even when the replacement IPC rejects", async () => {
+    let resolveFirst!: (v: Array<{ start: number; end: number } | null>) => void;
+    mockResolve
+      .mockReturnValueOnce(new Promise((res) => { resolveFirst = res; }))
+      .mockRejectedValueOnce(new Error("IPC channel closed"));
+
+    const { view, parent } = mountView("word rest");
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "sic" })]) });
+    await vi.advanceTimersByTimeAsync(200);
+
+    view.dispatch({ effects: setAnnotationData.of([makeAnnotation({ mark: "nb" })]) });
+
+    resolveFirst!([{ start: 5, end: 9 }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(parent.querySelector(".cm-mark-sic")).toBeNull();
+    expect(view.state.field(markDecorationField)).toBe(Decoration.none);
+
+    await vi.runAllTimersAsync();
+
+    expect(view.state.field(markDecorationField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
   it("discards stale result when language changes during in-flight IPC", async () => {
     let resolveFirst: (v: Array<{ start: number; end: number } | null>) => void;
     mockResolve

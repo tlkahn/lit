@@ -149,6 +149,16 @@ impl ReindexQueue {
     }
 }
 
+/// Builds a drain-pass closure that re-reads annotation options on every
+/// pass, so coalesced passes never run under options frozen at schedule time.
+pub fn fresh_opts_run<O, R>(opts: O, reindex: R) -> impl Fn(&DiffResult) -> RunResult
+where
+    O: Fn() -> crate::annotation::lang::AnnotationIndexOpts + Send + 'static,
+    R: Fn(&DiffResult, &crate::annotation::lang::AnnotationIndexOpts) -> RunResult + Send + 'static,
+{
+    move |diff| reindex(diff, &opts())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +418,76 @@ mod tests {
             run_count.load(Ordering::SeqCst),
             2,
             "10 rapid schedules must coalesce into exactly 2 run passes"
+        );
+    }
+
+    #[test]
+    fn run_closure_observes_opts_changed_between_coalesced_passes() {
+        use crate::annotation::lang::AnnotationIndexOpts;
+
+        let queue = Arc::new(ReindexQueue::with_spawner(thread_spawner()));
+        let root = PathBuf::from("/ws");
+
+        let shared_opts = Arc::new(Mutex::new(
+            AnnotationIndexOpts::with_lang("en"),
+        ));
+        let recorded_langs = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+
+        let opts_for_run = Arc::clone(&shared_opts);
+        let langs = Arc::clone(&recorded_langs);
+        queue.schedule(
+            root.clone(),
+            ChangeKind::Changed,
+            "a.md".to_string(),
+            fresh_opts_run(
+                move || opts_for_run.lock().unwrap().clone(),
+                move |_diff, ann| {
+                    langs.lock().unwrap().push(ann.default_lang.clone());
+                    started_tx.send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                    Ok(vec![])
+                },
+            ),
+            move |_res| {
+                done_tx.send(()).unwrap();
+            },
+        );
+
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first pass must start");
+
+        *shared_opts.lock().unwrap() = AnnotationIndexOpts::with_lang("fr");
+        queue.schedule(
+            root.clone(),
+            ChangeKind::Changed,
+            "a.md".to_string(),
+            |_diff| Ok(vec![]),
+            |_res| {},
+        );
+
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("pass 1 notify");
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("coalesced second pass must start");
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("pass 2 notify");
+
+        let langs = recorded_langs.lock().unwrap();
+        assert_eq!(
+            *langs,
+            vec!["en".to_string(), "fr".to_string()],
+            "each drain pass must re-read opts, not reuse the frozen schedule-time value"
         );
     }
 }

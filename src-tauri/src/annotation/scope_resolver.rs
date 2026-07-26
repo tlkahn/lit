@@ -643,6 +643,8 @@ impl<'a> ScopeResolveCtx<'a> {
 }
 
 /// One-shot wrapper over [`ScopeResolveCtx::extract_text_for_range`].
+/// The hardcoded `"en"` is irrelevant: extraction only uses the UTF-16
+/// offset map inside the ctx, not the language's segmentation rules.
 pub fn extract_text_for_range(content: &str, range: &ScopeRange) -> String {
     ScopeResolveCtx::new(content, "en").extract_text_for_range(range)
 }

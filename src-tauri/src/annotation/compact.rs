@@ -11,7 +11,7 @@ static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static LANG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?i)lang=([A-Za-z0-9_-]+)").unwrap()
+    Regex::new(r"^(?i)lang\s*=\s*([a-z0-9_-]+)").unwrap()
 });
 
 static SCOPE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -114,13 +114,15 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
     // `lang=xx` sits in the header region, after the scope/anchor and before
     // the `|`. On an annotation that is not yet structured the token is
     // ambiguous with prose (`<!--- lang=en is a variable name --->`), so it is
-    // only consumed when nothing but a body separator, a date or the end of
-    // the annotation follows it. Text after `|` is body and never scanned.
+    // only consumed when nothing but a body separator, an `@YYYY-MM` date, or
+    // the end of the annotation follows it. Text after `|` is body and never
+    // scanned.
     if let Some(caps) = LANG_RE.captures(remaining) {
         let rest = &remaining[caps.get(0).unwrap().end()..];
         let after = rest.trim_start();
         let unambiguous =
-            is_structured || after.is_empty() || after.starts_with('|') || after.starts_with('@');
+            is_structured || after.is_empty() || after.starts_with('|')
+            || (after.starts_with('@') && DATE_RE.is_match(after));
         if unambiguous {
             if let Some(normalized) = super::lang::normalize_lang(caps.get(1).unwrap().as_str()) {
                 lang = Some(normalized);
@@ -689,6 +691,30 @@ mod tests {
     fn lang_keyword_uppercase() {
         let ann = parse_compact(r"n \s LANG=ja | note", marks::builtin_mark_codes());
         assert_eq!(ann.lang, Some("ja".to_string()));
+    }
+
+    #[test]
+    fn compact_bare_lang_followed_by_non_date_at_token_stays_prose() {
+        let ann = parse_compact("lang=fr @gmail", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Bare);
+        assert!(!ann.is_structured);
+        assert_eq!(ann.lang, None);
+        assert_eq!(ann.body, Some("lang=fr @gmail".to_string()));
+    }
+
+    #[test]
+    fn compact_bare_lang_followed_by_date_is_structured() {
+        let ann = parse_compact("lang=fr @2026-07", marks::builtin_mark_codes());
+        assert!(ann.is_structured);
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.date, Some("2026-07".to_string()));
+    }
+
+    #[test]
+    fn compact_lang_accepts_spaces_around_equals() {
+        let ann = parse_compact(r"n \s lang = fr | note", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, Some("note".to_string()));
     }
 
     #[test]

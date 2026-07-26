@@ -58,7 +58,8 @@ const DEBOUNCE_MS = 150;
  * Watches `annotationDataField` for mark-type annotations, resolves all their
  * scopes in a single batched `resolveMarkScopes` IPC call, and dispatches
  * `setMarkDecorations`. Stale async results are discarded via a per-view
- * generation counter, mirroring the pattern in `annotationHover.ts`.
+ * generation counter bumped at schedule time, so any in-flight IPC is
+ * invalidated the moment a superseding schedule lands.
  */
 const markScopePlugin = ViewPlugin.fromClass(
   class {
@@ -87,6 +88,7 @@ const markScopePlugin = ViewPlugin.fromClass(
     }
 
     private schedule() {
+      this.generation++;
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
       this.debounceTimer = setTimeout(() => {
         this.debounceTimer = null;

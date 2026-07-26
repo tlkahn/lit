@@ -82,13 +82,16 @@ pub fn write_page(
     // Reindex off the hot path: rapid autosaves coalesce in the background
     // queue instead of serializing 100ms+ reindexes onto the main thread.
     if let Some(gi) = lookup_graph_index(&graph_state, &root) {
-        let ann = crate::preferences::annotation_index_opts(&app_handle);
+        let opts_handle = app_handle.clone();
         let handle = app_handle.clone();
         queue.inner().schedule(
             root.clone(),
             ChangeKind::Changed,
             relative_path.clone(),
-            move |diff| gi.batch_reindex(diff, &ann),
+            crate::commands::reindex_queue::fresh_opts_run(
+                move || crate::preferences::annotation_index_opts(&opts_handle),
+                move |diff, ann| gi.batch_reindex(diff, ann),
+            ),
             move |result| crate::commands::graph::emit_reindex_side_effects(&handle, result),
         );
     }

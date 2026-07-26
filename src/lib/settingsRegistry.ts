@@ -1,4 +1,5 @@
 import type { PreferencesState } from "../stores/preferences";
+import { normalizeLang } from "./annotationLang";
 import { DEFAULT_IMAGE_DIR } from "./imageSrcCandidates";
 import { fuzzyMatch } from "./fuzzyMatch";
 
@@ -250,6 +251,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "annotations.defaultLang",
     controlType: "text",
     testId: "settings-annotationDefaultLang",
+    normalize: (v) => normalizeLang(v) ?? "en",
     hint: "Applies to new resolutions; run Rebuild Index to refresh existing cards.",
   },
   {
