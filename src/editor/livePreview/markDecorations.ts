@@ -64,16 +64,26 @@ const markScopePlugin = ViewPlugin.fromClass(
   class {
     private generation = 0;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private unsubscribe: (() => void) | null = null;
 
     constructor(private view: EditorView) {
       this.schedule();
+
+      let prev = usePreferencesStore.getState().annotationDefaultLang;
+      this.unsubscribe = usePreferencesStore.subscribe((s) => {
+        if (s.annotationDefaultLang === prev) return;
+        prev = s.annotationDefaultLang;
+        this.schedule();
+      });
     }
 
     update(update: ViewUpdate) {
       const dataChanged = update.transactions.some((t) =>
         t.effects.some((e) => e.is(setAnnotationData)),
       );
-      if (dataChanged || update.docChanged) this.schedule();
+      const fmChanged =
+        update.state.facet(frontmatterFacet) !== update.startState.facet(frontmatterFacet);
+      if (dataChanged || update.docChanged || fmChanged) this.schedule();
     }
 
     private schedule() {
@@ -102,8 +112,6 @@ const markScopePlugin = ViewPlugin.fromClass(
         return;
       }
 
-      // Document language is the batch fallback; a mark carrying its own
-      // `lang=` overrides it per mark on the Rust side (#854).
       const lang = effectiveAnnotationLang(
         null,
         this.view.state.facet(frontmatterFacet),
@@ -128,6 +136,13 @@ const markScopePlugin = ViewPlugin.fromClass(
       if (this.generation !== generation) return;
       if (this.view.state.doc.toString() !== content) return;
 
+      const currentLang = effectiveAnnotationLang(
+        null,
+        this.view.state.facet(frontmatterFacet),
+        usePreferencesStore.getState().annotationDefaultLang,
+      );
+      if (currentLang !== lang) return;
+
       const ranges = marks.flatMap((ann, i) => {
         const range = results[i];
         return range && range.start < range.end
@@ -139,6 +154,7 @@ const markScopePlugin = ViewPlugin.fromClass(
 
     destroy() {
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
+      this.unsubscribe?.();
     }
   },
 );

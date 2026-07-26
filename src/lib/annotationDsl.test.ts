@@ -951,4 +951,22 @@ describe("lang field", () => {
       "<!--- n \\s lang=fr | une note --->",
     );
   });
+
+  it("normalizes lang in compact emit (FR-CA -> fr)", () => {
+    expect(
+      generateDsl(fields({ type: "note", lang: "FR-CA", body: "hello" })),
+    ).toBe("<!--- n lang=fr | hello --->");
+  });
+
+  it("normalizes lang in block emit (FR-CA -> fr)", () => {
+    expect(
+      generateDsl(fields({ type: "note", lang: "FR-CA", body: "line\ntwo" })),
+    ).toBe("<!---\nn\nlang: fr\n---\nline\ntwo\n--->");
+  });
+
+  it("omits unnormalizable lang (english -> nothing)", () => {
+    expect(
+      generateDsl(fields({ type: "note", lang: "english", body: "hello" })),
+    ).toBe("<!--- n | hello --->");
+  });
 });

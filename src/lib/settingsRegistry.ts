@@ -30,6 +30,7 @@ interface SettingEntryBase {
    *  related queries whose words are absent from its visible label. */
   keywords?: string[];
   normalize?: (trimmed: string) => string;
+  hint?: string;
 }
 
 interface ToggleEntry extends SettingEntryBase { controlType: "toggle"; }
@@ -249,6 +250,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     jsonKey: "annotations.defaultLang",
     controlType: "text",
     testId: "settings-annotationDefaultLang",
+    hint: "Applies to new resolutions; run Rebuild Index to refresh existing cards.",
   },
   {
     category: "Annotations",

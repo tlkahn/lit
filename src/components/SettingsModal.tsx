@@ -93,6 +93,7 @@ function renderControl(params: RenderControlParams) {
             const val = entry.nullable && trimmed === "" ? null : entry.normalize?.(trimmed) ?? trimmed;
             setRegistryPref(entry.storeField, entry.jsonKey, val);
           }}
+          hint={entry.hint}
         />
       );
     case "dropdown": {

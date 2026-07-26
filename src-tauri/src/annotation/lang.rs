@@ -14,18 +14,27 @@
 //! The TypeScript mirror of this module is `src/lib/annotationLang.ts`; the
 //! two must normalize identically.
 
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
 /// Fallback when nothing in the three scopes yields a usable tag.
 pub const DEFAULT_LANG: &str = "en";
+
+static KNOWN_SCRIPT_TAGS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let json: Vec<&str> = serde_json::from_str(
+        include_str!("../../../src/lib/annotationLangScripts.json"),
+    ).expect("annotationLangScripts.json must be a valid JSON array of strings");
+    json.into_iter().collect()
+});
 
 /// Canonicalizes a raw language tag into the form `sentencex` expects, or
 /// `None` when it is empty or malformed.
 ///
 /// Lowercases, and drops BCP-47 **region** subtags (2 alpha or 3 digits)
-/// while keeping **script** subtags: `zh-CN` -> `zh`, `en-US` -> `en`,
-/// `fr-CA` -> `fr`, `zh-Hant` -> `zh-hant`. Dropping the region matters
-/// because `sentencex::language_factory` falls through unknown tags to `en`,
-/// and its fallback table knows `zh-hant`/`zh-hans` but not `zh-cn` - so a
-/// pandoc-style `lang: zh-CN` would silently segment as English.
+/// while keeping **script** subtags only when the combined `primary-script`
+/// tag is known to sentencex's fallback table: `zh-CN` -> `zh`,
+/// `en-US` -> `en`, `zh-Hant` -> `zh-hant`, but `ru-Latn` -> `ru` (not in
+/// the table).
 pub fn normalize_lang(raw: &str) -> Option<String> {
     let lowered = raw.trim().to_lowercase();
     if lowered.is_empty() {
@@ -38,13 +47,14 @@ pub fn normalize_lang(raw: &str) -> Option<String> {
         return None;
     }
 
-    // Only a script subtag survives; regions and variants are dropped because
-    // `sentencex` keys its fallback table on language and script alone.
     let script = subtags.find(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_alphabetic()));
-    Some(match script {
-        Some(script) => format!("{primary}-{script}"),
-        None => primary.to_string(),
-    })
+    if let Some(script) = script {
+        let combined = format!("{primary}-{script}");
+        if KNOWN_SCRIPT_TAGS.contains(combined.as_str()) {
+            return Some(combined);
+        }
+    }
+    Some(primary.to_string())
 }
 
 /// Resolves the three scopes in precedence order, falling back to
@@ -129,9 +139,20 @@ mod tests {
     }
 
     #[test]
-    fn normalize_keeps_script_subtag() {
+    fn normalize_keeps_known_script_subtag() {
         assert_eq!(normalize_lang("zh-Hant"), Some("zh-hant".to_string()));
         assert_eq!(normalize_lang("zh-Hans"), Some("zh-hans".to_string()));
+        assert_eq!(normalize_lang("sr-Latn"), Some("sr-latn".to_string()));
+        assert_eq!(normalize_lang("kk-Latn"), Some("kk-latn".to_string()));
+        assert_eq!(normalize_lang("kk-Cyrl"), Some("kk-cyrl".to_string()));
+    }
+
+    #[test]
+    fn normalize_drops_unknown_script_subtag() {
+        assert_eq!(normalize_lang("ru-Latn"), Some("ru".to_string()));
+        assert_eq!(normalize_lang("ja-Latn"), Some("ja".to_string()));
+        assert_eq!(normalize_lang("en-Latn"), Some("en".to_string()));
+        assert_eq!(normalize_lang("fr-Latn"), Some("fr".to_string()));
     }
 
     #[test]
@@ -162,6 +183,36 @@ mod tests {
     #[test]
     fn normalize_drops_variant_subtags() {
         assert_eq!(normalize_lang("de-DE-1996"), Some("de".to_string()));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct FixtureEntry {
+        input: String,
+        normalized: Option<String>,
+    }
+
+    #[test]
+    fn normalize_matches_shared_fixture() {
+        let json = include_str!("../../../src/lib/annotationLang.fixture.json");
+        let entries: Vec<FixtureEntry> = serde_json::from_str(json).unwrap();
+        for entry in &entries {
+            assert_eq!(
+                normalize_lang(&entry.input),
+                entry.normalized.clone(),
+                "fixture: normalize_lang({:?})",
+                entry.input,
+            );
+        }
+    }
+
+    #[test]
+    fn script_tags_json_entries_are_known_to_sentencex() {
+        for tag in KNOWN_SCRIPT_TAGS.iter() {
+            assert!(
+                sentencex::languages::get_fallbacks(tag).is_some(),
+                "annotationLangScripts.json entry {tag:?} is not in sentencex's fallback table",
+            );
+        }
     }
 
     // --- effective_lang ---

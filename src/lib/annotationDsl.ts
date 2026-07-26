@@ -1,4 +1,5 @@
 import type { Annotation, AnnotationType, Certainty, Scope } from "./ipc";
+import { normalizeLang } from "./annotationLang";
 
 export interface AnnotationFields {
   id: string | null;
@@ -142,7 +143,7 @@ export function generateDsl(
   const certStr = serializeCertainty(certainty);
   const scopeStr = serializeScope(scope);
   const dateStr = date ? `@${date}` : "";
-  const langStr = lang ? lang : "";
+  const langStr = lang ? (normalizeLang(lang) ?? "") : "";
 
   // A body with a newline can never fit the inline grammar, regardless of caller intent.
   const form: AnnotationForm =

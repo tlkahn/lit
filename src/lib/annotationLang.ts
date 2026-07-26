@@ -16,18 +16,21 @@
  * The normalization table here and in `lang.rs` must stay identical (#854).
  */
 
+import scriptTags from "./annotationLangScripts.json";
+
 /** Fallback when nothing in the three scopes yields a usable tag. */
 export const DEFAULT_ANNOTATION_LANG = "en";
+
+const KNOWN_SCRIPT_TAGS: ReadonlySet<string> = new Set(scriptTags);
 
 /**
  * Canonicalizes a raw language tag into the form `sentencex` expects, or
  * `null` when it is empty or malformed.
  *
  * Lowercases, and drops BCP-47 *region* subtags (2 alpha or 3 digits) while
- * keeping *script* subtags: `zh-CN` -> `zh`, `en-US` -> `en`, `fr-CA` -> `fr`,
- * `zh-Hant` -> `zh-hant`. Dropping the region matters because `sentencex`
- * falls through unknown tags to `en`, and its fallback table knows
- * `zh-hant`/`zh-hans` but not `zh-cn`.
+ * keeping *script* subtags only when the combined `primary-script` tag is
+ * known to sentencex's fallback table: `zh-CN` -> `zh`, `en-US` -> `en`,
+ * `zh-Hant` -> `zh-hant`, but `ru-Latn` -> `ru` (not in the table).
  */
 export function normalizeLang(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") return null;
@@ -38,10 +41,12 @@ export function normalizeLang(raw: string | null | undefined): string | null {
   const primary = subtags[0] ?? "";
   if (!/^[a-z]{2,3}$/.test(primary)) return null;
 
-  // Only a script subtag survives; regions and variants are dropped because
-  // `sentencex` keys its fallback table on language and script alone.
   const script = subtags.slice(1).find((s) => /^[a-z]{4}$/.test(s));
-  return script ? `${primary}-${script}` : primary;
+  if (script) {
+    const combined = `${primary}-${script}`;
+    if (KNOWN_SCRIPT_TAGS.has(combined)) return combined;
+  }
+  return primary;
 }
 
 /**

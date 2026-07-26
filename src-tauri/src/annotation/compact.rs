@@ -11,7 +11,7 @@ static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static LANG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^lang=([A-Za-z0-9_-]+)").unwrap()
+    Regex::new(r"^(?i)lang=([A-Za-z0-9_-]+)").unwrap()
 });
 
 static SCOPE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -676,5 +676,25 @@ mod tests {
         let ann = parse_compact(r"n \s | lang=x", marks::builtin_mark_codes());
         assert_eq!(ann.lang, None);
         assert_eq!(ann.body, Some("lang=x".to_string()));
+    }
+
+    #[test]
+    fn lang_keyword_case_insensitive() {
+        let ann = parse_compact(r"n \s Lang=fr | note", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, Some("note".to_string()));
+    }
+
+    #[test]
+    fn lang_keyword_uppercase() {
+        let ann = parse_compact(r"n \s LANG=ja | note", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, Some("ja".to_string()));
+    }
+
+    #[test]
+    fn unnormalizable_lang_value_dropped_from_header() {
+        let ann = parse_compact(r"n \s lang=english | note", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+        assert_eq!(ann.body, Some("note".to_string()));
     }
 }

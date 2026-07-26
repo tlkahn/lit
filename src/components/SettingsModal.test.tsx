@@ -604,6 +604,13 @@ describe("SettingsModal", () => {
         });
       });
     });
+
+    it("renders a hint below the Default Language input", () => {
+      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+      const hint = container.querySelector("[data-testid='settings-annotationDefaultLang-hint']");
+      expect(hint).not.toBeNull();
+      expect(hint!.textContent).toContain("Rebuild Index");
+    });
   });
 
   // --- annotationDisplayMode (SegmentedControl) ---

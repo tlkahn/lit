@@ -5,6 +5,7 @@ import {
   frontmatterLang,
   effectiveAnnotationLang,
 } from "./annotationLang";
+import fixture from "./annotationLang.fixture.json";
 
 // This table is duplicated in `src-tauri/src/annotation/lang.rs`; the two
 // implementations must agree or index-time and live-preview segmentation
@@ -28,10 +29,20 @@ describe("normalizeLang", () => {
     expect(normalizeLang("es-419")).toBe("es");
   });
 
-  it("keeps script subtags", () => {
+  it("keeps known script subtags", () => {
     expect(normalizeLang("zh-Hant")).toBe("zh-hant");
     expect(normalizeLang("zh-Hans")).toBe("zh-hans");
     expect(normalizeLang("zh-Hant-TW")).toBe("zh-hant");
+    expect(normalizeLang("sr-Latn")).toBe("sr-latn");
+    expect(normalizeLang("kk-Latn")).toBe("kk-latn");
+    expect(normalizeLang("kk-Cyrl")).toBe("kk-cyrl");
+  });
+
+  it("drops unknown script subtags", () => {
+    expect(normalizeLang("ru-Latn")).toBe("ru");
+    expect(normalizeLang("ja-Latn")).toBe("ja");
+    expect(normalizeLang("en-Latn")).toBe("en");
+    expect(normalizeLang("fr-Latn")).toBe("fr");
   });
 
   it("accepts an underscore separator", () => {
@@ -51,6 +62,10 @@ describe("normalizeLang", () => {
   it("rejects nullish input", () => {
     expect(normalizeLang(null)).toBeNull();
     expect(normalizeLang(undefined)).toBeNull();
+  });
+
+  it.each(fixture)("fixture: normalize($input) == $normalized", ({ input, normalized }) => {
+    expect(normalizeLang(input)).toBe(normalized);
   });
 });
 

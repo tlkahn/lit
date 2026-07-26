@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { generateDsl, type AnnotationFields, type AnnotationForm, type EditRawInfo } from "../lib/annotationDsl";
+import { normalizeLang } from "../lib/annotationLang";
 import { SegmentedControl } from "./SegmentedControl";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import type { AnnotationType, Certainty, Scope, ScopeKind as IpcScopeKind } from "../lib/ipc";
@@ -125,16 +126,22 @@ export function AnnotationBuilderModal({
   const [defaultDate] = useState(date);
   const [defaultId] = useState(id);
 
+  const langTrimmed = lang.trim();
+  const langNorm = langTrimmed ? normalizeLang(langTrimmed) : null;
+  const langInvalid = langTrimmed !== "" && langNorm == null;
+
   const hasNonDefaultAdvanced =
     certainty !== "neutral" ||
     date !== defaultDate ||
     id !== defaultId ||
+    langTrimmed !== "" ||
     (showFormToggle && effectiveForm !== "inline");
 
   const [showAdvanced, setShowAdvanced] = useState(() => {
     if (initialFields?.certainty && initialFields.certainty !== "neutral") return true;
     if (initialFields?.date) return true;
     if (initialFields?.id) return true;
+    if (initialFields?.lang) return true;
     if (defaults?.certainty && defaults.certainty !== "neutral") return true;
     return false;
   });
@@ -159,9 +166,9 @@ export function AnnotationBuilderModal({
       scope,
       body,
       date: date || null,
-      lang: lang.trim() || null,
+      lang: langNorm ?? null,
     }),
-    [id, type, mark, certainty, scope, body, date, lang],
+    [id, type, mark, certainty, scope, body, date, langNorm],
   );
 
   const preview = useMemo(() => generateDsl(fields, { form: effectiveForm }), [fields, effectiveForm]);
@@ -312,6 +319,11 @@ export function AnnotationBuilderModal({
                   onChange={(e) => setLang(e.target.value)}
                   placeholder="inherit"
                 />
+                {langInvalid && (
+                  <span className="text-xs text-text-muted" data-testid="annotation-lang-hint">
+                    Not a recognized BCP-47 tag; will be omitted.
+                  </span>
+                )}
               </label>
 
               <label className="col-span-2 flex flex-col gap-1">

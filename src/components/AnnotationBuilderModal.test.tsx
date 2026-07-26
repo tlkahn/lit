@@ -1133,10 +1133,45 @@ describe("AnnotationBuilderModal", () => {
           initialFields={{ id: null, type: "note", body: "une note", lang: "fr", date: null }}
         />,
       );
-      expandOverflow();
       expect(screen.getByTestId("annotation-lang-input")).toHaveValue("fr");
       fireEvent.click(screen.getByTestId("annotation-insert-btn"));
       expect(onInsert).toHaveBeenCalledWith("<!--- n lang=fr | une note --->");
+    });
+
+    it("shows validation hint for unnormalizable lang input", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-lang-input"), { target: { value: "english" } });
+      expect(screen.getByTestId("annotation-lang-hint")).toBeInTheDocument();
+      expect(screen.getByTestId("annotation-preview").textContent).not.toContain("lang=");
+    });
+
+    it("normalizes valid lang in preview (FR-CA -> fr)", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-lang-input"), { target: { value: "FR-CA" } });
+      expect(screen.queryByTestId("annotation-lang-hint")).not.toBeInTheDocument();
+      expect(screen.getByTestId("annotation-preview").textContent).toContain("lang=fr");
+    });
+
+    it("expands advanced section when initialFields.lang is set", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ id: null, type: "note", body: "test", lang: "fr", date: null }}
+        />,
+      );
+      expect(screen.getByTestId("annotation-lang-input")).toBeInTheDocument();
+    });
+
+    it("shows overflow dot when lang is set but advanced is collapsed", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-lang-input"), { target: { value: "fr" } });
+      expandOverflow();
+      expect(screen.getByTestId("annotation-overflow-dot")).toBeInTheDocument();
     });
   });
 });

@@ -189,6 +189,7 @@ mod tests {
     use super::*;
     use crate::annotation::lang::AnnotationIndexOpts;
     use crate::annotation::marks::merged_config;
+    use crate::annotation::scope_resolver::extract_text_for_range;
     use crate::annotation::types::{AnnotationType, ResolutionMode};
     use crate::graph::indexer::GraphIndex;
 
@@ -320,7 +321,7 @@ mod tests {
         let result = resolve_mark_scopes(body.to_string(), marks, "en".to_string());
         let texts: Vec<Option<String>> = result
             .iter()
-            .map(|r| r.as_ref().map(|r| body[r.start..r.end].to_string()))
+            .map(|r| r.as_ref().map(|r| extract_text_for_range(body, r)))
             .collect();
         assert_eq!(texts[0].as_deref(), Some("3 ici."), "no mark lang falls back to the batch lang");
         assert_eq!(texts[1].as_deref(), Some("Voir p.ex. le chap. 3 ici."));
@@ -338,7 +339,7 @@ mod tests {
         }];
         let result = resolve_mark_scopes(body.to_string(), marks, "en".to_string());
         let r = result[0].as_ref().unwrap();
-        assert_eq!(&body[r.start..r.end], "Voir p.ex. le chap. 3 ici.");
+        assert_eq!(extract_text_for_range(body, r), "Voir p.ex. le chap. 3 ici.");
     }
 
     #[test]

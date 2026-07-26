@@ -2017,4 +2017,3 @@ mod tests {
         assert_eq!(texts[2], "3 ici.");
     }
 }
-
