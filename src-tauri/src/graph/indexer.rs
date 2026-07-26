@@ -65,7 +65,9 @@ pub fn parse_md_file(
 /// construction: `body` is the exact string the annotations were extracted
 /// from. Unresolvable scopes and empty extractions leave `original` as None.
 /// One `ScopeResolveCtx` is shared across the file's annotations so sentence
-/// segmentation and the UTF-16 offset map are computed once per body.
+/// segmentation and the UTF-16 offset map are computed once per body; each
+/// annotation then selects its sentences by byte span out of that shared
+/// segmentation, so a file costs `O(body + annotations x scope size)`.
 fn resolve_annotation_originals(body: &str, anns: &mut [super::types::IndexableAnnotation]) {
     let ctx = crate::annotation::scope_resolver::ScopeResolveCtx::new(body, "en");
     for ann in anns.iter_mut() {

@@ -53,7 +53,8 @@ pub struct MarkScopeRequest {
 /// Batched scope resolution: resolves every mark in `marks` in a single IPC call,
 /// returning results index-aligned with the input (`None` for unresolvable marks).
 /// One `ScopeResolveCtx` is shared across the batch so sentence segmentation and
-/// the UTF-16 offset map are computed once per content.
+/// the UTF-16 offset map are computed once per content; each mark then selects
+/// its sentences by byte span out of that shared segmentation.
 #[tauri::command]
 pub fn resolve_mark_scopes(
     content: String,
