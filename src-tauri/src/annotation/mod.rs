@@ -1,4 +1,5 @@
 pub mod types;
+pub mod lang;
 pub mod scanner;
 pub mod compact;
 pub mod block;

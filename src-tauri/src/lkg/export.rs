@@ -340,6 +340,7 @@ mod tests {
             scope_value: "x".into(),
             uuid: None,
             original: None,
+            lang: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
@@ -600,7 +601,7 @@ mod tests {
         std::fs::write(dir.path().join("img.png"), b"fake png").unwrap();
 
         let gi =
-            crate::graph::indexer::GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+            crate::graph::indexer::GraphIndex::build(dir.path().to_path_buf(), &crate::annotation::lang::AnnotationIndexOpts::default()).unwrap();
         let dest = dir.path().join("out.lkg");
 
         let summary =

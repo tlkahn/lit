@@ -10,6 +10,10 @@ static ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"\^"((?:[^"\\]|\\.)+)""#).unwrap()
 });
 
+static LANG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^lang=([A-Za-z0-9_-]+)").unwrap()
+});
+
 static SCOPE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(_{1,}|\\p(?:p+|_{1,})?|\\f(?:f+|_{1,})?|\\s(?:s+|_{1,})?|\\d|\\h|\d+\\[psf]\d+|\d+_\d+)\s").unwrap()
 });
@@ -21,6 +25,7 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
     let mut scope = Scope::Sentence(1);
     let mut is_structured = false;
     let mut mark: Option<String> = None;
+    let mut lang: Option<String> = None;
 
     let type_keywords = ["todo", "app", "llm", "cf", "tr", "th", "n", "q"];
     for &kw in &type_keywords {
@@ -106,6 +111,27 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
 
     remaining = remaining.trim_start();
 
+    // `lang=xx` sits in the header region, after the scope/anchor and before
+    // the `|`. On an annotation that is not yet structured the token is
+    // ambiguous with prose (`<!--- lang=en is a variable name --->`), so it is
+    // only consumed when nothing but a body separator, a date or the end of
+    // the annotation follows it. Text after `|` is body and never scanned.
+    if let Some(caps) = LANG_RE.captures(remaining) {
+        let rest = &remaining[caps.get(0).unwrap().end()..];
+        let after = rest.trim_start();
+        let unambiguous =
+            is_structured || after.is_empty() || after.starts_with('|') || after.starts_with('@');
+        if unambiguous {
+            if let Some(normalized) = super::lang::normalize_lang(caps.get(1).unwrap().as_str()) {
+                lang = Some(normalized);
+                remaining = rest;
+                is_structured = true;
+            }
+        }
+    }
+
+    remaining = remaining.trim_start();
+
     let body_text = if let Some(idx) = remaining.find('|') {
         let after_pipe = remaining[idx + 1..].trim_start();
         is_structured = true;
@@ -143,6 +169,7 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
             original: String::new(),
             uuid: None,
             mark: None,
+            lang: None,
         };
     }
 
@@ -159,6 +186,7 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
         original: String::new(),
         uuid: None,
         mark,
+        lang,
     }
 }
 
@@ -548,5 +576,105 @@ mod tests {
         let ann = parse_compact("foo _", marks::builtin_mark_codes());
         assert_eq!(ann.annotation_type, AnnotationType::Bare);
         assert_eq!(ann.mark, None);
+    }
+
+    // --- lang= field ---
+
+    #[test]
+    fn lang_after_scope_with_body() {
+        let ann = parse_compact(r"n? \ss lang=fr | même sens ? @2026-07", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.scope, Scope::Sentence(2));
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, Some("même sens ?".to_string()));
+        assert_eq!(ann.date, Some("2026-07".to_string()));
+    }
+
+    #[test]
+    fn lang_after_scope_without_body() {
+        let ann = parse_compact("tr _ lang=ja", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Translation);
+        assert_eq!(ann.scope, Scope::Words(1));
+        assert_eq!(ann.lang, Some("ja".to_string()));
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn lang_after_type_without_scope() {
+        let ann = parse_compact("n lang=fr | a note", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, Some("a note".to_string()));
+    }
+
+    #[test]
+    fn lang_after_anchor() {
+        let ann = parse_compact(r#"cf ^"anuttara" lang=sa | parallels"#, marks::builtin_mark_codes());
+        assert_eq!(ann.scope, Scope::Anchor("anuttara".to_string()));
+        assert_eq!(ann.lang, Some("sa".to_string()));
+        assert_eq!(ann.body, Some("parallels".to_string()));
+    }
+
+    #[test]
+    fn lang_is_normalized_at_parse_time() {
+        let ann = parse_compact(r"n \s lang=FR-CA | note", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, Some("fr".to_string()));
+    }
+
+    #[test]
+    fn lang_absent_leaves_none() {
+        let ann = parse_compact(r"n \s | note", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+    }
+
+    // The disambiguation rule: an unstructured annotation only yields its
+    // `lang=` token when nothing that looks like prose follows it.
+    #[test]
+    fn bare_annotation_keeps_lang_looking_prose_as_body() {
+        let ann = parse_compact("lang=en is a variable name", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::Bare);
+        assert!(!ann.is_structured);
+        assert_eq!(ann.lang, None);
+        assert_eq!(ann.body, Some("lang=en is a variable name".to_string()));
+    }
+
+    #[test]
+    fn lang_alone_before_pipe_structures_the_annotation() {
+        let ann = parse_compact("lang=fr | note", marks::builtin_mark_codes());
+        assert!(ann.is_structured);
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, Some("note".to_string()));
+    }
+
+    #[test]
+    fn lang_alone_at_end_structures_the_annotation() {
+        let ann = parse_compact("lang=fr", marks::builtin_mark_codes());
+        assert!(ann.is_structured);
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn lang_alone_before_date_structures_the_annotation() {
+        let ann = parse_compact("lang=fr @2026-07", marks::builtin_mark_codes());
+        assert!(ann.is_structured);
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.date, Some("2026-07".to_string()));
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn lang_in_body_after_pipe_is_never_consumed() {
+        let ann = parse_compact(r"n \s | set lang=fr in the config", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+        assert_eq!(ann.body, Some("set lang=fr in the config".to_string()));
+    }
+
+    #[test]
+    fn unnormalizable_lang_token_stays_body_text() {
+        let ann = parse_compact(r"n \s | lang=x", marks::builtin_mark_codes());
+        assert_eq!(ann.lang, None);
+        assert_eq!(ann.body, Some("lang=x".to_string()));
     }
 }

@@ -650,6 +650,7 @@ pub fn ensure_in_companion_bib(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::lang::AnnotationIndexOpts;
     use crate::bib::cache::BibCache;
     use crate::bib::db;
     use crate::graph::store::Store;
@@ -1994,7 +1995,7 @@ mod tests {
         ).unwrap();
 
         // Build GraphIndex (ingests .bib into DB and creates shadow nodes)
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
 
         // Verify initial shadow title contains "Original Title"
         {
@@ -2064,7 +2065,7 @@ mod tests {
         .unwrap();
 
         // Build GraphIndex (ingests bib + indexes pages)
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
 
         // Guard 1: page_for_citekey must detect the existing page
         let page_id = gi.store().page_for_citekey("smith2024").unwrap();

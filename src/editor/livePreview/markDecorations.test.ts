@@ -17,6 +17,7 @@ import {
   markDecorationExtension,
 } from "./markDecorations";
 import { setAnnotationData, annotationDataField } from "./annotationState";
+import { frontmatterFacet } from "./crossref";
 
 const mockResolve = resolveMarkScopes as ReturnType<typeof vi.fn>;
 
@@ -38,12 +39,19 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
 }
 
 /** Mount a real EditorView wired with the field + plugin and the data field it reads. */
-function mountView(doc = "hello world"): { view: EditorView; parent: HTMLElement } {
+function mountView(
+  doc = "hello world",
+  frontmatter?: Record<string, unknown>,
+): { view: EditorView; parent: HTMLElement } {
   const parent = document.createElement("div");
   const view = new EditorView({
     state: EditorState.create({
       doc,
-      extensions: [annotationDataField, markDecorationExtension()],
+      extensions: [
+        annotationDataField,
+        markDecorationExtension(),
+        ...(frontmatter ? [frontmatterFacet.of(frontmatter)] : []),
+      ],
     }),
     parent,
   });
@@ -339,6 +347,50 @@ describe("markScopePlugin", () => {
     await vi.runAllTimersAsync();
 
     expect(parent.querySelector(".cm-mark-nb")).not.toBeNull();
+    view.destroy();
+  });
+
+  // --- three-scope segmentation language (#854) ---
+
+  it("sends each mark's own lang and the document language as the batch fallback", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }, { start: 0, end: 4 }]);
+    const { view } = mountView("word rest", { "annotation-lang": "fr-CA" });
+
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({ char_start: 4, lang: "ja" }),
+        makeAnnotation({ char_start: 4 }),
+      ]),
+    });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "word rest",
+      [
+        { charStart: 4, scope: { kind: "words", value: 1 }, lang: "ja" },
+        { charStart: 4, scope: { kind: "words", value: 1 } },
+      ],
+      "fr",
+    );
+    view.destroy();
+  });
+
+  it("normalizes a mark's own lang before sending it", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    mockResolve.mockResolvedValue([{ start: 0, end: 4 }]);
+    const { view } = mountView("word rest");
+
+    view.dispatch({
+      effects: setAnnotationData.of([makeAnnotation({ char_start: 4, lang: "FR-CA" })]),
+    });
+    await vi.runAllTimersAsync();
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "word rest",
+      [{ charStart: 4, scope: { kind: "words", value: 1 }, lang: "fr" }],
+      "en",
+    );
     view.destroy();
   });
 });

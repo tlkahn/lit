@@ -378,6 +378,7 @@ pub async fn llm_build_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::lang::AnnotationIndexOpts;
     use tracing_test::traced_test;
 
     #[traced_test]
@@ -642,7 +643,7 @@ mod tests {
     fn build_context_inner_reads_page() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.md"), "---\ntitle: My Note\n---\nThe body.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("## Current document:"), "should contain document section");
@@ -652,7 +653,7 @@ mod tests {
     #[test]
     fn build_context_inner_missing_page_graceful() {
         let dir = tempfile::tempdir().unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("ghost.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None);
         assert!(r.is_ok());
@@ -665,7 +666,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "Body A. Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nMore of B.").unwrap();
         std::fs::write(dir.path().join("c.md"), "First paragraph of C.\n\nLinks to [[a]].").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("## Linked notes"), "should have linked notes section");
@@ -678,7 +679,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Body A. Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "Body B.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(!r.system.contains("## Linked notes"));
@@ -689,7 +690,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "First paragraph of B.\n\nLinks to [[a]].").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("a.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         let neighbor_count = r.system.matches("###").count();
@@ -702,7 +703,7 @@ mod tests {
         std::fs::write(dir.path().join("a.md"), "Links to [[b]].").unwrap();
         std::fs::write(dir.path().join("b.md"), "First para B.\n\nLinks to [[c]].").unwrap();
         std::fs::write(dir.path().join("c.md"), "First para C.").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("a.md", "Sys", 2, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(r.system.contains("c"), "2-hop neighbor c.md should appear");
@@ -717,7 +718,7 @@ mod tests {
             std::fs::write(dir.path().join(format!("n{i}.md")), format!("Para {i}.")).unwrap();
         }
         std::fs::write(dir.path().join("hub.md"), &body).unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let r = build_context_inner("hub.md", "Sys", 1, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         let count = r.system.matches("###").count();
@@ -729,7 +730,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let content = "---\ntitle: Hash Test\n---\nBody content.";
         std::fs::write(dir.path().join("note.md"), content).unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let _ = build_context_inner("note.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None).unwrap();
         assert!(registry.check(&dir.path().join("note.md"), content), "registry should record hash for the read page");
@@ -740,7 +741,7 @@ mod tests {
         fn assert_send<T: Send>(_: T) {}
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.md"), "body").unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
         let result = build_context_inner("a.md", "Sys", 0, "openai", "gpt-4o", &[], Some(&gi), Some(dir.path()), &registry, None);
         assert_send(result);
@@ -845,7 +846,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let big_body = "word ".repeat(24_000); // ~30000 tokens, under openai doc_cap
         std::fs::write(dir.path().join("note.md"), format!("---\ntitle: Big\n---\n{big_body}")).unwrap();
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let registry = WriteHashRegistry::new();
 
         let with_override = build_context_inner(

@@ -435,3 +435,15 @@ describe("insertCompanionAtCursor", () => {
     view.destroy();
   });
 });
+
+describe("buildThreadDsl lang inheritance", () => {
+  it("carries the source annotation's lang into the thread", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain", lang: "fr" });
+    expect(buildThreadDsl(ann, "La reponse.")).toContain("lang: fr");
+  });
+
+  it("emits no lang line when the source inherits", () => {
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
+    expect(buildThreadDsl(ann, "The answer.")).not.toContain("lang:");
+  });
+});

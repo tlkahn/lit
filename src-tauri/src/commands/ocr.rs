@@ -526,6 +526,7 @@ pub async fn check_ocr_target_exists(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::lang::AnnotationIndexOpts;
 
     #[test]
     fn ocr_slug_uses_title() {
@@ -1124,7 +1125,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path().to_path_buf();
 
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
         {
             let store = gi.store();
             let node = ParsedNode {
@@ -1154,7 +1155,7 @@ mod tests {
         let root = dir.path().to_path_buf();
 
         // Empty graph - no companion indexed
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
         let store = gi.store();
         let slug = resolve_slug_from_store(&store, "smith2024", "The Well-Posed Problem");
         assert_eq!(slug, ocr_slug("The Well-Posed Problem", "smith2024"));
@@ -1176,7 +1177,7 @@ mod tests {
         let root = dir.path().to_path_buf();
 
         // Build an empty graph index (creates .lit/graph.db)
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
         {
             let store = gi.store();
             let node = ParsedNode {
@@ -1217,7 +1218,7 @@ mod tests {
         // Create the OCR markdown file with the OLD slug
         std::fs::write(root.join("old-title-smith2024.md"), b"# OCR output").unwrap();
 
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
         {
             let store = gi.store();
             let node = ParsedNode {
@@ -1271,7 +1272,7 @@ mod tests {
         filetime::set_file_mtime(pdf_dir.join("smith2024.pdf"), old).unwrap();
         filetime::set_file_mtime(root.join("old-title-smith2024.md"), new).unwrap();
 
-        let gi = GraphIndex::build(root.clone(), false).unwrap();
+        let gi = GraphIndex::build(root.clone(), &AnnotationIndexOpts::disabled()).unwrap();
         {
             let store = gi.store();
             let node = ParsedNode {

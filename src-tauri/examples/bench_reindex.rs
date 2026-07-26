@@ -15,12 +15,12 @@ fn main() {
     let note = args.next().expect("usage: bench_reindex <workspace> <relative-note.md>");
 
     let t = Instant::now();
-    let gi = lit_lib::graph::indexer::GraphIndex::build(workspace, false).expect("build failed");
+    let gi = lit_lib::graph::indexer::GraphIndex::build(workspace, &lit_lib::annotation::lang::AnnotationIndexOpts::disabled()).expect("build failed");
     println!("build: {:?}", t.elapsed());
 
     for i in 0..5 {
         let t = Instant::now();
-        gi.reindex_file(&note, false).expect("reindex failed");
+        gi.reindex_file(&note, &lit_lib::annotation::lang::AnnotationIndexOpts::disabled()).expect("reindex failed");
         println!("reindex_file #{i}: {:?}", t.elapsed());
     }
 }

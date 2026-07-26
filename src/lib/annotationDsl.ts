@@ -8,6 +8,8 @@ export interface AnnotationFields {
   scope: Scope | null;
   body: string;
   date: string | null;
+  /** Segmentation language; `null`/empty means "inherit" and emits nothing. */
+  lang: string | null;
 }
 
 export interface AnnotationBuilderEventDetail {
@@ -70,8 +72,9 @@ export function annotationToFields(ann: Annotation): AnnotationFields {
 
   const body = ann.body ?? "";
   const date = ann.date ?? null;
+  const lang = ann.lang ?? null;
 
-  return { id, type, mark, certainty, scope, body, date };
+  return { id, type, mark, certainty, scope, body, date, lang };
 }
 
 const TYPE_KEYWORDS: Record<string, string> = {
@@ -132,23 +135,24 @@ export function generateDsl(
   fields: AnnotationFields,
   opts?: { form?: AnnotationForm },
 ): string {
-  const { id, type, mark, certainty, scope, body, date } = fields;
+  const { id, type, mark, certainty, scope, body, date, lang } = fields;
 
   const idStr = id ? `[${id}]` : "";
   const typeStr = mark ? mark : serializeType(type);
   const certStr = serializeCertainty(certainty);
   const scopeStr = serializeScope(scope);
   const dateStr = date ? `@${date}` : "";
+  const langStr = lang ? lang : "";
 
   // A body with a newline can never fit the inline grammar, regardless of caller intent.
   const form: AnnotationForm =
     body.includes("\n") ? "block" : (opts?.form ?? "inline");
 
   if (body && form === "block") {
-    return generateBlock(idStr, typeStr, certStr, scopeStr, dateStr, body);
+    return generateBlock(idStr, typeStr, certStr, scopeStr, langStr, dateStr, body);
   }
 
-  return generateCompact(idStr, typeStr, certStr, scopeStr, dateStr, body);
+  return generateCompact(idStr, typeStr, certStr, scopeStr, langStr, dateStr, body);
 }
 
 function generateCompact(
@@ -156,6 +160,7 @@ function generateCompact(
   typeStr: string,
   certStr: string,
   scopeStr: string,
+  langStr: string,
   dateStr: string,
   body: string,
 ): string {
@@ -164,6 +169,7 @@ function generateCompact(
   const headerParts: string[] = [];
   if (typeCert) headerParts.push(typeCert);
   if (scopeStr) headerParts.push(scopeStr);
+  if (langStr) headerParts.push(`lang=${langStr}`);
 
   const tailParts: string[] = [];
   if (body) tailParts.push(body);
@@ -193,6 +199,7 @@ function generateBlock(
   typeStr: string,
   certStr: string,
   scopeStr: string,
+  langStr: string,
   dateStr: string,
   body: string,
 ): string {
@@ -201,6 +208,7 @@ function generateBlock(
   const typeCert = typeStr + certStr;
   if (typeCert) lines.push(typeCert);
   if (scopeStr) lines.push(scopeStr);
+  if (langStr) lines.push(`lang: ${langStr}`);
   if (dateStr) lines.push(dateStr);
 
   if (body) {

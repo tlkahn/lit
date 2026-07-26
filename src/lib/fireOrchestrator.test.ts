@@ -7,6 +7,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useSecretStoreStore } from "../stores/secretStore";
 import { firingAnnotationsField, firingRangeField } from "../editor/livePreview/annotationWidgets";
+import { frontmatterFacet } from "../editor/livePreview/crossref";
 
 vi.mock("./ipc", () => ({
   resolveAnnotationScopeWithMode: vi.fn(async () => null),
@@ -33,8 +34,15 @@ const flush = (n = 5) =>
     Promise.resolve(),
   );
 
-function makeView(doc = "hello world", withFiringField = false): EditorView {
-  const extensions = withFiringField ? [firingAnnotationsField, firingRangeField] : [];
+function makeView(
+  doc = "hello world",
+  withFiringField = false,
+  frontmatter?: Record<string, unknown>,
+): EditorView {
+  const extensions = [
+    ...(withFiringField ? [firingAnnotationsField, firingRangeField] : []),
+    ...(frontmatter ? [frontmatterFacet.of(frontmatter)] : []),
+  ];
   return new EditorView({
     state: EditorState.create({ doc, extensions }),
     parent: document.createElement("div"),
@@ -829,5 +837,41 @@ describe("stripAnnotations", () => {
 
   it("removes mixed new-format and legacy annotations", () => {
     expect(stripAnnotations("a <!--- x ---> b %%! y %% c")).toBe("a b c");
+  });
+
+  // --- three-scope segmentation language (#854) ---
+
+  it("resolves the scope under the annotation's own lang", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    const view = makeView("hello world", false, { "annotation-lang": "ja" });
+    const ann = makeAnnotation({ lang: "fr" });
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "hello world",
+      ann.char_start,
+      ann.scope,
+      "fr",
+      "bidirectional",
+    );
+    view.destroy();
+  });
+
+  it("falls back to the document frontmatter language", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    const view = makeView("hello world", false, { lang: "fr-CA" });
+    const ann = makeAnnotation();
+
+    await fireAnnotation({ view, annotation: ann });
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "hello world",
+      ann.char_start,
+      ann.scope,
+      "fr",
+      "bidirectional",
+    );
+    view.destroy();
   });
 });

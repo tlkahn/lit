@@ -1077,4 +1077,66 @@ describe("AnnotationBuilderModal", () => {
       expect(screen.getByTestId("annotation-id-input")).toHaveValue("custom-id");
     });
   });
+
+  // --- language field (#854) ---
+
+  describe("language field", () => {
+    beforeEach(() => {
+      // Earlier blocks leave prefill-from-last-used enabled in the store.
+      usePreferencesStore.setState({ annotationPrefillLastUsed: false });
+    });
+
+    it("renders an empty language input beside Date, never prefilled from the preference", () => {
+      usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      expect(screen.getByTestId("annotation-lang-input")).toHaveValue("");
+    });
+
+    it("typing a language updates the live preview", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "x" } });
+      fireEvent.change(screen.getByTestId("annotation-lang-input"), { target: { value: "fr" } });
+      expect(screen.getByTestId("annotation-preview").textContent).toContain("lang=fr");
+    });
+
+    it("inserts the language into the emitted DSL", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test body" } });
+      fireEvent.change(screen.getByTestId("annotation-lang-input"), { target: { value: "fr" } });
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      expect(onInsert).toHaveBeenCalledWith(
+        "<!--- n lang=fr | test body @2026-06-01 --->",
+      );
+    });
+
+    it("an empty language emits nothing (inherit)", () => {
+      render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
+      expandOverflow();
+      fireEvent.change(screen.getByTestId("annotation-id-input"), { target: { value: "" } });
+      fireEvent.change(screen.getByTestId("annotation-body-input"), { target: { value: "test body" } });
+      expect(screen.getByTestId("annotation-preview").textContent).not.toContain("lang=");
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      expect(onInsert).toHaveBeenCalledWith("<!--- n | test body @2026-06-01 --->");
+    });
+
+    it("edit mode round-trips an existing language", () => {
+      render(
+        <AnnotationBuilderModal
+          onClose={onClose}
+          onInsert={onInsert}
+          mode="edit"
+          initialFields={{ id: null, type: "note", body: "une note", lang: "fr", date: null }}
+        />,
+      );
+      expandOverflow();
+      expect(screen.getByTestId("annotation-lang-input")).toHaveValue("fr");
+      fireEvent.click(screen.getByTestId("annotation-insert-btn"));
+      expect(onInsert).toHaveBeenCalledWith("<!--- n lang=fr | une note --->");
+    });
+  });
 });

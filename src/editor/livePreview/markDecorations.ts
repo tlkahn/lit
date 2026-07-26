@@ -2,7 +2,12 @@ import { type Extension, type Range, StateEffect, StateField } from "@codemirror
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { resolveMarkScopes, type ScopeRange } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
+import {
+  effectiveAnnotationLang,
+  normalizeLang,
+} from "../../lib/annotationLang";
 import { annotationDataField, setAnnotationData } from "./annotationState";
+import { frontmatterFacet } from "./crossref";
 
 /** A resolved mark span: a document range plus the mark code driving its CSS class. */
 export interface MarkRange {
@@ -97,11 +102,21 @@ const markScopePlugin = ViewPlugin.fromClass(
         return;
       }
 
-      const lang = usePreferencesStore.getState().annotationDefaultLang;
-      const requests = marks.map((ann) => ({
-        charStart: ann.char_start,
-        scope: ann.scope,
-      }));
+      // Document language is the batch fallback; a mark carrying its own
+      // `lang=` overrides it per mark on the Rust side (#854).
+      const lang = effectiveAnnotationLang(
+        null,
+        this.view.state.facet(frontmatterFacet),
+        usePreferencesStore.getState().annotationDefaultLang,
+      );
+      const requests = marks.map((ann) => {
+        const markLang = normalizeLang(ann.lang);
+        return {
+          charStart: ann.char_start,
+          scope: ann.scope,
+          ...(markLang ? { lang: markLang } : {}),
+        };
+      });
 
       let results: Array<ScopeRange | null>;
       try {

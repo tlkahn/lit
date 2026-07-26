@@ -651,7 +651,7 @@ mod tests {
     }
 
     fn build_graph(root: &Path) -> crate::graph::indexer::GraphIndex {
-        crate::graph::indexer::GraphIndex::build(root.to_path_buf(), false).unwrap()
+        crate::graph::indexer::GraphIndex::build(root.to_path_buf(), &crate::annotation::lang::AnnotationIndexOpts::disabled()).unwrap()
     }
 
     fn zip_entries(path: &Path) -> Vec<String> {

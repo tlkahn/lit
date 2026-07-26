@@ -312,7 +312,7 @@ pub fn execute_split(
     let result =
         split_execute::execute_split(&root, &relative_path, &registry, candidate_paths.as_ref()).map_err(|e| e.to_string())?;
 
-    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+    let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
     let gi = {
         let indices = graph_state.indices.lock().unwrap();
         indices.get(&root).cloned()
@@ -332,7 +332,7 @@ pub fn execute_split(
             changed: result.rewrite_actions.iter().map(|pr| pr.relative_path.clone()).collect(),
             deleted: vec![relative_path.clone()],
         };
-        let reindex_result = gi.batch_reindex(&diff, ann_enabled);
+        let reindex_result = gi.batch_reindex(&diff, &ann_opts);
         crate::commands::graph::emit_reindex_side_effects(&app_handle, &reindex_result);
     }
 
@@ -441,7 +441,7 @@ pub fn merge_documents(
         registry.record(&root.join(&pr.relative_path), &pr.after_content);
     }
 
-    let ann_enabled = crate::preferences::annotations_enabled(&app_handle);
+    let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
     let gi = {
         let indices = graph_state.indices.lock().unwrap();
         indices.get(&root).cloned()
@@ -452,7 +452,7 @@ pub fn merge_documents(
             changed: result.planned_rewrites.rewrites.iter().map(|pr| pr.relative_path.clone()).collect(),
             deleted: result.source_snapshots.iter().map(|(p, _)| p.clone()).collect(),
         };
-        let reindex_result = gi.batch_reindex(&diff, ann_enabled);
+        let reindex_result = gi.batch_reindex(&diff, &ann_opts);
         crate::commands::graph::emit_reindex_side_effects(&app_handle, &reindex_result);
     }
 

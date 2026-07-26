@@ -96,7 +96,10 @@ struct RawSeg {
 /// through it; the one-shot free functions below wrap it for single calls.
 pub struct ScopeResolveCtx<'a> {
     content: &'a str,
-    lang: &'a str,
+    /// Owned so callers can key a `HashMap<String, ScopeResolveCtx>` by an
+    /// effective language computed per annotation, without tying that tag's
+    /// lifetime to the content's.
+    lang: String,
     u16map: std::cell::OnceCell<Utf16ByteMap>,
     segs: std::cell::OnceCell<Vec<RawSeg>>,
     /// Test-only counter of cached segments inspected by the sentence
@@ -107,10 +110,10 @@ pub struct ScopeResolveCtx<'a> {
 }
 
 impl<'a> ScopeResolveCtx<'a> {
-    pub fn new(content: &'a str, lang: &'a str) -> Self {
+    pub fn new(content: &'a str, lang: &str) -> Self {
         Self {
             content,
-            lang,
+            lang: lang.to_string(),
             u16map: std::cell::OnceCell::new(),
             segs: std::cell::OnceCell::new(),
             #[cfg(test)]
@@ -150,7 +153,7 @@ impl<'a> ScopeResolveCtx<'a> {
             let end = base + self.content.len();
             let mut spans: Vec<RawSeg> = Vec::new();
             let mut cursor = 0usize;
-            for seg in sentencex::segment(self.lang, self.content) {
+            for seg in sentencex::segment(&self.lang, self.content) {
                 let ptr = seg.as_ptr() as usize;
                 if ptr < base || ptr + seg.len() > end {
                     continue;
@@ -1961,4 +1964,57 @@ mod tests {
             resolve_scope_range(content, cs, &Scope::Sentence(2), "en"),
         );
     }
+
+    // --- per-language segmentation ---
+
+    /// French knows `p.ex.` and `chap.` are abbreviations; English does not,
+    /// so the same body splits differently and the same `\s` annotation
+    /// resolves to a different sentence. This is the divergence behind #854.
+    const FR_ABBREV_BODY: &str = "Voir p.ex. le chap. 3 ici. Ensuite la suite.";
+
+    #[test]
+    fn sentence_scope_differs_between_en_and_fr() {
+        let at = utf16_len(&FR_ABBREV_BODY[..FR_ABBREV_BODY.find("Ensuite").unwrap()]);
+
+        let en = ScopeResolveCtx::new(FR_ABBREV_BODY, "en");
+        let en_range = en.resolve_scope_range(at, &Scope::Sentence(1)).unwrap();
+        assert_eq!(en.extract_text_for_range(&en_range), "3 ici.");
+
+        let fr = ScopeResolveCtx::new(FR_ABBREV_BODY, "fr");
+        let fr_range = fr.resolve_scope_range(at, &Scope::Sentence(1)).unwrap();
+        assert_eq!(
+            fr.extract_text_for_range(&fr_range),
+            "Voir p.ex. le chap. 3 ici."
+        );
+    }
+
+    /// The owned `lang` lets a caller keep one ctx per distinct language in a
+    /// map without borrowing the tag from a shorter-lived scope. This is how
+    /// the indexer and `resolve_mark_scopes` reuse segmentation per language.
+    #[test]
+    fn ctx_can_be_cached_per_language_in_a_map() {
+        use std::collections::HashMap;
+
+        let at = utf16_len(&FR_ABBREV_BODY[..FR_ABBREV_BODY.find("Ensuite").unwrap()]);
+        let mut by_lang: HashMap<String, ScopeResolveCtx> = HashMap::new();
+        let mut texts = Vec::new();
+
+        for ann_lang in ["en", "fr", "en"] {
+            // The key is computed per annotation and dropped at the end of the
+            // iteration, so the ctx must own its tag rather than borrow it.
+            let key = crate::annotation::lang::effective_lang(Some(ann_lang), None, None);
+            if !by_lang.contains_key(&key) {
+                by_lang.insert(key.clone(), ScopeResolveCtx::new(FR_ABBREV_BODY, &key));
+            }
+            let ctx = &by_lang[&key];
+            let range = ctx.resolve_scope_range(at, &Scope::Sentence(1)).unwrap();
+            texts.push(ctx.extract_text_for_range(&range));
+        }
+
+        assert_eq!(by_lang.len(), 2, "one ctx per distinct language, reused");
+        assert_eq!(texts[0], "3 ici.");
+        assert_eq!(texts[1], "Voir p.ex. le chap. 3 ici.");
+        assert_eq!(texts[2], "3 ici.");
+    }
 }
+

@@ -6,6 +6,7 @@ import {
   handleAnnotationLeave,
 } from "./annotationHover";
 import { scopeHighlightField, setScopeHighlight } from "./scopeHighlight";
+import { frontmatterFacet } from "./crossref";
 import { Decoration } from "@codemirror/view";
 import type { Annotation } from "../../lib/ipc";
 import { usePreferencesStore } from "../../stores/preferences";
@@ -20,10 +21,16 @@ import { resolveAnnotationScope, resolveAnnotationScopeWithMode } from "../../li
 const mockResolve = resolveAnnotationScope as ReturnType<typeof vi.fn>;
 const mockResolveWithMode = resolveAnnotationScopeWithMode as ReturnType<typeof vi.fn>;
 
-function makeView(doc = "hello world"): EditorView {
+function makeView(
+  doc = "hello world",
+  frontmatter?: Record<string, unknown>,
+): EditorView {
   const state = EditorState.create({
     doc,
-    extensions: [scopeHighlightField],
+    extensions: [
+      scopeHighlightField,
+      ...(frontmatter ? [frontmatterFacet.of(frontmatter)] : []),
+    ],
   });
   return new EditorView({ state, parent: document.createElement("div") });
 }
@@ -229,5 +236,56 @@ describe("annotationHover", () => {
 
     viewA.destroy();
     viewB.destroy();
+  });
+
+  // --- three-scope segmentation language (#854) ---
+
+  it("an annotation's own lang beats the document and the preference", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    const view = makeView("hello world", { "annotation-lang": "ja" });
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation({ lang: "fr" }));
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "hello world",
+      6,
+      { kind: "words", value: 2 },
+      "fr",
+    );
+    view.destroy();
+  });
+
+  it("document frontmatter beats the preference", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    const view = makeView("hello world", { lang: "fr-CA" });
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      "hello world",
+      6,
+      { kind: "words", value: 2 },
+      "fr",
+    );
+    view.destroy();
+  });
+
+  it("the alt-key bidirectional path resolves the same language", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "zh" });
+    const view = makeView("hello world", { "annotation-lang": "fr" });
+    mockResolveWithMode.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation(), { altKey: true });
+
+    expect(mockResolveWithMode).toHaveBeenCalledWith(
+      "hello world",
+      6,
+      { kind: "words", value: 2 },
+      "fr",
+      "bidirectional",
+    );
+    view.destroy();
   });
 });

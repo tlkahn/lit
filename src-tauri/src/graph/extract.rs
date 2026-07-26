@@ -444,6 +444,7 @@ pub fn extract_annotations(
                 scope_value,
                 uuid: ann.uuid,
                 original: None,
+                lang: ann.lang,
             }
         })
         .collect()
@@ -1106,6 +1107,29 @@ mod tests {
         let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].source_line, 3);
+    }
+
+    #[test]
+    fn extract_annotations_carries_lang() {
+        let content = r"Some text <!--- n \s lang=fr | une note ---> more";
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].lang, Some("fr".to_string()));
+    }
+
+    #[test]
+    fn extract_annotations_lang_absent_is_none() {
+        let content = r"Some text <!--- n \s | a note ---> more";
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
+        assert_eq!(result[0].lang, None);
+    }
+
+    #[test]
+    fn extract_annotations_carries_block_lang() {
+        let content = "text\n\n<!---\nn\nlang: ja\n---\nメモ\n--->\n";
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].lang, Some("ja".to_string()));
     }
 
     #[test]

@@ -1761,7 +1761,7 @@ mod tests {
         fs::create_dir_all(dir.path()).unwrap();
         fs::write(dir.path().join("a.md"), "As shown in [@smith2024].").unwrap();
 
-        let gi = crate::graph::indexer::GraphIndex::build(root.clone(), false).unwrap();
+        let gi = crate::graph::indexer::GraphIndex::build(root.clone(), &crate::annotation::lang::AnnotationIndexOpts::disabled()).unwrap();
 
         // No shadow initially
         {

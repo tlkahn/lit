@@ -101,6 +101,10 @@ export function AnnotationBuilderModal({
     if (mode !== "edit") return new Date().toISOString().slice(0, 10);
     return "";
   });
+  // Empty means "inherit": the document's frontmatter, then the global
+  // `annotations.defaultLang`. Deliberately never prefilled from the
+  // preference, so "inherit" is what an untouched field looks like (#854).
+  const [lang, setLang] = useState(initialFields?.lang ?? "");
   const [mark] = useState<string | undefined>(initialFields?.mark);
   const [formChoice, setFormChoice] = useState<AnnotationForm>("inline");
 
@@ -155,8 +159,9 @@ export function AnnotationBuilderModal({
       scope,
       body,
       date: date || null,
+      lang: lang.trim() || null,
     }),
-    [id, type, mark, certainty, scope, body, date],
+    [id, type, mark, certainty, scope, body, date, lang],
   );
 
   const preview = useMemo(() => generateDsl(fields, { form: effectiveForm }), [fields, effectiveForm]);
@@ -294,6 +299,18 @@ export function AnnotationBuilderModal({
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                   placeholder="YYYY-MM or YYYY-MM-DD"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-text-muted">Language</span>
+                <input
+                  type="text"
+                  className="rounded border border-border-primary bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                  data-testid="annotation-lang-input"
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value)}
+                  placeholder="inherit"
                 />
               </label>
 

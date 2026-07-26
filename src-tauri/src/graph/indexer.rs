@@ -15,6 +15,7 @@ use super::resolve::StemLookup;
 use super::cardbox_layout::load_layout_links;
 use super::store::Store;
 use super::types::{extract_aliases, extract_tags, BacklinkEntry, EdgeKind, LinkEntry, ParsedNode, SearchFilter, SearchMatchMode, SearchResult, Stats, UnlinkedMention};
+use crate::annotation::lang::AnnotationIndexOpts;
 use crate::workspace::frontmatter::parse_frontmatter;
 use crate::workspace::normalize::filename_to_page_name;
 
@@ -64,19 +65,47 @@ pub fn parse_md_file(
 /// re-reading and re-segmenting every annotated file. Offsets align by
 /// construction: `body` is the exact string the annotations were extracted
 /// from. Unresolvable scopes and empty extractions leave `original` as None.
-/// One `ScopeResolveCtx` is shared across the file's annotations so sentence
-/// segmentation and the UTF-16 offset map are computed once per body. Sentence
-/// scopes then select their span out of that shared segmentation at
-/// `O(log #segs + n)` per annotation, so a file's sentence work is
-/// `O(body + annotations x n)`. Section / paragraph / page / word scopes are
-/// unchanged: each still scans the document (or rebuilds the heading list) per
-/// annotation, so those remain `O(doc)` each: out of scope per #853.
-fn resolve_annotation_originals(body: &str, anns: &mut [super::types::IndexableAnnotation]) {
-    let ctx = crate::annotation::scope_resolver::ScopeResolveCtx::new(body, "en");
+/// One `ScopeResolveCtx` is shared per distinct segmentation language so
+/// sentence segmentation and the UTF-16 offset map are computed once per body
+/// per language (one ctx total for the overwhelmingly common single-language
+/// file). Sentence scopes then select their span out of that shared
+/// segmentation at `O(log #segs + n)` per annotation, so a file's sentence
+/// work is `O(langs x body + annotations x n)`. Section / paragraph / page /
+/// word scopes are unchanged: each still scans the document (or rebuilds the
+/// heading list) per annotation, so those remain `O(doc)` each: out of scope
+/// per #853.
+///
+/// The language of each annotation is resolved with precedence
+/// annotation > document frontmatter > `global_lang` (issue #854), so that
+/// index-time `original` values agree with what live preview highlights.
+fn resolve_annotation_originals(
+    body: &str,
+    frontmatter: &serde_json::Value,
+    global_lang: &str,
+    anns: &mut [super::types::IndexableAnnotation],
+) {
+    use crate::annotation::scope_resolver::ScopeResolveCtx;
+    use std::collections::hash_map::Entry;
+
+    let doc_lang = crate::annotation::lang::frontmatter_lang(frontmatter);
+    let mut ctxs: HashMap<String, ScopeResolveCtx> = HashMap::new();
+
     for ann in anns.iter_mut() {
         let scope = match crate::annotation::types::Scope::from_db(&ann.scope_kind, &ann.scope_value) {
             Some(s) => s,
             None => continue,
+        };
+        let lang = crate::annotation::lang::effective_lang(
+            ann.lang.as_deref(),
+            doc_lang.as_deref(),
+            Some(global_lang),
+        );
+        let ctx = match ctxs.entry(lang) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(v) => {
+                let ctx = ScopeResolveCtx::new(body, v.key());
+                v.insert(ctx)
+            }
         };
         if let Some(range) = ctx.resolve_scope_range(ann.char_start, &scope) {
             let text = ctx.extract_text_for_range(&range);
@@ -217,16 +246,16 @@ pub struct IndexResult {
 pub fn index_workspace(
     store: &Store,
     root: &Path,
-    annotations_enabled: bool,
+    ann_opts: &AnnotationIndexOpts,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
-    index_workspace_with_progress(store, root, &super::progress::noop_callback(), annotations_enabled)
+    index_workspace_with_progress(store, root, &super::progress::noop_callback(), ann_opts)
 }
 
 pub fn index_workspace_with_progress(
     store: &Store,
     root: &Path,
     on_progress: &dyn Fn(super::progress::IndexProgress),
-    annotations_enabled: bool,
+    ann_opts: &AnnotationIndexOpts,
 ) -> Result<(IndexResult, ReverseStemIndex), GraphError> {
     use super::progress::{IndexPhase, IndexProgress};
 
@@ -297,7 +326,7 @@ pub fn index_workspace_with_progress(
     let node_count = all_nodes.len();
 
     // Workspace-merged mark codes, computed once (reads `.lit/marks.toml`).
-    let mark_codes = if annotations_enabled {
+    let mark_codes = if ann_opts.enabled {
         crate::annotation::marks::sorted_mark_codes(&crate::annotation::marks::merged_config(root))
     } else {
         Vec::new()
@@ -310,11 +339,16 @@ pub fn index_workspace_with_progress(
 
         // Always call upsert even with empty vec so orphaned annotations get cleaned up.
         {
-            let anns = if annotations_enabled {
+            let anns = if ann_opts.enabled {
                 bodies.get(&node.id)
                     .map(|b| {
                         let mut anns = super::extract::extract_annotations(b, &mark_codes);
-                        resolve_annotation_originals(b, &mut anns);
+                        resolve_annotation_originals(
+                            b,
+                            &node.frontmatter,
+                            &ann_opts.default_lang,
+                            &mut anns,
+                        );
                         anns
                     })
                     .unwrap_or_default()
@@ -493,7 +527,7 @@ pub fn incremental_reindex(
     root: &Path,
     reverse_stems: &mut ReverseStemIndex,
     diff: &DiffResult,
-    annotations_enabled: bool,
+    ann_opts: &AnnotationIndexOpts,
 ) -> Result<IndexResult, GraphError> {
     store.begin_transaction()?;
 
@@ -503,7 +537,7 @@ pub fn incremental_reindex(
     let mut removed_annotation_uuids: Vec<(String, String)> = Vec::new();
 
     // Workspace-merged mark codes, computed once (reads `.lit/marks.toml`).
-    let mark_codes = if annotations_enabled {
+    let mark_codes = if ann_opts.enabled {
         crate::annotation::marks::sorted_mark_codes(&crate::annotation::marks::merged_config(root))
     } else {
         Vec::new()
@@ -557,9 +591,14 @@ pub fn incremental_reindex(
 
                 // Always call upsert even with empty vec so orphaned annotations get cleaned up.
                 {
-                    let anns = if annotations_enabled {
+                    let anns = if ann_opts.enabled {
                         let mut anns = super::extract::extract_annotations(&body, &mark_codes);
-                        resolve_annotation_originals(&body, &mut anns);
+                        resolve_annotation_originals(
+                            &body,
+                            &node.frontmatter,
+                            &ann_opts.default_lang,
+                            &mut anns,
+                        );
                         anns
                     } else {
                         vec![]
@@ -728,7 +767,7 @@ impl GraphIndex {
         }))
     }
 
-    pub fn sync_with_disk(&self, annotations_enabled: bool) -> Result<bool, GraphError> {
+    pub fn sync_with_disk(&self, ann_opts: &AnnotationIndexOpts) -> Result<bool, GraphError> {
         let store = self.store.lock().unwrap();
         let diff = compute_diff(&store, &self.workspace_root)?;
         if diff.is_empty() {
@@ -741,7 +780,7 @@ impl GraphIndex {
             "background sync: applying diff"
         );
         let mut reverse_stems = self.reverse_stems.lock().unwrap();
-        incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, annotations_enabled)?;
+        incremental_reindex(&store, &self.workspace_root, &mut reverse_stems, &diff, ann_opts)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
         let links = load_layout_links(&self.workspace_root);
@@ -751,14 +790,14 @@ impl GraphIndex {
         Ok(true)
     }
 
-    pub fn build(workspace_root: std::path::PathBuf, annotations_enabled: bool) -> Result<Self, GraphError> {
-        Self::build_with_progress(workspace_root, &super::progress::noop_callback(), annotations_enabled)
+    pub fn build(workspace_root: std::path::PathBuf, ann_opts: &AnnotationIndexOpts) -> Result<Self, GraphError> {
+        Self::build_with_progress(workspace_root, &super::progress::noop_callback(), ann_opts)
     }
 
     pub fn build_with_progress(
         workspace_root: std::path::PathBuf,
         on_progress: &dyn Fn(super::progress::IndexProgress),
-        annotations_enabled: bool,
+        ann_opts: &AnnotationIndexOpts,
     ) -> Result<Self, GraphError> {
         use super::progress::{IndexPhase, IndexProgress};
 
@@ -796,12 +835,12 @@ impl GraphIndex {
                     .map(|(source, _target, raw_target)| (source, raw_target))
                     .collect();
                 let mut reverse = ReverseStemIndex::build_from_edges(&edges);
-                incremental_reindex(&store, &workspace_root, &mut reverse, &diff, annotations_enabled)?;
+                incremental_reindex(&store, &workspace_root, &mut reverse, &diff, ann_opts)?;
                 reverse
             }
         } else {
             info!("cold start: no existing store data, full index");
-            let (_, reverse_stems) = index_workspace_with_progress(&store, &workspace_root, on_progress, annotations_enabled)?;
+            let (_, reverse_stems) = index_workspace_with_progress(&store, &workspace_root, on_progress, ann_opts)?;
             reverse_stems
         };
 
@@ -825,7 +864,7 @@ impl GraphIndex {
         })
     }
 
-    pub fn batch_reindex(&self, diff: &DiffResult, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
+    pub fn batch_reindex(&self, diff: &DiffResult, ann_opts: &AnnotationIndexOpts) -> Result<Vec<(String, String)>, GraphError> {
         if diff.is_empty() {
             return Ok(vec![]);
         }
@@ -856,7 +895,7 @@ impl GraphIndex {
         };
 
         let t = std::time::Instant::now();
-        let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, annotations_enabled)?;
+        let result = incremental_reindex(&store, &self.workspace_root, &mut reverse, diff, ann_opts)?;
         let reindex_ms = t.elapsed().as_millis() as u64;
         let t = std::time::Instant::now();
         if bib_in_diff {
@@ -896,22 +935,22 @@ impl GraphIndex {
         Ok(result.removed_annotation_uuids)
     }
 
-    pub fn reindex_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
-        self.batch_reindex(&DiffResult { new: vec![], changed: vec![relative_path.to_string()], deleted: vec![] }, annotations_enabled)
+    pub fn reindex_file(&self, relative_path: &str, ann_opts: &AnnotationIndexOpts) -> Result<Vec<(String, String)>, GraphError> {
+        self.batch_reindex(&DiffResult { new: vec![], changed: vec![relative_path.to_string()], deleted: vec![] }, ann_opts)
     }
 
     /// For newly created or restored files. Uses `new` semantics so stub promotion runs.
-    pub fn add_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
-        self.batch_reindex(&DiffResult { new: vec![relative_path.to_string()], changed: vec![], deleted: vec![] }, annotations_enabled)
+    pub fn add_file(&self, relative_path: &str, ann_opts: &AnnotationIndexOpts) -> Result<Vec<(String, String)>, GraphError> {
+        self.batch_reindex(&DiffResult { new: vec![relative_path.to_string()], changed: vec![], deleted: vec![] }, ann_opts)
     }
 
-    pub fn remove_file(&self, relative_path: &str, annotations_enabled: bool) -> Result<Vec<(String, String)>, GraphError> {
-        self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, annotations_enabled)
+    pub fn remove_file(&self, relative_path: &str, ann_opts: &AnnotationIndexOpts) -> Result<Vec<(String, String)>, GraphError> {
+        self.batch_reindex(&DiffResult { new: vec![], changed: vec![], deleted: vec![relative_path.to_string()] }, ann_opts)
     }
 
-    pub fn full_rebuild(&self, annotations_enabled: bool) -> Result<IndexResult, GraphError> {
+    pub fn full_rebuild(&self, ann_opts: &AnnotationIndexOpts) -> Result<IndexResult, GraphError> {
         let store = self.store.lock().unwrap();
-        let (result, new_reverse) = index_workspace(&store, &self.workspace_root, annotations_enabled)?;
+        let (result, new_reverse) = index_workspace(&store, &self.workspace_root, ann_opts)?;
         crate::bib::db::ingest_workspace_bibs(&store.conn, &self.workspace_root, &self.bib_cache)?;
         resolve_shadows_tx(&store)?;
         let links = load_layout_links(&self.workspace_root);
@@ -1915,6 +1954,20 @@ mod tests {
     use tempfile::TempDir;
     use tracing_test::traced_test;
 
+    /// Annotation indexing on, English default: what almost every test wants.
+    fn ann_on() -> &'static AnnotationIndexOpts {
+        static ON: std::sync::LazyLock<AnnotationIndexOpts> =
+            std::sync::LazyLock::new(AnnotationIndexOpts::default);
+        &ON
+    }
+
+    /// Annotation indexing off.
+    fn ann_off() -> &'static AnnotationIndexOpts {
+        static OFF: std::sync::LazyLock<AnnotationIndexOpts> =
+            std::sync::LazyLock::new(AnnotationIndexOpts::disabled);
+        &OFF
+    }
+
     fn create_workspace() -> TempDir {
         tempfile::tempdir().unwrap()
     }
@@ -1939,7 +1992,7 @@ mod tests {
         )
         .unwrap();
         write_md(dir.path(), "a.md", "text<!--- zz _ ---> rest");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
@@ -1953,7 +2006,7 @@ mod tests {
         // Same document, but no `.lit/marks.toml` defining `zz`.
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "text<!--- zz _ ---> rest");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "bare");
@@ -1965,7 +2018,7 @@ mod tests {
     fn build_persists_resolved_original_in_store() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Some text <!--- n: _ | a note ---> more.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let original: Option<String> = gi.store().conn.query_row(
             "SELECT original FROM annotations WHERE node_id = 'a.md'",
             [],
@@ -1978,7 +2031,7 @@ mod tests {
     fn build_persists_resolved_sentence_original_in_store() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "The dog ran. The cat sat.<!--- n: \\s | a note ---> tail.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let original: Option<String> = gi.store().conn.query_row(
             "SELECT original FROM annotations WHERE node_id = 'a.md'",
             [],
@@ -1989,6 +2042,174 @@ mod tests {
             Some("The cat sat."),
             "sentence-scoped original must be resolved and persisted at index time"
         );
+    }
+
+    // --- three-scope segmentation language (issue #854) ---
+
+    /// French treats `p.ex.` and `chap.` as abbreviations, English does not,
+    /// so the same `\s` annotation selects a different sentence under each.
+    const FR_BODY: &str = "Voir p.ex. le chap. 3 ici. Ensuite la suite.";
+    const EN_RESULT: &str = "3 ici.";
+    const FR_RESULT: &str = "Voir p.ex. le chap. 3 ici.";
+
+    fn sentence_ann(lang: Option<&str>) -> crate::graph::types::IndexableAnnotation {
+        let char_start =
+            crate::annotation::scanner::utf16_len(&FR_BODY[..FR_BODY.find("Ensuite").unwrap()]);
+        crate::graph::types::IndexableAnnotation {
+            annotation_type: "note".to_string(),
+            certainty: "neutral".to_string(),
+            body: Some("une note".to_string()),
+            date: None,
+            source_line: 1,
+            char_start,
+            char_end: char_start,
+            scope_kind: "sentence".to_string(),
+            scope_value: "1".to_string(),
+            uuid: None,
+            original: None,
+            lang: lang.map(String::from),
+        }
+    }
+
+    /// `FR_BODY` with the annotation planted immediately after `3 ici.`, the
+    /// point where the two segmentations disagree.
+    fn fr_body_with_annotation(inner: &str) -> String {
+        let cut = FR_BODY.find("Ensuite").unwrap();
+        format!("{}<!--- {inner} --->{}", &FR_BODY[..cut], &FR_BODY[cut..])
+    }
+
+    fn resolved_original(
+        ann_lang: Option<&str>,
+        frontmatter: serde_json::Value,
+        global: &str,
+    ) -> Option<String> {
+        let mut anns = vec![sentence_ann(ann_lang)];
+        resolve_annotation_originals(FR_BODY, &frontmatter, global, &mut anns);
+        anns.into_iter().next().unwrap().original
+    }
+
+    #[test]
+    fn resolve_originals_falls_back_to_global_lang() {
+        assert_eq!(
+            resolved_original(None, serde_json::json!({}), "en").as_deref(),
+            Some(EN_RESULT)
+        );
+        assert_eq!(
+            resolved_original(None, serde_json::json!({}), "fr").as_deref(),
+            Some(FR_RESULT)
+        );
+    }
+
+    #[test]
+    fn resolve_originals_frontmatter_annotation_lang_beats_global() {
+        assert_eq!(
+            resolved_original(None, serde_json::json!({ "annotation-lang": "fr" }), "en")
+                .as_deref(),
+            Some(FR_RESULT)
+        );
+    }
+
+    #[test]
+    fn resolve_originals_frontmatter_pandoc_lang_used_when_namespaced_key_absent() {
+        assert_eq!(
+            resolved_original(None, serde_json::json!({ "lang": "fr-CA" }), "en").as_deref(),
+            Some(FR_RESULT)
+        );
+    }
+
+    #[test]
+    fn resolve_originals_annotation_lang_beats_frontmatter() {
+        assert_eq!(
+            resolved_original(Some("fr"), serde_json::json!({ "annotation-lang": "en" }), "en")
+                .as_deref(),
+            Some(FR_RESULT)
+        );
+        assert_eq!(
+            resolved_original(Some("en"), serde_json::json!({ "annotation-lang": "fr" }), "fr")
+                .as_deref(),
+            Some(EN_RESULT)
+        );
+    }
+
+    /// A mixed-language body pays one segmentation per distinct language, and
+    /// each annotation still gets the answer its own language dictates.
+    #[test]
+    fn resolve_originals_groups_annotations_by_effective_lang() {
+        let mut anns = vec![
+            sentence_ann(Some("fr")),
+            sentence_ann(None),
+            sentence_ann(Some("fr")),
+        ];
+        resolve_annotation_originals(FR_BODY, &serde_json::json!({}), "en", &mut anns);
+        assert_eq!(anns[0].original.as_deref(), Some(FR_RESULT));
+        assert_eq!(anns[1].original.as_deref(), Some(EN_RESULT));
+        assert_eq!(anns[2].original.as_deref(), Some(FR_RESULT));
+    }
+
+    #[test]
+    fn build_persists_original_under_global_lang() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", &fr_body_with_annotation("n \\s | une note"));
+        let gi = GraphIndex::build(
+            dir.path().to_path_buf(),
+            &AnnotationIndexOpts::with_lang("fr"),
+        )
+        .unwrap();
+        let original: Option<String> = gi
+            .store()
+            .conn
+            .query_row("SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            original.as_deref(),
+            Some(FR_RESULT),
+            "the global default language must drive index-time segmentation"
+        );
+    }
+
+    #[test]
+    fn build_persists_original_under_document_frontmatter_lang() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            &format!(
+                "---\nannotation-lang: fr\n---\n\n{}",
+                fr_body_with_annotation("n \\s | une note")
+            ),
+        );
+        let gi = GraphIndex::build(
+            dir.path().to_path_buf(),
+            &AnnotationIndexOpts::with_lang("en"),
+        )
+        .unwrap();
+        let original: Option<String> = gi
+            .store()
+            .conn
+            .query_row("SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(original.as_deref(), Some(FR_RESULT));
+    }
+
+    #[test]
+    fn build_persists_original_under_annotation_lang() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            &fr_body_with_annotation("n \\s lang=fr | une note"),
+        );
+        let gi = GraphIndex::build(
+            dir.path().to_path_buf(),
+            &AnnotationIndexOpts::with_lang("en"),
+        )
+        .unwrap();
+        let original: Option<String> = gi
+            .store()
+            .conn
+            .query_row("SELECT original FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(original.as_deref(), Some(FR_RESULT));
     }
 
     /// Pins the repeated-sentence fix (issue #853) on the production path
@@ -2011,9 +2232,10 @@ mod tests {
             scope_value: "2".to_string(),
             uuid: None,
             original: None,
+            lang: None,
         }];
 
-        resolve_annotation_originals(body, &mut anns);
+        resolve_annotation_originals(body, &serde_json::Value::Null, "en", &mut anns);
 
         assert_eq!(anns[0].original.as_deref(), Some("The dog ran. A last line."));
     }
@@ -2046,6 +2268,7 @@ mod tests {
                         scope_value: "1".to_string(),
                         uuid: None,
                         original: None,
+                        lang: None,
                     }
                 })
                 .collect()
@@ -2053,12 +2276,12 @@ mod tests {
 
         let mut few = make_anns(5);
         let start = std::time::Instant::now();
-        resolve_annotation_originals(&body, &mut few);
+        resolve_annotation_originals(&body, &serde_json::Value::Null, "en", &mut few);
         let t_few = start.elapsed();
 
         let mut many = make_anns(500);
         let start = std::time::Instant::now();
-        resolve_annotation_originals(&body, &mut many);
+        resolve_annotation_originals(&body, &serde_json::Value::Null, "en", &mut many);
         let t_many = start.elapsed();
 
         let resolved = many.iter().filter(|a| a.original.is_some()).count();
@@ -2074,7 +2297,7 @@ mod tests {
     fn incremental_reindex_refreshes_original_when_surrounding_text_changes() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Alpha text <!--- n: _ | a note ---> tail.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let uuid_before: String = gi.store().conn.query_row(
             "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
@@ -2083,7 +2306,7 @@ mod tests {
         // Change only the text the annotation's scope covers — the annotation
         // itself keeps its (type, body) identity, so the diff UPDATEs in place.
         write_md(dir.path(), "a.md", "Alpha revised <!--- n: _ | a note ---> tail.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         let (uuid_after, original): (String, Option<String>) = gi.store().conn.query_row(
             "SELECT uuid, original FROM annotations WHERE node_id = 'a.md'",
@@ -2101,7 +2324,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "First paragraph of A.\n\nMore text.");
         write_md(dir.path(), "b.md", "First paragraph of B.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let ids = vec!["a.md".into(), "b.md".into()];
         let result = gi.get_first_paragraphs(&ids).unwrap();
         assert_eq!(result.len(), 2);
@@ -2220,7 +2443,7 @@ mod tests {
         write_md(dir.path(), "b.md", "Target B.");
         write_md(dir.path(), "c.md", "Target C.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         let bl_b = store.backlinks("b.md").unwrap();
         assert_eq!(bl_b.len(), 1);
         assert!(!bl_b[0].context.contains("title:"));
@@ -2234,7 +2457,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Placeholder.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(
             dir.path(),
@@ -2247,7 +2470,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].context, "Now links to [[B]].");
@@ -2264,7 +2487,7 @@ mod tests {
         );
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         // Delete b.md and recreate — triggers re-resolution of a.md as affected source
         fs::remove_file(dir.path().join("b.md")).unwrap();
         write_md(dir.path(), "b.md", "Recreated target.");
@@ -2274,7 +2497,7 @@ mod tests {
             changed: vec!["b.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert!(!bl[0].context.contains("title:"));
@@ -2347,7 +2570,7 @@ mod tests {
     fn index_workspace_empty_dir() {
         let dir = create_workspace();
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(result.nodes_indexed, 0);
         assert_eq!(result.edges_resolved, 0);
     }
@@ -2361,7 +2584,7 @@ mod tests {
             "---\ntitle: Hello\ntags:\n  - test\n---\nContent.",
         );
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(result.nodes_indexed, 1);
         let stats = store.stats().unwrap();
         assert_eq!(stats.nodes, 1);
@@ -2374,7 +2597,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Links to [[B]].");
         write_md(dir.path(), "b.md", "Target page.");
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(result.edges_resolved, 1);
         let edges = store.all_edges().unwrap();
         assert_eq!(edges.len(), 1);
@@ -2387,7 +2610,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[Ghost]].");
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(result.stubs_created, 1);
         let meta = store.all_nodes_metadata().unwrap();
         assert!(meta.iter().any(|(id, is_stub, _)| id == "Ghost" && *is_stub));
@@ -2399,7 +2622,7 @@ mod tests {
         write_md(dir.path(), "a.md", "See [[My Note]].");
         write_md(dir.path(), "My Note.md", "Target.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         let raw = store.all_raw_edges().unwrap();
         assert_eq!(raw.len(), 1);
         assert_eq!(raw[0].2, "My Note");
@@ -2415,7 +2638,7 @@ mod tests {
         );
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         let bl = store.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].context, "This links to [[B]].");
@@ -2432,7 +2655,7 @@ mod tests {
         write_md(dir.path(), "a.md", "[[B]]");
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        let (_, reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         let entries = reverse.lookup("b");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "a.md");
@@ -2443,7 +2666,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         let entries = store.all_sync_entries().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "a.md");
@@ -2456,7 +2679,7 @@ mod tests {
         write_md(dir.path(), ".obsidian/config.md", "Hidden.");
         write_md(dir.path(), "visible.md", "Visible.");
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(result.nodes_indexed, 1);
     }
 
@@ -2466,8 +2689,8 @@ mod tests {
         write_md(dir.path(), "a.md", "[[B]]");
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        let (r1, _) = index_workspace(&store, dir.path(), true).unwrap();
-        let (r2, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (r1, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
+        let (r2, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(r1.nodes_indexed, r2.nodes_indexed);
         assert_eq!(store.stats().unwrap().nodes, 2);
     }
@@ -2477,7 +2700,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert!(dir.path().join(".lit").exists());
     }
 
@@ -2500,7 +2723,7 @@ mod tests {
             log_clone.lock().unwrap().push(p);
         };
 
-        let (result, _) = index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
+        let (result, _) = index_workspace_with_progress(&store, dir.path(), &callback, ann_on()).unwrap();
         assert_eq!(result.nodes_indexed, 3);
 
         let events = log.lock().unwrap();
@@ -2545,7 +2768,7 @@ mod tests {
             }
         };
 
-        index_workspace_with_progress(&store, dir.path(), &callback, true).unwrap();
+        index_workspace_with_progress(&store, dir.path(), &callback, ann_on()).unwrap();
 
         let phases = log.lock().unwrap();
         assert_eq!(*phases, vec![IndexPhase::Scanning, IndexPhase::Parsing, IndexPhase::Resolving]);
@@ -2557,7 +2780,7 @@ mod tests {
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(result.nodes_indexed, 2);
         assert_eq!(result.edges_resolved, 1);
     }
@@ -2569,7 +2792,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         let diff = compute_diff(&store, dir.path()).unwrap();
         assert!(diff.new.is_empty());
         assert!(diff.changed.is_empty());
@@ -2581,7 +2804,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         write_md(dir.path(), "b.md", "New file.");
         let diff = compute_diff(&store, dir.path()).unwrap();
         assert_eq!(diff.new, vec!["b.md"]);
@@ -2592,7 +2815,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         // Touch the file to change mtime
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "a.md", "Updated content.");
@@ -2606,7 +2829,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Content.");
         write_md(dir.path(), "b.md", "Content.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         fs::remove_file(dir.path().join("b.md")).unwrap();
         let diff = compute_diff(&store, dir.path()).unwrap();
         assert_eq!(diff.deleted, vec!["b.md"]);
@@ -2619,7 +2842,7 @@ mod tests {
         write_md(dir.path(), "change.md", "Change.");
         write_md(dir.path(), "delete.md", "Delete.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "change.md", "Changed.");
         fs::remove_file(dir.path().join("delete.md")).unwrap();
@@ -2800,7 +3023,7 @@ mod tests {
             "Real cite [@outside2024].\n```\n[@inside2024]\n```\nDone.",
         );
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let outside = store.citing_pages("outside2024").unwrap();
         assert_eq!(outside.len(), 1, "citation outside code block must be indexed");
@@ -2816,7 +3039,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let citing = store.citing_pages("smith2024").unwrap();
         assert_eq!(citing.len(), 1);
@@ -2830,7 +3053,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
@@ -2846,7 +3069,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Cites [@old2020].");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(store.citing_pages("old2020").unwrap().len(), 1);
 
         write_md(dir.path(), "a.md", "Cites [@new2021].");
@@ -2855,7 +3078,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         assert!(store.citing_pages("old2020").unwrap().is_empty());
         assert_eq!(store.citing_pages("new2021").unwrap().len(), 1);
@@ -2866,7 +3089,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "See [[Ghost]] and [@smith2024].");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(store.citing_pages("smith2024").unwrap().len(), 1);
 
         // Creating ghost.md triggers the changed-stems re-resolve path, which
@@ -2877,7 +3100,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         let citing = store.citing_pages("smith2024").unwrap();
         assert_eq!(citing.len(), 1, "re-resolve must not drop citation edges");
@@ -2889,7 +3112,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Cites [@smith2024].");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         assert_eq!(store.citing_pages("smith2024").unwrap().len(), 1);
 
         fs::remove_file(dir.path().join("a.md")).unwrap();
@@ -2898,7 +3121,7 @@ mod tests {
             changed: vec![],
             deleted: vec!["a.md".to_string()],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         assert!(
             store.citing_pages("smith2024").unwrap().is_empty(),
@@ -2911,7 +3134,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "See [@alpha2020; @beta2021, pp. 10-12].");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let alpha = store.citing_pages("alpha2020").unwrap();
         assert_eq!(alpha.len(), 1);
@@ -2932,7 +3155,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
         write_md(dir.path(), "b.md", "Links [[a]] but cites nothing.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let citing = gi.citing_pages("smith2024").unwrap();
         assert_eq!(citing.len(), 1);
@@ -2948,7 +3171,7 @@ mod tests {
     fn citation_edges_stay_out_of_knowledge_graph() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let result = gi.neighbors("a.md", 1, false).unwrap();
         assert!(
@@ -2964,7 +3187,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Link [[B]] and cite [@smith2024].");
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        let (result, _) = index_workspace(&store, dir.path(), true).unwrap();
+        let (result, _) = index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         assert_eq!(result.edges_resolved, 1, "only the wikilink counts as resolved");
         assert_eq!(store.citing_pages("smith2024").unwrap().len(), 1);
@@ -2977,14 +3200,14 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Old paragraph.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         write_md(dir.path(), "a.md", "New paragraph.");
         let diff = DiffResult {
             new: vec![],
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         let titles = store.node_titles().unwrap();
         assert_eq!(titles.len(), 1);
     }
@@ -2995,14 +3218,14 @@ mod tests {
         write_md(dir.path(), "a.md", "[[OldLink]]");
         write_md(dir.path(), "b.md", "Target.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         write_md(dir.path(), "a.md", "[[b]]");
         let diff = DiffResult {
             new: vec![],
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         let edges = store.all_edges().unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].1, "b.md");
@@ -3014,14 +3237,14 @@ mod tests {
         write_md(dir.path(), "a.md", "Alpha.");
         write_md(dir.path(), "b.md", "Beta.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         write_md(dir.path(), "a.md", "Alpha updated.");
         let diff = DiffResult {
             new: vec![],
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         assert_eq!(store.stats().unwrap().nodes, 2);
     }
 
@@ -3030,7 +3253,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[B]].");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         // B was unresolved (stub). Now create it.
         write_md(dir.path(), "b.md", "I exist now.");
         let diff = DiffResult {
@@ -3038,7 +3261,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         let edges = store.all_edges().unwrap();
         assert!(
             edges.iter().any(|(s, t)| s == "a.md" && t == "b.md"),
@@ -3053,14 +3276,14 @@ mod tests {
         write_md(dir.path(), "a.md", "Alpha.");
         write_md(dir.path(), "b.md", "Beta.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
         fs::remove_file(dir.path().join("b.md")).unwrap();
         let diff = DiffResult {
             new: vec![],
             changed: vec![],
             deleted: vec!["b.md".to_string()],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
         let ids = store.all_node_ids().unwrap();
         assert!(!ids.contains(&"b.md".to_string()));
     }
@@ -3070,7 +3293,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Alpha.");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         write_md(dir.path(), "b.md", "Links to [[A]].");
         write_md(dir.path(), "c.md", "Links to [[B]].");
@@ -3079,7 +3302,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         let bl_a = store.backlinks("a.md").unwrap();
         assert!(bl_a.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md");
@@ -3096,7 +3319,7 @@ mod tests {
             "---\naliases:\n  - Alpha\n---\nContent.",
         );
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         write_md(dir.path(), "b.md", "Links to [[Alpha]].");
         let diff = DiffResult {
@@ -3104,7 +3327,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         let bl = store.backlinks("a.md").unwrap();
         assert!(bl.iter().any(|bl| bl.source_id == "b.md"), "b.md should link to a.md via alias");
@@ -3117,7 +3340,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         write_md(dir.path(), "b.md", "World.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
     }
@@ -3129,14 +3352,14 @@ mod tests {
         write_md(dir.path(), "b.md", "Links to [[a]].");
 
         // Cold start — builds .lit/graph.db
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats1 = gi1.stats().unwrap();
         assert_eq!(stats1.nodes, 2);
         assert_eq!(stats1.edges, 1);
         drop(gi1);
 
         // Warm start — same files, no changes
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats2 = gi2.stats().unwrap();
         assert_eq!(stats2.nodes, 2, "warm start should preserve node count");
         assert_eq!(stats2.edges, 1, "warm start should preserve edge count");
@@ -3154,7 +3377,7 @@ mod tests {
         write_md(dir.path(), "b.md", "Links to [[a]].");
 
         // Cold start
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi1.stats().unwrap().nodes, 2);
         drop(gi1);
 
@@ -3164,7 +3387,7 @@ mod tests {
         write_md(dir.path(), "c.md", "New page.");
 
         // Warm start — should apply diff
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats2 = gi2.stats().unwrap();
         assert_eq!(stats2.nodes, 3, "should include new page c.md");
 
@@ -3183,7 +3406,7 @@ mod tests {
         write_md(dir.path(), "b.md", "World.");
 
         // Cold start
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi1.stats().unwrap().nodes, 2);
         drop(gi1);
 
@@ -3191,7 +3414,7 @@ mod tests {
         fs::remove_file(dir.path().join("b.md")).unwrap();
 
         // Warm start — should detect deletion
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats2 = gi2.stats().unwrap();
         assert_eq!(stats2.nodes, 1, "deleted file should be removed");
     }
@@ -3202,7 +3425,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Hello.");
 
         // Cold start — creates graph.db
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi1.stats().unwrap().nodes, 1);
         drop(gi1);
 
@@ -3215,7 +3438,7 @@ mod tests {
         }
 
         // Build again — should detect future version, reset, and do cold start
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats2 = gi2.stats().unwrap();
         assert_eq!(stats2.nodes, 1, "cold start fallback should re-index");
     }
@@ -3238,7 +3461,7 @@ mod tests {
             }
         };
 
-        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
+        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 2);
 
         let phases = log.lock().unwrap();
@@ -3256,7 +3479,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
 
-        GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let log: Arc<Mutex<Vec<IndexPhase>>> = Arc::new(Mutex::new(Vec::new()));
         let log_clone = Arc::clone(&log);
@@ -3267,7 +3490,7 @@ mod tests {
             }
         };
 
-        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
+        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 1);
 
         let phases = log.lock().unwrap();
@@ -3282,7 +3505,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
 
-        GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "a.md", "Updated content.");
@@ -3296,7 +3519,7 @@ mod tests {
             }
         };
 
-        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, true).unwrap();
+        let gi = GraphIndex::build_with_progress(dir.path().to_path_buf(), &callback, ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 1);
 
         let phases = log.lock().unwrap();
@@ -3308,7 +3531,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);
@@ -3322,7 +3545,7 @@ mod tests {
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
         write_md(dir.path(), "c.md", "Will be deleted.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 3);
 
         // new file, change a, delete c
@@ -3335,7 +3558,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec!["c.md".to_string()],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 3); // a, b, d (c deleted)
@@ -3364,10 +3587,10 @@ mod tests {
         // B1: create — new file becomes queryable via subgraph for its own id
         let dir = create_workspace();
         write_md(dir.path(), "seed.md", "Seed content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         write_md(dir.path(), "fresh.md", "");
-        gi.reindex_file("fresh.md", true).unwrap();
+        gi.reindex_file("fresh.md", ann_on()).unwrap();
 
         let sub = gi.subgraph(&["fresh.md"], 1, false, false, false).unwrap();
         assert!(sub.nodes.iter().any(|n| n.id == "fresh.md"));
@@ -3378,10 +3601,10 @@ mod tests {
         // B2: rename — old id no longer found, new id queryable
         let dir = create_workspace();
         write_md(dir.path(), "old.md", "Renamed content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         fs::rename(dir.path().join("old.md"), dir.path().join("new.md")).unwrap();
-        gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), true).unwrap();
+        gi.batch_reindex(&rename_reindex_diff("old.md", "new.md"), ann_on()).unwrap();
 
         assert!(matches!(
             gi.subgraph(&["old.md"], 1, false, false, false),
@@ -3396,10 +3619,10 @@ mod tests {
         // B3: delete — id no longer found
         let dir = create_workspace();
         write_md(dir.path(), "doomed.md", "Doomed content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         fs::remove_file(dir.path().join("doomed.md")).unwrap();
-        gi.remove_file("doomed.md", true).unwrap();
+        gi.remove_file("doomed.md", ann_on()).unwrap();
 
         assert!(matches!(
             gi.subgraph(&["doomed.md"], 1, false, false, false),
@@ -3411,7 +3634,7 @@ mod tests {
     fn batch_reindex_new_file_resolves_stub() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // b is a stub node — filtered from subgraph output
         let sub = gi.full_subgraph(false, false);
@@ -3424,7 +3647,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         let sub = gi.full_subgraph(false, false);
         // Real node should now appear (stub was replaced)
@@ -3439,10 +3662,10 @@ mod tests {
     fn create_page_scenario_promotes_stub() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         write_md(dir.path(), "b.md", "I exist now.");
-        gi.add_file("b.md", true).unwrap();
+        gi.add_file("b.md", ann_on()).unwrap();
 
         let sub = gi.full_subgraph(false, false);
         assert!(!sub.nodes.iter().any(|n| n.id == "b"), "stub 'b' should be gone");
@@ -3455,10 +3678,10 @@ mod tests {
     fn reindex_file_does_not_promote_stub_documents_limitation() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         write_md(dir.path(), "b.md", "I exist now.");
-        gi.reindex_file("b.md", true).unwrap();
+        gi.reindex_file("b.md", ann_on()).unwrap();
 
         // reindex_file uses `changed` semantics — stub promotion is skipped,
         // so the edge a.md -> b.md is NOT resolved (still points at stub "b",
@@ -3476,7 +3699,7 @@ mod tests {
         write_md(dir.path(), "b.md", "Beta content.");
         write_md(dir.path(), "c.md", "Links to [[a]].");
         write_md(dir.path(), "d.md", "Links to [[b]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 4);
 
         // After merge: a.md & b.md deleted, merged.md created, c.md & d.md rewritten
@@ -3491,7 +3714,7 @@ mod tests {
             changed: vec!["c.md".to_string(), "d.md".to_string()],
             deleted: vec!["a.md".to_string(), "b.md".to_string()],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 3); // merged, c, d
@@ -3508,7 +3731,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "big.md", "Part one.\n\nPart two.");
         write_md(dir.path(), "ref.md", "Links to [[big]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 2);
 
         // After split: big.md deleted, part1.md & part2.md created, ref.md rewritten
@@ -3522,7 +3745,7 @@ mod tests {
             changed: vec!["ref.md".to_string()],
             deleted: vec!["big.md".to_string()],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 3); // part1, part2, ref
@@ -3552,17 +3775,17 @@ mod tests {
 
         // Sequential approach
         let dir_seq = make_workspace();
-        let gi_seq = GraphIndex::build(dir_seq.path().to_path_buf(), true).unwrap();
+        let gi_seq = GraphIndex::build(dir_seq.path().to_path_buf(), ann_on()).unwrap();
         write_md(dir_seq.path(), "n0.md", "Updated root.");
         write_md(dir_seq.path(), "new.md", "Brand new [[n5]].");
         fs::remove_file(dir_seq.path().join("n9.md")).unwrap();
-        gi_seq.reindex_file("n0.md", true).unwrap();
-        gi_seq.reindex_file("new.md", true).unwrap();
-        gi_seq.remove_file("n9.md", true).unwrap();
+        gi_seq.reindex_file("n0.md", ann_on()).unwrap();
+        gi_seq.reindex_file("new.md", ann_on()).unwrap();
+        gi_seq.remove_file("n9.md", ann_on()).unwrap();
 
         // Batch approach
         let dir_batch = make_workspace();
-        let gi_batch = GraphIndex::build(dir_batch.path().to_path_buf(), true).unwrap();
+        let gi_batch = GraphIndex::build(dir_batch.path().to_path_buf(), ann_on()).unwrap();
         write_md(dir_batch.path(), "n0.md", "Updated root.");
         write_md(dir_batch.path(), "new.md", "Brand new [[n5]].");
         fs::remove_file(dir_batch.path().join("n9.md")).unwrap();
@@ -3571,7 +3794,7 @@ mod tests {
             changed: vec!["n0.md".to_string()],
             deleted: vec!["n9.md".to_string()],
         };
-        gi_batch.batch_reindex(&diff, true).unwrap();
+        gi_batch.batch_reindex(&diff, ann_on()).unwrap();
 
         // Compare node IDs
         let mut seq_nodes: Vec<String> = gi_seq.full_subgraph(false, false).nodes.iter().map(|n| n.id.clone()).collect();
@@ -3592,9 +3815,9 @@ mod tests {
     fn graph_index_batch_reindex_empty_diff_is_noop() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let diff = DiffResult { new: vec![], changed: vec![], deleted: vec![] };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 1);
     }
 
@@ -3603,7 +3826,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         write_md(dir.path(), "b.md", "World.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         fs::remove_file(dir.path().join("a.md")).unwrap();
         fs::remove_file(dir.path().join("b.md")).unwrap();
         let diff = DiffResult {
@@ -3611,7 +3834,7 @@ mod tests {
             changed: vec![],
             deleted: vec!["a.md".to_string(), "b.md".to_string()],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
         assert_eq!(gi.stats().unwrap().nodes, 0);
     }
 
@@ -3619,14 +3842,14 @@ mod tests {
     fn graph_index_batch_reindex_only_new_files() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         write_md(dir.path(), "b.md", "New file [[a]].");
         let diff = DiffResult {
             new: vec!["b.md".to_string()],
             changed: vec![],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);
@@ -3637,9 +3860,9 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[B]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         write_md(dir.path(), "a.md", "No links now.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.edges, 0);
     }
@@ -3649,9 +3872,9 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         write_md(dir.path(), "b.md", "World.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         fs::remove_file(dir.path().join("b.md")).unwrap();
-        gi.remove_file("b.md", true).unwrap();
+        gi.remove_file("b.md", ann_on()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 1);
     }
@@ -3660,9 +3883,9 @@ mod tests {
     fn graph_index_full_rebuild() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         write_md(dir.path(), "b.md", "New file.");
-        let result = gi.full_rebuild(true).unwrap();
+        let result = gi.full_rebuild(ann_on()).unwrap();
         assert_eq!(result.nodes_indexed, 2);
     }
 
@@ -3671,7 +3894,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[B]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats = gi.stats().unwrap();
         assert_eq!(stats.nodes, 2);
         assert_eq!(stats.edges, 1);
@@ -3684,7 +3907,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let result = gi.neighbors("a.md", 1, true).unwrap();
         let ids: std::collections::HashSet<&str> =
             result.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -3696,12 +3919,12 @@ mod tests {
     fn graph_index_knowledge_rebuilt_after_full_rebuild() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 1);
 
         write_md(dir.path(), "b.md", "New.");
-        gi.full_rebuild(true).unwrap();
+        gi.full_rebuild(ann_on()).unwrap();
         let sub = gi.full_subgraph(false, false);
         assert_eq!(sub.nodes.len(), 2);
     }
@@ -3711,12 +3934,12 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "No links.");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let sub = gi.full_subgraph(false, false);
         assert!(sub.edges.is_empty());
 
         write_md(dir.path(), "a.md", "Now links to [[b]].");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
         let sub = gi.full_subgraph(false, false);
         assert!(!sub.edges.is_empty());
     }
@@ -3728,7 +3951,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let bl = gi.backlinks("b.md").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].source_id, "a.md");
@@ -3738,7 +3961,7 @@ mod tests {
     fn graph_index_backlinks_empty() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "No outgoing links.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let bl = gi.backlinks("a.md").unwrap();
         assert!(bl.is_empty());
     }
@@ -3748,7 +3971,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let fl = gi.forward_links("a.md").unwrap();
         assert_eq!(fl.len(), 1);
         assert_eq!(fl[0].target_id, "b.md");
@@ -3758,7 +3981,7 @@ mod tests {
     fn graph_index_forward_links_empty() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "No links.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let fl = gi.forward_links("a.md").unwrap();
         assert!(fl.is_empty());
     }
@@ -3767,7 +3990,7 @@ mod tests {
     fn graph_index_search() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: Quantum Computing\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("Quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -3777,7 +4000,7 @@ mod tests {
     fn graph_index_search_empty() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("zzzznonexistent", 20).unwrap();
         assert!(results.is_empty());
     }
@@ -3789,7 +4012,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores = gi.pagerank().unwrap();
         assert_eq!(scores.len(), 2);
         for (id, score) in &scores {
@@ -3802,7 +4025,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores = gi.pagerank().unwrap();
         let sum: f64 = scores.values().sum();
         assert!((sum - 1.0).abs() < 1e-9, "sum was {sum}");
@@ -3813,7 +4036,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         gi.pagerank().unwrap();
         let store = gi.store.lock().unwrap();
         assert!(store.get_meta("pagerank_scores").unwrap().is_some());
@@ -3825,7 +4048,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "Target.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores1 = gi.pagerank().unwrap();
         let scores2 = gi.pagerank().unwrap();
         assert_eq!(scores1, scores2);
@@ -3836,10 +4059,10 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "[[a]]");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores1 = gi.pagerank().unwrap();
         write_md(dir.path(), "a.md", "No links now.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
         let scores2 = gi.pagerank().unwrap();
         assert_ne!(scores1, scores2);
     }
@@ -3849,11 +4072,11 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         write_md(dir.path(), "b.md", "World.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores1 = gi.pagerank().unwrap();
         assert_eq!(scores1.len(), 2);
         fs::remove_file(dir.path().join("b.md")).unwrap();
-        gi.remove_file("b.md", true).unwrap();
+        gi.remove_file("b.md", ann_on()).unwrap();
         let scores2 = gi.pagerank().unwrap();
         assert_eq!(scores2.len(), 1);
     }
@@ -3862,11 +4085,11 @@ mod tests {
     fn pagerank_invalidated_after_rebuild() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores1 = gi.pagerank().unwrap();
         assert_eq!(scores1.len(), 1);
         write_md(dir.path(), "b.md", "New file.");
-        gi.full_rebuild(true).unwrap();
+        gi.full_rebuild(ann_on()).unwrap();
         let scores2 = gi.pagerank().unwrap();
         assert_eq!(scores2.len(), 2);
     }
@@ -3877,7 +4100,7 @@ mod tests {
         write_md(dir.path(), "a.md", "[[b]] [[c]]");
         write_md(dir.path(), "b.md", "[[c]]");
         write_md(dir.path(), "c.md", "Leaf.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let top = gi.top_by_pagerank(3).unwrap();
         assert_eq!(top.len(), 3);
         for w in top.windows(2) {
@@ -3891,7 +4114,7 @@ mod tests {
         write_md(dir.path(), "a.md", "[[b]] [[c]]");
         write_md(dir.path(), "b.md", "[[c]]");
         write_md(dir.path(), "c.md", "Leaf.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let top = gi.top_by_pagerank(2).unwrap();
         assert_eq!(top.len(), 2);
     }
@@ -3902,7 +4125,7 @@ mod tests {
     fn resolve_wikilink_existing_page() {
         let dir = create_workspace();
         write_md(dir.path(), "People/Alice.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let r = gi.resolve_wikilink("Alice").unwrap();
         assert_eq!(r.node_id, Some("People/Alice.md".to_string()));
     }
@@ -3911,7 +4134,7 @@ mod tests {
     fn resolve_wikilink_unresolved_page() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let r = gi.resolve_wikilink("NonExistent").unwrap();
         assert_eq!(r.node_id, None);
         assert_eq!(r.tier, super::super::resolve::ResolutionTier::Unresolved);
@@ -3921,7 +4144,7 @@ mod tests {
     fn resolve_wikilink_exact_path() {
         let dir = create_workspace();
         write_md(dir.path(), "Notes/Topic.md", "Content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let r = gi.resolve_wikilink("Notes/Topic.md").unwrap();
         assert_eq!(r.tier, super::super::resolve::ResolutionTier::ExactPath);
         assert_eq!(r.node_id, Some("Notes/Topic.md".to_string()));
@@ -3932,7 +4155,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a/Note.md", "Alpha.");
         write_md(dir.path(), "b/Note.md", "Beta.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let r = gi.resolve_wikilink("Note").unwrap();
         assert_eq!(r.tier, super::super::resolve::ResolutionTier::Ambiguous);
         assert_eq!(r.node_id, Some("a/Note.md".to_string()));
@@ -3944,7 +4167,7 @@ mod tests {
     fn page_headings_returns_headings() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "# Intro\n\n## Details");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let headings = gi.page_headings("a").unwrap();
         assert_eq!(headings.len(), 2);
         assert_eq!(headings[0].text, "Intro");
@@ -3957,7 +4180,7 @@ mod tests {
     fn page_headings_empty_for_no_headings() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Just plain text.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let headings = gi.page_headings("a").unwrap();
         assert!(headings.is_empty());
     }
@@ -3966,7 +4189,7 @@ mod tests {
     fn page_headings_resolves_by_stem() {
         let dir = create_workspace();
         write_md(dir.path(), "notes/Topic.md", "# First\n## Second");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let headings = gi.page_headings("Topic").unwrap();
         assert_eq!(headings.len(), 2);
     }
@@ -3975,7 +4198,7 @@ mod tests {
     fn page_headings_unresolved_errors() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let result = gi.page_headings("NonExistent");
         assert!(result.is_err());
     }
@@ -3986,7 +4209,7 @@ mod tests {
     fn page_block_anchors_returns_anchors() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Some paragraph. ^3141e2\n\nAnother line.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let anchors = gi.page_block_anchors("a").unwrap();
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].id, "3141e2");
@@ -3997,7 +4220,7 @@ mod tests {
     fn page_block_anchors_empty_for_no_anchors() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Just plain text.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let anchors = gi.page_block_anchors("a").unwrap();
         assert!(anchors.is_empty());
     }
@@ -4006,7 +4229,7 @@ mod tests {
     fn page_block_anchors_unresolved_errors() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let result = gi.page_block_anchors("NonExistent");
         assert!(result.is_err());
     }
@@ -4016,7 +4239,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Hello.");
         write_md(dir.path(), "b.md", "World.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let top = gi.top_by_pagerank(100).unwrap();
         assert_eq!(top.len(), 2);
     }
@@ -4031,7 +4254,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let scores = gi.pagerank().unwrap();
         for key in scores.keys() {
             assert!(!key.starts_with("bib:"), "shadow node {key} should not appear in pagerank");
@@ -4051,7 +4274,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let top = gi.top_by_pagerank(100).unwrap();
         for (key, _) in &top {
             assert!(!key.starts_with("bib:"), "shadow node {key} should not appear in top_by_pagerank");
@@ -4067,7 +4290,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let bundle = gi.subgraph_bundle(&[], 0, false, false, false).unwrap();
         for key in bundle.pagerank.keys() {
             assert!(!key.starts_with("bib:"), "shadow node {key} in pagerank with include_citations=false");
@@ -4081,7 +4304,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
         write_md(dir.path(), "other.md", "No mention of the name here.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert!(mentions.is_empty());
     }
@@ -4091,7 +4314,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
         write_md(dir.path(), "other.md", "I met Alice yesterday.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].source_id, "other.md");
@@ -4105,7 +4328,7 @@ mod tests {
         write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
         write_md(dir.path(), "linked.md", "[[target]] and Alice is great.");
         write_md(dir.path(), "unlinked.md", "Alice is here.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].source_id, "unlinked.md");
@@ -4116,7 +4339,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nI am Alice.");
         write_md(dir.path(), "other.md", "`Alice` and [[Bob]] and Alice plain.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].matched_text, "Alice");
@@ -4127,7 +4350,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "---\ntitle: Alice\naliases:\n  - Ali\n---\nContent.");
         write_md(dir.path(), "other.md", "I met Ali today.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].matched_text, "Ali");
@@ -4137,7 +4360,7 @@ mod tests {
     fn unlinked_mentions_skips_self() {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "---\ntitle: Alice\n---\nAlice talks about Alice.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert!(mentions.is_empty());
     }
@@ -4151,7 +4374,7 @@ mod tests {
             "other.md",
             "---\ntitle: Other\ntags:\n  - test\n---\nLine one.\nAlice here.",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].source_line, 2);
@@ -4171,7 +4394,7 @@ mod tests {
             };
             write_md(dir.path(), &format!("note_{i}.md"), &content);
         }
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 10, "every even file of 20 should mention Alice");
         for m in &mentions {
@@ -4499,7 +4722,7 @@ mod tests {
             "a.md",
             "---\ntitle: Intro\n---\nFirst paragraph.\n\nDeep in the body: thermodynamics rules.",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("thermodynamics", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -4510,7 +4733,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "many.md", "rust\nrust\nrust\nrust\nrust");
         write_md(dir.path(), "few.md", "rust once");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("rust", 20).unwrap();
         assert!(results.len() >= 2);
         assert_eq!(results[0].id, "many.md", "file with more matches should rank first");
@@ -4521,7 +4744,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "both.md", "quantum computing is here");
         write_md(dir.path(), "one.md", "quantum mechanics only");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("quantum computing", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "both.md");
@@ -4531,7 +4754,7 @@ mod tests {
     fn search_strips_trailing_star() {
         let dir = create_workspace();
         write_md(dir.path(), "alpha.md", "---\ntitle: Alpha\n---\nAlpha content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("Alph*", 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "alpha.md");
@@ -4541,7 +4764,7 @@ mod tests {
     fn search_empty_query() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("", 20).unwrap();
         assert!(results.is_empty());
     }
@@ -4552,7 +4775,7 @@ mod tests {
         for i in 0..5 {
             write_md(dir.path(), &format!("{i}.md"), "searchable content here");
         }
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("searchable", 2).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -4568,7 +4791,7 @@ mod tests {
             };
             write_md(dir.path(), &format!("note_{i}.md"), &content);
         }
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("quantum computing", 100).unwrap();
         assert_eq!(results.len(), 10, "every 5th of 50 files should match");
         for r in &results {
@@ -4595,7 +4818,7 @@ mod tests {
             "a.md",
             "---\ntitle: Alpha\ndate: 2026-01-01\n---\nline one\nquantum here\nline three\nnew quantum",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("quantum", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4616,7 +4839,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "split.md", "quantum on this line\ncomputing on that line");
         write_md(dir.path(), "contiguous.md", "intro line\nquantum computing here");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("quantum computing", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4635,7 +4858,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "projects/a.md", "quantum one\nquantum two");
         write_md(dir.path(), "notes/b.md", "quantum one\nquantum two");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let filter = SearchFilter {
             folder_prefix: Some("projects/".into()),
             ..Default::default()
@@ -4655,7 +4878,7 @@ mod tests {
         );
         write_md(dir.path(), "b.md", "---\ntags: [physics]\n---\nquantum body");
         write_md(dir.path(), "c.md", "quantum body");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let one_tag = SearchFilter {
             tags: Some(vec!["physics".into()]),
@@ -4681,7 +4904,7 @@ mod tests {
         write_md(dir.path(), "new.md", "quantum new");
         set_mtime(dir.path(), "old.md", 1000);
         set_mtime(dir.path(), "new.md", 2000);
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // sync.mtime is stored in epoch milliseconds.
         let after = SearchFilter {
@@ -4705,7 +4928,7 @@ mod tests {
     fn search_content_filtered_html_escapes_excerpt() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<b>bold</b> & quantum text");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("quantum", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
@@ -4727,7 +4950,7 @@ mod tests {
             "a.md",
             "---\ntitle: Quantum Physics\n---\nno match in body",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("Quantum", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
@@ -4742,7 +4965,7 @@ mod tests {
         // so the raw-file prefilter alone would miss it.
         let dir = create_workspace();
         write_md(dir.path(), "zanzibar-notes.md", "no match in body");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("zanzibar", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
@@ -4755,7 +4978,7 @@ mod tests {
     fn search_content_filtered_empty_query() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("", &SearchFilter::default(), 10, SearchMatchMode::Phrase)
             .unwrap();
@@ -4768,7 +4991,7 @@ mod tests {
         let body = "quantum one\nquantum two\nquantum three\nquantum four\nquantum five";
         write_md(dir.path(), "a.md", body);
         write_md(dir.path(), "b.md", body);
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("quantum", &SearchFilter::default(), 3, SearchMatchMode::Phrase)
             .unwrap();
@@ -4780,7 +5003,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "many.md", "rust\nrust\nrust");
         write_md(dir.path(), "few.md", "rust once");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("rust", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4809,7 +5032,7 @@ mod tests {
         write_md(dir.path(), "a/one.md", "x");
         write_md(dir.path(), "a/b/two.md", "x");
         write_md(dir.path(), "z/three.md", "x");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let folders = gi.list_folders(100).unwrap();
         assert_eq!(folders, vec!["a/", "a/b/", "z/"]);
     }
@@ -4820,7 +5043,7 @@ mod tests {
         write_md(dir.path(), "a/one.md", "x");
         write_md(dir.path(), "b/two.md", "x");
         write_md(dir.path(), "c/three.md", "x");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let folders = gi.list_folders(2).unwrap();
         assert_eq!(folders, vec!["a/", "b/"]);
     }
@@ -4835,7 +5058,7 @@ mod tests {
             "a.md",
             "I love Lean 4 proofs\nsee section 4 notes",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("Lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4852,7 +5075,7 @@ mod tests {
     fn phrase_mode_case_insensitive() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Studying Lean 4 today");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4864,7 +5087,7 @@ mod tests {
     fn phrase_mode_requires_contiguous() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Lean proofs here\nsection 4 there");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("Lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4878,7 +5101,7 @@ mod tests {
     fn regex_mode_matches() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "I love Lean 4 proofs\nplain text line");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered(r"Lean\s+\d", &SearchFilter::default(), 20, SearchMatchMode::Regex)
             .unwrap();
@@ -4891,7 +5114,7 @@ mod tests {
     fn regex_mode_lookahead() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Lean 4 rocks\nLean proofs elsewhere");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered(r"Lean(?=\s+4)", &SearchFilter::default(), 20, SearchMatchMode::Regex)
             .unwrap();
@@ -4904,7 +5127,7 @@ mod tests {
     fn regex_mode_invalid_returns_err() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "content");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let result =
             gi.search_content_filtered("foo(", &SearchFilter::default(), 20, SearchMatchMode::Regex);
         assert!(result.is_err(), "invalid regex must surface as Err");
@@ -4918,7 +5141,7 @@ mod tests {
             "a.md",
             "---\ntitle: Lean 4 Cookbook\n---\nno match in body",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi
             .search_content_filtered("Lean 4", &SearchFilter::default(), 20, SearchMatchMode::Phrase)
             .unwrap();
@@ -4992,7 +5215,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: Quantum Computing\n---\nBody.");
         write_md(dir.path(), "b.md", "---\ntitle: Classical Physics\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("Quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a.md");
@@ -5003,7 +5226,7 @@ mod tests {
     fn search_by_title_matches_file_stem() {
         let dir = create_workspace();
         write_md(dir.path(), "quantum-notes.md", "---\ntitle: My Notes\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("quantum", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "quantum-notes.md");
@@ -5013,7 +5236,7 @@ mod tests {
     fn search_by_title_matches_aliases() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: Alice\naliases:\n  - Ali\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("Ali", 10).unwrap();
         assert!(results.iter().any(|r| r.id == "a.md"));
     }
@@ -5022,7 +5245,7 @@ mod tests {
     fn search_by_title_returns_search_result_type() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: Alpha\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("Alpha", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].score, 0.0);
@@ -5033,7 +5256,7 @@ mod tests {
     fn search_by_title_empty_query_returns_empty() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "---\ntitle: Alpha\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("", 10).unwrap();
         assert!(results.is_empty());
     }
@@ -5046,7 +5269,7 @@ mod tests {
             "real.md",
             "---\ntitle: Agentic Design Patterns\n---\nSee [[agentic-workflows]] for more.",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("agentic", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "real.md");
@@ -5056,7 +5279,7 @@ mod tests {
     fn search_by_title_file_with_empty_frontmatter_title_uses_filename() {
         let dir = create_workspace();
         write_md(dir.path(), "agentic-workflows.md", "---\ntitle: \"\"\n---\nBody.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_by_title("agentic", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "agentic-workflows");
@@ -5066,7 +5289,7 @@ mod tests {
     fn search_case_insensitive() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "QUANTUM computing.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("quantum", 20).unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -5083,7 +5306,7 @@ mod tests {
             };
             write_md(dir.path(), &format!("src_{i}.md"), &content);
         }
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let mentions = gi.unlinked_mentions("target.md").unwrap();
         assert_eq!(mentions.len(), 15, "every even file of 30 should mention Alice");
         for m in &mentions {
@@ -5102,7 +5325,7 @@ mod tests {
             };
             write_md(dir.path(), &format!("par_{i}.md"), &content);
         }
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search("parallelism", 100).unwrap();
         assert_eq!(results.len(), 10, "every 3rd of 30 files should match");
         for r in &results {
@@ -5135,7 +5358,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
         write_md(dir.path(), "b.md", "Target.");
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let stats1 = gi1.stats().unwrap();
         drop(gi1);
 
@@ -5153,22 +5376,22 @@ mod tests {
     fn sync_with_disk_no_changes() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
-        assert_eq!(gi.sync_with_disk(true).unwrap(), false);
+        assert_eq!(gi.sync_with_disk(ann_on()).unwrap(), false);
     }
 
     #[test]
     fn sync_with_disk_detects_new_file() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Content.");
-        GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         write_md(dir.path(), "b.md", "New file.");
         let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
         let before = gi.stats().unwrap().nodes;
-        assert_eq!(gi.sync_with_disk(true).unwrap(), true);
+        assert_eq!(gi.sync_with_disk(ann_on()).unwrap(), true);
         assert!(gi.stats().unwrap().nodes > before);
     }
 
@@ -5176,13 +5399,13 @@ mod tests {
     fn sync_with_disk_detects_changed_file() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Original.");
-        GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "a.md", "Modified content with [[b]].");
         write_md(dir.path(), "b.md", "Target.");
         let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
-        assert_eq!(gi.sync_with_disk(true).unwrap(), true);
+        assert_eq!(gi.sync_with_disk(ann_on()).unwrap(), true);
         let backlinks = gi.backlinks("b.md").unwrap();
         assert_eq!(backlinks.len(), 1);
     }
@@ -5192,12 +5415,12 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Keep.");
         write_md(dir.path(), "b.md", "Delete me.");
-        GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         fs::remove_file(dir.path().join("b.md")).unwrap();
         let gi = GraphIndex::load_from_store(dir.path().to_path_buf()).unwrap().unwrap();
         let before = gi.stats().unwrap().nodes;
-        assert_eq!(gi.sync_with_disk(true).unwrap(), true);
+        assert_eq!(gi.sync_with_disk(ann_on()).unwrap(), true);
         assert!(gi.stats().unwrap().nodes < before);
     }
 
@@ -5207,7 +5430,7 @@ mod tests {
     fn full_index_stores_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Some text <!--- n: _ | important discovery ---> more.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_annotations("important", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node_id, "a.md");
@@ -5220,12 +5443,12 @@ mod tests {
     fn incremental_reindex_updates_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | old body --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_annotations("old", None, 10).unwrap();
         assert_eq!(results.len(), 1);
 
         write_md(dir.path(), "a.md", "<!--- n: _ | new body --->");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         let old_results = gi.search_annotations("old", None, 10).unwrap();
         assert!(old_results.is_empty());
@@ -5234,7 +5457,7 @@ mod tests {
         assert!(new_results[0].body.as_deref().unwrap().contains("new body"));
     }
 
-    // --- Cycle 12: annotations_enabled gating ---
+    // --- Cycle 12: annotation indexing gating ---
 
     #[test]
     fn full_index_skips_annotations_when_disabled() {
@@ -5242,7 +5465,7 @@ mod tests {
         write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
-        index_workspace_with_progress(&store, dir.path(), &crate::graph::progress::noop_callback(), false).unwrap();
+        index_workspace_with_progress(&store, dir.path(), &crate::graph::progress::noop_callback(), ann_off()).unwrap();
 
         let count: i64 = store
             .conn
@@ -5257,7 +5480,7 @@ mod tests {
         write_md(dir.path(), "a.md", "initial content");
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit").join("graph.db")).unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         write_md(dir.path(), "a.md", "<!--- n: _ | annotated --->");
         let diff = DiffResult {
@@ -5266,7 +5489,7 @@ mod tests {
             deleted: vec![],
         };
         let mut reverse = ReverseStemIndex::new();
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, false).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_off()).unwrap();
 
         let count: i64 = store
             .conn
@@ -5279,7 +5502,7 @@ mod tests {
     fn graph_index_build_skips_annotations_when_disabled() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_off()).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert!(results.is_empty());
     }
@@ -5288,7 +5511,7 @@ mod tests {
     fn graph_index_build_indexes_annotations_when_enabled() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -5297,10 +5520,10 @@ mod tests {
     fn graph_index_sync_skips_annotations_when_disabled() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "initial");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "a.md", "<!--- n: _ | synced note --->");
-        gi.sync_with_disk(false).unwrap();
+        gi.sync_with_disk(ann_off()).unwrap();
         let results = gi.search_annotations("synced", None, 10).unwrap();
         assert!(results.is_empty());
     }
@@ -5309,9 +5532,9 @@ mod tests {
     fn graph_index_reindex_file_skips_annotations_when_disabled() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "initial");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), false).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_off()).unwrap();
         write_md(dir.path(), "a.md", "<!--- n: _ | reindexed note --->");
-        gi.reindex_file("a.md", false).unwrap();
+        gi.reindex_file("a.md", ann_off()).unwrap();
         let results = gi.search_annotations("reindexed", None, 10).unwrap();
         assert!(results.is_empty());
     }
@@ -5321,11 +5544,11 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
         write_md(dir.path(), "b.md", "other");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         fs::remove_file(dir.path().join("b.md")).unwrap();
-        gi.remove_file("b.md", false).unwrap();
+        gi.remove_file("b.md", ann_off()).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -5334,10 +5557,10 @@ mod tests {
     fn graph_index_full_rebuild_skips_annotations_when_disabled() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note body --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert_eq!(results.len(), 1);
-        let result = gi.full_rebuild(false).unwrap();
+        let result = gi.full_rebuild(ann_off()).unwrap();
         assert_eq!(result.nodes_indexed, 1);
         let results = gi.search_annotations("note", None, 10).unwrap();
         assert!(results.is_empty());
@@ -5349,7 +5572,7 @@ mod tests {
         write_md(dir.path(), "alpha.md", "# Alpha\n\n[[beta]]");
         write_md(dir.path(), "beta.md", "# Beta\n\n[[gamma]]");
         write_md(dir.path(), "gamma.md", "# Gamma");
-        GraphIndex::build(dir.path().to_path_buf(), false).unwrap()
+        GraphIndex::build(dir.path().to_path_buf(), ann_off()).unwrap()
     }
 
     #[test]
@@ -5402,7 +5625,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "[[b]]");
         write_md(dir.path(), "b.md", "target");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         gi.compute_layout_background(&crate::graph::layout::LayoutSettings::default());
         assert!(logs_contain("layout positions saved"));
     }
@@ -5416,7 +5639,7 @@ mod tests {
         write_md(dir.path(), "b.md", "target");
         write_md(dir.path(), "c.md", "links to [[D]]");
         write_md(dir.path(), "d.md", "other target");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let affected = gi.affected_sources(&["b".to_string()]);
         assert!(affected.contains("a.md"));
         assert!(!affected.contains("c.md"));
@@ -5427,7 +5650,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "links to [[B]]");
         write_md(dir.path(), "b.md", "target");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let affected = gi.affected_sources(&[]);
         assert!(affected.is_empty());
     }
@@ -5437,7 +5660,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Links to [[b]].");
         let store = Store::open_memory().unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
@@ -5451,7 +5674,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         let meta = store.all_nodes_metadata().unwrap();
         assert!(
@@ -5482,7 +5705,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Links to [[b]] and [[c]].");
         write_md(dir.path(), "b.md", "Links to [[c]].");
         write_md(dir.path(), "c.md", "Links to [[a]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         for target in &["a.md", "b.md", "c.md"] {
             let bl_sources: HashSet<String> = gi
@@ -5517,14 +5740,14 @@ mod tests {
         write_md(dir.path(), "target.md", "I am the target.");
         write_md(dir.path(), "existing-linker.md", "Links to [[target]].");
 
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi1.backlinks("target.md").unwrap().len(), 1);
         drop(gi1);
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "new-linker.md", "Also links to [[target]].");
 
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let bl = gi2.backlinks("target.md").unwrap();
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
         assert!(
@@ -5550,7 +5773,7 @@ mod tests {
     fn backlinks_appear_after_stub_resolved_by_batch_reindex() {
         let dir = create_workspace();
         write_md(dir.path(), "source.md", "Links to [[target]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Before target.md exists, backlinks for "target.md" should be empty
         // because the edge points to the stub "target", not "target.md"
@@ -5568,7 +5791,7 @@ mod tests {
                 changed: vec![],
                 deleted: vec![],
             },
-            true,
+            ann_on(),
         )
         .unwrap();
 
@@ -5600,13 +5823,13 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "Target page.");
         write_md(dir.path(), "linker-a.md", "Links to [[target]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert_eq!(gi.backlinks("target.md").unwrap().len(), 1);
 
         // Add a new file that links to target — after build, so sync_with_disk sees it
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "linker-b.md", "Also links to [[target]].");
-        gi.sync_with_disk(true).unwrap();
+        gi.sync_with_disk(ann_on()).unwrap();
 
         let bl = gi.backlinks("target.md").unwrap();
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
@@ -5633,12 +5856,12 @@ mod tests {
     fn sync_with_disk_resolves_stub_and_updates_backlinks() {
         let dir = create_workspace();
         write_md(dir.path(), "source.md", "Links to [[future-page]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert!(gi.backlinks("future-page.md").unwrap().is_empty());
 
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "future-page.md", "I was created later.");
-        gi.sync_with_disk(true).unwrap();
+        gi.sync_with_disk(ann_on()).unwrap();
 
         let bl = gi.backlinks("future-page.md").unwrap();
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
@@ -5659,7 +5882,7 @@ mod tests {
             "linker.md",
             "Links to [[Alpha: First Part + Beta: Second Part]].",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let bl = gi.backlinks(target_name).unwrap();
         assert_eq!(
@@ -5677,7 +5900,7 @@ mod tests {
         let target_name = "知识图谱入门.md";
         write_md(dir.path(), target_name, "Content.");
         write_md(dir.path(), "reference.md", "See [[知识图谱入门]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let bl = gi.backlinks(target_name).unwrap();
         assert_eq!(bl.len(), 1);
@@ -5699,7 +5922,7 @@ mod tests {
         write_md(dir.path(), "spoke-a.md", "Links back to [[hub]].");
         write_md(dir.path(), "spoke-b.md", "Links back to [[hub]].");
 
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let bl = gi1.backlinks("hub.md").unwrap();
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
@@ -5712,7 +5935,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         write_md(dir.path(), "spoke-c.md", "Links back to [[hub]].");
 
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let bl = gi2.backlinks("hub.md").unwrap();
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
@@ -5741,12 +5964,12 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "target.md", "Target.");
         write_md(dir.path(), "source.md", "No links yet.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert!(gi.backlinks("target.md").unwrap().is_empty());
 
         // Source now links to target (simulates user editing and saving)
         write_md(dir.path(), "source.md", "Now links to [[target]].");
-        gi.reindex_file("source.md", true).unwrap();
+        gi.reindex_file("source.md", ann_on()).unwrap();
 
         let bl = gi.backlinks("target.md").unwrap();
         assert_eq!(bl.len(), 1);
@@ -5769,7 +5992,7 @@ mod tests {
         write_md(dir.path(), "b.md", "[[c]]");
         write_md(dir.path(), "c.md", "Leaf.");
         write_md(dir.path(), "d.md", "[[b]] and [[c]]");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // b.md should have backlinks from a.md and d.md
         let bl_b: HashSet<String> = gi
@@ -5833,7 +6056,7 @@ mod tests {
         write_md(dir.path(), "source.md", "First [[target]]. Second [[target]].");
         write_md(dir.path(), "target.md", "Target.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let store_bl = store.backlinks("target.md").unwrap();
         let knowledge = KnowledgeGraph::from_store(&store).unwrap();
@@ -5865,7 +6088,7 @@ mod tests {
         write_md(dir.path(), "source.md", "Links to [[target]].");
         // target.md does NOT exist yet
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         // Edge points to stub "target", not "target.md"
         let all_edges = store.all_edges().unwrap();
@@ -5898,7 +6121,7 @@ mod tests {
         write_md(dir.path(), "a.md", "Links to [[b]].");
         write_md(dir.path(), "b.md", "Links to [[c]].");
         write_md(dir.path(), "c.md", "Leaf.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // b.md's backlinks: only a.md (incoming)
         let bl: HashSet<String> = gi
@@ -5939,7 +6162,7 @@ mod tests {
         // neighbors() (both via KG) see the resolved edge.
         let dir = create_workspace();
         write_md(dir.path(), "source.md", "See [[target]].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Before target.md exists: graph can't find "target.md" as a node
         assert!(gi.neighbors("target.md", 1, false).is_err());
@@ -5953,7 +6176,7 @@ mod tests {
                 changed: vec![],
                 deleted: vec![],
             },
-            true,
+            ann_on(),
         )
         .unwrap();
 
@@ -6003,7 +6226,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "source.md", "Links to [[target]].");
         // Cold start — creates stub edge source.md → "target"
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert!(gi1.backlinks("target.md").unwrap().is_empty());
         drop(gi1);
 
@@ -6012,7 +6235,7 @@ mod tests {
         write_md(dir.path(), "target.md", "Created later.");
 
         // Warm start — should detect target.md as new, re-resolve source.md
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let bl = gi2.backlinks("target.md").unwrap();
         let bl_sources: HashSet<String> = bl.into_iter().map(|e| e.source_id).collect();
@@ -6047,7 +6270,7 @@ mod tests {
         write_md(dir.path(), "c.md", "[[a]]");
         write_md(dir.path(), "d.md", "[[a]] [[b]] [[c]]");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let knowledge = KnowledgeGraph::from_store(&store).unwrap();
 
@@ -6077,7 +6300,7 @@ mod tests {
         write_md(dir.path(), "source.md", "Links to [[target]].");
 
         // Cold start — creates stub edge source.md → "target"
-        let gi1 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi1 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         assert!(
             gi1.backlinks("target.md").unwrap().is_empty(),
             "before target.md exists, no backlinks for target.md"
@@ -6085,7 +6308,7 @@ mod tests {
         drop(gi1);
 
         // Warm start (no changes on disk) — should preserve existing state
-        let gi2 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi2 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let bl = gi2.backlinks("target.md").unwrap();
         assert!(
             bl.is_empty(),
@@ -6105,7 +6328,7 @@ mod tests {
         write_md(dir.path(), "target.md", "I exist now.");
 
         // Warm start WITH diff — should detect target.md as new
-        let gi3 = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi3 = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // After warm start re-resolution, backlinks should work
         let bl = gi3.backlinks("target.md").unwrap();
@@ -6126,7 +6349,7 @@ mod tests {
         write_md(dir.path(), "linker.md", "See also [[my-note]].");
 
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         // Edge exists: linker.md → stub "my-note"
         let edges = store.all_edges().unwrap();
@@ -6155,7 +6378,7 @@ mod tests {
                 .map(|(s, _, r)| (s.clone(), r.clone()))
                 .collect::<Vec<_>>(),
         );
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         // NOW both paths should work
         let bl = store.backlinks("my-note.md").unwrap();
@@ -6184,7 +6407,7 @@ mod tests {
         write_md(dir.path(), "source.md", "Links to [[target]].");
         write_md(dir.path(), "target.md", "Target.");
         let store = Store::open_memory().unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         // Verify backlink exists
         assert_eq!(store.backlinks("target.md").unwrap().len(), 1);
@@ -6225,7 +6448,7 @@ mod tests {
     fn batch_reindex_returns_removed_annotation_uuids() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Text <!--- n: _ | keep ---> more <!--- q: _ | remove --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let remove_uuid: String = {
             let store = gi.store.lock().unwrap();
@@ -6237,7 +6460,7 @@ mod tests {
 
         write_md(dir.path(), "a.md", "Text <!--- n: _ | keep ---> more");
         let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
-        let removed = gi.batch_reindex(&diff, true).unwrap();
+        let removed = gi.batch_reindex(&diff, ann_on()).unwrap();
 
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0], ("a.md".to_string(), remove_uuid));
@@ -6247,11 +6470,11 @@ mod tests {
     fn batch_reindex_returns_empty_when_no_annotations_removed() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Text <!--- n: _ | stay --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         write_md(dir.path(), "a.md", "Changed text <!--- n: _ | stay --->");
         let diff = DiffResult { new: vec![], changed: vec!["a.md".to_string()], deleted: vec![] };
-        let removed = gi.batch_reindex(&diff, true).unwrap();
+        let removed = gi.batch_reindex(&diff, ann_on()).unwrap();
 
         assert!(removed.is_empty());
     }
@@ -6284,7 +6507,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
@@ -6326,7 +6549,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Citation edge target should be the citekey page, not bib:smith2024
         let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
@@ -6352,7 +6575,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
         // No bib file initially
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // No shadow initially
         {
@@ -6398,7 +6621,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Initially: no shadow, citation target is smith-note.md
         {
@@ -6419,7 +6642,7 @@ mod tests {
             changed: vec!["smith-note.md".to_string()],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         // Citation target should revert to bib:smith2024
         let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
@@ -6448,7 +6671,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Initially: shadow bib:smith2024 exists, citation target is bib:smith2024
         {
@@ -6467,7 +6690,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         // Citation edge target should now be smith-note.md
         let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
@@ -6496,7 +6719,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Shadow should exist initially
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
@@ -6512,7 +6735,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         // Shadow should be pruned
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
@@ -6528,7 +6751,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@ghost2024].");
         // No .bib file, or bib file without that key
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         assert!(
@@ -6559,7 +6782,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
@@ -6582,7 +6805,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         assert!(
@@ -6601,7 +6824,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024},\n  abstract = {This paper explores...}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         let shadow = meta.iter().find(|(id, _, _)| id == "bib:smith2024");
@@ -6675,7 +6898,7 @@ mod tests {
         // writing a new bib creates the shadow with the correct title.
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // No shadow initially
         {
@@ -6728,7 +6951,7 @@ mod tests {
             "refs.bib",
             "@article{jones2023,\n  author = {Jones},\n  title = {Gamma},\n  year = {2023}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Verify initial materialization is Shadow (no abstract)
         {
@@ -6796,7 +7019,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         {
             let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
             assert!(
@@ -6806,7 +7029,7 @@ mod tests {
         }
 
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         assert!(
@@ -6832,11 +7055,11 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Remove the citation from a.md — b.md still cites it, shadow stays.
         write_md(dir.path(), "a.md", "Nothing here.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
         {
             let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
             assert!(
@@ -6847,7 +7070,7 @@ mod tests {
 
         // Remove the last citation — shadow must be pruned.
         write_md(dir.path(), "b.md", "Nothing here either.");
-        gi.reindex_file("b.md", true).unwrap();
+        gi.reindex_file("b.md", ann_on()).unwrap();
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         assert!(
             !meta.iter().any(|(id, _, _)| id == "bib:smith2024"),
@@ -6866,11 +7089,11 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith},\n  title = {Alpha},\n  year = {2024}\n}\n@article{jones2023,\n  author = {Jones},\n  title = {Beta},\n  year = {2023}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Reindex a.md only — b.md's shadow must not be touched.
         write_md(dir.path(), "a.md", "See [@smith2024] still.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
         assert!(
@@ -6900,11 +7123,11 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Cite the key from a.md — must resolve to the citekey page, no shadow.
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
         let cite = edges
@@ -6930,7 +7153,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         {
             let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
             assert!(meta.iter().any(|(id, _, _)| id == "bib:smith2024"), "shadow exists initially");
@@ -6948,7 +7171,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         let edges = gi.store.lock().unwrap().all_edges_full().unwrap();
         let cite = edges
@@ -6975,7 +7198,7 @@ mod tests {
             "refs.bib",
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Tombstone the bib item, then re-save a.md (still citing the key).
         {
@@ -6983,7 +7206,7 @@ mod tests {
             assert!(crate::bib::db::tombstone_bib_item(&store.conn, "smith2024").unwrap());
         }
         write_md(dir.path(), "a.md", "See [@smith2024] again.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         // The shadow is no longer backed by a bib item — it must be gone,
         // along with every bib:* edge that pointed at it (b.md's included).
@@ -7007,7 +7230,7 @@ mod tests {
     fn batch_reindex_skips_ingest_when_no_bib_in_diff() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Nothing yet.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // A .bib appears on disk, but the diff is md-only — it must NOT be
         // ingested on the editor-save hot path.
@@ -7017,7 +7240,7 @@ mod tests {
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
         write_md(dir.path(), "a.md", "Changed.");
-        gi.reindex_file("a.md", true).unwrap();
+        gi.reindex_file("a.md", ann_on()).unwrap();
 
         let store = gi.store.lock().unwrap();
         let ledger_count: i64 = store
@@ -7033,7 +7256,7 @@ mod tests {
     fn batch_reindex_ingests_and_fully_resolves_when_bib_in_diff() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "See [@smith2024].");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         {
             let meta = gi.store.lock().unwrap().all_nodes_metadata().unwrap();
             assert!(!meta.iter().any(|(id, _, _)| id == "bib:smith2024"), "no shadow yet");
@@ -7049,7 +7272,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         let store = gi.store.lock().unwrap();
         let item = crate::bib::db::get_bib_item(&store.conn, "smith2024").unwrap();
@@ -7075,7 +7298,7 @@ mod tests {
         // Index the workspace (creates edges) without shadow resolution
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
@@ -7109,7 +7332,7 @@ mod tests {
         // Index the workspace to populate edges
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         // Sabotage: drop the edges table so resolve_shadows will fail
         // when it tries to SELECT from edges
@@ -7148,7 +7371,7 @@ mod tests {
         // Index the workspace to populate edges
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         // Sabotage: insert a row with NULL raw_target into the edges table.
         // The query_map closure does row.get::<_, String>(0) on raw_target;
@@ -7192,7 +7415,7 @@ mod tests {
 
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
-        let (_, mut reverse) = index_workspace(&store, dir.path(), true).unwrap();
+        let (_, mut reverse) = index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
@@ -7240,7 +7463,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        incremental_reindex(&store, dir.path(), &mut reverse, &diff, true).unwrap();
+        incremental_reindex(&store, dir.path(), &mut reverse, &diff, ann_on()).unwrap();
 
         // The wikilink edge target is the raw string "bib:smith2024" (since
         // StemLookup returns Unresolved, the code falls through to
@@ -7272,7 +7495,7 @@ mod tests {
         );
 
         // Build the graph index (populates bib index cache)
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Verify shadow node exists
         let store = gi.store();
@@ -7293,7 +7516,7 @@ mod tests {
             changed: vec!["a.md".to_string()],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         // Assert the shadow node bib:smith2024 still exists (DB retains the entry)
         let store = gi.store();
@@ -7321,7 +7544,7 @@ mod tests {
 
         fs::create_dir_all(dir.path().join(".lit")).unwrap();
         let store = Store::open(&dir.path().join(".lit/graph.db")).unwrap();
-        index_workspace(&store, dir.path(), true).unwrap();
+        index_workspace(&store, dir.path(), ann_on()).unwrap();
 
         let bib_cache = crate::bib::cache::BibCache::new();
         crate::bib::db::ingest_workspace_bibs(&store.conn, dir.path(), &bib_cache).unwrap();
@@ -7354,7 +7577,7 @@ mod tests {
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
 
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
         let store = gi.store.lock().unwrap();
 
         // bib_items should have the entry
@@ -7375,7 +7598,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "As shown in [@smith2024].");
 
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // No shadow initially
         {
@@ -7414,7 +7637,7 @@ mod tests {
             "@article{smith2024,\n  author = {Smith, John},\n  title = {Alpha},\n  year = {2024}\n}",
         );
 
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), ann_on()).unwrap();
 
         // Write a new bib file
         write_bib(
@@ -7431,7 +7654,7 @@ mod tests {
             changed: vec![],
             deleted: vec![],
         };
-        gi.batch_reindex(&diff, true).unwrap();
+        gi.batch_reindex(&diff, ann_on()).unwrap();
 
         // Both entries should be in bib_items
         let store = gi.store.lock().unwrap();

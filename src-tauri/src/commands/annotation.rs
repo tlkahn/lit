@@ -43,28 +43,51 @@ pub fn resolve_annotation_scope_with_mode(
     resolve_scope_range_with_mode(&content, char_start, &scope, &lang, &mode)
 }
 
-/// One mark's scope-resolution request: where the mark sits and the scope it spans.
+/// One mark's scope-resolution request: where the mark sits, the scope it
+/// spans, and optionally the segmentation language it resolved to on the
+/// frontend (annotation `lang=` over document frontmatter).
 #[derive(Debug, Clone, Deserialize)]
 pub struct MarkScopeRequest {
     pub char_start: usize,
     pub scope: Scope,
+    #[serde(default)]
+    pub lang: Option<String>,
 }
 
 /// Batched scope resolution: resolves every mark in `marks` in a single IPC call,
 /// returning results index-aligned with the input (`None` for unresolvable marks).
-/// One `ScopeResolveCtx` is shared across the batch so sentence segmentation and
-/// the UTF-16 offset map are computed once per content; each mark then selects
-/// its sentences by byte span out of that shared segmentation.
+/// One `ScopeResolveCtx` is shared per distinct effective language so sentence
+/// segmentation and the UTF-16 offset map are computed once per content per
+/// language; each mark then selects its sentences by byte span out of that
+/// shared segmentation. The top-level `lang` is the batch fallback for marks
+/// that carry none of their own.
 #[tauri::command]
 pub fn resolve_mark_scopes(
     content: String,
     marks: Vec<MarkScopeRequest>,
     lang: String,
 ) -> Vec<Option<ScopeRange>> {
-    let ctx = ScopeResolveCtx::new(&content, &lang);
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
+
+    let mut ctxs: HashMap<String, ScopeResolveCtx> = HashMap::new();
     marks
         .iter()
-        .map(|m| ctx.resolve_scope_range(m.char_start, &m.scope))
+        .map(|m| {
+            let key = crate::annotation::lang::effective_lang(
+                m.lang.as_deref(),
+                None,
+                Some(&lang),
+            );
+            let ctx = match ctxs.entry(key) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(v) => {
+                    let ctx = ScopeResolveCtx::new(&content, v.key());
+                    v.insert(ctx)
+                }
+            };
+            ctx.resolve_scope_range(m.char_start, &m.scope)
+        })
         .collect()
 }
 
@@ -164,6 +187,7 @@ pub fn get_mark_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annotation::lang::AnnotationIndexOpts;
     use crate::annotation::marks::merged_config;
     use crate::annotation::types::{AnnotationType, ResolutionMode};
     use crate::graph::indexer::GraphIndex;
@@ -218,6 +242,7 @@ mod tests {
         let marks = vec![MarkScopeRequest {
             char_start: 12,
             scope: Scope::Words(1),
+            lang: None,
         }];
         let result = resolve_mark_scopes(content, marks, "en".to_string());
         assert_eq!(result, vec![Some(ScopeRange { start: 6, end: 11 })]);
@@ -230,10 +255,12 @@ mod tests {
             MarkScopeRequest {
                 char_start: 0,
                 scope: Scope::Words(1),
+                lang: None,
             },
             MarkScopeRequest {
                 char_start: 12,
                 scope: Scope::Words(1),
+                lang: None,
             },
         ];
         let result = resolve_mark_scopes(content, marks, "en".to_string());
@@ -256,10 +283,10 @@ mod tests {
         let content = "The dog ran. The cat sat. <!--- n ---> tail".to_string();
         let cs = 26; // annotation marker start
         let marks = vec![
-            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(1) },
-            MarkScopeRequest { char_start: cs, scope: Scope::Words(2) },
-            MarkScopeRequest { char_start: 0, scope: Scope::Sentence(1) },
-            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(2) },
+            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(1), lang: None },
+            MarkScopeRequest { char_start: cs, scope: Scope::Words(2), lang: None },
+            MarkScopeRequest { char_start: 0, scope: Scope::Sentence(1), lang: None },
+            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(2), lang: None },
         ];
         let batched = resolve_mark_scopes(content.clone(), marks.clone(), "en".to_string());
         let single: Vec<Option<ScopeRange>> = marks
@@ -269,6 +296,49 @@ mod tests {
         assert_eq!(batched, single);
         assert_eq!(batched[0], Some(ScopeRange { start: 13, end: 25 }));
         assert_eq!(batched[2], None, "no text before offset 0");
+    }
+
+    /// The per-mark `lang` overrides the batch-level fallback, so one call can
+    /// carry marks resolved under different segmentation languages (#854).
+    #[test]
+    fn cmd_resolve_mark_scopes_honours_per_mark_lang() {
+        let body = "Voir p.ex. le chap. 3 ici. Ensuite la suite.";
+        let cs = body.find("Ensuite").unwrap();
+        let marks = vec![
+            MarkScopeRequest { char_start: cs, scope: Scope::Sentence(1), lang: None },
+            MarkScopeRequest {
+                char_start: cs,
+                scope: Scope::Sentence(1),
+                lang: Some("fr".to_string()),
+            },
+            MarkScopeRequest {
+                char_start: cs,
+                scope: Scope::Sentence(1),
+                lang: Some("en".to_string()),
+            },
+        ];
+        let result = resolve_mark_scopes(body.to_string(), marks, "en".to_string());
+        let texts: Vec<Option<String>> = result
+            .iter()
+            .map(|r| r.as_ref().map(|r| body[r.start..r.end].to_string()))
+            .collect();
+        assert_eq!(texts[0].as_deref(), Some("3 ici."), "no mark lang falls back to the batch lang");
+        assert_eq!(texts[1].as_deref(), Some("Voir p.ex. le chap. 3 ici."));
+        assert_eq!(texts[2].as_deref(), Some("3 ici."));
+    }
+
+    #[test]
+    fn cmd_resolve_mark_scopes_normalizes_per_mark_lang() {
+        let body = "Voir p.ex. le chap. 3 ici. Ensuite la suite.";
+        let cs = body.find("Ensuite").unwrap();
+        let marks = vec![MarkScopeRequest {
+            char_start: cs,
+            scope: Scope::Sentence(1),
+            lang: Some("FR-CA".to_string()),
+        }];
+        let result = resolve_mark_scopes(body.to_string(), marks, "en".to_string());
+        let r = result[0].as_ref().unwrap();
+        assert_eq!(&body[r.start..r.end], "Voir p.ex. le chap. 3 ici.");
     }
 
     #[test]
@@ -308,7 +378,7 @@ mod tests {
     fn cmd_search_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "Some text <!--- n: _ | Silk Road flourished ---> more.");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.search_annotations("Silk Road", None, 20).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node_id, "a.md");
@@ -319,7 +389,7 @@ mod tests {
     fn cmd_list_annotations() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | first ---> text <!--- q: _ | second --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_annotations(Some("a.md"), None, 100).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -328,7 +398,7 @@ mod tests {
     fn cmd_list_annotations_filtered() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note body ---> and <!--- q: _ | question body --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_annotations(Some("a.md"), Some("note"), 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].annotation_type, "note");
@@ -339,7 +409,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | alpha note --->");
         write_md(dir.path(), "b.md", "<!--- q: _ | beta question --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_annotations(None, None, 100).unwrap();
         assert_eq!(results.len(), 2);
         let node_ids: Vec<&str> = results.iter().map(|r| r.node_id.as_str()).collect();
@@ -351,7 +421,7 @@ mod tests {
     fn cmd_annotation_find_uuid() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- q: _ | What does this mean? ---> hello");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("What does this mean?"), 0).unwrap();
         assert!(uuid.is_some());
         assert!(!uuid.unwrap().is_empty());
@@ -361,7 +431,7 @@ mod tests {
     fn cmd_annotation_find_uuid_missing() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let uuid = gi.find_annotation_uuid("a.md", "question", Some("nonexistent"), 0).unwrap();
         assert!(uuid.is_none());
     }
@@ -435,7 +505,7 @@ mod tests {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "<!--- n: _ | alpha note ---> and <!--- q: _ | alpha question --->");
         write_md(dir.path(), "b.md", "<!--- n: _ | beta note --->");
-        let gi = GraphIndex::build(dir.path().to_path_buf(), true).unwrap();
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
         let results = gi.list_annotations(None, Some("note"), 100).unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.annotation_type == "note"));

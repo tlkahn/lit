@@ -6,6 +6,8 @@ import { usePreferencesStore, type PreferencesState } from "../stores/preference
 import { clearFiringAnnotation } from "../editor/livePreview/annotationWidgets";
 import { buildThreadDsl } from "./companionInsert";
 import { withLlmStream } from "./withLlmStream";
+import { effectiveAnnotationLang } from "./annotationLang";
+import { frontmatterFacet } from "../editor/livePreview/crossref";
 
 export interface FireAnnotationArgs {
   view: EditorView;
@@ -45,7 +47,11 @@ export async function fireAnnotation(args: FireAnnotationArgs): Promise<void> {
 
   const prefs = usePreferencesStore.getState();
   const doc = view.state.doc.toString();
-  const lang = prefs.annotationDefaultLang;
+  const lang = effectiveAnnotationLang(
+    annotation.lang,
+    view.state.facet(frontmatterFacet),
+    prefs.annotationDefaultLang,
+  );
 
   return withLlmStream(view, annotation, {
     buildArgs: async ({ isCancelled }) => {

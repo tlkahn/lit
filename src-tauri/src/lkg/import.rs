@@ -367,7 +367,7 @@ mod tests {
         std::fs::write(dir.join("b.md"), "# B").unwrap();
         std::fs::write(dir.join("img.png"), b"fake png").unwrap();
 
-        let gi = crate::graph::indexer::GraphIndex::build(dir.to_path_buf(), true).unwrap();
+        let gi = crate::graph::indexer::GraphIndex::build(dir.to_path_buf(), &crate::annotation::lang::AnnotationIndexOpts::default()).unwrap();
         let dest = dir.join("out.lkg");
         crate::lkg::export::export_lkg(dir, &gi, "My Graph", Some("desc"), &dest, |_, _| {}).unwrap();
         dest

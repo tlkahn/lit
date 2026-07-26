@@ -1615,6 +1615,26 @@ describe("ipc", () => {
     expect(result).toEqual([null, { start: 6, end: 11 }]);
   });
 
+  it("resolveMarkScopes emits a per-mark lang when one is set", async () => {
+    await resolveMarkScopes(
+      "hello world <!--- n: _ | note --->",
+      [
+        { charStart: 12, scope: { kind: "words", value: 1 }, lang: "fr" },
+        { charStart: 12, scope: { kind: "words", value: 1 } },
+      ],
+      "en",
+    );
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("resolve_mark_scopes", {
+      content: "hello world <!--- n: _ | note --->",
+      marks: [
+        { char_start: 12, scope: { kind: "words", value: 1 }, lang: "fr" },
+        { char_start: 12, scope: { kind: "words", value: 1 } },
+      ],
+      lang: "en",
+    });
+  });
+
   it("resolveAnnotationScopeWithMode calls IPC with mode arg", async () => {
     const result = await resolveAnnotationScopeWithMode(
       "hello world <!--- llm | explain --->",

@@ -258,6 +258,56 @@ mod tests {
     }
 
     #[test]
+    fn compact_with_lang_round_trip() {
+        let ann = parse_one(r"<!--- n? \ss lang=fr | même sens ? @2026-07 --->");
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.scope, Scope::Sentence(2));
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.body, Some("même sens ?".to_string()));
+        assert_eq!(ann.date, Some("2026-07".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Compact);
+    }
+
+    #[test]
+    fn compact_with_lang_no_body_round_trip() {
+        let ann = parse_one("<!--- tr _ lang=ja --->");
+        assert_eq!(ann.annotation_type, AnnotationType::Translation);
+        assert_eq!(ann.scope, Scope::Words(1));
+        assert_eq!(ann.lang, Some("ja".to_string()));
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn compact_without_lang_round_trip() {
+        let ann = parse_one(r"<!--- n \s | a note --->");
+        assert_eq!(ann.lang, None);
+    }
+
+    #[test]
+    fn block_with_lang_round_trip() {
+        let ann = parse_one("<!---\nn!\n\\p\nlang: fr\n@2026-03-28\n---\nLe corps.\n--->");
+        assert_eq!(ann.annotation_type, AnnotationType::Note);
+        assert_eq!(ann.certainty, Certainty::Firm);
+        assert_eq!(ann.scope, Scope::Paragraph(1));
+        assert_eq!(ann.lang, Some("fr".to_string()));
+        assert_eq!(ann.date, Some("2026-03-28".to_string()));
+        assert_eq!(ann.body, Some("Le corps.".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Block);
+    }
+
+    #[test]
+    fn block_with_uuid_and_lang_round_trip() {
+        let ann = parse_one(
+            "<!---[550e8400-e29b-41d4-a716-446655440000]\nq?\nlang: zh-Hant\n---\n本文\n--->",
+        );
+        assert_eq!(ann.uuid, Some("550e8400-e29b-41d4-a716-446655440000".to_string()));
+        assert_eq!(ann.annotation_type, AnnotationType::Question);
+        assert_eq!(ann.lang, Some("zh-hant".to_string()));
+        assert_eq!(ann.body, Some("本文".to_string()));
+    }
+
+    #[test]
     fn block_with_uuid_id_round_trip() {
         let ann = parse_one("<!---[550e8400-e29b-41d4-a716-446655440000]\nn!\n\\p\n@2026-03-28\n---\nThe body.\n--->");
         assert_eq!(ann.uuid, Some("550e8400-e29b-41d4-a716-446655440000".to_string()));

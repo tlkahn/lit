@@ -217,6 +217,11 @@ pub struct Annotation {
     pub uuid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mark: Option<String>,
+    /// Annotation-scope segmentation language, the highest-precedence input to
+    /// [`crate::annotation::lang::effective_lang`]. `None` means "inherit"
+    /// (document frontmatter, then the global preference).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -514,6 +519,7 @@ mod tests {
             original: "<!--- n? __ | a note @2026-03 --->".to_string(),
             uuid: None,
             mark: None,
+            lang: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         let parsed: Annotation = serde_json::from_str(&json).unwrap();
@@ -573,6 +579,7 @@ mod tests {
             original: "<!---: n --->".to_string(),
             uuid: None,
             mark: None,
+            lang: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(!json.contains("uuid"), "JSON should omit uuid when None, got: {json}");
@@ -593,6 +600,7 @@ mod tests {
             original: "<!---: n --->".to_string(),
             uuid: Some("abc".to_string()),
             mark: None,
+            lang: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(json.contains(r#""uuid":"abc""#), "JSON should include uuid when Some, got: {json}");
@@ -615,6 +623,7 @@ mod tests {
             original: "<!---[scanner-id] n | test --->".to_string(),
             uuid: Some("scanner-id".to_string()),
             mark: None,
+            lang: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(json.contains(r#""uuid":"scanner-id""#), "JSON should contain scanner-id, got: {json}");
@@ -645,6 +654,7 @@ mod tests {
             original: "<!---: n --->".to_string(),
             uuid: None,
             mark: None,
+            lang: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(!json.contains("\"mark\""), "JSON should omit mark when None, got: {json}");
@@ -665,6 +675,7 @@ mod tests {
             original: "<!--- nb _ --->".to_string(),
             uuid: None,
             mark: Some("nb".to_string()),
+            lang: None,
         };
         let json = serde_json::to_string(&ann).unwrap();
         assert!(json.contains(r#""mark":"nb""#), "JSON should include mark when Some, got: {json}");

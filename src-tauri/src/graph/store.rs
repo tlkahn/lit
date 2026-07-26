@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 24;
+pub const CURRENT_SCHEMA_VERSION: i64 = 25;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -614,6 +614,21 @@ impl Store {
                 "BEGIN;
                  UPDATE sync SET mtime = 0;
                  UPDATE meta SET value = '24' WHERE key = 'schema_version';
+                 COMMIT;"
+            )?;
+        }
+
+        if version < 25 {
+            // Annotation `original` used to be resolved with a hardcoded `en`
+            // segmentation. It now follows the three-scope language precedence
+            // (annotation > frontmatter > `annotations.defaultLang`), so force
+            // one reindex to re-resolve rows a non-English workspace got wrong
+            // (#854). No DDL needed.
+            info!(from = version, to = 25, "migrating schema: forcing reindex to re-resolve annotation originals per language");
+            self.conn.execute_batch(
+                "BEGIN;
+                 UPDATE sync SET mtime = 0;
+                 UPDATE meta SET value = '25' WHERE key = 'schema_version';
                  COMMIT;"
             )?;
         }
@@ -2089,6 +2104,7 @@ mod tests {
                 scope_value: "a.md".into(),
                 uuid: None,
                 original: None,
+                lang: None,
             }]).unwrap();
             use super::super::types::Position;
             let mut positions = HashMap::new();
@@ -3745,8 +3761,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_four() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 24);
+    fn schema_version_is_twenty_five() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
     }
 
     #[test]
@@ -3862,6 +3878,45 @@ mod tests {
         assert_eq!(
             max_mtime, 0,
             "sync mtimes should be reset so stale sentence `original` rows are re-resolved"
+        );
+    }
+
+    #[test]
+    fn migration_v25_resets_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE annotations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                     certainty TEXT NOT NULL, body TEXT, date TEXT,
+                     source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                     scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                     uuid TEXT NOT NULL,
+                     original TEXT
+                 );
+                 CREATE UNIQUE INDEX idx_annotations_uuid ON annotations(uuid);
+                 INSERT INTO meta(key, value) VALUES ('schema_version', '24');
+                 INSERT INTO sync(path, mtime) VALUES ('a.md', 111), ('b.md', 222);",
+            ).unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+        let max_mtime: i64 = store.conn
+            .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            max_mtime, 0,
+            "sync mtimes should be reset so `original` rows are re-resolved under \
+             the three-scope language precedence"
         );
     }
 
@@ -4206,6 +4261,7 @@ mod tests {
             scope_value: "1".into(),
             uuid: None,
             original: None,
+            lang: None,
         }
     }
 
@@ -4706,6 +4762,7 @@ mod tests {
             scope_value: "2".into(),
             uuid: None,
             original: None,
+            lang: None,
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
@@ -6260,11 +6317,13 @@ mod tests {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
             date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
             original: None,
+            lang: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
             date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
             original: None,
+            lang: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
@@ -6287,6 +6346,7 @@ mod tests {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
             original: None,
+            lang: None,
         }];
         store.upsert_annotations("a.md", &anns).unwrap();
         // Insert an orphan annotation directly via SQL (node "orphan.md" doesn't exist in nodes)
@@ -6308,11 +6368,13 @@ mod tests {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("note on alpha".into()),
             date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
             original: None,
+            lang: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "question".into(), certainty: "tentative".into(), body: Some("why beta?".into()),
             date: Some("2026-06-15".into()), source_line: 5, char_start: 20, char_end: 30, scope_kind: "paragraph".into(), scope_value: "1".into(), uuid: Some("u2".into()),
             original: None,
+            lang: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
@@ -6331,6 +6393,7 @@ mod tests {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("good".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("u1".into()),
             original: None,
+            lang: None,
         }];
         store.upsert_annotations("a.md", &anns).unwrap();
         store.conn.execute(
@@ -6440,11 +6503,13 @@ mod tests {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("x".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-a".into()),
             original: None,
+            lang: None,
         }];
         let anns_b = vec![IndexableAnnotation {
             annotation_type: "note".into(), certainty: "neutral".into(), body: Some("y".into()),
             date: None, source_line: 1, char_start: 0, char_end: 5, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("uuid-b".into()),
             original: None,
+            lang: None,
         }];
         store.upsert_annotations("a.md", &anns_a).unwrap();
         store.upsert_annotations("b.md", &anns_b).unwrap();
