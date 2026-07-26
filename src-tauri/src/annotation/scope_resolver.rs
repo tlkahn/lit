@@ -288,8 +288,12 @@ impl<'a> ScopeResolveCtx<'a> {
     /// the occurrence adjacent to the cut. The segment the cut lands inside is
     /// clipped at `te`, matching `split_sentences(content[..te])`. Fewer than
     /// `n` available sentences yields the span of all of them; `None` when
-    /// there are none.
+    /// there are none, and `None` for `n == 0`: an empty window has no span,
+    /// and returning early keeps a zero `n` from walking the whole prefix.
     fn prefix_sentence_span(&self, te: usize, n: usize) -> Option<(usize, usize)> {
+        if n == 0 {
+            return None;
+        }
         let segs = self.segs();
         let cut = segs.partition_point(|s| s.raw_start < te);
 
@@ -409,8 +413,13 @@ impl<'a> ScopeResolveCtx<'a> {
     /// when the target sentence's text recurs between the cut and itself. The
     /// segment the cut lands inside is clipped at `ts`, matching
     /// `split_sentences(content[ts..])`. Fewer than `n` available sentences
-    /// yields the end of the last one; `None` when there are none.
+    /// yields the end of the last one; `None` when there are none, and `None`
+    /// for `n == 0`: an empty window has no end, and returning early keeps a
+    /// zero `n` from walking the whole suffix.
     fn suffix_sentence_end(&self, ts: usize, n: usize) -> Option<usize> {
+        if n == 0 {
+            return None;
+        }
         let segs = self.segs();
         let cut = segs.partition_point(|s| s.raw_end <= ts);
 
@@ -652,10 +661,13 @@ mod tests {
     use crate::annotation::scanner::utf16_len;
 
     // -----------------------------------------------------------------------
-    // Reference implementations: the pre-ScopeResolveCtx resolver bodies,
-    // kept as a genuine independent lock on the ctx parity tests — they
-    // re-segment the prefix/suffix per call instead of selecting spans out of
-    // the shared full-body segmentation.
+    // Reference implementations for the ctx parity tests: they re-segment the
+    // prefix/suffix per call instead of selecting spans out of the shared
+    // full-body segmentation. What they lock is that independence from
+    // `segs()`, not the historical first-occurrence `ws_flexible_find`
+    // semantics: `locate_sentences` carries the same sequential cursor this
+    // PR introduced, deliberately replacing first-occurrence lookup. The
+    // repeated-text tests below are what pin that correctness fix.
     // -----------------------------------------------------------------------
 
     /// Whitespace-flexible substring search: matches `needle`'s non-whitespace
@@ -1430,6 +1442,23 @@ mod tests {
         );
     }
 
+    /// Pure-forward companion to the bidirectional test above: asserts the
+    /// forward end offset on its own, so a first-occurrence regression reports
+    /// `Some(24)` vs `Some(49)` instead of a conflated whole-range string diff.
+    #[test]
+    fn forward_sentence_repeated_text_end_offset_is_nearest() {
+        let content = "Start here. The dog ran. Middle bit. The dog ran. Tail end.";
+        let cut = content.find("The dog ran.").unwrap();
+        let ctx = ScopeResolveCtx::new(content, "en");
+        // Third sentence forward from the cut is the *second* "The dog ran.";
+        // a first-occurrence search collapses the window onto the first.
+        let second_occurrence_end = content.rfind("The dog ran.").unwrap() + "The dog ran.".len();
+        assert_eq!(
+            ctx.resolve_forward_sentences(utf16_len(&content[..cut]), 3),
+            Some(utf16_len(&content[..second_occurrence_end]))
+        );
+    }
+
     #[test]
     fn asymmetric_sentence_repeated_text() {
         // "The dog ran." recurs before the cut and "Echo now." after it; both
@@ -1905,6 +1934,19 @@ mod tests {
             visits[0] <= 8,
             "forward sentence selection must inspect a bounded number of segments, got {}",
             visits[0]
+        );
+    }
+
+    #[test]
+    fn sentence_span_selectors_reject_zero_n() {
+        let content = "One. Two. Three. Four. Five.";
+        let ctx = ScopeResolveCtx::new(content, "en");
+        assert_eq!(ctx.prefix_sentence_span(content.len(), 0), None);
+        assert_eq!(ctx.suffix_sentence_end(0, 0), None);
+        assert_eq!(
+            ctx.segs_visited.get(),
+            0,
+            "n == 0 must short-circuit before walking any segment"
         );
     }
 
