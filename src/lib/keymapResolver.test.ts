@@ -111,6 +111,15 @@ describe("keymaps/default.json", () => {
     expect(entry).toBeDefined();
   });
 
+  it("contains Mod-Shift-m binding for app.toggleAllBlockAnnotations (global, no when clause)", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string; when?: string }) =>
+        b.key === "Mod-Shift-m" && b.command === "app.toggleAllBlockAnnotations",
+    );
+    expect(entry).toBeDefined();
+    expect((entry as Record<string, unknown>).when).toBeUndefined();
+  });
+
   it("contains pane keybindings in default.json", () => {
     const find = (cmd: string) =>
       defaultKeymaps.find((b: { key: string; command: string }) => b.command === cmd);
