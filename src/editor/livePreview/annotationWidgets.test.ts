@@ -1112,12 +1112,13 @@ describe("createCardboxLinkButton", () => {
     expect(createCardboxLinkButton(makeAnnotation({ uuid: "" }))).toBeNull();
   });
 
-  it("returns a span with cardbox-link + proximity classes when uuid is set", () => {
+  it("returns a span with cardbox-link class (no fire-proximity) when uuid is set", () => {
     const btn = createCardboxLinkButton(makeAnnotation({ uuid: "abc" }));
     expect(btn).toBeTruthy();
     expect(btn!.tagName).toBe("SPAN");
     expect(btn!.classList.contains("cm-annotation-cardbox-link")).toBe(true);
-    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
+    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
+    expect(btn!.textContent).toBe("\u{f17f1}");
     expect(btn!.title).toBe("Show in cardbox");
   });
 
