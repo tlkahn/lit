@@ -5,6 +5,7 @@ import {
   registerHandler,
   hasCommand,
   executeCommand,
+  getAllCommands,
   getVisibleCommands,
   _clear,
 } from "../lib/commandRegistry";
@@ -1283,6 +1284,23 @@ describe("useKeymaps", () => {
     expect(ids).not.toContain("app.toggleAllBlockAnnotations");
   });
 
+  it("hidden from the palette when annotationEnabled is false even with an editor view", async () => {
+    await loadHook();
+    const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
+    const mockView = {
+      focus: vi.fn(),
+      state: { field: () => undefined, selection: { main: { head: 0 } } },
+    } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    setFocusedPane("main");
+    usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
+    usePreferencesStore.setState({ annotationEnabled: false });
+    const visible = getVisibleCommands("block annotations");
+    const ids = visible.map((c) => c.id);
+    expect(ids).not.toContain("app.toggleAllBlockAnnotations");
+    usePreferencesStore.setState({ annotationEnabled: true });
+  });
+
   it("visible in the palette when an editor view exists", async () => {
     await loadHook();
     const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
@@ -1296,6 +1314,12 @@ describe("useKeymaps", () => {
     const visible = getVisibleCommands("block annotations");
     const ids = visible.map((c) => c.id);
     expect(ids).toContain("app.toggleAllBlockAnnotations");
+  });
+
+  it("surfaces Mod-Shift-m as shortcut on the palette entry", async () => {
+    await loadHook();
+    const cmd = getAllCommands().find((c) => c.id === "app.toggleAllBlockAnnotations");
+    expect(cmd?.shortcut).toBe("Mod-Shift-m");
   });
 
   it("executing the command calls toggleAllBlockAnnotationFolds with the focused view", async () => {

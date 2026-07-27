@@ -330,7 +330,10 @@ export function ensureCommandsRegistered() {
     id: "app.toggleAllBlockAnnotations",
     label: "Collapse/Expand All Block Annotations",
     keywords: ["fold", "collapse", "expand", "annotation", "callout", "thread"],
-    when: () => getCurrentEditorView() != null,
+    shortcut: "Mod-Shift-m",
+    when: () =>
+      getCurrentEditorView() != null &&
+      usePreferencesStore.getState().annotationEnabled,
     action: () => {
       const view = getCurrentEditorView();
       if (view) toggleAllBlockAnnotationFolds(view);
