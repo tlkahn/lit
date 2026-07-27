@@ -1932,6 +1932,73 @@ describe("ThreadWidget", () => {
   });
 });
 
+describe("programmatic-collapse menu cleanup (Phase 6)", () => {
+  it("programmatic collapse closes the overflow menu and removes document listeners", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const expanded = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = expanded.toDOM(view);
+
+    const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`)! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(true);
+
+    // Verify keydown IS trapped while menu is open (sanity baseline).
+    const keyBefore = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(keyBefore);
+    expect(keyBefore.defaultPrevented).toBe(true);
+
+    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
+    collapsed.updateDOM(dom, view, expanded);
+
+    expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(false);
+
+    // After collapse, the THIS widget's keydown listener must be gone.
+    // Use a fresh MouseEvent to verify the outside-click handler is also gone:
+    // dispatching a mousedown outside the overflow should NOT re-trigger closeMenu
+    // (which would throw or crash if already torn down).
+    const outsideClick = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(outsideClick);
+    expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(false);
+
+    view.destroy();
+  });
+
+  // The chevron path needs no fix: the capture-phase outside-click handler on
+  // `document` fires before the fold effect is dispatched by the chevron's
+  // mousedown, so `closeMenu()` runs first and the menu is already gone.
+});
+
+describe("ThreadWidget.updateDOM expand does not call toDOM (Phase 4)", () => {
+  it("updateDOM expand does not call toDOM", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
+    const dom = collapsed.toDOM(view);
+
+    const spy = vi.spyOn(ThreadWidget.prototype, "toDOM");
+    try {
+      const expanded = new ThreadWidget(ann, 0, false, 0, false);
+      const result = expanded.updateDOM(dom, view, collapsed);
+
+      expect(result).toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+      expect(dom.querySelector(`.${CLS.THREAD_QUESTION}`)).not.toBeNull();
+      expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+      expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+    view.destroy();
+  });
+});
+
 describe("CalloutWidget.updateDOM", () => {
   const view = makeEditorView();
 

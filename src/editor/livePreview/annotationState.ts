@@ -406,6 +406,10 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
  *
  * Mirrors `buildAnnotationDecorations` but is viewport-independent (block
  * annotations are few and the field has no access to view geometry).
+ *
+ * `blockSensitiveLines` tracks only tree-witnessed annotation lines (witness
+ * before line-tracking). Unmatched tree nodes intentionally do not mark lines
+ * (no decoration can exist there, so no rebuild is ever needed).
  */
 /** State shape for `annotationBlockDecorationField`. */
 export interface BlockDecorationState {
@@ -449,8 +453,9 @@ export function buildAnnotationBlockDecorations(state: EditorView["state"]): Blo
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const tree = syntaxTree(state);
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
-  for (const ann of annotations) {
+  for (const ann of rangeMap.values()) {
     const from = ann.char_start;
     const to = ann.char_end;
     if (from < 0 || to > docLen || from >= to) continue;
@@ -459,10 +464,6 @@ export function buildAnnotationBlockDecorations(state: EditorView["state"]): Blo
     const endLine = state.doc.lineAt(to);
     if (startLine.number === endLine.number) continue;
     if (startLine.from !== from) continue;
-
-    for (let l = startLine.number; l <= endLine.number; l++) blockSensitiveLines.add(l);
-
-    if (isCursorOnLine(state, from, to)) continue;
 
     let isBlock = false;
     tree.iterate({
@@ -475,6 +476,13 @@ export function buildAnnotationBlockDecorations(state: EditorView["state"]): Blo
       },
     });
     if (!isBlock) continue;
+
+    // Line tracking after witness: only tree-witnessed annotations mark lines
+    // cursor-sensitive. Unmatched tree nodes intentionally do not mark lines
+    // (no decoration can exist there, so no rebuild is ever needed).
+    for (let l = startLine.number; l <= endLine.number; l++) blockSensitiveLines.add(l);
+
+    if (isCursorOnLine(state, from, to)) continue;
 
     const widget = blockWidgetFor(ann, from, foldState, turnState, firingSet, llmLocked);
     decos.push({ from, to, deco: Decoration.replace({ widget }) });
@@ -491,9 +499,10 @@ export function buildAnnotationBlockDecorations(state: EditorView["state"]): Blo
  * Returns true when a transaction carries ONLY fold/turn effects (no doc
  * change, no shared annotation effects). The field's `update` uses this to
  * enter the surgical path, which replaces existing block decorations in-place
- * without a full rebuild. When the transaction also carries a selection change,
- * the caller forces a full rebuild instead - the surgical path does not
- * recompute `blockSensitiveLines` or cursor suppression on unaffected blocks.
+ * without a full rebuild. The caller additionally disqualifies the surgical
+ * path when the transaction carries a selection change or a tree-identity
+ * change (e.g. a compartment reconfigure that swaps the grammar), forcing a
+ * full rebuild in those cases.
  */
 function isFoldOrTurnOnly(tr: { effects: readonly StateEffect<unknown>[]; docChanged: boolean }): boolean {
   if (tr.docChanged) return false;
@@ -533,8 +542,7 @@ function surgicallyUpdateBlockDecorations(
   }
 
   const annotations = state.field(annotationDataField);
-  const annByStart = new Map<number, Annotation>();
-  for (const a of annotations) annByStart.set(a.char_start, a);
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
   const llmLocked = state.field(llmLockedField, false) ?? false;
@@ -547,13 +555,13 @@ function surgicallyUpdateBlockDecorations(
     const span = existingSpans.get(pos);
     if (span === undefined) continue;
 
-    const ann = annByStart.get(pos);
+    const ann = rangeMap.get(`${pos}:${span}`);
     if (!ann) continue;
 
-    if (isCursorOnLine(state, ann.char_start, ann.char_end)) continue;
+    if (isCursorOnLine(state, pos, span)) continue;
 
     const widget = blockWidgetFor(ann, pos, foldState, turnState, firingSet, llmLocked);
-    newDecos.push({ from: ann.char_start, to: ann.char_end, deco: Decoration.replace({ widget }) });
+    newDecos.push({ from: pos, to: span, deco: Decoration.replace({ widget }) });
   }
 
   newDecos.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -608,7 +616,9 @@ export const annotationBlockDecorationField = StateField.define<BlockDecorationS
       return buildAnnotationBlockDecorations(tr.state);
     }
     if (isFoldOrTurnOnly(tr)) {
-      if (tr.selection) return buildAnnotationBlockDecorations(tr.state);
+      if (tr.selection || syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
+        return buildAnnotationBlockDecorations(tr.state);
+      }
       return surgicallyUpdateBlockDecorations(value, tr.state, tr.effects);
     }
     if (syntaxTree(tr.startState) !== syntaxTree(tr.state)) {

@@ -9,8 +9,10 @@ import {
   annotationDecorationPlugin,
   annotationBlockDecorationField,
   buildAnnotationBlockDecorations,
+  buildAnnotationRangeMap,
   displayModeField,
 } from "./annotationState";
+import { isCursorOnLine } from "./proximity";
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
@@ -396,10 +398,20 @@ describe("targeted iteration (step 1)", () => {
     const view = makeBlockViewNoPlugin(doc);
     const annotations = blockAnnotationsFromTree(view);
 
+    // Adversarial candidates: duplicate exact span, same-start-different-end,
+    // and a non-witnessed multiline span over plain text.
+    const first = annotations[0]!;
+    const adversarial = [
+      ...annotations,
+      makeAnnotation({ form: "block", char_start: first.char_start, char_end: first.char_end, body: "duplicate exact span", original: first.original }),
+      makeAnnotation({ form: "block", char_start: first.char_start, char_end: first.char_end - 1, body: "same-start shorter", original: "shorter" }),
+      makeAnnotation({ form: "block", char_start: doc.length - 20, char_end: doc.length - 5, body: "non-witnessed multiline", original: "no tree node here" }),
+    ];
+
     const foldTarget = annotations[2]!.char_start;
     view.dispatch({
       effects: [
-        setAnnotationData.of(annotations),
+        setAnnotationData.of(adversarial),
         toggleAnnotationFoldEffect.of({ pos: foldTarget }),
       ],
     });
@@ -419,40 +431,114 @@ describe("targeted iteration (step 1)", () => {
       iter.next();
     }
 
+    // Pre-refactor reference: full syntaxTree(state).iterate over BlockAnnotation
+    // nodes with multiline check, isCursorOnLine guard, and exact rangeMap lookup.
     const refResult: Tuple[] = [];
     const state = view.state;
     const foldState = state.field(annotationFoldField, false);
-    const refTree = syntaxTree(state);
-    for (const ann of annotations) {
-      const from = ann.char_start;
-      const to = ann.char_end;
-      if (from < 0 || to > state.doc.length || from >= to) continue;
-      const startLine = state.doc.lineAt(from);
-      const endLine = state.doc.lineAt(to);
-      if (startLine.number === endLine.number) continue;
-      if (startLine.from !== from) continue;
-      let isBlock = false;
-      refTree.iterate({
-        from,
-        to: from + 1,
-        enter: (node) => {
-          if (node.name === "BlockAnnotation" && node.from === from && node.to === to) isBlock = true;
-        },
-      });
-      if (!isBlock) continue;
-      const isCollapsed = foldState?.get(from) ?? false;
-      refResult.push({
-        from,
-        to,
-        kind: ann.annotation_type === "thread" ? "thread" : "callout",
-        isCollapsed,
-      });
-    }
+    const rangeMap = buildAnnotationRangeMap(adversarial);
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        if (node.name !== "BlockAnnotation") return;
+        const from = node.from;
+        const to = node.to;
+        if (from < 0 || to > state.doc.length || from >= to) return;
+        const startLine = state.doc.lineAt(from).number;
+        const endLine = state.doc.lineAt(to).number;
+        if (startLine === endLine) return;
+        if (isCursorOnLine(state, from, to)) return;
+        const ann = rangeMap.get(`${from}:${to}`);
+        if (!ann) return;
+        const isCollapsed = foldState?.get(from) ?? false;
+        refResult.push({
+          from,
+          to,
+          kind: ann.annotation_type === "thread" ? "thread" : "callout",
+          isCollapsed,
+        });
+      },
+    });
+    refResult.sort((a, b) => a.from - b.from || a.to - b.to);
 
     expect(fieldResult.length).toBe(refResult.length);
     expect(fieldResult.length).toBeGreaterThan(0);
     for (let i = 0; i < fieldResult.length; i++) {
       expect(fieldResult[i]).toEqual(refResult[i]);
+    }
+    view.destroy();
+  });
+
+  it("surgical-parity: fold-only dispatch matches fresh full build", () => {
+    const doc = generateBlockAnnotationStress();
+    const view = makeBlockViewNoPlugin(doc);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    const foldTarget = annotations[1]!.char_start;
+    const unaffectedPos = annotations[3]!.char_start;
+
+    // Capture widget identity at an unaffected position before fold.
+    type Tuple = { from: number; to: number; kind: string; isCollapsed: boolean };
+    function extractTuples(view: EditorView): Tuple[] {
+      const result: Tuple[] = [];
+      const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+      while (iter.value) {
+        const w = iter.value.spec.widget;
+        result.push({
+          from: iter.from,
+          to: iter.to,
+          kind: w instanceof ThreadWidget ? "thread" : "callout",
+          isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+        });
+        iter.next();
+      }
+      return result;
+    }
+
+    const beforeWidgets = new Map<number, unknown>();
+    {
+      const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+      while (iter.value) {
+        beforeWidgets.set(iter.from, iter.value.spec.widget);
+        iter.next();
+      }
+    }
+
+    // Fold-only dispatch (no shared effects) to exercise the surgical branch.
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: foldTarget }) });
+
+    // Verify surgical path ran (widget identity preserved at unaffected position).
+    {
+      const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+      while (iter.value) {
+        if (iter.from === unaffectedPos) {
+          expect(iter.value.spec.widget).toBe(beforeWidgets.get(unaffectedPos));
+        }
+        iter.next();
+      }
+    }
+
+    // Compare against a fresh full build on the post-fold state.
+    const surgicalTuples = extractTuples(view);
+    const freshBuild = buildAnnotationBlockDecorations(view.state);
+    const freshTuples: Tuple[] = [];
+    {
+      const iter = freshBuild.decorations.iter();
+      while (iter.value) {
+        const w = iter.value.spec.widget;
+        freshTuples.push({
+          from: iter.from,
+          to: iter.to,
+          kind: w instanceof ThreadWidget ? "thread" : "callout",
+          isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+        });
+        iter.next();
+      }
+    }
+
+    expect(surgicalTuples.length).toBe(freshTuples.length);
+    for (let i = 0; i < surgicalTuples.length; i++) {
+      expect(surgicalTuples[i]).toEqual(freshTuples[i]);
     }
     view.destroy();
   });
@@ -991,10 +1077,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
         expect(totalUpdateDOM).toBeGreaterThan(1);
         const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
-        // The surgical path cannot invent new ranges, so cursor-suppressed
-        // annotations stay suppressed. The residual toDOM (<=1) is CM6
-        // rebuilding a thread widget whose collapsed DOM structure changed.
-        expect(totalToDOM).toBeLessThanOrEqual(1);
+        expect(totalToDOM).toBe(0);
 
         console.warn(
           `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +

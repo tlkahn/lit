@@ -596,6 +596,10 @@ export interface ThreadDeleteEventDetail {
   range?: { from: number; to: number };
 }
 
+interface OverflowEl extends HTMLElement {
+  _litCloseMenu?: () => void;
+}
+
 export class ThreadWidget extends WidgetType {
   constructor(
     readonly annotation: Annotation,
@@ -764,6 +768,7 @@ export class ThreadWidget extends WidgetType {
     });
 
     overflow.appendChild(menu);
+    (overflow as OverflowEl)._litCloseMenu = closeMenu;
     overflow.onmousedown = (e) => {
       if ((e.target as HTMLElement).closest(`.${CLS.THREAD_OVERFLOW_MENU}`)) return;
       e.preventDefault();
@@ -791,70 +796,72 @@ export class ThreadWidget extends WidgetType {
 
     container.appendChild(header);
 
-    // --- Body ---
     if (!this.isCollapsed) {
-      const activeTurn = turns[idx];
-
-      // Whitespace-only body → no turns. Render a placeholder instead of an
-      // empty body div + follow-up trigger, and skip the question/body/trigger.
-      if (turns.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = CLS.THREAD_EMPTY;
-        empty.textContent = "No conversation yet.";
-        container.appendChild(empty);
-        return container;
-      }
-
-      if (activeTurn && activeTurn.question !== "") {
-        const question = document.createElement("div");
-        question.className = CLS.THREAD_QUESTION;
-        // Plain text — never render attacker-controlled markup in the question line.
-        question.textContent = activeTurn.question;
-        container.appendChild(question);
-      }
-
-      const body = document.createElement("div");
-      body.className = CLS.CALLOUT_BODY;
-      body.innerHTML = renderMarkdown(activeTurn?.response ?? "");
-      interceptFootnoteClicks(body);
-      container.appendChild(body);
-
-      // Follow-up trigger (proximity-revealed) — suppressed while streaming.
-      if (!this.isFiring) {
-        const trigger = document.createElement("span");
-        trigger.className = `${CLS.THREAD_FOLLOWUP_TRIGGER} ${CLS.FIRE_PROXIMITY}`;
-        trigger.textContent = "⊕ Follow up";
-        trigger.onmousedown = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const textarea = document.createElement("textarea");
-          textarea.className = CLS.THREAD_FOLLOWUP_INPUT;
-          textarea.placeholder = "Ask a follow-up…";
-          textarea.onpaste = (pe) => {
-            pe.stopPropagation();
-          };
-          textarea.onkeydown = (ke) => {
-            ke.stopPropagation();
-            if (ke.key === "Enter" && (ke.metaKey || ke.ctrlKey)) {
-              ke.preventDefault();
-              window.dispatchEvent(
-                new CustomEvent<ThreadFollowupEventDetail>("lit:thread-followup", {
-                  detail: { annotation: ann, question: textarea.value },
-                }),
-              );
-            } else if (ke.key === "Escape") {
-              ke.preventDefault();
-              textarea.replaceWith(trigger);
-            }
-          };
-          trigger.replaceWith(textarea);
-          textarea.focus();
-        };
-        container.appendChild(trigger);
-      }
+      this.appendBody(container);
     }
 
     return container;
+  }
+
+  private appendBody(container: HTMLElement): void {
+    const ann = this.annotation;
+    const turns = parseThreadBody(ann.body ?? "");
+    const idx = Math.min(Math.max(this.turn, 0), Math.max(turns.length - 1, 0));
+    const activeTurn = turns[idx];
+
+    if (turns.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = CLS.THREAD_EMPTY;
+      empty.textContent = "No conversation yet.";
+      container.appendChild(empty);
+      return;
+    }
+
+    if (activeTurn && activeTurn.question !== "") {
+      const question = document.createElement("div");
+      question.className = CLS.THREAD_QUESTION;
+      question.textContent = activeTurn.question;
+      container.appendChild(question);
+    }
+
+    const body = document.createElement("div");
+    body.className = CLS.CALLOUT_BODY;
+    body.innerHTML = renderMarkdown(activeTurn?.response ?? "");
+    interceptFootnoteClicks(body);
+    container.appendChild(body);
+
+    if (!this.isFiring) {
+      const trigger = document.createElement("span");
+      trigger.className = `${CLS.THREAD_FOLLOWUP_TRIGGER} ${CLS.FIRE_PROXIMITY}`;
+      trigger.textContent = "⊕ Follow up";
+      trigger.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const textarea = document.createElement("textarea");
+        textarea.className = CLS.THREAD_FOLLOWUP_INPUT;
+        textarea.placeholder = "Ask a follow-up…";
+        textarea.onpaste = (pe) => {
+          pe.stopPropagation();
+        };
+        textarea.onkeydown = (ke) => {
+          ke.stopPropagation();
+          if (ke.key === "Enter" && (ke.metaKey || ke.ctrlKey)) {
+            ke.preventDefault();
+            window.dispatchEvent(
+              new CustomEvent<ThreadFollowupEventDetail>("lit:thread-followup", {
+                detail: { annotation: ann, question: textarea.value },
+              }),
+            );
+          } else if (ke.key === "Escape") {
+            ke.preventDefault();
+            textarea.replaceWith(trigger);
+          }
+        };
+        trigger.replaceWith(textarea);
+        textarea.focus();
+      };
+      container.appendChild(trigger);
+    }
   }
 
   eq(other: ThreadWidget): boolean {
@@ -869,7 +876,7 @@ export class ThreadWidget extends WidgetType {
     );
   }
 
-  updateDOM(dom: HTMLElement, view: EditorView, from: ThreadWidget): boolean {
+  updateDOM(dom: HTMLElement, _view: EditorView, from: ThreadWidget): boolean {
     if (
       this.annotation.original !== from.annotation.original ||
       this.annotation.char_start !== from.annotation.char_start ||
@@ -888,19 +895,13 @@ export class ThreadWidget extends WidgetType {
     if (this.isCollapsed) {
       const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
       if (!header) return false;
+      const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`) as OverflowEl | null;
+      overflow?._litCloseMenu?.();
       chevron.classList.add(CLS.IS_COLLAPSED);
       while (dom.lastChild && dom.lastChild !== header) dom.removeChild(dom.lastChild);
     } else {
       chevron.classList.remove(CLS.IS_COLLAPSED);
-      const freshDom = this.toDOM(view);
-      const question = freshDom.querySelector(`.${CLS.THREAD_QUESTION}`);
-      if (question) dom.appendChild(question);
-      const body = freshDom.querySelector(`.${CLS.CALLOUT_BODY}`);
-      if (body) dom.appendChild(body);
-      const trigger = freshDom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`);
-      if (trigger) dom.appendChild(trigger);
-      const empty = freshDom.querySelector(`.${CLS.THREAD_EMPTY}`);
-      if (empty) dom.appendChild(empty);
+      this.appendBody(dom);
     }
     return true;
   }
