@@ -27,6 +27,7 @@ import {
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import { generateAnnotationHeavy, generateBlockAnnotationStress } from "../../test/fixtures/generate";
+import { toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
 import type { Annotation } from "../../lib/ipc";
 
 const HARD_LIMIT_MS = 100;
@@ -851,6 +852,23 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     view.destroy();
   });
 
+  it("fold-all via toggleAllBlockAnnotationFolds helper", () => {
+    const view = makeStressBlockView();
+
+    const start = performance.now();
+    const result = toggleAllBlockAnnotationFolds(view);
+    const elapsed = performance.now() - start;
+
+    expect(result).toBe(true);
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress fold-all helper: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
+    view.destroy();
+  });
+
   /**
    * H2 proxy: count how many widgets CM6 must rebuild when fold state flips.
    *
@@ -1010,6 +1028,9 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     };
   }
 
+  // Stress fixture invariants (pure multiline, line-start blocks) make the
+  // unfiltered char_start map equivalent to the helper's target set; if the
+  // fixture ever gains compact/inline rows, switch these cases to the helper.
   function foldAllEffects(view: EditorView) {
     const annotations = view.state.field(annotationDataField);
     const positions = annotations.map((a) => a.char_start);
