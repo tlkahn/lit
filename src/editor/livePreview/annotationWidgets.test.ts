@@ -1118,7 +1118,7 @@ describe("createCardboxLinkButton", () => {
     expect(btn!.tagName).toBe("SPAN");
     expect(btn!.classList.contains("cm-annotation-cardbox-link")).toBe(true);
     expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
-    expect(btn!.textContent).toBe("\u{f1ff1}");
+    expect(btn!.textContent).toBe("\u{f17f1}");
     expect(btn!.title).toBe("Show in cardbox");
   });
 

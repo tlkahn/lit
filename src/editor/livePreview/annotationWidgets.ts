@@ -147,7 +147,7 @@ export function createCardboxLinkButton(ann: Annotation): HTMLSpanElement | null
 
   const btn = document.createElement("span");
   btn.className = CLS.CARDBOX_LINK;
-  btn.textContent = "\u{f1ff1}";
+  btn.textContent = "\u{f17f1}"; // nerdfont md-card_multiple (󱟱)
   btn.title = "Show in cardbox";
   btn.onmousedown = (e) => {
     e.stopPropagation();
