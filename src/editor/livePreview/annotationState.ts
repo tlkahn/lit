@@ -4,7 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect } from "./annotationWidgets";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -386,6 +386,7 @@ export function hasBlockAnnotationEffect(tr: { effects: readonly StateEffect<unk
   return tr.effects.some((e) =>
     isSharedAnnotationEffect(e) ||
     e.is(toggleAnnotationFoldEffect) ||
+    e.is(setAllAnnotationFoldsEffect) ||
     e.is(setThreadTurnEffect),
   );
 }
@@ -508,7 +509,7 @@ function isFoldOrTurnOnly(tr: { effects: readonly StateEffect<unknown>[]; docCha
   if (tr.docChanged) return false;
   let hasFoldOrTurn = false;
   for (const e of tr.effects) {
-    if (e.is(toggleAnnotationFoldEffect) || e.is(setThreadTurnEffect)) {
+    if (e.is(toggleAnnotationFoldEffect) || e.is(setAllAnnotationFoldsEffect) || e.is(setThreadTurnEffect)) {
       hasFoldOrTurn = true;
     } else if (isSharedAnnotationEffect(e)) {
       return false;
@@ -531,6 +532,9 @@ function surgicallyUpdateBlockDecorations(
   const affected = new Set<number>();
   for (const e of effects) {
     if (e.is(toggleAnnotationFoldEffect)) affected.add(e.value.pos);
+    if (e.is(setAllAnnotationFoldsEffect)) {
+      for (const pos of e.value.positions) affected.add(pos);
+    }
     if (e.is(setThreadTurnEffect)) affected.add(e.value.pos);
   }
 

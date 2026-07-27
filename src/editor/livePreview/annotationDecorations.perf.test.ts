@@ -16,6 +16,7 @@ import { isCursorOnLine } from "./proximity";
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
+  setAllAnnotationFoldsEffect,
   threadTurnField,
   setThreadTurnEffect,
   firingAnnotationsField,
@@ -833,10 +834,12 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   it("fold-all surgical path total time", () => {
     const view = makeStressBlockView();
     const annotations = view.state.field(annotationDataField);
-    const effects = annotations.map((a) => toggleAnnotationFoldEffect.of({ pos: a.char_start }));
+    const positions = annotations.map((a) => a.char_start);
+    const foldMap = view.state.field(annotationFoldField, false);
+    const allCollapsed = positions.every((pos) => foldMap?.get(pos) ?? false);
 
     const start = performance.now();
-    view.dispatch({ effects });
+    view.dispatch({ effects: setAllAnnotationFoldsEffect.of({ positions, collapsed: !allCollapsed }) });
     const elapsed = performance.now() - start;
 
     if (elapsed > ADVISORY_MS) {
@@ -1009,7 +1012,10 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
 
   function foldAllEffects(view: EditorView) {
     const annotations = view.state.field(annotationDataField);
-    return annotations.map((a) => toggleAnnotationFoldEffect.of({ pos: a.char_start }));
+    const positions = annotations.map((a) => a.char_start);
+    const foldMap = view.state.field(annotationFoldField, false);
+    const allCollapsed = positions.every((pos) => foldMap?.get(pos) ?? false);
+    return [setAllAnnotationFoldsEffect.of({ positions, collapsed: !allCollapsed })];
   }
 
   function countAnnotationMix(view: EditorView): { notes: number; threads: number } {

@@ -23,6 +23,7 @@ import {
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
+  setAllAnnotationFoldsEffect,
   PillWidget,
   CalloutWidget,
   MarkerWidget,
@@ -1143,6 +1144,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
       setFiringAnnotation.of(0),
       clearFiringAnnotation.of(0),
       setLlmLockedEffect.of(true),
@@ -1172,6 +1174,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
 
     const falseCases = [
       toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
       setThreadTurnEffect.of({ pos: 0, turn: 1 }),
     ];
     for (const effect of falseCases) {
@@ -1190,6 +1193,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
       clearFiringAnnotation.of(0),
       setLlmLockedEffect.of(true),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
       setThreadTurnEffect.of({ pos: 0, turn: 1 }),
     ];
     for (const effect of trueCases) {
@@ -1211,6 +1215,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
       setFiringAnnotation.of(0),
       clearFiringAnnotation.of(0),
       setLlmLockedEffect.of(true),
@@ -2202,6 +2207,129 @@ describe("fold/turn + selection in one transaction", () => {
 
       expect(isCollapsedAt(view, A.from)).toBe(true);
       expect(hasDecoAt(view, B.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
+describe("setAllAnnotationFoldsEffect surgical path", () => {
+  const DOC = "first line\n\n<!---\nbody A\n--->\nmiddle\n\n<!---\nbody B\n--->\ntail";
+
+  function makeViewWithBlocks(anchor: number) {
+    const state = EditorState.create({
+      doc: DOC,
+      selection: { anchor },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(2);
+    const annotations = blocks.map((b) =>
+      makeAnnotation({
+        form: "block",
+        char_start: b.from,
+        char_end: b.to,
+        original: DOC.slice(b.from, b.to),
+      }),
+    );
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+    return { view, A: blocks[0]!, B: blocks[1]! };
+  }
+
+  function isCollapsedAt(view: EditorView, from: number): boolean | undefined {
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      if (iter.from === from) {
+        const w = iter.value.spec?.widget;
+        if (w instanceof CalloutWidget) return w.isCollapsed;
+      }
+      iter.next();
+    }
+    return undefined;
+  }
+
+  function hasDecoAt(view: EditorView, from: number): boolean {
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      if (iter.from === from) return true;
+      iter.next();
+    }
+    return false;
+  }
+
+  it("C1: fold-all flips isCollapsed on both block widgets via the surgical path", () => {
+    const { view, A, B } = makeViewWithBlocks(0);
+    try {
+      expect(isCollapsedAt(view, A.from)).toBe(false);
+      expect(isCollapsedAt(view, B.from)).toBe(false);
+
+      view.dispatch({
+        effects: setAllAnnotationFoldsEffect.of({
+          positions: [A.from, B.from],
+          collapsed: true,
+        }),
+      });
+
+      expect(isCollapsedAt(view, A.from)).toBe(true);
+      expect(isCollapsedAt(view, B.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("C2: fold-all with cursor on one block: that block suppressed, other flips", () => {
+    const { view, A, B } = makeViewWithBlocks(0);
+    try {
+      view.dispatch({ selection: { anchor: A.from + 2 } });
+      expect(hasDecoAt(view, A.from)).toBe(false);
+
+      view.dispatch({
+        effects: setAllAnnotationFoldsEffect.of({
+          positions: [A.from, B.from],
+          collapsed: true,
+        }),
+      });
+
+      expect(hasDecoAt(view, A.from)).toBe(false);
+      expect(isCollapsedAt(view, B.from)).toBe(true);
+
+      const foldMap = view.state.field(annotationFoldField);
+      expect(foldMap.get(A.from)).toBe(true);
+      expect(foldMap.get(B.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("C3: fold-all + selection change in same transaction takes full-rebuild path", () => {
+    const { view, A, B } = makeViewWithBlocks(0);
+    try {
+      view.dispatch({
+        effects: setAllAnnotationFoldsEffect.of({
+          positions: [A.from, B.from],
+          collapsed: true,
+        }),
+        selection: { anchor: DOC.length - 1 },
+      });
+
+      expect(isCollapsedAt(view, A.from)).toBe(true);
+      expect(isCollapsedAt(view, B.from)).toBe(true);
     } finally {
       view.destroy();
     }
