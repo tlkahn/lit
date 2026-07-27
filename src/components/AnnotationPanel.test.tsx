@@ -313,7 +313,7 @@ describe("AnnotationPanel", () => {
     it("renders when a multiline block annotation is present", () => {
       const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
       const annotations = [
-        makeAnnotation({ char_start: 6, char_end: 31, body: "body" }),
+        makeAnnotation({ char_start: 6, char_end: 27, body: "body" }),
       ];
       editorView = setupEditorView(doc, annotations);
       render(<AnnotationPanel pageId="test.md" />);
@@ -340,7 +340,7 @@ describe("AnnotationPanel", () => {
     it("clicking the fold-all button executes app.toggleAllBlockAnnotations", async () => {
       const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
       const annotations = [
-        makeAnnotation({ char_start: 6, char_end: 31, body: "body" }),
+        makeAnnotation({ char_start: 6, char_end: 27, body: "body" }),
       ];
       editorView = setupEditorView(doc, annotations);
       const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
