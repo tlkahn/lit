@@ -38,6 +38,7 @@ describe("useKeymaps", () => {
     usePaneStore.setState(createInitialState());
     usePaneHistoryStore.setState({ stacks: new Map() });
     useBottomPanelStore.setState({ activeTab: "linked", unfolded: false, tabMeta: defaultTabMeta() });
+    usePreferencesStore.setState({ annotationEnabled: true });
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [
@@ -1298,7 +1299,6 @@ describe("useKeymaps", () => {
     const visible = getVisibleCommands("block annotations");
     const ids = visible.map((c) => c.id);
     expect(ids).not.toContain("app.toggleAllBlockAnnotations");
-    usePreferencesStore.setState({ annotationEnabled: true });
   });
 
   it("visible in the palette when an editor view exists", async () => {
