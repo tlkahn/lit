@@ -308,7 +308,7 @@ describe("annotationFoldField", () => {
   it("setAllAnnotationFoldsEffect.map remaps positions through a change", () => {
     const change = ChangeSet.of({ from: 0, insert: "XXXXX" }, 30);
     const effect = setAllAnnotationFoldsEffect.of({ positions: [10, 20], collapsed: true });
-    const mapped = effect.map(change);
+    const mapped = effect.map(change)!;
     expect(mapped.value.positions).toEqual([15, 25]);
     expect(mapped.value.collapsed).toBe(true);
   });
@@ -316,7 +316,7 @@ describe("annotationFoldField", () => {
   it("toggleAnnotationFoldEffect.map remaps pos through a change", () => {
     const change = ChangeSet.of({ from: 0, insert: "XXXXX" }, 30);
     const effect = toggleAnnotationFoldEffect.of({ pos: 10 });
-    const mapped = effect.map(change);
+    const mapped = effect.map(change)!;
     expect(mapped.value.pos).toBe(15);
   });
 

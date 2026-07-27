@@ -17,8 +17,9 @@ export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {
     const from = ann.char_start;
     const to = ann.char_end;
     if (from < 0 || to > docLen || from >= to) continue;
-    if (doc.lineAt(from).from !== from) continue;
-    if (doc.lineAt(from).number === doc.lineAt(to).number) continue;
+    const startLine = doc.lineAt(from);
+    if (startLine.from !== from) continue;
+    if (startLine.number === doc.lineAt(to).number) continue;
     targets.push(from);
   }
 

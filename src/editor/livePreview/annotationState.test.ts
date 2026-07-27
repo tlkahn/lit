@@ -2317,7 +2317,7 @@ describe("setAllAnnotationFoldsEffect surgical path", () => {
     }
   });
 
-  it("C3: fold-all + selection change in same transaction takes full-rebuild path", () => {
+  it("C3: fold-all + selection change in same transaction ends fully collapsed (path not asserted)", () => {
     const { view, A, B } = makeViewWithBlocks(0);
     try {
       view.dispatch({
