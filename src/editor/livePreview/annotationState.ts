@@ -490,6 +490,67 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
  * than `syntaxTreeAvailable` (which queries the live parse context and may
  * reflect progress that hasn't yet been committed to the StateField).
  */
+function isFoldOrTurnOnly(tr: { effects: readonly StateEffect<unknown>[]; docChanged: boolean }): boolean {
+  if (tr.docChanged) return false;
+  let hasFoldOrTurn = false;
+  for (const e of tr.effects) {
+    if (e.is(toggleAnnotationFoldEffect) || e.is(setThreadTurnEffect)) {
+      hasFoldOrTurn = true;
+    } else if (isSharedAnnotationEffect(e)) {
+      return false;
+    }
+  }
+  return hasFoldOrTurn;
+}
+
+function surgicallyUpdateBlockDecorations(
+  prev: BlockDecorationState,
+  state: EditorView["state"],
+  effects: readonly StateEffect<unknown>[],
+): BlockDecorationState {
+  const affected = new Set<number>();
+  for (const e of effects) {
+    if (e.is(toggleAnnotationFoldEffect)) affected.add(e.value.pos);
+    if (e.is(setThreadTurnEffect)) affected.add(e.value.pos);
+  }
+
+  const annotations = state.field(annotationDataField);
+  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
+  const llmLocked = state.field(llmLockedField, false) ?? false;
+  const foldState = state.field(annotationFoldField, false);
+  const turnState = state.field(threadTurnField, false);
+
+  const newDecos: Array<{ from: number; to: number; deco: Decoration }> = [];
+
+  for (const pos of affected) {
+    const ann = annotations.find((a) => a.char_start === pos);
+    if (!ann) continue;
+
+    if (isCursorOnLine(state, ann.char_start, ann.char_end)) continue;
+
+    const isCollapsed = foldState?.get(pos) ?? false;
+    const isFiring = firingSet.has(pos);
+    const widget =
+      ann.annotation_type === "thread"
+        ? new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos, isFiring)
+        : new CalloutWidget(ann, isCollapsed, pos, isFiring, llmLocked);
+    newDecos.push({
+      from: ann.char_start,
+      to: ann.char_end,
+      deco: Decoration.replace({ widget }),
+    });
+  }
+
+  newDecos.sort((a, b) => a.from - b.from || a.to - b.to);
+
+  const updated = prev.decorations.update({
+    filter: (from) => !affected.has(from),
+    add: newDecos.map((d) => d.deco.range(d.from, d.to)),
+  });
+
+  return { decorations: updated, blockSensitiveLines: prev.blockSensitiveLines };
+}
+
 export function shouldRebuildBlocksOnTreeChange(
   startState: EditorView["state"],
   annotations: Annotation[],
@@ -517,13 +578,12 @@ export const annotationBlockDecorationField = StateField.define<BlockDecorationS
     return buildAnnotationBlockDecorations(state);
   },
   update(value, tr) {
-    if (tr.docChanged || hasBlockAnnotationEffect(tr)) {
+    if (tr.docChanged || tr.effects.some((e) => isSharedAnnotationEffect(e))) {
       return buildAnnotationBlockDecorations(tr.state);
     }
-    // Parser progress (Language.setState advancing the tree) carries no
-    // docChange or annotation effect. Only rebuild if the old tree hadn't yet
-    // covered all annotation positions — otherwise the extension can't reveal
-    // new block nodes.
+    if (isFoldOrTurnOnly(tr)) {
+      return surgicallyUpdateBlockDecorations(value, tr.state, tr.effects);
+    }
     if (syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
       if (shouldRebuildBlocksOnTreeChange(tr.startState, tr.startState.field(annotationDataField))) {
         return buildAnnotationBlockDecorations(tr.state);
