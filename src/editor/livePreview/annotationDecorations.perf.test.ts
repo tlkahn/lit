@@ -83,7 +83,7 @@ function makeAnnotationPerfView(doc: string): EditorView {
     ],
   });
   const view = new EditorView({ state, parent: document.createElement("div") });
-  ensureSyntaxTree(view.state, view.state.doc.length);
+  forceParsing(view, view.state.doc.length, 10_000);
   const annotations = annotationsFromTree(view);
   view.dispatch({ effects: setAnnotationData.of(annotations) });
   return view;
@@ -257,16 +257,16 @@ function blockAnnotationsFromTree(view: EditorView): Annotation[] {
 describe("annotationBlockDecorationField — block-heavy doc", () => {
   const BLOCK_COUNT = 200;
 
-  it(`plain-line cursor move skips field rebuild fast (${BLOCK_COUNT} block annotations)`, () => {
-    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+  function makeBlockPerfView(doc: string): EditorView {
     const state = EditorState.create({
       doc,
-      selection: { anchor: doc.length - 2 }, // on the trailing plain line
+      selection: { anchor: doc.length - 2 },
       extensions: [
         markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
         annotationDataField,
         displayModeField,
         annotationFoldField,
+        threadTurnField,
         firingAnnotationsField,
         llmLockedField,
         annotationDecorationPlugin,
@@ -274,8 +274,15 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
       ],
     });
     const view = new EditorView({ state, parent: document.createElement("div") });
-    ensureSyntaxTree(view.state, view.state.doc.length);
+    forceParsing(view, view.state.doc.length, 10_000);
     view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view)) });
+    return view;
+  }
+
+  it(`plain-line cursor move skips field rebuild fast (${BLOCK_COUNT} block annotations)`, () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockPerfView(doc);
+    expect(view.state.field(annotationDataField)).toHaveLength(BLOCK_COUNT);
 
     // The field must NOT rebuild on a plain-line cursor move: same value ref.
     const before = view.state.field(annotationBlockDecorationField);
@@ -294,28 +301,6 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
     expect(elapsed).toBeLessThan(HARD_LIMIT_MS);
     view.destroy();
   });
-
-  function makeBlockPerfView(doc: string): EditorView {
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: doc.length - 2 },
-      extensions: [
-        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
-        annotationDataField,
-        displayModeField,
-        annotationFoldField,
-        threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
-        annotationDecorationPlugin,
-        annotationBlockDecorationField,
-      ],
-    });
-    const view = new EditorView({ state, parent: document.createElement("div") });
-    ensureSyntaxTree(view.state, view.state.doc.length);
-    view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view)) });
-    return view;
-  }
 
   it(`single toggleAnnotationFoldEffect (${BLOCK_COUNT} block annotations)`, () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
