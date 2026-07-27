@@ -15,6 +15,8 @@ import {
   buildAnnotationDecorations,
   hasAnnotationEffect,
   shouldRebuildBlocksOnTreeChange,
+  buildAnnotationRangeMap,
+  findAnnotationForRange,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -1593,6 +1595,29 @@ describe("buildAnnotationDecorations", () => {
     const line = view.state.doc.lineAt(16).number;
     expect(cursorSensitiveLines.has(line)).toBe(true);
     view.destroy();
+  });
+});
+
+describe("buildAnnotationRangeMap", () => {
+  it("keys annotations by char_start:char_end for O(1) lookup", () => {
+    const a1 = makeAnnotation({ char_start: 5, char_end: 15 });
+    const a2 = makeAnnotation({ char_start: 20, char_end: 30 });
+    const map = buildAnnotationRangeMap([a1, a2]);
+    expect(map.get("5:15")).toBe(a1);
+    expect(map.get("20:30")).toBe(a2);
+    expect(map.get("0:10")).toBeUndefined();
+  });
+
+  it("preserves findAnnotationForRange's first-match-wins for duplicate spans", () => {
+    const a1 = makeAnnotation({ char_start: 5, char_end: 15, body: "first" });
+    const a2 = makeAnnotation({ char_start: 5, char_end: 15, body: "second" });
+    const map = buildAnnotationRangeMap([a1, a2]);
+    expect(map.get("5:15")).toBe(a1);
+    expect(findAnnotationForRange([a1, a2], 5, 15)).toBe(a1);
+  });
+
+  it("returns an empty map for no annotations", () => {
+    expect(buildAnnotationRangeMap([]).size).toBe(0);
   });
 });
 

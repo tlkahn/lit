@@ -142,7 +142,7 @@ export const annotationPlugin = ViewPlugin.fromClass(
   },
 );
 
-function findAnnotationForRange(
+export function findAnnotationForRange(
   annotations: Annotation[],
   from: number,
   to: number,
@@ -150,6 +150,15 @@ function findAnnotationForRange(
   return annotations.find(
     (a) => a.char_start === from && a.char_end === to,
   );
+}
+
+export function buildAnnotationRangeMap(annotations: Annotation[]): Map<string, Annotation> {
+  const map = new Map<string, Annotation>();
+  for (const a of annotations) {
+    const key = `${a.char_start}:${a.char_end}`;
+    if (!map.has(key)) map.set(key, a);
+  }
+  return map;
 }
 
 export interface BuildAnnotationDecorationsResult {
@@ -182,6 +191,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const tree = syntaxTree(state);
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   // Buffered windows of adjacent visible ranges can overlap (e.g. around a code
   // fold), so the same annotation node may be entered once per range. Dedupe by
@@ -212,7 +222,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
 
         if (isCursorOnLine(state, nodeFrom, nodeTo)) return;
 
-        const ann = findAnnotationForRange(annotations, nodeFrom, nodeTo);
+        const ann = rangeMap.get(`${nodeFrom}:${nodeTo}`);
         if (!ann) return;
 
         const text = state.doc.sliceString(nodeFrom, nodeTo);
@@ -389,6 +399,7 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   syntaxTree(state).iterate({
     enter: (node) => {
@@ -407,7 +418,7 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 
       if (isCursorOnLine(state, from, to)) return;
 
-      const ann = findAnnotationForRange(annotations, from, to);
+      const ann = rangeMap.get(`${from}:${to}`);
       if (!ann) return;
 
       const isCollapsed = foldState?.get(from) ?? false;
