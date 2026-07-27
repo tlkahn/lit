@@ -371,7 +371,7 @@ describe("targeted iteration (step 1)", () => {
     const iterateCalls: Array<{ from?: number; to?: number }> = [];
     const tree = syntaxTree(view.state);
     const origIterate = tree.iterate.bind(tree);
-    vi.spyOn(tree, "iterate").mockImplementation((spec: any) => {
+    vi.spyOn(tree, "iterate").mockImplementation((spec: Parameters<typeof tree.iterate>[0]) => {
       iterateCalls.push({ from: spec.from, to: spec.to });
       return origIterate(spec);
     });
@@ -557,7 +557,7 @@ describe("surgical DecorationSet update (step 2)", () => {
   });
 });
 
-const STRESS_SMOKE_CAP_MS = 5000;
+const STRESS_HARD_LIMIT_MS = HARD_LIMIT_MS;
 
 function makeStressBlockView(): EditorView {
   const doc = generateBlockAnnotationStress();
@@ -586,7 +586,7 @@ function makeStressBlockView(): EditorView {
 }
 
 describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
-  it("plain-line cursor move preserves field identity", { timeout: 30_000 }, () => {
+  it("plain-line cursor move preserves field identity", () => {
     const view = makeStressBlockView();
     const doc = view.state.doc.toString();
     const tailPos = doc.length - 1;
@@ -594,12 +594,21 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     view.dispatch({ selection: { anchor: tailPos } });
     const before = view.state.field(annotationBlockDecorationField);
 
+    const start = performance.now();
     view.dispatch({ selection: { anchor: tailPos - 1 } });
+    const elapsed = performance.now() - start;
+
     expect(view.state.field(annotationBlockDecorationField)).toBe(before);
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress plain-line cursor move: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
-  it("single fold toggle dispatch", { timeout: 30_000 }, () => {
+  it("single fold toggle dispatch", () => {
     const view = makeStressBlockView();
     const firstBlockPos = view.state.field(annotationDataField)[0]?.char_start ?? 0;
 
@@ -612,11 +621,11 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         `[perf] stress fold toggle: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
       );
     }
-    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
-  it("setAnnotationData re-dispatch", { timeout: 30_000 }, () => {
+  it("setAnnotationData re-dispatch", () => {
     const view = makeStressBlockView();
     const annotations = blockAnnotationsFromTree(view);
 
@@ -629,11 +638,11 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         `[perf] stress setAnnotationData re-dispatch: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
       );
     }
-    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
-  it("midpoint single-char insert", { timeout: 30_000 }, () => {
+  it("midpoint single-char insert", () => {
     const view = makeStressBlockView();
     const mid = Math.floor(view.state.doc.length / 2);
 
@@ -646,7 +655,25 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         `[perf] stress midpoint insert: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
       );
     }
-    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
+    view.destroy();
+  });
+
+  it("fold-all surgical path total time", () => {
+    const view = makeStressBlockView();
+    const annotations = view.state.field(annotationDataField);
+    const effects = annotations.map((a) => toggleAnnotationFoldEffect.of({ pos: a.char_start }));
+
+    const start = performance.now();
+    view.dispatch({ effects });
+    const elapsed = performance.now() - start;
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress fold-all surgical: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
