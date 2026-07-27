@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
@@ -27,6 +27,11 @@ vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
   listAnnotations: vi.fn(async () => []),
 }));
+
+vi.mock("@codemirror/language", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@codemirror/language")>();
+  return { ...actual, ensureSyntaxTree: vi.fn(actual.ensureSyntaxTree) };
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -421,9 +426,77 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D11b: implementation never imports ensureSyntaxTree", async () => {
+  it("D11b: implementation never imports syntaxTree or @codemirror/language", async () => {
     const src = await import("./annotationFoldAll?raw");
     const raw = typeof src === "string" ? src : (src as { default: string }).default;
-    expect(raw).not.toContain("ensureSyntaxTree");
+    expect(raw).not.toContain("syntaxTree");
+    expect(raw).not.toContain("@codemirror/language");
+  });
+});
+
+describe("toggleAllBlockAnnotationFolds - parse frontier", () => {
+  const FILLER_LINE = "this is a line of plain filler text to pad the document out\n";
+  const PREFIX = FILLER_LINE.repeat(2000);
+  const BLOCK = "<!---\nn\n---\nlate body\n--->";
+  const DOC = PREFIX + "\n" + BLOCK + "\ntrailer\n";
+  const BLOCK_FROM = PREFIX.length + 1;
+  const BLOCK_TO = BLOCK_FROM + BLOCK.length;
+
+  function makeFrontierView() {
+    const state = EditorState.create({
+      doc: DOC,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({
+          form: "block",
+          char_start: BLOCK_FROM,
+          char_end: BLOCK_TO,
+          original: BLOCK,
+        }),
+      ]),
+    });
+    return view;
+  }
+
+  afterEach(() => {
+    vi.mocked(ensureSyntaxTree).mockReset();
+  });
+
+  it("targets annotations beyond the parse frontier even when the parse budget is exhausted", () => {
+    const view = makeFrontierView();
+    try {
+      expect(syntaxTree(view.state).length).toBeLessThan(BLOCK_FROM);
+      vi.mocked(ensureSyntaxTree).mockReturnValue(null);
+
+      expect(toggleAllBlockAnnotationFolds(view)).toBe(true);
+      expect(view.state.field(annotationFoldField).get(BLOCK_FROM)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("never re-enters the parser (ensureSyntaxTree not called)", () => {
+    const view = makeFrontierView();
+    try {
+      vi.mocked(ensureSyntaxTree).mockClear();
+
+      toggleAllBlockAnnotationFolds(view);
+      expect(ensureSyntaxTree).not.toHaveBeenCalled();
+    } finally {
+      view.destroy();
+    }
   });
 });
