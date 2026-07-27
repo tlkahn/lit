@@ -445,6 +445,14 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
+  it("D12: returns false without throwing when annotationExtension is absent", () => {
+    const view = new EditorView({ state: EditorState.create({ doc: "hello" }) });
+    let result: boolean | undefined;
+    expect(() => { result = toggleAllBlockAnnotationFolds(view); }).not.toThrow();
+    expect(result).toBe(false);
+    view.destroy();
+  });
+
   it("D11b: implementation never imports syntaxTree or @codemirror/language", async () => {
     const src = await import("./annotationFoldAll?raw");
     const raw = typeof src === "string" ? src : (src as { default: string }).default;

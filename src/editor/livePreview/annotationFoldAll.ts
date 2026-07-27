@@ -3,24 +3,30 @@ import { annotationDataField } from "./annotationState";
 import { annotationFoldField, setAllAnnotationFoldsEffect } from "./annotationWidgets";
 import { isPerfEnabled } from "./perf";
 
+export function isFoldAllTarget(
+  doc: { length: number; lineAt(pos: number): { from: number; number: number } },
+  ann: { char_start: number; char_end: number },
+): boolean {
+  const from = ann.char_start;
+  const to = ann.char_end;
+  if (from < 0 || to > doc.length || from >= to) return false;
+  const startLine = doc.lineAt(from);
+  if (startLine.from !== from) return false;
+  return startLine.number !== doc.lineAt(to).number;
+}
+
 export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {
   const t0 = isPerfEnabled() ? performance.now() : 0;
 
-  const annotations = view.state.field(annotationDataField);
+  const annotations = view.state.field(annotationDataField, false) ?? [];
   if (annotations.length === 0) return false;
 
   const doc = view.state.doc;
-  const docLen = doc.length;
 
   const targets: number[] = [];
   for (const ann of annotations) {
-    const from = ann.char_start;
-    const to = ann.char_end;
-    if (from < 0 || to > docLen || from >= to) continue;
-    const startLine = doc.lineAt(from);
-    if (startLine.from !== from) continue;
-    if (startLine.number === doc.lineAt(to).number) continue;
-    targets.push(from);
+    if (!isFoldAllTarget(doc, ann)) continue;
+    targets.push(ann.char_start);
   }
 
   if (targets.length === 0) return false;

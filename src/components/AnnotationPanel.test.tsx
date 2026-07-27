@@ -8,6 +8,7 @@ import { annotationDataField, setAnnotationData } from "../editor/livePreview/an
 import { setCurrentEditorView } from "../lib/editorViewRef";
 import { useMarkConfigStore } from "../stores/markConfig";
 import type { Annotation } from "../lib/ipc";
+import * as commandRegistryModule from "../lib/commandRegistry";
 
 vi.mock("../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -306,5 +307,47 @@ describe("AnnotationPanel", () => {
     });
 
     expect(screen.getByTestId("annotation-entry-0").classList.contains("bg-bg-secondary")).toBe(false);
+  });
+
+  describe("fold-all toolbar", () => {
+    it("renders when a multiline block annotation is present", () => {
+      const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
+      const annotations = [
+        makeAnnotation({ char_start: 6, char_end: 27, body: "body" }),
+      ];
+      editorView = setupEditorView(doc, annotations);
+      render(<AnnotationPanel pageId="test.md" />);
+      expect(screen.getByTestId("annotation-panel-toolbar")).toBeInTheDocument();
+    });
+
+    it("does not render when only single-line annotations exist", () => {
+      const doc = "a".repeat(50);
+      const annotations = [
+        makeAnnotation({ char_start: 5, char_end: 15, body: "single line" }),
+      ];
+      editorView = setupEditorView(doc, annotations);
+      render(<AnnotationPanel pageId="test.md" />);
+      expect(screen.queryByTestId("annotation-panel-toolbar")).toBeNull();
+    });
+
+    it("does not render when there are no annotations", () => {
+      editorView = setupEditorView("hello", []);
+      render(<AnnotationPanel pageId="test.md" />);
+      expect(screen.queryByTestId("annotation-panel-toolbar")).toBeNull();
+      expect(screen.getByTestId("annotation-panel-empty")).toBeInTheDocument();
+    });
+
+    it("clicking the fold-all button executes app.toggleAllBlockAnnotations", async () => {
+      const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
+      const annotations = [
+        makeAnnotation({ char_start: 6, char_end: 27, body: "body" }),
+      ];
+      editorView = setupEditorView(doc, annotations);
+      const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
+      render(<AnnotationPanel pageId="test.md" />);
+      await userEvent.click(screen.getByTestId("annotation-panel-fold-all"));
+      expect(spy).toHaveBeenCalledWith("app.toggleAllBlockAnnotations");
+      spy.mockRestore();
+    });
   });
 });

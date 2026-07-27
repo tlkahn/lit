@@ -18,6 +18,7 @@ import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
 import { canFire } from "../lib/fireClassification";
 import { fireAnnotation } from "../lib/fireOrchestrator";
 import { batchFireReplacingAnnotations } from "../lib/batchFire";
+import { toggleAllBlockAnnotationFolds } from "../editor/livePreview/annotationFoldAll";
 import type { EditorView } from "@codemirror/view";
 
 function transferDomFocus() {
@@ -323,6 +324,19 @@ export function ensureCommandsRegistered() {
     action: () => {
       const view = getCurrentEditorView();
       if (view) batchFireReplacingAnnotations(view);
+    },
+  });
+  registerCommand({
+    id: "app.toggleAllBlockAnnotations",
+    label: "Collapse/Expand All Block Annotations",
+    keywords: ["fold", "collapse", "expand", "annotation", "callout", "thread"],
+    shortcut: "Mod-Shift-m",
+    when: () =>
+      getCurrentEditorView() != null &&
+      usePreferencesStore.getState().annotationEnabled,
+    action: () => {
+      const view = getCurrentEditorView();
+      if (view) toggleAllBlockAnnotationFolds(view);
     },
   });
 }
