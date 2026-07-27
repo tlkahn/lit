@@ -232,6 +232,25 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
+  it("D5b: cursor-suppressed block reveals collapsed widget after cursor exits", () => {
+    const { view, A, B } = makeViewWithBlocks();
+    try {
+      view.dispatch({ selection: { anchor: A.from + 2 } });
+
+      toggleAllBlockAnnotationFolds(view);
+
+      expect(isCollapsedAt(view, A.from)).toBeUndefined();
+      expect(view.state.field(annotationFoldField).get(A.from)).toBe(true);
+
+      view.dispatch({ selection: { anchor: 0 } });
+
+      expect(isCollapsedAt(view, A.from)).toBe(true);
+      expect(isCollapsedAt(view, B.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
   it("D6: returns false without dispatching when there are no annotations", () => {
     const state = EditorState.create({
       doc: "plain text\nno annotations",
