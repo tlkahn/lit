@@ -304,6 +304,20 @@ describe("annotationFoldField", () => {
     expect(fold.get(6)).toBeUndefined();
     expect(fold.get(8)).toBe(true);
   });
+
+  it("empty setAllAnnotationFoldsEffect preserves fold map identity", () => {
+    const state = EditorState.create({ doc: "hello\nworld", extensions: [annotationFoldField] });
+    const tr1 = state.update({
+      effects: setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
+    });
+    const before = tr1.state.field(annotationFoldField);
+    expect(before.get(0)).toBe(true);
+
+    const tr2 = tr1.state.update({
+      effects: setAllAnnotationFoldsEffect.of({ positions: [], collapsed: true }),
+    });
+    expect(tr2.state.field(annotationFoldField)).toBe(before);
+  });
 });
 
 describe("CalloutWidget", () => {

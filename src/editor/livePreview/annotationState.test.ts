@@ -2334,6 +2334,24 @@ describe("setAllAnnotationFoldsEffect surgical path", () => {
       view.destroy();
     }
   });
+
+  it("C4: empty setAll positions preserves block decoration identity", () => {
+    const { view } = makeViewWithBlocks(0);
+    try {
+      const before = view.state.field(annotationBlockDecorationField);
+
+      view.dispatch({
+        effects: setAllAnnotationFoldsEffect.of({
+          positions: [],
+          collapsed: true,
+        }),
+      });
+
+      expect(view.state.field(annotationBlockDecorationField)).toBe(before);
+    } finally {
+      view.destroy();
+    }
+  });
 });
 
 describe("llmLockBridgePlugin", () => {

@@ -374,12 +374,16 @@ export const setAllAnnotationFoldsEffect = StateEffect.define<{
   collapsed: boolean;
 }>();
 
+export function isEffectiveFoldAllEffect(e: StateEffect<unknown>): boolean {
+  return e.is(setAllAnnotationFoldsEffect) && e.value.positions.length > 0;
+}
+
 export const annotationFoldField = StateField.define<Map<number, boolean>>({
   create() {
     return new Map();
   },
   update(value: Map<number, boolean>, tr: Transaction) {
-    const hasFoldEffect = tr.effects.some(e => e.is(toggleAnnotationFoldEffect) || e.is(setAllAnnotationFoldsEffect));
+    const hasFoldEffect = tr.effects.some(e => e.is(toggleAnnotationFoldEffect) || isEffectiveFoldAllEffect(e));
     if (!tr.docChanged && !hasFoldEffect) return value;
     const newMap = new Map<number, boolean>();
     for (const [pos, collapsed] of value) {
