@@ -374,10 +374,11 @@ export const annotationFoldField = StateField.define<Map<number, boolean>>({
     return new Map();
   },
   update(value: Map<number, boolean>, tr: Transaction) {
-    if (!tr.docChanged && !tr.effects.length) return value;
+    const hasFoldEffect = tr.effects.some(e => e.is(toggleAnnotationFoldEffect));
+    if (!tr.docChanged && !hasFoldEffect) return value;
     const newMap = new Map<number, boolean>();
     for (const [pos, collapsed] of value) {
-      const newPos = tr.changes.mapPos(pos, 1);
+      const newPos = tr.docChanged ? tr.changes.mapPos(pos, 1) : pos;
       newMap.set(newPos, collapsed);
     }
     for (const effect of tr.effects) {
@@ -399,10 +400,11 @@ export const threadTurnField = StateField.define<Map<number, number>>({
     return new Map();
   },
   update(value: Map<number, number>, tr: Transaction) {
-    if (!tr.docChanged && !tr.effects.length) return value;
+    const hasTurnEffect = tr.effects.some(e => e.is(setThreadTurnEffect));
+    if (!tr.docChanged && !hasTurnEffect) return value;
     const newMap = new Map<number, number>();
     for (const [pos, turn] of value) {
-      const newPos = tr.changes.mapPos(pos, 1);
+      const newPos = tr.docChanged ? tr.changes.mapPos(pos, 1) : pos;
       newMap.set(newPos, turn);
     }
     for (const effect of tr.effects) {
