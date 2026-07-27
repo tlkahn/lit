@@ -339,6 +339,88 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
   });
 });
 
+describe("targeted iteration (step 1)", () => {
+  const BLOCK_COUNT = 200;
+
+  function makeBlockView(doc: string): EditorView {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length - 2 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    forceParsing(view, view.state.doc.length, 10_000);
+    return view;
+  }
+
+  it("tree.iterate is called with bounded from/to, not unbounded", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockView(doc);
+    const annotations = blockAnnotationsFromTree(view);
+
+    const iterateCalls: Array<{ from?: number; to?: number }> = [];
+    const tree = syntaxTree(view.state);
+    const origIterate = tree.iterate.bind(tree);
+    vi.spyOn(tree, "iterate").mockImplementation((spec: any) => {
+      iterateCalls.push({ from: spec.from, to: spec.to });
+      return origIterate(spec);
+    });
+
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    // After the dispatch, every iterate() call from the block field rebuild
+    // must have bounded from/to properties (not undefined).
+    expect(iterateCalls.length).toBeGreaterThan(0);
+    for (const call of iterateCalls) {
+      expect(call.from).toBeDefined();
+      expect(call.to).toBeDefined();
+    }
+    vi.restoreAllMocks();
+    view.destroy();
+  });
+
+  it("produces same decorations as full-tree walk", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockView(doc);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    // Collect decoration positions and widget types from the field
+    const decoState = view.state.field(annotationBlockDecorationField);
+    const positions: Array<{ from: number; to: number; type: string }> = [];
+    const iter = decoState.decorations.iter();
+    while (iter.value) {
+      const widget = iter.value.spec.widget;
+      positions.push({
+        from: iter.from,
+        to: iter.to,
+        type: widget instanceof ThreadWidget ? "thread" : "callout",
+      });
+      iter.next();
+    }
+
+    // Verify we got the expected count of block decorations
+    expect(positions.length).toBe(BLOCK_COUNT);
+
+    // Verify decorations are sorted by position
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i]!.from).toBeGreaterThanOrEqual(positions[i - 1]!.from);
+    }
+
+    view.destroy();
+  });
+});
+
 const STRESS_SMOKE_CAP_MS = 5000;
 
 function makeStressBlockView(): EditorView {

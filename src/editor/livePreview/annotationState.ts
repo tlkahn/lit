@@ -431,42 +431,46 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
-  const rangeMap = buildAnnotationRangeMap(annotations);
+  const tree = syntaxTree(state);
 
-  syntaxTree(state).iterate({
-    enter: (node) => {
-      if (node.name !== "BlockAnnotation") return;
-      const from = node.from;
-      const to = node.to;
-      if (from < 0 || to > docLen || from >= to) return;
+  for (const ann of annotations) {
+    const from = ann.char_start;
+    const to = ann.char_end;
+    if (from < 0 || to > docLen || from >= to) continue;
 
-      const startLine = state.doc.lineAt(from).number;
-      const endLine = state.doc.lineAt(to).number;
-      if (startLine === endLine) return;
+    const startLine = state.doc.lineAt(from);
+    const endLine = state.doc.lineAt(to);
+    if (startLine.number === endLine.number) continue;
+    if (startLine.from !== from) continue;
 
-      // Track every line spanned by this multiline block annotation
-      // (cursor-sensitive) BEFORE the isCursorOnLine early-return, so moving the
-      // cursor OFF a block line still triggers a rebuild that restores the callout.
-      for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
+    for (let l = startLine.number; l <= endLine.number; l++) blockSensitiveLines.add(l);
 
-      if (isCursorOnLine(state, from, to)) return;
+    if (isCursorOnLine(state, from, to)) continue;
 
-      const ann = rangeMap.get(`${from}:${to}`);
-      if (!ann) return;
+    let isBlock = false;
+    tree.iterate({
+      from,
+      to: from + 1,
+      enter: (node) => {
+        if (node.name === "BlockAnnotation" && node.from === from && node.to === to) {
+          isBlock = true;
+        }
+      },
+    });
+    if (!isBlock) continue;
 
-      const isCollapsed = foldState?.get(from) ?? false;
-      const isFiring = firingSet.has(from);
-      const widget =
-        ann.annotation_type === "thread"
-          ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring)
-          : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
-      decos.push({
-        from,
-        to,
-        deco: Decoration.replace({ widget }),
-      });
-    },
-  });
+    const isCollapsed = foldState?.get(from) ?? false;
+    const isFiring = firingSet.has(from);
+    const widget =
+      ann.annotation_type === "thread"
+        ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring)
+        : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
+    decos.push({
+      from,
+      to,
+      deco: Decoration.replace({ widget }),
+    });
+  }
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
   return {
