@@ -142,7 +142,7 @@ export const annotationPlugin = ViewPlugin.fromClass(
   },
 );
 
-function findAnnotationForRange(
+export function findAnnotationForRange(
   annotations: Annotation[],
   from: number,
   to: number,
@@ -150,6 +150,23 @@ function findAnnotationForRange(
   return annotations.find(
     (a) => a.char_start === from && a.char_end === to,
   );
+}
+
+/**
+ * Index annotations by their `char_start:char_end` span for O(1) range lookup.
+ *
+ * Replaces repeated O(n) `findAnnotationForRange` scans inside a per-node tree
+ * walk (which is O(n*m) overall) with a single O(n) build plus O(1) lookups. To
+ * preserve `findAnnotationForRange`'s "first match wins" semantics, a span that
+ * appears more than once keeps the earliest annotation.
+ */
+export function buildAnnotationRangeMap(annotations: Annotation[]): Map<string, Annotation> {
+  const map = new Map<string, Annotation>();
+  for (const a of annotations) {
+    const key = `${a.char_start}:${a.char_end}`;
+    if (!map.has(key)) map.set(key, a);
+  }
+  return map;
 }
 
 export interface BuildAnnotationDecorationsResult {
@@ -182,6 +199,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const tree = syntaxTree(state);
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   // Buffered windows of adjacent visible ranges can overlap (e.g. around a code
   // fold), so the same annotation node may be entered once per range. Dedupe by
@@ -212,17 +230,17 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
 
         if (isCursorOnLine(state, nodeFrom, nodeTo)) return;
 
-        const ann = findAnnotationForRange(annotations, nodeFrom, nodeTo);
+        const ann = rangeMap.get(`${nodeFrom}:${nodeTo}`);
         if (!ann) return;
 
-        const text = state.doc.sliceString(nodeFrom, nodeTo);
-        const isMultiLine = text.includes("\n");
+        // Reuse already-computed line numbers for the multiline check.
+        const isMultiLine = startLine !== endLine;
 
         // A multiline block annotation's callout is a line-break-spanning
         // replacement, which CodeMirror forbids from plugin sources;
         // splitAnnotationDecorations would route it to the discarded "block"
         // subset. annotationBlockDecorationField (a StateField) is the sole
-        // producer of that callout, so skip building it here — the line
+        // producer of that callout, so skip building it here - the line
         // tracking above keeps these lines cursor-sensitive.
         if (node.name === "BlockAnnotation" && isMultiLine) return;
 
@@ -315,7 +333,7 @@ class AnnotationDecorationPluginValue implements PluginValue {
     const treeChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
     if (update.docChanged || update.viewportChanged || treeChanged) {
       this.rebuild(update.view, update.docChanged ? "docChanged" : update.viewportChanged ? "viewportChanged" : "syntaxTree");
-    } else if (update.transactions.some((tr) => hasAnnotationEffect(tr))) {
+    } else if (update.transactions.some((tr) => hasInlineAnnotationEffect(tr))) {
       this.rebuild(update.view, "effect");
     } else if (update.selectionSet) {
       const oldLine = update.startState.doc.lineAt(update.startState.selection.main.head).number;
@@ -338,20 +356,44 @@ export const annotationDecorationPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.inlineDecorations },
 );
 
-/**
- * Returns true when a transaction carries an annotation-relevant state effect
- * (the same effects that trigger a plugin rebuild).
- */
-export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
-  return tr.effects.some((e) =>
+function isSharedAnnotationEffect(e: StateEffect<unknown>): boolean {
+  return (
     e.is(setAnnotationData) ||
-    e.is(setDisplayMode) ||
-    e.is(toggleAnnotationFoldEffect) ||
     e.is(setFiringAnnotation) ||
     e.is(clearFiringAnnotation) ||
-    e.is(setLlmLockedEffect) ||
+    e.is(setLlmLockedEffect)
+  );
+}
+
+/**
+ * Inline-plugin gate: returns true only for effects that affect inline
+ * annotation rendering. Excludes fold and thread-turn effects (block-only).
+ */
+export function hasInlineAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return tr.effects.some((e) =>
+    isSharedAnnotationEffect(e) || e.is(setDisplayMode),
+  );
+}
+
+/**
+ * Block-field gate: returns true for effects that affect block annotation
+ * rendering. Excludes setDisplayMode (buildAnnotationBlockDecorations never
+ * reads displayModeField).
+ */
+export function hasBlockAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return tr.effects.some((e) =>
+    isSharedAnnotationEffect(e) ||
+    e.is(toggleAnnotationFoldEffect) ||
     e.is(setThreadTurnEffect),
   );
+}
+
+/**
+ * Superset gate: returns true when a transaction carries any
+ * annotation-relevant state effect (inline OR block-only).
+ */
+export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return hasInlineAnnotationEffect(tr) || hasBlockAnnotationEffect(tr);
 }
 
 /**
@@ -389,6 +431,7 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
+  const rangeMap = buildAnnotationRangeMap(annotations);
 
   syntaxTree(state).iterate({
     enter: (node) => {
@@ -396,18 +439,19 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
       const from = node.from;
       const to = node.to;
       if (from < 0 || to > docLen || from >= to) return;
-      if (!state.doc.sliceString(from, to).includes("\n")) return;
+
+      const startLine = state.doc.lineAt(from).number;
+      const endLine = state.doc.lineAt(to).number;
+      if (startLine === endLine) return;
 
       // Track every line spanned by this multiline block annotation
       // (cursor-sensitive) BEFORE the isCursorOnLine early-return, so moving the
       // cursor OFF a block line still triggers a rebuild that restores the callout.
-      const startLine = state.doc.lineAt(from).number;
-      const endLine = state.doc.lineAt(to).number;
       for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
 
       if (isCursorOnLine(state, from, to)) return;
 
-      const ann = findAnnotationForRange(annotations, from, to);
+      const ann = rangeMap.get(`${from}:${to}`);
       if (!ann) return;
 
       const isCollapsed = foldState?.get(from) ?? false;
@@ -469,7 +513,7 @@ export const annotationBlockDecorationField = StateField.define<BlockDecorationS
     return buildAnnotationBlockDecorations(state);
   },
   update(value, tr) {
-    if (tr.docChanged || hasAnnotationEffect(tr)) {
+    if (tr.docChanged || hasBlockAnnotationEffect(tr)) {
       return buildAnnotationBlockDecorations(tr.state);
     }
     // Parser progress (Language.setState advancing the tree) carries no

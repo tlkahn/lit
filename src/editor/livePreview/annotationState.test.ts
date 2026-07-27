@@ -14,7 +14,11 @@ import {
   findAnnotationAtCursor,
   buildAnnotationDecorations,
   hasAnnotationEffect,
+  hasInlineAnnotationEffect,
+  hasBlockAnnotationEffect,
   shouldRebuildBlocksOnTreeChange,
+  buildAnnotationRangeMap,
+  findAnnotationForRange,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -843,6 +847,38 @@ describe("annotationDecorationPlugin", () => {
     view.destroy();
   });
 
+  it("single-line BlockAnnotation produces no block-field callout (lineAt multiline guard)", () => {
+    const doc = "first line\n<!---content--->";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    const ann = makeAnnotation({
+      form: "block",
+      char_start: 11,
+      char_end: 27,
+      original: "<!---content--->",
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const blockDecos = collectFromSet(view.state.field(annotationBlockDecorationField).decorations);
+    expect(blockDecos.filter(d => d.from === 11 && d.to === 27)).toHaveLength(0);
+
+    view.destroy();
+  });
+
   it("fold state → block-field CalloutWidget receives isCollapsed=true", () => {
     // The fold/isCollapsed state now lives on the block field's callout, since
     // the plugin no longer builds the multiline callout.
@@ -1100,10 +1136,9 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
     view.destroy();
   });
 
-  it("hasAnnotationEffect is the single source of truth for every rebuild-triggering effect", () => {
-    // Single source of truth: the plugin's inline rebuild gate and the block
-    // StateField's gate both delegate to hasAnnotationEffect. Each of these six
-    // effects must be recognized, and an unrelated/empty transaction must not.
+  it("hasAnnotationEffect recognizes every block-field rebuild-triggering effect", () => {
+    // Block-field superset gate: every annotation-relevant effect must be
+    // recognized, and an unrelated/empty transaction must not.
     const cases = [
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
@@ -1120,6 +1155,110 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
 
     const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
     expect(hasAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasInlineAnnotationEffect recognizes ONLY the inline-relevant effects", () => {
+    const trueCases = [
+      setAnnotationData.of([]),
+      setDisplayMode.of("footnote"),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+    ];
+    for (const effect of trueCases) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasInlineAnnotationEffect(tr)).toBe(true);
+    }
+
+    const falseCases = [
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of falseCases) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasInlineAnnotationEffect(tr)).toBe(false);
+    }
+
+    const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
+    expect(hasInlineAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasBlockAnnotationEffect returns true for block-relevant effects", () => {
+    const trueCases = [
+      setAnnotationData.of([]),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of trueCases) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasBlockAnnotationEffect(tr)).toBe(true);
+    }
+
+    const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
+    expect(hasBlockAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasBlockAnnotationEffect returns false for setDisplayMode", () => {
+    const tr = EditorState.create({ doc: "x" }).update({ effects: setDisplayMode.of("footnote") });
+    expect(hasBlockAnnotationEffect(tr)).toBe(false);
+  });
+
+  it("hasAnnotationEffect is the composition of inline and block gates", () => {
+    const allEffects = [
+      setAnnotationData.of([]),
+      setDisplayMode.of("footnote"),
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of allEffects) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasAnnotationEffect(tr)).toBe(hasInlineAnnotationEffect(tr) || hasBlockAnnotationEffect(tr));
+    }
+  });
+
+  it("does NOT rebuild the block field on setDisplayMode effect", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeView(doc, 28);
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const fieldBefore = view.state.field(annotationBlockDecorationField);
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+    expect(view.state.field(annotationBlockDecorationField)).toBe(fieldBefore);
+
+    view.destroy();
+  });
+
+  it("does NOT rebuild the inline plugin on toggleAnnotationFoldEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const setBefore = getSet(view);
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 16 }) });
+    expect(getSet(view)).toBe(setBefore);
+
+    view.destroy();
+  });
+
+  it("does NOT rebuild the inline plugin on setThreadTurnEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const setBefore = getSet(view);
+    view.dispatch({ effects: setThreadTurnEffect.of({ pos: 16, turn: 1 }) });
+    expect(getSet(view)).toBe(setBefore);
+
+    view.destroy();
   });
 
   it("does NOT rebuild when cursor moves between two non-annotation (plain) lines", () => {
@@ -1593,6 +1732,29 @@ describe("buildAnnotationDecorations", () => {
     const line = view.state.doc.lineAt(16).number;
     expect(cursorSensitiveLines.has(line)).toBe(true);
     view.destroy();
+  });
+});
+
+describe("buildAnnotationRangeMap", () => {
+  it("keys annotations by char_start:char_end for O(1) lookup", () => {
+    const a1 = makeAnnotation({ char_start: 5, char_end: 15 });
+    const a2 = makeAnnotation({ char_start: 20, char_end: 30 });
+    const map = buildAnnotationRangeMap([a1, a2]);
+    expect(map.get("5:15")).toBe(a1);
+    expect(map.get("20:30")).toBe(a2);
+    expect(map.get("0:10")).toBeUndefined();
+  });
+
+  it("preserves findAnnotationForRange's first-match-wins for duplicate spans", () => {
+    const a1 = makeAnnotation({ char_start: 5, char_end: 15, body: "first" });
+    const a2 = makeAnnotation({ char_start: 5, char_end: 15, body: "second" });
+    const map = buildAnnotationRangeMap([a1, a2]);
+    expect(map.get("5:15")).toBe(a1);
+    expect(findAnnotationForRange([a1, a2], 5, 15)).toBe(a1);
+  });
+
+  it("returns an empty map for no annotations", () => {
+    expect(buildAnnotationRangeMap([]).size).toBe(0);
   });
 });
 
