@@ -348,19 +348,12 @@ export const annotationDecorationPlugin = ViewPlugin.fromClass(
   { decorations: (v) => v.inlineDecorations },
 );
 
-/**
- * Block-field superset gate: returns true when a transaction carries any
- * annotation-relevant state effect (inline OR block-only).
- */
-export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
-  return tr.effects.some((e) =>
+function isSharedAnnotationEffect(e: StateEffect<unknown>): boolean {
+  return (
     e.is(setAnnotationData) ||
-    e.is(setDisplayMode) ||
-    e.is(toggleAnnotationFoldEffect) ||
     e.is(setFiringAnnotation) ||
     e.is(clearFiringAnnotation) ||
-    e.is(setLlmLockedEffect) ||
-    e.is(setThreadTurnEffect),
+    e.is(setLlmLockedEffect)
   );
 }
 
@@ -370,12 +363,29 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
  */
 export function hasInlineAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
   return tr.effects.some((e) =>
-    e.is(setAnnotationData) ||
-    e.is(setDisplayMode) ||
-    e.is(setFiringAnnotation) ||
-    e.is(clearFiringAnnotation) ||
-    e.is(setLlmLockedEffect),
+    isSharedAnnotationEffect(e) || e.is(setDisplayMode),
   );
+}
+
+/**
+ * Block-field gate: returns true for effects that affect block annotation
+ * rendering. Excludes setDisplayMode (buildAnnotationBlockDecorations never
+ * reads displayModeField).
+ */
+export function hasBlockAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return tr.effects.some((e) =>
+    isSharedAnnotationEffect(e) ||
+    e.is(toggleAnnotationFoldEffect) ||
+    e.is(setThreadTurnEffect),
+  );
+}
+
+/**
+ * Superset gate: returns true when a transaction carries any
+ * annotation-relevant state effect (inline OR block-only).
+ */
+export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return hasInlineAnnotationEffect(tr) || hasBlockAnnotationEffect(tr);
 }
 
 /**
@@ -495,7 +505,7 @@ export const annotationBlockDecorationField = StateField.define<BlockDecorationS
     return buildAnnotationBlockDecorations(state);
   },
   update(value, tr) {
-    if (tr.docChanged || hasAnnotationEffect(tr)) {
+    if (tr.docChanged || hasBlockAnnotationEffect(tr)) {
       return buildAnnotationBlockDecorations(tr.state);
     }
     // Parser progress (Language.setState advancing the tree) carries no

@@ -15,6 +15,7 @@ import {
   buildAnnotationDecorations,
   hasAnnotationEffect,
   hasInlineAnnotationEffect,
+  hasBlockAnnotationEffect,
   shouldRebuildBlocksOnTreeChange,
   buildAnnotationRangeMap,
   findAnnotationForRange,
@@ -1180,6 +1181,58 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
 
     const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
     expect(hasInlineAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasBlockAnnotationEffect returns true for block-relevant effects", () => {
+    const trueCases = [
+      setAnnotationData.of([]),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of trueCases) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasBlockAnnotationEffect(tr)).toBe(true);
+    }
+
+    const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
+    expect(hasBlockAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasBlockAnnotationEffect returns false for setDisplayMode", () => {
+    const tr = EditorState.create({ doc: "x" }).update({ effects: setDisplayMode.of("footnote") });
+    expect(hasBlockAnnotationEffect(tr)).toBe(false);
+  });
+
+  it("hasAnnotationEffect is the composition of inline and block gates", () => {
+    const allEffects = [
+      setAnnotationData.of([]),
+      setDisplayMode.of("footnote"),
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of allEffects) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasAnnotationEffect(tr)).toBe(hasInlineAnnotationEffect(tr) || hasBlockAnnotationEffect(tr));
+    }
+  });
+
+  it("does NOT rebuild the block field on setDisplayMode effect", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const view = makeView(doc, 28);
+    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const fieldBefore = view.state.field(annotationBlockDecorationField);
+    view.dispatch({ effects: setDisplayMode.of("footnote") });
+    expect(view.state.field(annotationBlockDecorationField)).toBe(fieldBefore);
+
+    view.destroy();
   });
 
   it("does NOT rebuild the inline plugin on toggleAnnotationFoldEffect", () => {
