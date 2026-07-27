@@ -7,15 +7,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    preserveSymlinks: true,
-  },
-  server: {
-    fs: {
-      allow: [__dirname],
-    },
-  },
   test: {
+    // Anchor root + setupFiles to this config's dir: worktrees nested inside the
+    // parent repo otherwise resolve ./src/test/setup.ts against the wrong root.
     root: __dirname,
     environment: "jsdom",
     globals: true,
