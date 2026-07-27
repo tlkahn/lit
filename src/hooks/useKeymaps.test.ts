@@ -12,7 +12,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore, createInitialState, collectLeaves, type PaneSplit, type PaneLeaf, type PaneNode } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
-import { registerPaneView, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
+import { registerPaneView, setFocusedPane, _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import { useBottomPanelStore, defaultTabMeta } from "../stores/bottomPanel";
 import type { EditorView } from "@codemirror/view";
 
@@ -1266,5 +1266,53 @@ describe("useKeymaps", () => {
     const idsAfter = visibleAfter.map((c) => c.id);
     expect(idsAfter).toContain("pane.historyBack");
     expect(idsAfter).not.toContain("pane.historyForward");
+  });
+
+  // --- Cycle A: app.toggleAllBlockAnnotations command registration ---
+
+  it("app.toggleAllBlockAnnotations is registered after ensureCommandsRegistered", async () => {
+    await loadHook();
+    expect(hasCommand("app.toggleAllBlockAnnotations")).toBe(true);
+  });
+
+  it("hidden from the palette without an editor view", async () => {
+    await loadHook();
+    resetEditorViewRef();
+    const visible = getVisibleCommands("block annotations");
+    const ids = visible.map((c) => c.id);
+    expect(ids).not.toContain("app.toggleAllBlockAnnotations");
+  });
+
+  it("visible in the palette when an editor view exists", async () => {
+    await loadHook();
+    const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
+    const mockView = {
+      focus: vi.fn(),
+      state: { field: () => undefined, selection: { main: { head: 0 } } },
+    } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    setFocusedPane("main");
+    usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
+    const visible = getVisibleCommands("block annotations");
+    const ids = visible.map((c) => c.id);
+    expect(ids).toContain("app.toggleAllBlockAnnotations");
+  });
+
+  it("executing the command calls toggleAllBlockAnnotationFolds with the focused view", async () => {
+    const mod = await import("../editor/livePreview/annotationFoldAll");
+    const spy = vi.spyOn(mod, "toggleAllBlockAnnotationFolds").mockReturnValue(true);
+    await loadHook();
+    const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
+    const mockView = {
+      focus: vi.fn(),
+      state: { field: () => undefined, selection: { main: { head: 0 } } },
+    } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    setFocusedPane("main");
+    usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
+    executeCommand("app.toggleAllBlockAnnotations");
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy).toHaveBeenCalledWith(mockView);
+    spy.mockRestore();
   });
 });
