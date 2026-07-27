@@ -8,12 +8,16 @@ import {
   setAnnotationData,
   annotationDecorationPlugin,
   annotationBlockDecorationField,
+  buildAnnotationBlockDecorations,
+  buildAnnotationRangeMap,
   displayModeField,
 } from "./annotationState";
+import { isCursorOnLine } from "./proximity";
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
   threadTurnField,
+  setThreadTurnEffect,
   firingAnnotationsField,
   llmLockedField,
   CalloutWidget,
@@ -339,7 +343,392 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
   });
 });
 
-const STRESS_SMOKE_CAP_MS = 5000;
+describe("targeted iteration (step 1)", () => {
+  const BLOCK_COUNT = 200;
+
+  function makeBlockViewNoPlugin(doc: string): EditorView {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length - 2 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    forceParsing(view, view.state.doc.length, 10_000);
+    return view;
+  }
+
+  it("block builder iterate calls are bounded with to - from === 1", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockViewNoPlugin(doc);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    const iterateCalls: Array<{ from?: number; to?: number }> = [];
+    const tree = syntaxTree(view.state);
+    const origIterate = tree.iterate.bind(tree);
+    vi.spyOn(tree, "iterate").mockImplementation((spec: Parameters<typeof tree.iterate>[0]) => {
+      iterateCalls.push({ from: spec.from, to: spec.to });
+      return origIterate(spec);
+    });
+
+    buildAnnotationBlockDecorations(view.state);
+
+    expect(iterateCalls.length).toBeGreaterThan(0);
+    expect(iterateCalls.length).toBeLessThanOrEqual(annotations.length);
+    for (const call of iterateCalls) {
+      expect(call.from).toBeDefined();
+      expect(call.to).toBeDefined();
+      expect(call.to! - call.from!).toBe(1);
+    }
+    vi.restoreAllMocks();
+    view.destroy();
+  });
+
+  it("produces same full-tuple decorations as reference full-tree walk", () => {
+    const doc = generateBlockAnnotationStress();
+    const view = makeBlockViewNoPlugin(doc);
+    const annotations = blockAnnotationsFromTree(view);
+
+    // Adversarial candidates: duplicate exact span, same-start-different-end,
+    // and a non-witnessed multiline span over plain text.
+    const first = annotations[0]!;
+    const adversarial = [
+      ...annotations,
+      makeAnnotation({ form: "block", char_start: first.char_start, char_end: first.char_end, body: "duplicate exact span", original: first.original }),
+      makeAnnotation({ form: "block", char_start: first.char_start, char_end: first.char_end - 1, body: "same-start shorter", original: "shorter" }),
+      makeAnnotation({ form: "block", char_start: doc.length - 20, char_end: doc.length - 5, body: "non-witnessed multiline", original: "no tree node here" }),
+    ];
+
+    const foldTarget = annotations[2]!.char_start;
+    view.dispatch({
+      effects: [
+        setAnnotationData.of(adversarial),
+        toggleAnnotationFoldEffect.of({ pos: foldTarget }),
+      ],
+    });
+
+    type Tuple = { from: number; to: number; kind: string; isCollapsed: boolean };
+
+    const fieldResult: Tuple[] = [];
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      const w = iter.value.spec.widget;
+      fieldResult.push({
+        from: iter.from,
+        to: iter.to,
+        kind: w instanceof ThreadWidget ? "thread" : "callout",
+        isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+      });
+      iter.next();
+    }
+
+    // Pre-refactor reference: full syntaxTree(state).iterate over BlockAnnotation
+    // nodes with multiline check, isCursorOnLine guard, and exact rangeMap lookup.
+    const refResult: Tuple[] = [];
+    const state = view.state;
+    const foldState = state.field(annotationFoldField, false);
+    const rangeMap = buildAnnotationRangeMap(adversarial);
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        if (node.name !== "BlockAnnotation") return;
+        const from = node.from;
+        const to = node.to;
+        if (from < 0 || to > state.doc.length || from >= to) return;
+        const startLine = state.doc.lineAt(from).number;
+        const endLine = state.doc.lineAt(to).number;
+        if (startLine === endLine) return;
+        if (isCursorOnLine(state, from, to)) return;
+        const ann = rangeMap.get(`${from}:${to}`);
+        if (!ann) return;
+        const isCollapsed = foldState?.get(from) ?? false;
+        refResult.push({
+          from,
+          to,
+          kind: ann.annotation_type === "thread" ? "thread" : "callout",
+          isCollapsed,
+        });
+      },
+    });
+    refResult.sort((a, b) => a.from - b.from || a.to - b.to);
+
+    expect(fieldResult.length).toBe(refResult.length);
+    expect(fieldResult.length).toBeGreaterThan(0);
+    for (let i = 0; i < fieldResult.length; i++) {
+      expect(fieldResult[i]).toEqual(refResult[i]);
+    }
+    view.destroy();
+  });
+
+  it("surgical-parity: fold-only dispatch matches fresh full build", () => {
+    const doc = generateBlockAnnotationStress();
+    const view = makeBlockViewNoPlugin(doc);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    const foldTarget = annotations[1]!.char_start;
+    const unaffectedPos = annotations[3]!.char_start;
+
+    // Capture widget identity at an unaffected position before fold.
+    type Tuple = { from: number; to: number; kind: string; isCollapsed: boolean };
+    function extractTuples(view: EditorView): Tuple[] {
+      const result: Tuple[] = [];
+      const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+      while (iter.value) {
+        const w = iter.value.spec.widget;
+        result.push({
+          from: iter.from,
+          to: iter.to,
+          kind: w instanceof ThreadWidget ? "thread" : "callout",
+          isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+        });
+        iter.next();
+      }
+      return result;
+    }
+
+    const beforeWidgets = new Map<number, unknown>();
+    {
+      const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+      while (iter.value) {
+        beforeWidgets.set(iter.from, iter.value.spec.widget);
+        iter.next();
+      }
+    }
+
+    // Fold-only dispatch (no shared effects) to exercise the surgical branch.
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: foldTarget }) });
+
+    // Verify surgical path ran (widget identity preserved at unaffected position).
+    {
+      const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+      while (iter.value) {
+        if (iter.from === unaffectedPos) {
+          expect(iter.value.spec.widget).toBe(beforeWidgets.get(unaffectedPos));
+        }
+        iter.next();
+      }
+    }
+
+    // Compare against a fresh full build on the post-fold state.
+    const surgicalTuples = extractTuples(view);
+    const freshBuild = buildAnnotationBlockDecorations(view.state);
+    const freshTuples: Tuple[] = [];
+    {
+      const iter = freshBuild.decorations.iter();
+      while (iter.value) {
+        const w = iter.value.spec.widget;
+        freshTuples.push({
+          from: iter.from,
+          to: iter.to,
+          kind: w instanceof ThreadWidget ? "thread" : "callout",
+          isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+        });
+        iter.next();
+      }
+    }
+
+    expect(surgicalTuples.length).toBe(freshTuples.length);
+    for (let i = 0; i < surgicalTuples.length; i++) {
+      expect(surgicalTuples[i]).toEqual(freshTuples[i]);
+    }
+
+    const surgicalLines = [...view.state.field(annotationBlockDecorationField).blockSensitiveLines].sort((a, b) => a - b);
+    const freshLines = [...freshBuild.blockSensitiveLines].sort((a, b) => a - b);
+    expect(surgicalLines).toEqual(freshLines);
+
+    view.destroy();
+  });
+});
+
+describe("surgical DecorationSet update (step 2)", () => {
+  const BLOCK_COUNT = 10;
+
+  function makeBlockView(doc: string): EditorView {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length - 2 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    forceParsing(view, view.state.doc.length, 10_000);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+    return view;
+  }
+
+  type DecoEntry = { from: number; to: number; widget: CalloutWidget | ThreadWidget };
+
+  function collectDecos(view: EditorView): DecoEntry[] {
+    const entries: DecoEntry[] = [];
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      const w = iter.value.spec.widget;
+      if (w instanceof CalloutWidget || w instanceof ThreadWidget) {
+        entries.push({ from: iter.from, to: iter.to, widget: w });
+      }
+      iter.next();
+    }
+    return entries;
+  }
+
+  it("fold-only dispatch preserves Decoration identity for unaffected positions", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockView(doc);
+    const annotations = view.state.field(annotationDataField);
+    expect(annotations.length).toBe(BLOCK_COUNT);
+
+    const beforeDecos = collectDecos(view);
+    expect(beforeDecos.length).toBe(BLOCK_COUNT);
+
+    const targetPos = annotations[1]!.char_start;
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: targetPos }) });
+
+    const afterDecos = collectDecos(view);
+    expect(afterDecos.length).toBe(BLOCK_COUNT);
+
+    // Decorations at non-toggled positions must be === identical objects
+    for (const before of beforeDecos) {
+      if (before.from === targetPos) continue;
+      const after = afterDecos.find((d) => d.from === before.from);
+      expect(after).toBeDefined();
+      expect(after!.widget).toBe(before.widget);
+    }
+    view.destroy();
+  });
+
+  it("surgical fold produces correct fold state", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockView(doc);
+    const annotations = view.state.field(annotationDataField);
+    const targetPos = annotations[2]!.char_start;
+
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: targetPos }) });
+
+    const afterDecos = collectDecos(view);
+    const toggled = afterDecos.find((d) => d.from === targetPos);
+    expect(toggled).toBeDefined();
+    expect((toggled!.widget as CalloutWidget).isCollapsed).toBe(true);
+
+    // Others remain expanded
+    for (const d of afterDecos) {
+      if (d.from === targetPos) continue;
+      expect((d.widget as CalloutWidget).isCollapsed).toBe(false);
+    }
+    view.destroy();
+  });
+
+  it("surgical update respects cursor-sensitivity", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockView(doc);
+    const annotations = view.state.field(annotationDataField);
+    const target = annotations[0]!;
+
+    // Move cursor onto the first annotation's lines
+    const cursorPos = target.char_start + 1;
+    view.dispatch({ selection: { anchor: cursorPos } });
+
+    // Fold that annotation
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: target.char_start }) });
+
+    // No decoration should exist at the cursor-suppressed position
+    const afterDecos = collectDecos(view);
+    const suppressed = afterDecos.find((d) => d.from === target.char_start);
+    expect(suppressed).toBeUndefined();
+    view.destroy();
+  });
+
+  it("shared effects bypass surgical path", () => {
+    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
+    const view = makeBlockView(doc);
+    const annotations = view.state.field(annotationDataField);
+
+    const beforeDecos = collectDecos(view);
+    const targetPos = annotations[1]!.char_start;
+
+    // Dispatch fold + setAnnotationData together (shared effect forces full rebuild)
+    view.dispatch({
+      effects: [
+        toggleAnnotationFoldEffect.of({ pos: targetPos }),
+        setAnnotationData.of(annotations),
+      ],
+    });
+
+    const afterDecos = collectDecos(view);
+
+    // Full rebuild: decoration identity NOT preserved for any position
+    let identityPreserved = 0;
+    for (const before of beforeDecos) {
+      const after = afterDecos.find((d) => d.from === before.from);
+      if (after && after.widget === before.widget) identityPreserved++;
+    }
+    expect(identityPreserved).toBe(0);
+    view.destroy();
+  });
+
+  it("surgical setThreadTurnEffect preserves unaffected widget identity", () => {
+    const doc = generateBlockAnnotationStress();
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length - 2 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    forceParsing(view, view.state.doc.length, 10_000);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    const threads = annotations.filter((a) => a.annotation_type === "thread");
+    expect(threads.length).toBeGreaterThan(0);
+    const targetPos = threads[0]!.char_start;
+
+    const beforeDecos = collectDecos(view);
+    view.dispatch({ effects: setThreadTurnEffect.of({ pos: targetPos, turn: 1 }) });
+    const afterDecos = collectDecos(view);
+
+    const targetAfter = afterDecos.find((d) => d.from === targetPos);
+    expect(targetAfter).toBeDefined();
+    expect((targetAfter!.widget as ThreadWidget).turn).toBe(1);
+
+    for (const before of beforeDecos) {
+      if (before.from === targetPos) continue;
+      const after = afterDecos.find((d) => d.from === before.from);
+      expect(after).toBeDefined();
+      expect(after!.widget).toBe(before.widget);
+    }
+    view.destroy();
+  });
+});
+
+const STRESS_HARD_LIMIT_MS = HARD_LIMIT_MS;
 
 function makeStressBlockView(): EditorView {
   const doc = generateBlockAnnotationStress();
@@ -368,7 +757,7 @@ function makeStressBlockView(): EditorView {
 }
 
 describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
-  it("plain-line cursor move preserves field identity", { timeout: 30_000 }, () => {
+  it("plain-line cursor move preserves field identity", () => {
     const view = makeStressBlockView();
     const doc = view.state.doc.toString();
     const tailPos = doc.length - 1;
@@ -376,12 +765,21 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     view.dispatch({ selection: { anchor: tailPos } });
     const before = view.state.field(annotationBlockDecorationField);
 
+    const start = performance.now();
     view.dispatch({ selection: { anchor: tailPos - 1 } });
+    const elapsed = performance.now() - start;
+
     expect(view.state.field(annotationBlockDecorationField)).toBe(before);
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress plain-line cursor move: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
-  it("single fold toggle dispatch", { timeout: 30_000 }, () => {
+  it("single fold toggle dispatch", () => {
     const view = makeStressBlockView();
     const firstBlockPos = view.state.field(annotationDataField)[0]?.char_start ?? 0;
 
@@ -394,11 +792,11 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         `[perf] stress fold toggle: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
       );
     }
-    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
-  it("setAnnotationData re-dispatch", { timeout: 30_000 }, () => {
+  it("setAnnotationData re-dispatch", () => {
     const view = makeStressBlockView();
     const annotations = blockAnnotationsFromTree(view);
 
@@ -411,11 +809,11 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         `[perf] stress setAnnotationData re-dispatch: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
       );
     }
-    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
-  it("midpoint single-char insert", { timeout: 30_000 }, () => {
+  it("midpoint single-char insert", () => {
     const view = makeStressBlockView();
     const mid = Math.floor(view.state.doc.length / 2);
 
@@ -428,7 +826,25 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         `[perf] stress midpoint insert: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
       );
     }
-    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
+    view.destroy();
+  });
+
+  it("fold-all surgical path total time", () => {
+    const view = makeStressBlockView();
+    const annotations = view.state.field(annotationDataField);
+    const effects = annotations.map((a) => toggleAnnotationFoldEffect.of({ pos: a.char_start }));
+
+    const start = performance.now();
+    view.dispatch({ effects });
+    const elapsed = performance.now() - start;
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress fold-all surgical: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_HARD_LIMIT_MS);
     view.destroy();
   });
 
@@ -539,14 +955,18 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     return { calloutEqFalse, threadEqFalse, calloutEqCalls, threadEqCalls };
   }
 
-  function installToDOMSpies(): {
+  function installDOMSpies(): {
     calloutToDOM: number;
     threadToDOM: number;
+    calloutUpdateDOM: number;
+    threadUpdateDOM: number;
     restore: () => void;
   } {
-    const stats = { calloutToDOM: 0, threadToDOM: 0 };
+    const stats = { calloutToDOM: 0, threadToDOM: 0, calloutUpdateDOM: 0, threadUpdateDOM: 0 };
     const origCalloutToDOM = CalloutWidget.prototype.toDOM;
     const origThreadToDOM = ThreadWidget.prototype.toDOM;
+    const origCalloutUpdateDOM = CalloutWidget.prototype.updateDOM;
+    const origThreadUpdateDOM = ThreadWidget.prototype.updateDOM;
 
     const calloutSpy = vi
       .spyOn(CalloutWidget.prototype, "toDOM")
@@ -560,17 +980,29 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         stats.threadToDOM++;
         return origThreadToDOM.call(this, view);
       });
+    const calloutUpdateSpy = vi
+      .spyOn(CalloutWidget.prototype, "updateDOM")
+      .mockImplementation(function (this: CalloutWidget, dom: HTMLElement, view: EditorView, from: CalloutWidget) {
+        stats.calloutUpdateDOM++;
+        return origCalloutUpdateDOM.call(this, dom, view, from);
+      });
+    const threadUpdateSpy = vi
+      .spyOn(ThreadWidget.prototype, "updateDOM")
+      .mockImplementation(function (this: ThreadWidget, dom: HTMLElement, view: EditorView, from: ThreadWidget) {
+        stats.threadUpdateDOM++;
+        return origThreadUpdateDOM.call(this, dom, view, from);
+      });
 
     return {
-      get calloutToDOM() {
-        return stats.calloutToDOM;
-      },
-      get threadToDOM() {
-        return stats.threadToDOM;
-      },
+      get calloutToDOM() { return stats.calloutToDOM; },
+      get threadToDOM() { return stats.threadToDOM; },
+      get calloutUpdateDOM() { return stats.calloutUpdateDOM; },
+      get threadUpdateDOM() { return stats.threadUpdateDOM; },
       restore: () => {
         calloutSpy.mockRestore();
         threadSpy.mockRestore();
+        calloutUpdateSpy.mockRestore();
+        threadUpdateSpy.mockRestore();
       },
     };
   }
@@ -591,7 +1023,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     return { notes, threads };
   }
 
-  it("fold-all blast radius: eq() and toDOM() call counts", { timeout: 60_000 }, () => {
+  it("fold-all blast radius: eq() and updateDOM/toDOM call counts", { timeout: 60_000 }, () => {
     const { view, restoreHeights } = makeStressBlockViewFullViewport();
     try {
       const { notes, threads } = countAnnotationMix(view);
@@ -602,29 +1034,24 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
       const before = collectBlockWidgets(view);
       expect(before.size).toBe(150);
 
-      const spies = installToDOMSpies();
+      const spies = installDOMSpies();
       try {
         view.dispatch({ effects: foldAllEffects(view) });
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        // Primary H2 multiplier: every folded widget fails eq (isCollapsed flipped).
         expect(blast.calloutEqCalls).toBe(notes);
         expect(blast.threadEqCalls).toBe(threads);
         expect(blast.calloutEqFalse).toBe(notes);
         expect(blast.threadEqFalse).toBe(threads);
-        // toDOM only runs for widgets CM6 has drawn (viewport-scoped). Fold-all
-        // must redraw more than a single toggle; exact N is not reachable in
-        // jsdom because the height-map viewport still covers only a handful of
-        // the 150 replace-widgets even with estimatedHeight forced to 1.
+        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
+        expect(totalUpdateDOM).toBeGreaterThan(1);
         const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBeGreaterThan(1);
-        expect(spies.calloutToDOM).toBeGreaterThan(0);
-        expect(spies.threadToDOM).toBeGreaterThan(0);
+        expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius fold-all: callout eqFalse=${blast.calloutEqFalse}/${notes} toDOM=${spies.calloutToDOM}; ` +
-            `thread eqFalse=${blast.threadEqFalse}/${threads} toDOM=${spies.threadToDOM} (viewport-scoped toDOM)`,
+          `[perf] H2 blast-radius fold-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +
+            `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();
@@ -640,26 +1067,26 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     try {
       const { notes, threads } = countAnnotationMix(view);
 
-      // First fold-all (no spies) so the second toggle expands.
       view.dispatch({ effects: foldAllEffects(view) });
       const before = collectBlockWidgets(view);
       expect(before.size).toBe(150);
 
-      const spies = installToDOMSpies();
+      const spies = installDOMSpies();
       try {
         view.dispatch({ effects: foldAllEffects(view) });
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        // Expand direction has the same eq blast radius as fold.
         expect(blast.calloutEqFalse).toBe(notes);
         expect(blast.threadEqFalse).toBe(threads);
+        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
+        expect(totalUpdateDOM).toBeGreaterThan(1);
         const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBeGreaterThan(1);
+        expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} toDOM=${spies.calloutToDOM}; ` +
-            `thread eqFalse=${blast.threadEqFalse}/${threads} toDOM=${spies.threadToDOM} (viewport-scoped toDOM)`,
+          `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +
+            `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();
@@ -673,26 +1100,27 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   it("single fold toggle: blast radius is 1", { timeout: 60_000 }, () => {
     const { view, restoreHeights } = makeStressBlockViewFullViewport();
     try {
-      // Fold the second annotation - the first may sit next to the parked cursor.
       const target = view.state.field(annotationDataField)[1];
       expect(target).toBeDefined();
 
       const before = collectBlockWidgets(view);
       expect(before.size).toBe(150);
 
-      const spies = installToDOMSpies();
+      const spies = installDOMSpies();
       try {
         view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: target!.char_start }) });
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
         const totalEqFalse = blast.calloutEqFalse + blast.threadEqFalse;
-        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
         expect(totalEqFalse).toBe(1);
-        expect(totalToDOM).toBe(1);
+        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
+        expect(totalUpdateDOM).toBeLessThanOrEqual(1);
+        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
+        expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} toDOM=${totalToDOM}`,
+          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} updateDOM=${totalUpdateDOM} toDOM=${totalToDOM}`,
         );
       } finally {
         spies.restore();

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { CLS } from "./annotationConstants";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
@@ -1873,6 +1874,7 @@ describe("ThreadWidget", () => {
     expect(key.defaultPrevented).toBe(true);
     expect(stopSpy).toHaveBeenCalled();
     expect(overflow.classList.contains("is-open")).toBe(true);
+    w.destroy(dom);
   });
 
   it("menu row click closes the menu", () => {
@@ -1928,5 +1930,281 @@ describe("ThreadWidget", () => {
     const pasteFromSpan = new Event("paste", { bubbles: true });
     Object.defineProperty(pasteFromSpan, "target", { value: span });
     expect(w.ignoreEvent(pasteFromSpan)).toBe(false);
+  });
+
+  it("destroy closes an open overflow menu and releases the document keydown trap", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(true);
+
+    w.destroy(dom);
+
+    expect(overflow.classList.contains("is-open")).toBe(false);
+
+    const key = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+
+    const click = new MouseEvent("mousedown", { bubbles: true });
+    expect(() => document.dispatchEvent(click)).not.toThrow();
+  });
+
+  it("destroy with menu closed is a no-op", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+
+    expect(() => w.destroy(dom)).not.toThrow();
+
+    const key = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+  });
+});
+
+describe("programmatic-collapse menu cleanup (Phase 6)", () => {
+  it("programmatic collapse closes the overflow menu and removes document listeners", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const expanded = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = expanded.toDOM(view);
+
+    const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`)! as HTMLElement;
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(true);
+
+    // Verify keydown IS trapped while menu is open (sanity baseline).
+    const keyBefore = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(keyBefore);
+    expect(keyBefore.defaultPrevented).toBe(true);
+
+    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
+    collapsed.updateDOM(dom, view, expanded);
+
+    expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(false);
+
+    // After collapse, the THIS widget's keydown listener must be gone.
+    // Use a fresh MouseEvent to verify the outside-click handler is also gone:
+    // dispatching a mousedown outside the overflow should NOT re-trigger closeMenu
+    // (which would throw or crash if already torn down).
+    const outsideClick = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(outsideClick);
+    expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(false);
+
+    view.destroy();
+  });
+
+  // The chevron path needs no fix: the capture-phase outside-click handler on
+  // `document` fires before the fold effect is dispatched by the chevron's
+  // mousedown, so `closeMenu()` runs first and the menu is already gone.
+});
+
+describe("ThreadWidget.updateDOM expand does not call toDOM (Phase 4)", () => {
+  it("updateDOM expand does not call toDOM", () => {
+    const view = makeEditorView();
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
+    const dom = collapsed.toDOM(view);
+
+    const spy = vi.spyOn(ThreadWidget.prototype, "toDOM");
+    try {
+      const expanded = new ThreadWidget(ann, 0, false, 0, false);
+      const result = expanded.updateDOM(dom, view, collapsed);
+
+      expect(result).toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+      expect(dom.querySelector(`.${CLS.THREAD_QUESTION}`)).not.toBeNull();
+      expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+      expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+    view.destroy();
+  });
+});
+
+describe("CalloutWidget.updateDOM", () => {
+  const view = makeEditorView();
+
+  it("collapses: returns true, removes body, adds IS_COLLAPSED class", () => {
+    const ann = makeAnnotation({ body: "some body text" });
+    const oldWidget = new CalloutWidget(ann, false, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
+
+    const newWidget = new CalloutWidget(ann, true, 0, false, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(true);
+  });
+
+  it("expands: returns true, adds body with rendered markdown", () => {
+    const ann = makeAnnotation({ body: "expanded body" });
+    const oldWidget = new CalloutWidget(ann, true, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+
+    const newWidget = new CalloutWidget(ann, false, 0, false, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    const body = dom.querySelector(`.${CLS.CALLOUT_BODY}`);
+    expect(body).not.toBeNull();
+    expect(body!.innerHTML).toBeTruthy();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
+  });
+
+  it("returns false for content change", () => {
+    const ann1 = makeAnnotation({ original: "<!---n | body1--->" });
+    const ann2 = makeAnnotation({ original: "<!---n | body2--->" });
+    const oldWidget = new CalloutWidget(ann1, false, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new CalloutWidget(ann2, false, 0, false, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+
+  it("returns false for firing state change", () => {
+    const ann = makeAnnotation();
+    const oldWidget = new CalloutWidget(ann, false, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new CalloutWidget(ann, false, 0, true, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+});
+
+describe("ThreadWidget.updateDOM", () => {
+  const view = makeEditorView();
+
+  it("collapses: returns true, removes body elements", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "Q: first?\nA: reply one.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+
+    const newWidget = new ThreadWidget(ann, 0, true, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.THREAD_QUESTION}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(true);
+  });
+
+  it("expands: returns true, adds body elements", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "Q: first?\nA: reply one.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, true, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+
+    const newWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
+  });
+
+  it("returns false for turn change", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "Q: first?\nA: reply one.\nQ: second?\nA: reply two.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new ThreadWidget(ann, 1, false, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+
+  it("returns false for content change", () => {
+    const ann1 = makeAnnotation({
+      annotation_type: "thread",
+      original: "<!---thread-1--->",
+      body: "Q: first?\nA: reply.",
+    });
+    const ann2 = makeAnnotation({
+      annotation_type: "thread",
+      original: "<!---thread-2--->",
+      body: "Q: different?\nA: different reply.",
+    });
+    const oldWidget = new ThreadWidget(ann1, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new ThreadWidget(ann2, 0, false, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+
+  it("collapse removes an open follow-up textarea", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const trigger = dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)! as HTMLElement;
+    expect(trigger).not.toBeNull();
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).not.toBeNull();
+
+    const newWidget = new ThreadWidget(ann, 0, true, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).toBeNull();
+    const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
+    expect(header).not.toBeNull();
+    expect(dom.children.length).toBe(1);
+  });
+
+  it("collapse+expand round-trip after open input yields clean state", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const trigger = dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).not.toBeNull();
+
+    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
+    collapsed.updateDOM(dom, view, oldWidget);
+
+    const expanded = new ThreadWidget(ann, 0, false, 0, false);
+    expanded.updateDOM(dom, view, collapsed);
+
+    expect(dom.querySelectorAll(`.${CLS.CALLOUT_BODY}`).length).toBe(1);
+    expect(dom.querySelectorAll(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`).length).toBe(1);
+    expect(dom.querySelectorAll(`.${CLS.THREAD_FOLLOWUP_INPUT}`).length).toBe(0);
   });
 });
