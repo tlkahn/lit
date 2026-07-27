@@ -12,12 +12,13 @@ import {
 } from "./annotationState";
 import {
   annotationFoldField,
+  toggleAnnotationFoldEffect,
   firingAnnotationsField,
   llmLockedField,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
-import { generateAnnotationHeavy } from "../../test/fixtures/generate";
+import { generateAnnotationHeavy, generateBlockAnnotationStress } from "../../test/fixtures/generate";
 import type { Annotation } from "../../lib/ipc";
 
 const HARD_LIMIT_MS = 100;
@@ -281,6 +282,97 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
       );
     }
     expect(elapsed).toBeLessThan(HARD_LIMIT_MS);
+    view.destroy();
+  });
+});
+
+const STRESS_SMOKE_CAP_MS = 5000;
+
+function makeStressBlockView(): EditorView {
+  const doc = generateBlockAnnotationStress();
+  const state = EditorState.create({
+    doc,
+    selection: { anchor: 0 },
+    extensions: [
+      markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+      annotationDataField,
+      displayModeField,
+      annotationFoldField,
+      firingAnnotationsField,
+      llmLockedField,
+      annotationDecorationPlugin,
+      annotationBlockDecorationField,
+    ],
+  });
+  const view = new EditorView({ state, parent: document.createElement("div") });
+  ensureSyntaxTree(view.state, view.state.doc.length, 10_000);
+  const annotations = blockAnnotationsFromTree(view);
+  view.dispatch({ effects: setAnnotationData.of(annotations) });
+  return view;
+}
+
+describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
+  it("plain-line cursor move preserves field identity", { timeout: 30_000 }, () => {
+    const view = makeStressBlockView();
+    const doc = view.state.doc.toString();
+    const tailPos = doc.length - 1;
+
+    view.dispatch({ selection: { anchor: tailPos } });
+    const before = view.state.field(annotationBlockDecorationField);
+
+    view.dispatch({ selection: { anchor: tailPos - 1 } });
+    expect(view.state.field(annotationBlockDecorationField)).toBe(before);
+    view.destroy();
+  });
+
+  it("single fold toggle dispatch", { timeout: 30_000 }, () => {
+    const view = makeStressBlockView();
+    const firstBlockPos = view.state.field(annotationDataField)[0]?.char_start ?? 0;
+
+    const start = performance.now();
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: firstBlockPos }) });
+    const elapsed = performance.now() - start;
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress fold toggle: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    view.destroy();
+  });
+
+  it("setAnnotationData re-dispatch", { timeout: 30_000 }, () => {
+    const view = makeStressBlockView();
+    const annotations = blockAnnotationsFromTree(view);
+
+    const start = performance.now();
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+    const elapsed = performance.now() - start;
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress setAnnotationData re-dispatch: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
+    view.destroy();
+  });
+
+  it("midpoint single-char insert", { timeout: 30_000 }, () => {
+    const view = makeStressBlockView();
+    const mid = Math.floor(view.state.doc.length / 2);
+
+    const start = performance.now();
+    view.dispatch({ changes: { from: mid, insert: "x" } });
+    const elapsed = performance.now() - start;
+
+    if (elapsed > ADVISORY_MS) {
+      console.warn(
+        `[perf] stress midpoint insert: ${elapsed.toFixed(1)}ms (>${ADVISORY_MS}ms target)`,
+      );
+    }
+    expect(elapsed).toBeLessThan(STRESS_SMOKE_CAP_MS);
     view.destroy();
   });
 });
