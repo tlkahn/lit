@@ -1,3 +1,5 @@
+import { mulberry32 } from "../../lib/random";
+
 const SENTENCES = [
   "The quick brown fox jumps over the lazy dog.",
   "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
@@ -159,4 +161,57 @@ export function generateAnnotationHeavy(lines: number): string {
     out.push(`Line ${i}: ${sentence(i)} <!---note ${i}---> tail text`);
   }
   return out.join("\n");
+}
+
+export interface BlockAnnotationStressOptions {
+  annotationCount?: number;
+  targetBytes?: number;
+  seed?: number;
+}
+
+// Mirrors the ~1.28MB / ~150-annotation document that exposed fold-all slowness in PR #875.
+export function generateBlockAnnotationStress(
+  opts?: BlockAnnotationStressOptions,
+): string {
+  const annotationCount = opts?.annotationCount ?? 150;
+  const targetBytes = opts?.targetBytes ?? 1_300_000;
+  const seed = opts?.seed ?? 42;
+  const rng = mulberry32(seed);
+
+  const out: string[] = [];
+
+  for (let i = 0; i < annotationCount; i++) {
+    const isThread = i % 3 === 2;
+    const head = isThread ? "th" : "n";
+    const bodyLineCount = 3 + Math.floor(rng() * 6);
+
+    out.push(`<!---`);
+    out.push(head);
+    for (let j = 0; j < bodyLineCount; j++) {
+      if (j === 0) out.push("---");
+      out.push(sentence(i * 7 + j));
+    }
+    out.push(`--->`);
+    out.push("");
+  }
+
+  let text = out.join("\n");
+
+  if (text.length < targetBytes) {
+    const padding: string[] = [text];
+    let heading = 1;
+    while (padding.reduce((a, b) => a + b.length, 0) < targetBytes) {
+      padding.push("");
+      padding.push(`${"#".repeat(((heading - 1) % 6) + 1)} Filler Section ${heading}`);
+      heading++;
+      padding.push("");
+      const paraLines = 5 + Math.floor(rng() * 6);
+      for (let j = 0; j < paraLines; j++) {
+        padding.push(sentence(heading * 3 + j));
+      }
+    }
+    text = padding.join("\n");
+  }
+
+  return text;
 }
