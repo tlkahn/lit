@@ -8,12 +8,14 @@ import {
   setAnnotationData,
   annotationDecorationPlugin,
   annotationBlockDecorationField,
+  buildAnnotationBlockDecorations,
   displayModeField,
 } from "./annotationState";
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
   threadTurnField,
+  setThreadTurnEffect,
   firingAnnotationsField,
   llmLockedField,
   CalloutWidget,
@@ -342,7 +344,7 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
 describe("targeted iteration (step 1)", () => {
   const BLOCK_COUNT = 200;
 
-  function makeBlockView(doc: string): EditorView {
+  function makeBlockViewNoPlugin(doc: string): EditorView {
     const state = EditorState.create({
       doc,
       selection: { anchor: doc.length - 2 },
@@ -354,7 +356,6 @@ describe("targeted iteration (step 1)", () => {
         threadTurnField,
         firingAnnotationsField,
         llmLockedField,
-        annotationDecorationPlugin,
         annotationBlockDecorationField,
       ],
     });
@@ -363,10 +364,11 @@ describe("targeted iteration (step 1)", () => {
     return view;
   }
 
-  it("tree.iterate is called with bounded from/to, not unbounded", () => {
+  it("block builder iterate calls are bounded with to - from === 1", () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
-    const view = makeBlockView(doc);
+    const view = makeBlockViewNoPlugin(doc);
     const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
 
     const iterateCalls: Array<{ from?: number; to?: number }> = [];
     const tree = syntaxTree(view.state);
@@ -376,47 +378,82 @@ describe("targeted iteration (step 1)", () => {
       return origIterate(spec);
     });
 
-    view.dispatch({ effects: setAnnotationData.of(annotations) });
+    buildAnnotationBlockDecorations(view.state);
 
-    // After the dispatch, every iterate() call from the block field rebuild
-    // must have bounded from/to properties (not undefined).
     expect(iterateCalls.length).toBeGreaterThan(0);
+    expect(iterateCalls.length).toBeLessThanOrEqual(annotations.length);
     for (const call of iterateCalls) {
       expect(call.from).toBeDefined();
       expect(call.to).toBeDefined();
+      expect(call.to! - call.from!).toBe(1);
     }
     vi.restoreAllMocks();
     view.destroy();
   });
 
-  it("produces same decorations as full-tree walk", () => {
-    const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
-    const view = makeBlockView(doc);
+  it("produces same full-tuple decorations as reference full-tree walk", () => {
+    const doc = generateBlockAnnotationStress();
+    const view = makeBlockViewNoPlugin(doc);
     const annotations = blockAnnotationsFromTree(view);
-    view.dispatch({ effects: setAnnotationData.of(annotations) });
 
-    // Collect decoration positions and widget types from the field
-    const decoState = view.state.field(annotationBlockDecorationField);
-    const positions: Array<{ from: number; to: number; type: string }> = [];
-    const iter = decoState.decorations.iter();
+    const foldTarget = annotations[2]!.char_start;
+    view.dispatch({
+      effects: [
+        setAnnotationData.of(annotations),
+        toggleAnnotationFoldEffect.of({ pos: foldTarget }),
+      ],
+    });
+
+    type Tuple = { from: number; to: number; kind: string; isCollapsed: boolean };
+
+    const fieldResult: Tuple[] = [];
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
     while (iter.value) {
-      const widget = iter.value.spec.widget;
-      positions.push({
+      const w = iter.value.spec.widget;
+      fieldResult.push({
         from: iter.from,
         to: iter.to,
-        type: widget instanceof ThreadWidget ? "thread" : "callout",
+        kind: w instanceof ThreadWidget ? "thread" : "callout",
+        isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
       });
       iter.next();
     }
 
-    // Verify we got the expected count of block decorations
-    expect(positions.length).toBe(BLOCK_COUNT);
-
-    // Verify decorations are sorted by position
-    for (let i = 1; i < positions.length; i++) {
-      expect(positions[i]!.from).toBeGreaterThanOrEqual(positions[i - 1]!.from);
+    const refResult: Tuple[] = [];
+    const state = view.state;
+    const foldState = state.field(annotationFoldField, false);
+    const refTree = syntaxTree(state);
+    for (const ann of annotations) {
+      const from = ann.char_start;
+      const to = ann.char_end;
+      if (from < 0 || to > state.doc.length || from >= to) continue;
+      const startLine = state.doc.lineAt(from);
+      const endLine = state.doc.lineAt(to);
+      if (startLine.number === endLine.number) continue;
+      if (startLine.from !== from) continue;
+      let isBlock = false;
+      refTree.iterate({
+        from,
+        to: from + 1,
+        enter: (node) => {
+          if (node.name === "BlockAnnotation" && node.from === from && node.to === to) isBlock = true;
+        },
+      });
+      if (!isBlock) continue;
+      const isCollapsed = foldState?.get(from) ?? false;
+      refResult.push({
+        from,
+        to,
+        kind: ann.annotation_type === "thread" ? "thread" : "callout",
+        isCollapsed,
+      });
     }
 
+    expect(fieldResult.length).toBe(refResult.length);
+    expect(fieldResult.length).toBeGreaterThan(0);
+    for (let i = 0; i < fieldResult.length; i++) {
+      expect(fieldResult[i]).toEqual(refResult[i]);
+    }
     view.destroy();
   });
 });
@@ -553,6 +590,49 @@ describe("surgical DecorationSet update (step 2)", () => {
       if (after && after.widget === before.widget) identityPreserved++;
     }
     expect(identityPreserved).toBe(0);
+    view.destroy();
+  });
+
+  it("surgical setThreadTurnEffect preserves unaffected widget identity", () => {
+    const doc = generateBlockAnnotationStress();
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: doc.length - 2 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationDecorationPlugin,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    forceParsing(view, view.state.doc.length, 10_000);
+    const annotations = blockAnnotationsFromTree(view);
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+
+    const threads = annotations.filter((a) => a.annotation_type === "thread");
+    expect(threads.length).toBeGreaterThan(0);
+    const targetPos = threads[0]!.char_start;
+
+    const beforeDecos = collectDecos(view);
+    view.dispatch({ effects: setThreadTurnEffect.of({ pos: targetPos, turn: 1 }) });
+    const afterDecos = collectDecos(view);
+
+    const targetAfter = afterDecos.find((d) => d.from === targetPos);
+    expect(targetAfter).toBeDefined();
+    expect((targetAfter!.widget as ThreadWidget).turn).toBe(1);
+
+    for (const before of beforeDecos) {
+      if (before.from === targetPos) continue;
+      const after = afterDecos.find((d) => d.from === before.from);
+      expect(after).toBeDefined();
+      expect(after!.widget).toBe(before.widget);
+    }
     view.destroy();
   });
 });
@@ -911,10 +991,10 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
         expect(totalUpdateDOM).toBeGreaterThan(1);
         const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
-        // Expand may produce a small number of toDOM calls for widgets that
-        // had no previous DOM (e.g. cursor-suppressed annotations that gain a
-        // decoration on fold-state change).
-        expect(totalToDOM).toBeLessThanOrEqual(2);
+        // The surgical path cannot invent new ranges, so cursor-suppressed
+        // annotations stay suppressed. The residual toDOM (<=1) is CM6
+        // rebuilding a thread widget whose collapsed DOM structure changed.
+        expect(totalToDOM).toBeLessThanOrEqual(1);
 
         console.warn(
           `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +

@@ -2008,6 +2008,206 @@ describe("annotationBlockDecorationField selection guard", () => {
   });
 });
 
+describe("surgical path eligibility guards", () => {
+  function makeView(doc: string, anchor: number) {
+    const state = EditorState.create({
+      doc,
+      selection: { anchor },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    return view;
+  }
+
+  function decoCount(view: EditorView): number {
+    let count = 0;
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) { count++; iter.next(); }
+    return count;
+  }
+
+  function hasDecoAt(view: EditorView, from: number): boolean {
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      if (iter.from === from) return true;
+      iter.next();
+    }
+    return false;
+  }
+
+  it("fold on a single-line annotation does not create a block deco", () => {
+    const doc = "first line\n<!---single-line--->\ntail";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({
+      char_start: 11,
+      char_end: 31,
+      original: "<!---single-line--->",
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+    expect(decoCount(view)).toBe(0);
+
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 11 }) });
+    expect(decoCount(view)).toBe(0);
+
+    view.destroy();
+  });
+
+  it("fold on a cursor-suppressed position does not invent a deco", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\ntail";
+    const view = makeView(doc, 0);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(1);
+    const b = blocks[0]!;
+    const ann = makeAnnotation({ form: "block", char_start: b.from, char_end: b.to, original: doc.slice(b.from, b.to) });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    view.dispatch({ selection: { anchor: b.from + 2 } });
+    expect(hasDecoAt(view, b.from)).toBe(false);
+
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: b.from }) });
+    expect(hasDecoAt(view, b.from)).toBe(false);
+
+    view.dispatch({ selection: { anchor: doc.length - 1 } });
+    expect(hasDecoAt(view, b.from)).toBe(true);
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      if (iter.from === b.from) {
+        expect((iter.value.spec?.widget as CalloutWidget).isCollapsed).toBe(true);
+      }
+      iter.next();
+    }
+
+    view.destroy();
+  });
+});
+
+describe("fold/turn + selection in one transaction", () => {
+  const DOC = "first line\n\n<!---\nbody A\n--->\nmiddle\n\n<!---\nbody B\n--->\ntail";
+
+  function makeViewWithBlocks(anchor: number) {
+    const state = EditorState.create({
+      doc: DOC,
+      selection: { anchor },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(2);
+    const annotations = blocks.map((b) =>
+      makeAnnotation({
+        form: "block",
+        char_start: b.from,
+        char_end: b.to,
+        original: DOC.slice(b.from, b.to),
+      }),
+    );
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+    return { view, A: blocks[0]!, B: blocks[1]! };
+  }
+
+  function hasDecoAt(view: EditorView, from: number): boolean {
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      if (iter.from === from) return true;
+      iter.next();
+    }
+    return false;
+  }
+
+  function isCollapsedAt(view: EditorView, from: number): boolean {
+    const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
+    while (iter.value) {
+      if (iter.from === from) {
+        const w = iter.value.spec?.widget;
+        return w instanceof CalloutWidget && w.isCollapsed;
+      }
+      iter.next();
+    }
+    return false;
+  }
+
+  it("fold A + selection into B: A collapsed, B suppressed", () => {
+    const { view, A, B } = makeViewWithBlocks(0);
+    try {
+      expect(hasDecoAt(view, A.from)).toBe(true);
+      expect(hasDecoAt(view, B.from)).toBe(true);
+
+      view.dispatch({
+        effects: toggleAnnotationFoldEffect.of({ pos: A.from }),
+        selection: { anchor: B.from + 2 },
+      });
+
+      expect(isCollapsedAt(view, A.from)).toBe(true);
+      expect(hasDecoAt(view, B.from)).toBe(false);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("cursor inside B, fold A + selection to plain: B restored, A collapsed", () => {
+    const { view, A, B } = makeViewWithBlocks(DOC.length - 1);
+    try {
+      view.dispatch({ selection: { anchor: B.from + 2 } });
+      expect(hasDecoAt(view, B.from)).toBe(false);
+
+      view.dispatch({
+        effects: toggleAnnotationFoldEffect.of({ pos: A.from }),
+        selection: { anchor: 0 },
+      });
+
+      expect(hasDecoAt(view, B.from)).toBe(true);
+      expect(isCollapsedAt(view, A.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("cursor plain->plain with fold: fold still applied", () => {
+    const { view, A, B } = makeViewWithBlocks(0);
+    try {
+      view.dispatch({
+        effects: toggleAnnotationFoldEffect.of({ pos: A.from }),
+        selection: { anchor: DOC.length - 1 },
+      });
+
+      expect(isCollapsedAt(view, A.from)).toBe(true);
+      expect(hasDecoAt(view, B.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+});
+
 describe("llmLockBridgePlugin", () => {
   beforeEach(() => {
     useModalLockStore.setState({ llmLocked: false });

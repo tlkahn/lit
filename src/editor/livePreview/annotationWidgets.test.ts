@@ -2062,4 +2062,50 @@ describe("ThreadWidget.updateDOM", () => {
     const result = newWidget.updateDOM(dom, view, oldWidget);
     expect(result).toBe(false);
   });
+
+  it("collapse removes an open follow-up textarea", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const trigger = dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)! as HTMLElement;
+    expect(trigger).not.toBeNull();
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).not.toBeNull();
+
+    const newWidget = new ThreadWidget(ann, 0, true, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).toBeNull();
+    const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
+    expect(header).not.toBeNull();
+    expect(dom.children.length).toBe(1);
+  });
+
+  it("collapse+expand round-trip after open input yields clean state", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "[q]: Question?\n\nAnswer text.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const trigger = dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)! as HTMLElement;
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).not.toBeNull();
+
+    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
+    collapsed.updateDOM(dom, view, oldWidget);
+
+    const expanded = new ThreadWidget(ann, 0, false, 0, false);
+    expanded.updateDOM(dom, view, collapsed);
+
+    expect(dom.querySelectorAll(`.${CLS.CALLOUT_BODY}`).length).toBe(1);
+    expect(dom.querySelectorAll(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`).length).toBe(1);
+    expect(dom.querySelectorAll(`.${CLS.THREAD_FOLLOWUP_INPUT}`).length).toBe(0);
+  });
 });

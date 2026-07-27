@@ -546,9 +546,10 @@ export class CalloutWidget extends WidgetType {
     if (!chevron) return false;
 
     if (this.isCollapsed) {
+      const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
+      if (!header) return false;
       chevron.classList.add(CLS.IS_COLLAPSED);
-      const body = dom.querySelector(`.${CLS.CALLOUT_BODY}`);
-      if (body) body.remove();
+      while (dom.lastChild && dom.lastChild !== header) dom.removeChild(dom.lastChild);
     } else {
       chevron.classList.remove(CLS.IS_COLLAPSED);
       if (this.annotation.body) {
@@ -885,11 +886,10 @@ export class ThreadWidget extends WidgetType {
     if (!chevron) return false;
 
     if (this.isCollapsed) {
+      const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
+      if (!header) return false;
       chevron.classList.add(CLS.IS_COLLAPSED);
-      for (const cls of [CLS.CALLOUT_BODY, CLS.THREAD_QUESTION, CLS.THREAD_FOLLOWUP_TRIGGER, CLS.THREAD_EMPTY]) {
-        const el = dom.querySelector(`.${cls}`);
-        if (el) el.remove();
-      }
+      while (dom.lastChild && dom.lastChild !== header) dom.removeChild(dom.lastChild);
     } else {
       chevron.classList.remove(CLS.IS_COLLAPSED);
       const freshDom = this.toDOM(view);

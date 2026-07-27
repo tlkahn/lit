@@ -378,7 +378,9 @@ export function hasInlineAnnotationEffect(tr: { effects: readonly StateEffect<un
 /**
  * Block-field gate: returns true for effects that affect block annotation
  * rendering. Excludes setDisplayMode (buildAnnotationBlockDecorations never
- * reads displayModeField).
+ * reads displayModeField). The field's own `update` uses `isSharedAnnotationEffect`
+ * and `isFoldOrTurnOnly` directly; this predicate is the public block-relevant
+ * test used by `hasAnnotationEffect`.
  */
 export function hasBlockAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
   return tr.effects.some((e) =>
@@ -417,7 +419,22 @@ export interface BlockDecorationState {
   blockSensitiveLines: Set<number>;
 }
 
-function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecorationState {
+function blockWidgetFor(
+  ann: Annotation,
+  pos: number,
+  foldState: Map<number, boolean> | undefined,
+  turnState: Map<number, number> | undefined,
+  firingSet: Set<number>,
+  llmLocked: boolean,
+): CalloutWidget | ThreadWidget {
+  const isCollapsed = foldState?.get(pos) ?? false;
+  const isFiring = firingSet.has(pos);
+  return ann.annotation_type === "thread"
+    ? new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos, isFiring)
+    : new CalloutWidget(ann, isCollapsed, pos, isFiring, llmLocked);
+}
+
+export function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecorationState {
   const annotations = state.field(annotationDataField);
   const blockSensitiveLines = new Set<number>();
   if (annotations.length === 0) {
@@ -459,17 +476,8 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
     });
     if (!isBlock) continue;
 
-    const isCollapsed = foldState?.get(from) ?? false;
-    const isFiring = firingSet.has(from);
-    const widget =
-      ann.annotation_type === "thread"
-        ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring)
-        : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
-    decos.push({
-      from,
-      to,
-      deco: Decoration.replace({ widget }),
-    });
+    const widget = blockWidgetFor(ann, from, foldState, turnState, firingSet, llmLocked);
+    decos.push({ from, to, deco: Decoration.replace({ widget }) });
   }
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -480,15 +488,12 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
 }
 
 /**
- * Returns true when a tree-identity change (parser progress) warrants
- * rebuilding the block decorations. When there are no annotations, or the
- * materialized tree on `startState` already covered all annotation positions,
- * the parser can only be extending into territory that contains no block
- * annotations — skip the (unbounded) full-tree walk.
- *
- * Uses `syntaxTree(startState).length` (the materialized StateField tree) rather
- * than `syntaxTreeAvailable` (which queries the live parse context and may
- * reflect progress that hasn't yet been committed to the StateField).
+ * Returns true when a transaction carries ONLY fold/turn effects (no doc
+ * change, no shared annotation effects). The field's `update` uses this to
+ * enter the surgical path, which replaces existing block decorations in-place
+ * without a full rebuild. When the transaction also carries a selection change,
+ * the caller forces a full rebuild instead - the surgical path does not
+ * recompute `blockSensitiveLines` or cursor suppression on unaffected blocks.
  */
 function isFoldOrTurnOnly(tr: { effects: readonly StateEffect<unknown>[]; docChanged: boolean }): boolean {
   if (tr.docChanged) return false;
@@ -503,6 +508,12 @@ function isFoldOrTurnOnly(tr: { effects: readonly StateEffect<unknown>[]; docCha
   return hasFoldOrTurn;
 }
 
+/**
+ * Replaces existing block decorations at fold/turn-affected positions. Never
+ * invents new ranges - discovery of block-eligible positions is exclusively
+ * the full builder's job. Does not recompute `blockSensitiveLines` since
+ * fold/turn cannot change span membership.
+ */
 function surgicallyUpdateBlockDecorations(
   prev: BlockDecorationState,
   state: EditorView["state"],
@@ -514,7 +525,17 @@ function surgicallyUpdateBlockDecorations(
     if (e.is(setThreadTurnEffect)) affected.add(e.value.pos);
   }
 
+  const existingSpans = new Map<number, number>();
+  const iter = prev.decorations.iter();
+  while (iter.value) {
+    if (affected.has(iter.from)) existingSpans.set(iter.from, iter.to);
+    iter.next();
+  }
+
   const annotations = state.field(annotationDataField);
+  const annByStart = new Map<number, Annotation>();
+  for (const a of annotations) annByStart.set(a.char_start, a);
+
   const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
   const llmLocked = state.field(llmLockedField, false) ?? false;
   const foldState = state.field(annotationFoldField, false);
@@ -523,22 +544,16 @@ function surgicallyUpdateBlockDecorations(
   const newDecos: Array<{ from: number; to: number; deco: Decoration }> = [];
 
   for (const pos of affected) {
-    const ann = annotations.find((a) => a.char_start === pos);
+    const span = existingSpans.get(pos);
+    if (span === undefined) continue;
+
+    const ann = annByStart.get(pos);
     if (!ann) continue;
 
     if (isCursorOnLine(state, ann.char_start, ann.char_end)) continue;
 
-    const isCollapsed = foldState?.get(pos) ?? false;
-    const isFiring = firingSet.has(pos);
-    const widget =
-      ann.annotation_type === "thread"
-        ? new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos, isFiring)
-        : new CalloutWidget(ann, isCollapsed, pos, isFiring, llmLocked);
-    newDecos.push({
-      from: ann.char_start,
-      to: ann.char_end,
-      deco: Decoration.replace({ widget }),
-    });
+    const widget = blockWidgetFor(ann, pos, foldState, turnState, firingSet, llmLocked);
+    newDecos.push({ from: ann.char_start, to: ann.char_end, deco: Decoration.replace({ widget }) });
   }
 
   newDecos.sort((a, b) => a.from - b.from || a.to - b.to);
@@ -551,6 +566,16 @@ function surgicallyUpdateBlockDecorations(
   return { decorations: updated, blockSensitiveLines: prev.blockSensitiveLines };
 }
 
+/**
+ * Returns true when a tree-identity change (parser progress) warrants
+ * rebuilding block decorations. When there are no annotations, or the
+ * materialized tree on `startState` already covered all annotation positions,
+ * the parser is extending into territory with no block annotations - skip.
+ *
+ * Uses `syntaxTree(startState).length` (the materialized StateField tree)
+ * rather than `syntaxTreeAvailable` (which queries the live parse context and
+ * may reflect progress not yet committed to the StateField).
+ */
 export function shouldRebuildBlocksOnTreeChange(
   startState: EditorView["state"],
   annotations: Annotation[],
@@ -563,14 +588,15 @@ export function shouldRebuildBlocksOnTreeChange(
 /**
  * Delivers line-break-spanning annotation callouts via a `StateField` (not the
  * plugin) because CodeMirror only permits such replacements from field/facet
- * sources. Recomputes on doc change and annotation effects. For selection-only
- * transactions it applies a cursor-sensitivity guard analogous to the plugin's
- * (see `AnnotationDecorationPluginValue.update`): the rebuild — an unbounded
- * full-tree walk — is skipped unless the old or new cursor line spans a block
- * annotation, so plain cursor moves between non-block lines cost nothing while
- * moving onto/off a block line still updates the `isCursorOnLine` suppression.
+ * sources. Recomputes on doc change and annotation effects via an
+ * annotation-driven builder with bounded per-annotation `tree.iterate` calls.
+ * Fold/turn-only transactions take a surgical path that replaces only affected
+ * positions (unless the transaction also carries a selection change, which
+ * forces a full rebuild). For selection-only transactions it applies a
+ * cursor-sensitivity guard: the rebuild is skipped unless the old or new
+ * cursor line spans a block annotation, so plain cursor moves cost nothing.
  *
- * Value shape: `BlockDecorationState` — `.decorations` for the DecorationSet,
+ * Value shape: `BlockDecorationState` - `.decorations` for the DecorationSet,
  * `.blockSensitiveLines` for the cursor guard set.
  */
 export const annotationBlockDecorationField = StateField.define<BlockDecorationState>({
@@ -582,6 +608,7 @@ export const annotationBlockDecorationField = StateField.define<BlockDecorationS
       return buildAnnotationBlockDecorations(tr.state);
     }
     if (isFoldOrTurnOnly(tr)) {
+      if (tr.selection) return buildAnnotationBlockDecorations(tr.state);
       return surgicallyUpdateBlockDecorations(value, tr.state, tr.effects);
     }
     if (syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
