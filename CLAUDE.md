@@ -53,6 +53,14 @@ See `doc/architecture.md` for full module map, state registry, startup flow, and
 - Windows are created dynamically in code, not in `tauri.conf.json`'s `windows` array.
 - **If `bun run test` ever hangs** (worker pegged at 100% CPU, no vitest timeout firing): it's a promise/setState microtask livelock, NOT memory pressure - do not reintroduce sharding/memory-limit workarounds. Capture stderr and look for an endlessly repeating `act(...)` warning (it names the host component), then stub that component. Full playbook and history: `doc/reports/2026-07-14-vitest-suite-hang-settingsmodal-livelock.md`. The original livelock (SettingsModal's stale-colorTheme reconcile effect: optimistic-null + reject-revert ping-pong when `set_preference` rejects) was root-caused and fixed in #891 by moving stale-theme cleanup into the theme store (`syncFromPreferences`, gated on `themesLoaded`, persist with no revert) and deleting the modal effect.
 - **Components mounted unconditionally by `App` (or hidden via `display:none`/an `open` prop) run their effects in every `render(<App />)` test.** Mount lazily in prod (see ReferenceLibrary in `Sidebar.tsx`), and stub heavy children in app-level wiring tests - they all have their own test files.
+- **Nerd Font codepoints: verify before coding.** The bundled `src/fonts/SymbolsNerdFontMono-Regular.woff2` only contains a subset of the Nerd Fonts catalog. Before using a new codepoint, check it exists in the shipped font:
+  ```bash
+  .venv/bin/python -c "
+  from fontTools.ttLib import TTFont
+  cmap = TTFont('src/fonts/SymbolsNerdFontMono-Regular.woff2').getBestCmap()
+  print(cmap.get(0xYOUR_HEX, 'MISSING'))"
+  ```
+  Always resolve pasted glyphs with `ord('...')` rather than trusting icon-picker labels - names and codepoints frequently disagree.
 
 ## Releasing
 

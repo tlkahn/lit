@@ -56,7 +56,12 @@ test-vault-*/
 # playwright-cli
 .playwright-cli
 
-# scripts/ Python (uv)
+# Python (uv) - dev/debug deps
+.venv/
+.python-version
+uv.lock
+__pycache__/
+*.pyc
 scripts/.venv/
 scripts/.python-version
 scripts/uv.lock
