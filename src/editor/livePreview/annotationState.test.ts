@@ -14,6 +14,7 @@ import {
   findAnnotationAtCursor,
   buildAnnotationDecorations,
   hasAnnotationEffect,
+  hasInlineAnnotationEffect,
   shouldRebuildBlocksOnTreeChange,
   buildAnnotationRangeMap,
   findAnnotationForRange,
@@ -1102,10 +1103,9 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
     view.destroy();
   });
 
-  it("hasAnnotationEffect is the single source of truth for every rebuild-triggering effect", () => {
-    // Single source of truth: the plugin's inline rebuild gate and the block
-    // StateField's gate both delegate to hasAnnotationEffect. Each of these six
-    // effects must be recognized, and an unrelated/empty transaction must not.
+  it("hasAnnotationEffect recognizes every block-field rebuild-triggering effect", () => {
+    // Block-field superset gate: every annotation-relevant effect must be
+    // recognized, and an unrelated/empty transaction must not.
     const cases = [
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
@@ -1122,6 +1122,58 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
 
     const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
     expect(hasAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("hasInlineAnnotationEffect recognizes ONLY the inline-relevant effects", () => {
+    const trueCases = [
+      setAnnotationData.of([]),
+      setDisplayMode.of("footnote"),
+      setFiringAnnotation.of(0),
+      clearFiringAnnotation.of(0),
+      setLlmLockedEffect.of(true),
+    ];
+    for (const effect of trueCases) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasInlineAnnotationEffect(tr)).toBe(true);
+    }
+
+    const falseCases = [
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setThreadTurnEffect.of({ pos: 0, turn: 1 }),
+    ];
+    for (const effect of falseCases) {
+      const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
+      expect(hasInlineAnnotationEffect(tr)).toBe(false);
+    }
+
+    const empty = EditorState.create({ doc: "x" }).update({ selection: { anchor: 1 } });
+    expect(hasInlineAnnotationEffect(empty)).toBe(false);
+  });
+
+  it("does NOT rebuild the inline plugin on toggleAnnotationFoldEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const setBefore = getSet(view);
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 16 }) });
+    expect(getSet(view)).toBe(setBefore);
+
+    view.destroy();
+  });
+
+  it("does NOT rebuild the inline plugin on setThreadTurnEffect", () => {
+    const doc = "first line\ntext <!---n | body---> more";
+    const view = makeView(doc, 0);
+    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const setBefore = getSet(view);
+    view.dispatch({ effects: setThreadTurnEffect.of({ pos: 16, turn: 1 }) });
+    expect(getSet(view)).toBe(setBefore);
+
+    view.destroy();
   });
 
   it("does NOT rebuild when cursor moves between two non-annotation (plain) lines", () => {

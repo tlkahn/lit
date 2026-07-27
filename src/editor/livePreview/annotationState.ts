@@ -325,7 +325,7 @@ class AnnotationDecorationPluginValue implements PluginValue {
     const treeChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
     if (update.docChanged || update.viewportChanged || treeChanged) {
       this.rebuild(update.view, update.docChanged ? "docChanged" : update.viewportChanged ? "viewportChanged" : "syntaxTree");
-    } else if (update.transactions.some((tr) => hasAnnotationEffect(tr))) {
+    } else if (update.transactions.some((tr) => hasInlineAnnotationEffect(tr))) {
       this.rebuild(update.view, "effect");
     } else if (update.selectionSet) {
       const oldLine = update.startState.doc.lineAt(update.startState.selection.main.head).number;
@@ -349,8 +349,8 @@ export const annotationDecorationPlugin = ViewPlugin.fromClass(
 );
 
 /**
- * Returns true when a transaction carries an annotation-relevant state effect
- * (the same effects that trigger a plugin rebuild).
+ * Block-field superset gate: returns true when a transaction carries any
+ * annotation-relevant state effect (inline OR block-only).
  */
 export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
   return tr.effects.some((e) =>
@@ -361,6 +361,20 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
     e.is(clearFiringAnnotation) ||
     e.is(setLlmLockedEffect) ||
     e.is(setThreadTurnEffect),
+  );
+}
+
+/**
+ * Inline-plugin gate: returns true only for effects that affect inline
+ * annotation rendering. Excludes fold and thread-turn effects (block-only).
+ */
+export function hasInlineAnnotationEffect(tr: { effects: readonly StateEffect<unknown>[] }): boolean {
+  return tr.effects.some((e) =>
+    e.is(setAnnotationData) ||
+    e.is(setDisplayMode) ||
+    e.is(setFiringAnnotation) ||
+    e.is(clearFiringAnnotation) ||
+    e.is(setLlmLockedEffect),
   );
 }
 
