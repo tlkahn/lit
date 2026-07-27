@@ -367,12 +367,22 @@ export class MarkerWidget extends WidgetType {
 
 // --- Fold state ---
 
-export const toggleAnnotationFoldEffect = StateEffect.define<{ pos: number }>();
+/** Positions refer to the transaction's post-change document (standard CM6 effect convention). */
+export const toggleAnnotationFoldEffect = StateEffect.define<{ pos: number }>({
+  map(value, mapping) {
+    return { pos: mapping.mapPos(value.pos, 1) };
+  },
+});
 
+/** Positions refer to the transaction's post-change document (standard CM6 effect convention). */
 export const setAllAnnotationFoldsEffect = StateEffect.define<{
   positions: number[];
   collapsed: boolean;
-}>();
+}>({
+  map(value, mapping) {
+    return { positions: value.positions.map((p) => mapping.mapPos(p, 1)), collapsed: value.collapsed };
+  },
+});
 
 export function isEffectiveFoldAllEffect(e: StateEffect<unknown>): boolean {
   return e.is(setAllAnnotationFoldsEffect) && e.value.positions.length > 0;

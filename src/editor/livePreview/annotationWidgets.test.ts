@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EditorState } from "@codemirror/state";
+import { EditorState, ChangeSet } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import { CLS } from "./annotationConstants";
@@ -303,6 +303,21 @@ describe("annotationFoldField", () => {
     const fold = tr2.state.field(annotationFoldField);
     expect(fold.get(6)).toBeUndefined();
     expect(fold.get(8)).toBe(true);
+  });
+
+  it("setAllAnnotationFoldsEffect.map remaps positions through a change", () => {
+    const change = ChangeSet.of({ from: 0, insert: "XXXXX" }, 30);
+    const effect = setAllAnnotationFoldsEffect.of({ positions: [10, 20], collapsed: true });
+    const mapped = effect.map(change);
+    expect(mapped.value.positions).toEqual([15, 25]);
+    expect(mapped.value.collapsed).toBe(true);
+  });
+
+  it("toggleAnnotationFoldEffect.map remaps pos through a change", () => {
+    const change = ChangeSet.of({ from: 0, insert: "XXXXX" }, 30);
+    const effect = toggleAnnotationFoldEffect.of({ pos: 10 });
+    const mapped = effect.map(change);
+    expect(mapped.value.pos).toBe(15);
   });
 
   it("empty setAllAnnotationFoldsEffect preserves fold map identity", () => {
