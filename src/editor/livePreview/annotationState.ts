@@ -225,14 +225,14 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
         const ann = rangeMap.get(`${nodeFrom}:${nodeTo}`);
         if (!ann) return;
 
-        const text = state.doc.sliceString(nodeFrom, nodeTo);
-        const isMultiLine = text.includes("\n");
+        // Reuse already-computed line numbers for the multiline check.
+        const isMultiLine = startLine !== endLine;
 
         // A multiline block annotation's callout is a line-break-spanning
         // replacement, which CodeMirror forbids from plugin sources;
         // splitAnnotationDecorations would route it to the discarded "block"
         // subset. annotationBlockDecorationField (a StateField) is the sole
-        // producer of that callout, so skip building it here — the line
+        // producer of that callout, so skip building it here - the line
         // tracking above keeps these lines cursor-sensitive.
         if (node.name === "BlockAnnotation" && isMultiLine) return;
 
@@ -421,13 +421,14 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
       const from = node.from;
       const to = node.to;
       if (from < 0 || to > docLen || from >= to) return;
-      if (!state.doc.sliceString(from, to).includes("\n")) return;
+
+      const startLine = state.doc.lineAt(from).number;
+      const endLine = state.doc.lineAt(to).number;
+      if (startLine === endLine) return;
 
       // Track every line spanned by this multiline block annotation
       // (cursor-sensitive) BEFORE the isCursorOnLine early-return, so moving the
       // cursor OFF a block line still triggers a rebuild that restores the callout.
-      const startLine = state.doc.lineAt(from).number;
-      const endLine = state.doc.lineAt(to).number;
       for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
 
       if (isCursorOnLine(state, from, to)) return;

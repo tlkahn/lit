@@ -846,6 +846,38 @@ describe("annotationDecorationPlugin", () => {
     view.destroy();
   });
 
+  it("single-line BlockAnnotation produces no block-field callout (lineAt multiline guard)", () => {
+    const doc = "first line\n<!---content--->";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 0 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    const ann = makeAnnotation({
+      form: "block",
+      char_start: 11,
+      char_end: 27,
+      original: "<!---content--->",
+    });
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const blockDecos = collectFromSet(view.state.field(annotationBlockDecorationField).decorations);
+    expect(blockDecos.filter(d => d.from === 11 && d.to === 27)).toHaveLength(0);
+
+    view.destroy();
+  });
+
   it("fold state → block-field CalloutWidget receives isCollapsed=true", () => {
     // The fold/isCollapsed state now lives on the block field's callout, since
     // the plugin no longer builds the multiline callout.
