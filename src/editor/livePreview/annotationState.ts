@@ -152,6 +152,14 @@ export function findAnnotationForRange(
   );
 }
 
+/**
+ * Index annotations by their `char_start:char_end` span for O(1) range lookup.
+ *
+ * Replaces repeated O(n) `findAnnotationForRange` scans inside a per-node tree
+ * walk (which is O(n*m) overall) with a single O(n) build plus O(1) lookups. To
+ * preserve `findAnnotationForRange`'s "first match wins" semantics, a span that
+ * appears more than once keeps the earliest annotation.
+ */
 export function buildAnnotationRangeMap(annotations: Annotation[]): Map<string, Annotation> {
   const map = new Map<string, Annotation>();
   for (const a of annotations) {
