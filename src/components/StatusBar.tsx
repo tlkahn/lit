@@ -204,6 +204,8 @@ function SwapPanesButton() {
   );
 }
 
+// Deliberately approximate: shows for any annotation count, including single-line-only
+// pages where the helper no-ops. Panel toolbar is the precise surface (isFoldAllTarget).
 function ToggleAnnotationsFoldButton() {
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
   const annotationCount = useBottomPanelStore((s) => s.tabMeta.annotations.count);
