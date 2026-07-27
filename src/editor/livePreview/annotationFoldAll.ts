@@ -18,7 +18,7 @@ export function isFoldAllTarget(
 export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {
   const t0 = isPerfEnabled() ? performance.now() : 0;
 
-  const annotations = view.state.field(annotationDataField);
+  const annotations = view.state.field(annotationDataField, false) ?? [];
   if (annotations.length === 0) return false;
 
   const doc = view.state.doc;
