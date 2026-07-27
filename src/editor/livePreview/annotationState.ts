@@ -1,6 +1,7 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, type PluginValue, keymap } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import type { Tree, SyntaxNode } from "@lezer/common";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
@@ -142,14 +143,12 @@ export const annotationPlugin = ViewPlugin.fromClass(
   },
 );
 
-function findAnnotationForRange(
-  annotations: Annotation[],
-  from: number,
-  to: number,
-): Annotation | undefined {
-  return annotations.find(
-    (a) => a.char_start === from && a.char_end === to,
-  );
+export function buildAnnotationIndex(annotations: Annotation[]): Map<string, Annotation> {
+  const map = new Map<string, Annotation>();
+  for (const ann of annotations) {
+    map.set(`${ann.char_start}:${ann.char_end}`, ann);
+  }
+  return map;
 }
 
 export interface BuildAnnotationDecorationsResult {
@@ -182,6 +181,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const tree = syntaxTree(state);
+  const index = buildAnnotationIndex(annotations);
 
   // Buffered windows of adjacent visible ranges can overlap (e.g. around a code
   // fold), so the same annotation node may be entered once per range. Dedupe by
@@ -212,7 +212,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
 
         if (isCursorOnLine(state, nodeFrom, nodeTo)) return;
 
-        const ann = findAnnotationForRange(annotations, nodeFrom, nodeTo);
+        const ann = index.get(`${nodeFrom}:${nodeTo}`);
         if (!ann) return;
 
         const text = state.doc.sliceString(nodeFrom, nodeTo);
@@ -222,7 +222,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
         // replacement, which CodeMirror forbids from plugin sources;
         // splitAnnotationDecorations would route it to the discarded "block"
         // subset. annotationBlockDecorationField (a StateField) is the sole
-        // producer of that callout, so skip building it here — the line
+        // producer of that callout, so skip building it here - the line
         // tracking above keeps these lines cursor-sensitive.
         if (node.name === "BlockAnnotation" && isMultiLine) return;
 
@@ -354,15 +354,87 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
   );
 }
 
-/**
- * Builds ONLY the line-break-spanning annotation decorations (expanded multiline
- * callouts) over the full document. These cannot be delivered via the
- * `annotationDecorationPlugin` (CodeMirror forbids line-break-spanning
- * replacements from plugins), so they live in this StateField instead.
- *
- * Mirrors `buildAnnotationDecorations` but is viewport-independent (block
- * annotations are few and the field has no access to view geometry).
- */
+export type BlockEffectClassification = "surgical" | "full" | "none";
+
+export function classifyBlockEffects(tr: { effects: readonly StateEffect<unknown>[] }): BlockEffectClassification {
+  let hasSurgical = false;
+  for (const e of tr.effects) {
+    if (e.is(setAnnotationData) || e.is(setDisplayMode) || e.is(setLlmLockedEffect)) {
+      return "full";
+    }
+    if (
+      e.is(toggleAnnotationFoldEffect) ||
+      e.is(setThreadTurnEffect) ||
+      e.is(setFiringAnnotation) ||
+      e.is(clearFiringAnnotation)
+    ) {
+      hasSurgical = true;
+    }
+  }
+  return hasSurgical ? "surgical" : "none";
+}
+
+function buildOneBlockWidget(
+  ann: Annotation,
+  from: number,
+  foldState: Map<number, boolean> | undefined,
+  turnState: Map<number, number> | undefined,
+  firingSet: Set<number>,
+  llmLocked: boolean,
+): Decoration {
+  const isCollapsed = foldState?.get(from) ?? false;
+  const isFiring = firingSet.has(from);
+  const widget =
+    ann.annotation_type === "thread"
+      ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring)
+      : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
+  return Decoration.replace({ widget });
+}
+
+function surgicalBlockUpdate(value: BlockDecorationState, tr: { state: EditorView["state"]; effects: readonly StateEffect<unknown>[] }): BlockDecorationState {
+  const state = tr.state;
+  const annotations = state.field(annotationDataField);
+  const index = buildAnnotationIndex(annotations);
+  const tree = syntaxTree(state);
+  const docLen = state.doc.length;
+
+  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
+  const llmLocked = state.field(llmLockedField, false) ?? false;
+  const foldState = state.field(annotationFoldField, false);
+  const turnState = state.field(threadTurnField, false);
+
+  const affectedPositions = new Set<number>();
+  for (const e of tr.effects) {
+    if (e.is(toggleAnnotationFoldEffect)) affectedPositions.add(e.value.pos);
+    else if (e.is(setThreadTurnEffect)) affectedPositions.add(e.value.pos);
+    else if (e.is(setFiringAnnotation)) affectedPositions.add(e.value);
+    else if (e.is(clearFiringAnnotation)) affectedPositions.add(e.value);
+  }
+
+  const add: { from: number; to: number; deco: Decoration }[] = [];
+  for (const pos of affectedPositions) {
+    const resolved = resolveBlockAnnotationNode(tree, pos);
+    if (!resolved) continue;
+    const { from, to } = resolved;
+    if (from < 0 || to > docLen || from >= to) continue;
+    if (!state.doc.sliceString(from, to).includes("\n")) continue;
+    if (isCursorOnLine(state, from, to)) continue;
+
+    const ann = index.get(`${from}:${to}`);
+    if (!ann) continue;
+
+    add.push({ from, to, deco: buildOneBlockWidget(ann, from, foldState, turnState, firingSet, llmLocked) });
+  }
+
+  const newDecos = value.decorations.update({
+    filter: (from) => !affectedPositions.has(from),
+    add: add.map((d) => d.deco.range(d.from, d.to)),
+    sort: true,
+  });
+
+  return { decorations: newDecos, blockSensitiveLines: value.blockSensitiveLines };
+}
+
 /** State shape for `annotationBlockDecorationField`. */
 export interface BlockDecorationState {
   /** The DecorationSet containing line-break-spanning block annotation callouts. */
@@ -373,6 +445,18 @@ export interface BlockDecorationState {
    * lines that no block annotation touches.
    */
   blockSensitiveLines: Set<number>;
+}
+
+export function resolveBlockAnnotationNode(
+  tree: Tree, charStart: number,
+): { from: number; to: number } | null {
+  if (charStart >= tree.length) return null;
+  let node: SyntaxNode | null = tree.resolveInner(charStart, 1);
+  while (node) {
+    if (node.name === "BlockAnnotation") return { from: node.from, to: node.to };
+    node = node.parent;
+  }
+  return null;
 }
 
 function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecorationState {
@@ -388,41 +472,28 @@ function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecor
   const turnState = state.field(threadTurnField, false);
 
   const docLen = state.doc.length;
+  const tree = syntaxTree(state);
   const decos: { from: number; to: number; deco: Decoration }[] = [];
 
-  syntaxTree(state).iterate({
-    enter: (node) => {
-      if (node.name !== "BlockAnnotation") return;
-      const from = node.from;
-      const to = node.to;
-      if (from < 0 || to > docLen || from >= to) return;
-      if (!state.doc.sliceString(from, to).includes("\n")) return;
+  for (const ann of annotations) {
+    const resolved = resolveBlockAnnotationNode(tree, ann.char_start);
+    if (!resolved) continue;
+    const { from, to } = resolved;
+    if (from < 0 || to > docLen || from >= to) continue;
+    if (!state.doc.sliceString(from, to).includes("\n")) continue;
 
-      // Track every line spanned by this multiline block annotation
-      // (cursor-sensitive) BEFORE the isCursorOnLine early-return, so moving the
-      // cursor OFF a block line still triggers a rebuild that restores the callout.
-      const startLine = state.doc.lineAt(from).number;
-      const endLine = state.doc.lineAt(to).number;
-      for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
+    const startLine = state.doc.lineAt(from).number;
+    const endLine = state.doc.lineAt(to).number;
+    for (let l = startLine; l <= endLine; l++) blockSensitiveLines.add(l);
 
-      if (isCursorOnLine(state, from, to)) return;
+    if (isCursorOnLine(state, from, to)) continue;
 
-      const ann = findAnnotationForRange(annotations, from, to);
-      if (!ann) return;
-
-      const isCollapsed = foldState?.get(from) ?? false;
-      const isFiring = firingSet.has(from);
-      const widget =
-        ann.annotation_type === "thread"
-          ? new ThreadWidget(ann, turnState?.get(from) ?? 0, isCollapsed, from, isFiring)
-          : new CalloutWidget(ann, isCollapsed, from, isFiring, llmLocked);
-      decos.push({
-        from,
-        to,
-        deco: Decoration.replace({ widget }),
-      });
-    },
-  });
+    decos.push({
+      from,
+      to,
+      deco: buildOneBlockWidget(ann, from, foldState, turnState, firingSet, llmLocked),
+    });
+  }
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
   return {
@@ -469,12 +540,13 @@ export const annotationBlockDecorationField = StateField.define<BlockDecorationS
     return buildAnnotationBlockDecorations(state);
   },
   update(value, tr) {
-    if (tr.docChanged || hasAnnotationEffect(tr)) {
-      return buildAnnotationBlockDecorations(tr.state);
-    }
+    if (tr.docChanged) return buildAnnotationBlockDecorations(tr.state);
+    const cls = classifyBlockEffects(tr);
+    if (cls === "full") return buildAnnotationBlockDecorations(tr.state);
+    if (cls === "surgical") return surgicalBlockUpdate(value, tr);
     // Parser progress (Language.setState advancing the tree) carries no
     // docChange or annotation effect. Only rebuild if the old tree hadn't yet
-    // covered all annotation positions — otherwise the extension can't reveal
+    // covered all annotation positions - otherwise the extension can't reveal
     // new block nodes.
     if (syntaxTree(tr.startState) !== syntaxTree(tr.state)) {
       if (shouldRebuildBlocksOnTreeChange(tr.startState, tr.startState.field(annotationDataField))) {

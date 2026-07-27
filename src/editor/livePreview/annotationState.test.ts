@@ -15,6 +15,9 @@ import {
   buildAnnotationDecorations,
   hasAnnotationEffect,
   shouldRebuildBlocksOnTreeChange,
+  resolveBlockAnnotationNode,
+  buildAnnotationIndex,
+  classifyBlockEffects,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -1385,6 +1388,276 @@ describe("shouldRebuildBlocksOnTreeChange", () => {
     // the already-parsed territory of the OLD tree.
     expect(fieldAfter).toBe(fieldBefore);
 
+    view.destroy();
+  });
+});
+
+describe("resolveBlockAnnotationNode", () => {
+  function makeTree(doc: string) {
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: [CommentGrammar, AnnotationGrammar] })],
+    });
+    ensureSyntaxTree(state, state.doc.length);
+    return syntaxTree(state);
+  }
+
+  it("returns { from, to } when charStart is at a BlockAnnotation node", () => {
+    const doc = "text\n\n<!---\nnote body\n--->";
+    const tree = makeTree(doc);
+    const blockStart = doc.indexOf("<!---");
+    const result = resolveBlockAnnotationNode(tree, blockStart);
+    expect(result).not.toBeNull();
+    expect(result!.from).toBe(blockStart);
+    expect(result!.to).toBe(doc.length);
+  });
+
+  it("returns null when charStart is in a plain paragraph", () => {
+    const doc = "plain paragraph text";
+    const tree = makeTree(doc);
+    expect(resolveBlockAnnotationNode(tree, 5)).toBeNull();
+  });
+
+  it("returns null when charStart is beyond parsed tree length", () => {
+    const doc = "hello";
+    const tree = makeTree(doc);
+    expect(resolveBlockAnnotationNode(tree, 9999)).toBeNull();
+  });
+
+  it("returns correct range for multiple BlockAnnotation nodes", () => {
+    const doc = "<!---\nbody A\n--->\n\n<!---\nbody B\n--->";
+    const tree = makeTree(doc);
+    const startA = 0;
+    const startB = doc.indexOf("<!---\nbody B");
+    const resultA = resolveBlockAnnotationNode(tree, startA);
+    const resultB = resolveBlockAnnotationNode(tree, startB);
+    expect(resultA).not.toBeNull();
+    expect(resultB).not.toBeNull();
+    expect(resultA!.from).toBe(startA);
+    expect(resultB!.from).toBe(startB);
+    expect(resultA!.to).toBeLessThan(resultB!.from);
+  });
+});
+
+describe("buildAnnotationIndex", () => {
+  it("builds a Map keyed by char_start:char_end", () => {
+    const a1 = makeAnnotation({ char_start: 0, char_end: 10 });
+    const a2 = makeAnnotation({ char_start: 20, char_end: 35 });
+    const index = buildAnnotationIndex([a1, a2]);
+    expect(index.get("0:10")).toBe(a1);
+    expect(index.get("20:35")).toBe(a2);
+    expect(index.get("0:35")).toBeUndefined();
+  });
+
+  it("returns empty Map for empty annotations", () => {
+    const index = buildAnnotationIndex([]);
+    expect(index.size).toBe(0);
+  });
+
+  it("last annotation wins on duplicate range", () => {
+    const a1 = makeAnnotation({ char_start: 5, char_end: 15, body: "first" });
+    const a2 = makeAnnotation({ char_start: 5, char_end: 15, body: "second" });
+    const index = buildAnnotationIndex([a1, a2]);
+    expect(index.get("5:15")).toBe(a2);
+  });
+});
+
+describe("classifyBlockEffects", () => {
+  it("fold-only -> surgical", () => {
+    const effects = [toggleAnnotationFoldEffect.of({ pos: 0 })];
+    expect(classifyBlockEffects({ effects })).toBe("surgical");
+  });
+
+  it("turn-only -> surgical", () => {
+    const effects = [setThreadTurnEffect.of({ pos: 0, turn: 1 })];
+    expect(classifyBlockEffects({ effects })).toBe("surgical");
+  });
+
+  it("fire-only -> surgical", () => {
+    const effects = [setFiringAnnotation.of(42)];
+    expect(classifyBlockEffects({ effects })).toBe("surgical");
+  });
+
+  it("clearFire-only -> surgical", () => {
+    const effects = [clearFiringAnnotation.of(42)];
+    expect(classifyBlockEffects({ effects })).toBe("surgical");
+  });
+
+  it("setAnnotationData -> full", () => {
+    const effects = [setAnnotationData.of([])];
+    expect(classifyBlockEffects({ effects })).toBe("full");
+  });
+
+  it("setDisplayMode -> full", () => {
+    const effects = [setDisplayMode.of("footnote")];
+    expect(classifyBlockEffects({ effects })).toBe("full");
+  });
+
+  it("setLlmLockedEffect -> full", () => {
+    const effects = [setLlmLockedEffect.of(true)];
+    expect(classifyBlockEffects({ effects })).toBe("full");
+  });
+
+  it("no effects -> none", () => {
+    expect(classifyBlockEffects({ effects: [] })).toBe("none");
+  });
+
+  it("fold + setAnnotationData -> full (full wins)", () => {
+    const effects = [
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setAnnotationData.of([]),
+    ];
+    expect(classifyBlockEffects({ effects })).toBe("full");
+  });
+
+  it("fold + fire -> surgical (multiple surgical combine)", () => {
+    const effects = [
+      toggleAnnotationFoldEffect.of({ pos: 0 }),
+      setFiringAnnotation.of(10),
+    ];
+    expect(classifyBlockEffects({ effects })).toBe("surgical");
+  });
+});
+
+describe("surgical block update", () => {
+  function makeBlockView(doc: string, cursorPos?: number) {
+    const pos = cursorPos ?? doc.length - 1;
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: pos },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    return view;
+  }
+
+  function blockAnnotations(view: EditorView): Annotation[] {
+    const { state } = view;
+    const anns: Annotation[] = [];
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        if (node.name !== "BlockAnnotation") return;
+        anns.push(makeAnnotation({
+          form: "block",
+          annotation_type: "note",
+          char_start: node.from,
+          char_end: node.to,
+          original: state.doc.sliceString(node.from, node.to),
+          body: `body at ${node.from}`,
+        }));
+      },
+    });
+    return anns;
+  }
+
+  function decoPositions(state: EditorView["state"]): number[] {
+    const field = state.field(annotationBlockDecorationField);
+    const positions: number[] = [];
+    const iter = field.decorations.iter();
+    while (iter.value) { positions.push(iter.from); iter.next(); }
+    return positions;
+  }
+
+  it("fold toggle via surgical path produces identical DecorationSet to full rebuild", () => {
+    const doc = "text\n\n<!---\nbody A\n--->\n\n<!---\nbody B\n--->\n\ntail";
+    const view = makeBlockView(doc);
+    const anns = blockAnnotations(view);
+    view.dispatch({ effects: setAnnotationData.of(anns) });
+
+    const target = anns[0]!.char_start;
+
+    // Surgical fold
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: target }) });
+    const surgicalPositions = decoPositions(view.state);
+
+    // Compare with a fresh full rebuild by toggling back then forward via setAnnotationData (forces full)
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: target }) });
+    view.dispatch({ effects: [setAnnotationData.of(anns), toggleAnnotationFoldEffect.of({ pos: target })] });
+    const fullPositions = decoPositions(view.state);
+
+    expect(surgicalPositions).toEqual(fullPositions);
+    view.destroy();
+  });
+
+  it("fold single: only 1 decoration changes in the set", () => {
+    const doc = "first\n\n<!---\nbody A\n--->\n\n<!---\nbody B\n--->\n\ntail";
+    const view = makeBlockView(doc);
+    const anns = blockAnnotations(view);
+    view.dispatch({ effects: setAnnotationData.of(anns) });
+
+    const before = view.state.field(annotationBlockDecorationField);
+    const target = anns[0]!.char_start;
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: target }) });
+    const after = view.state.field(annotationBlockDecorationField);
+
+    // Count how many widget positions changed
+    const beforeIter = before.decorations.iter();
+    const afterIter = after.decorations.iter();
+    let changed = 0;
+    while (beforeIter.value && afterIter.value) {
+      if (beforeIter.from === afterIter.from) {
+        const bw = beforeIter.value.spec.widget;
+        const aw = afterIter.value.spec.widget;
+        if (!bw.eq(aw)) changed++;
+      }
+      beforeIter.next();
+      afterIter.next();
+    }
+    expect(changed).toBe(1);
+    view.destroy();
+  });
+
+  it("surgical path reuses blockSensitiveLines reference", () => {
+    const doc = "text\n\n<!---\nbody\n--->\n\ntail";
+    const view = makeBlockView(doc);
+    const anns = blockAnnotations(view);
+    view.dispatch({ effects: setAnnotationData.of(anns) });
+
+    const before = view.state.field(annotationBlockDecorationField);
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: anns[0]!.char_start }) });
+    const after = view.state.field(annotationBlockDecorationField);
+
+    expect(after.blockSensitiveLines).toBe(before.blockSensitiveLines);
+    view.destroy();
+  });
+
+  it("surgical fold on cursor-suppressed annotation: no decoration added", () => {
+    // Place cursor on the block annotation line - it gets suppressed
+    const doc = "<!---\nbody\n--->\n\ntail";
+    const view = makeBlockView(doc, 0);
+    const anns = blockAnnotations(view);
+    view.dispatch({ effects: setAnnotationData.of(anns) });
+
+    // No decoration since cursor is on the annotation
+    expect(decoPositions(view.state)).toEqual([]);
+
+    // Fold toggle while suppressed - still no decoration
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: anns[0]!.char_start }) });
+    expect(decoPositions(view.state)).toEqual([]);
+    view.destroy();
+  });
+
+  it("surgical path returns new object (not === old value)", () => {
+    const doc = "text\n\n<!---\nbody\n--->\n\ntail";
+    const view = makeBlockView(doc);
+    const anns = blockAnnotations(view);
+    view.dispatch({ effects: setAnnotationData.of(anns) });
+
+    const before = view.state.field(annotationBlockDecorationField);
+    view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: anns[0]!.char_start }) });
+    const after = view.state.field(annotationBlockDecorationField);
+
+    expect(after).not.toBe(before);
     view.destroy();
   });
 });
