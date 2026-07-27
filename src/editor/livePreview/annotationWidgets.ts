@@ -820,6 +820,7 @@ export class ThreadWidget extends WidgetType {
     if (activeTurn && activeTurn.question !== "") {
       const question = document.createElement("div");
       question.className = CLS.THREAD_QUESTION;
+      // Plain text - never render attacker-controlled markup in the question line.
       question.textContent = activeTurn.question;
       container.appendChild(question);
     }
@@ -874,6 +875,11 @@ export class ThreadWidget extends WidgetType {
       this.isCollapsed === other.isCollapsed &&
       this.isFiring === other.isFiring
     );
+  }
+
+  destroy(dom: HTMLElement): void {
+    const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`) as OverflowEl | null;
+    overflow?._litCloseMenu?.();
   }
 
   updateDOM(dom: HTMLElement, _view: EditorView, from: ThreadWidget): boolean {

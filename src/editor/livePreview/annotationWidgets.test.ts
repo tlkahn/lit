@@ -1874,6 +1874,7 @@ describe("ThreadWidget", () => {
     expect(key.defaultPrevented).toBe(true);
     expect(stopSpy).toHaveBeenCalled();
     expect(overflow.classList.contains("is-open")).toBe(true);
+    w.destroy(dom);
   });
 
   it("menu row click closes the menu", () => {
@@ -1929,6 +1930,37 @@ describe("ThreadWidget", () => {
     const pasteFromSpan = new Event("paste", { bubbles: true });
     Object.defineProperty(pasteFromSpan, "target", { value: span });
     expect(w.ignoreEvent(pasteFromSpan)).toBe(false);
+  });
+
+  it("destroy closes an open overflow menu and releases the document keydown trap", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const overflow = dom.querySelector(".cm-thread-overflow")! as HTMLElement;
+
+    overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(overflow.classList.contains("is-open")).toBe(true);
+
+    w.destroy(dom);
+
+    expect(overflow.classList.contains("is-open")).toBe(false);
+
+    const key = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+
+    const click = new MouseEvent("mousedown", { bubbles: true });
+    expect(() => document.dispatchEvent(click)).not.toThrow();
+  });
+
+  it("destroy with menu closed is a no-op", () => {
+    const w = new ThreadWidget(makeThread(), 0, false, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+
+    expect(() => w.destroy(dom)).not.toThrow();
+
+    const key = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
   });
 });
 

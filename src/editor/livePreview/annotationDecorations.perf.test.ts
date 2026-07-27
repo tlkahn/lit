@@ -540,6 +540,11 @@ describe("targeted iteration (step 1)", () => {
     for (let i = 0; i < surgicalTuples.length; i++) {
       expect(surgicalTuples[i]).toEqual(freshTuples[i]);
     }
+
+    const surgicalLines = [...view.state.field(annotationBlockDecorationField).blockSensitiveLines].sort((a, b) => a - b);
+    const freshLines = [...freshBuild.blockSensitiveLines].sort((a, b) => a - b);
+    expect(surgicalLines).toEqual(freshLines);
+
     view.destroy();
   });
 });
