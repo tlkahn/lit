@@ -528,6 +528,40 @@ export class CalloutWidget extends WidgetType {
     );
   }
 
+  updateDOM(dom: HTMLElement, _view: EditorView, from: CalloutWidget): boolean {
+    if (
+      this.annotation.original !== from.annotation.original ||
+      this.annotation.char_start !== from.annotation.char_start ||
+      this.annotation.char_end !== from.annotation.char_end ||
+      this.annotation.mark !== from.annotation.mark ||
+      this.annotation.uuid !== from.annotation.uuid ||
+      this.isFiring !== from.isFiring ||
+      this.llmLocked !== from.llmLocked
+    ) {
+      return false;
+    }
+    if (this.isCollapsed === from.isCollapsed) return true;
+
+    const chevron = dom.querySelector(`.${CLS.FOLD_ICON}`);
+    if (!chevron) return false;
+
+    if (this.isCollapsed) {
+      chevron.classList.add(CLS.IS_COLLAPSED);
+      const body = dom.querySelector(`.${CLS.CALLOUT_BODY}`);
+      if (body) body.remove();
+    } else {
+      chevron.classList.remove(CLS.IS_COLLAPSED);
+      if (this.annotation.body) {
+        const body = document.createElement("div");
+        body.className = CLS.CALLOUT_BODY;
+        body.innerHTML = renderMarkdown(this.annotation.body);
+        interceptFootnoteClicks(body);
+        dom.appendChild(body);
+      }
+    }
+    return true;
+  }
+
   ignoreEvent(event: Event): boolean {
     return event.type === "mousedown";
   }
@@ -832,6 +866,43 @@ export class ThreadWidget extends WidgetType {
       this.isCollapsed === other.isCollapsed &&
       this.isFiring === other.isFiring
     );
+  }
+
+  updateDOM(dom: HTMLElement, view: EditorView, from: ThreadWidget): boolean {
+    if (
+      this.annotation.original !== from.annotation.original ||
+      this.annotation.char_start !== from.annotation.char_start ||
+      this.annotation.char_end !== from.annotation.char_end ||
+      this.annotation.uuid !== from.annotation.uuid ||
+      this.turn !== from.turn ||
+      this.isFiring !== from.isFiring
+    ) {
+      return false;
+    }
+    if (this.isCollapsed === from.isCollapsed) return true;
+
+    const chevron = dom.querySelector(`.${CLS.FOLD_ICON}`);
+    if (!chevron) return false;
+
+    if (this.isCollapsed) {
+      chevron.classList.add(CLS.IS_COLLAPSED);
+      for (const cls of [CLS.CALLOUT_BODY, CLS.THREAD_QUESTION, CLS.THREAD_FOLLOWUP_TRIGGER, CLS.THREAD_EMPTY]) {
+        const el = dom.querySelector(`.${cls}`);
+        if (el) el.remove();
+      }
+    } else {
+      chevron.classList.remove(CLS.IS_COLLAPSED);
+      const freshDom = this.toDOM(view);
+      const question = freshDom.querySelector(`.${CLS.THREAD_QUESTION}`);
+      if (question) dom.appendChild(question);
+      const body = freshDom.querySelector(`.${CLS.CALLOUT_BODY}`);
+      if (body) dom.appendChild(body);
+      const trigger = freshDom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`);
+      if (trigger) dom.appendChild(trigger);
+      const empty = freshDom.querySelector(`.${CLS.THREAD_EMPTY}`);
+      if (empty) dom.appendChild(empty);
+    }
+    return true;
   }
 
   ignoreEvent(event: Event): boolean {

@@ -757,14 +757,18 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     return { calloutEqFalse, threadEqFalse, calloutEqCalls, threadEqCalls };
   }
 
-  function installToDOMSpies(): {
+  function installDOMSpies(): {
     calloutToDOM: number;
     threadToDOM: number;
+    calloutUpdateDOM: number;
+    threadUpdateDOM: number;
     restore: () => void;
   } {
-    const stats = { calloutToDOM: 0, threadToDOM: 0 };
+    const stats = { calloutToDOM: 0, threadToDOM: 0, calloutUpdateDOM: 0, threadUpdateDOM: 0 };
     const origCalloutToDOM = CalloutWidget.prototype.toDOM;
     const origThreadToDOM = ThreadWidget.prototype.toDOM;
+    const origCalloutUpdateDOM = CalloutWidget.prototype.updateDOM;
+    const origThreadUpdateDOM = ThreadWidget.prototype.updateDOM;
 
     const calloutSpy = vi
       .spyOn(CalloutWidget.prototype, "toDOM")
@@ -778,17 +782,29 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         stats.threadToDOM++;
         return origThreadToDOM.call(this, view);
       });
+    const calloutUpdateSpy = vi
+      .spyOn(CalloutWidget.prototype, "updateDOM")
+      .mockImplementation(function (this: CalloutWidget, dom: HTMLElement, view: EditorView, from: CalloutWidget) {
+        stats.calloutUpdateDOM++;
+        return origCalloutUpdateDOM.call(this, dom, view, from);
+      });
+    const threadUpdateSpy = vi
+      .spyOn(ThreadWidget.prototype, "updateDOM")
+      .mockImplementation(function (this: ThreadWidget, dom: HTMLElement, view: EditorView, from: ThreadWidget) {
+        stats.threadUpdateDOM++;
+        return origThreadUpdateDOM.call(this, dom, view, from);
+      });
 
     return {
-      get calloutToDOM() {
-        return stats.calloutToDOM;
-      },
-      get threadToDOM() {
-        return stats.threadToDOM;
-      },
+      get calloutToDOM() { return stats.calloutToDOM; },
+      get threadToDOM() { return stats.threadToDOM; },
+      get calloutUpdateDOM() { return stats.calloutUpdateDOM; },
+      get threadUpdateDOM() { return stats.threadUpdateDOM; },
       restore: () => {
         calloutSpy.mockRestore();
         threadSpy.mockRestore();
+        calloutUpdateSpy.mockRestore();
+        threadUpdateSpy.mockRestore();
       },
     };
   }
@@ -809,7 +825,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     return { notes, threads };
   }
 
-  it("fold-all blast radius: eq() and toDOM() call counts", { timeout: 60_000 }, () => {
+  it("fold-all blast radius: eq() and updateDOM/toDOM call counts", { timeout: 60_000 }, () => {
     const { view, restoreHeights } = makeStressBlockViewFullViewport();
     try {
       const { notes, threads } = countAnnotationMix(view);
@@ -820,29 +836,24 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
       const before = collectBlockWidgets(view);
       expect(before.size).toBe(150);
 
-      const spies = installToDOMSpies();
+      const spies = installDOMSpies();
       try {
         view.dispatch({ effects: foldAllEffects(view) });
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        // Primary H2 multiplier: every folded widget fails eq (isCollapsed flipped).
         expect(blast.calloutEqCalls).toBe(notes);
         expect(blast.threadEqCalls).toBe(threads);
         expect(blast.calloutEqFalse).toBe(notes);
         expect(blast.threadEqFalse).toBe(threads);
-        // toDOM only runs for widgets CM6 has drawn (viewport-scoped). Fold-all
-        // must redraw more than a single toggle; exact N is not reachable in
-        // jsdom because the height-map viewport still covers only a handful of
-        // the 150 replace-widgets even with estimatedHeight forced to 1.
+        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
+        expect(totalUpdateDOM).toBeGreaterThan(1);
         const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBeGreaterThan(1);
-        expect(spies.calloutToDOM).toBeGreaterThan(0);
-        expect(spies.threadToDOM).toBeGreaterThan(0);
+        expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius fold-all: callout eqFalse=${blast.calloutEqFalse}/${notes} toDOM=${spies.calloutToDOM}; ` +
-            `thread eqFalse=${blast.threadEqFalse}/${threads} toDOM=${spies.threadToDOM} (viewport-scoped toDOM)`,
+          `[perf] H2 blast-radius fold-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +
+            `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();
@@ -858,26 +869,29 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     try {
       const { notes, threads } = countAnnotationMix(view);
 
-      // First fold-all (no spies) so the second toggle expands.
       view.dispatch({ effects: foldAllEffects(view) });
       const before = collectBlockWidgets(view);
       expect(before.size).toBe(150);
 
-      const spies = installToDOMSpies();
+      const spies = installDOMSpies();
       try {
         view.dispatch({ effects: foldAllEffects(view) });
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        // Expand direction has the same eq blast radius as fold.
         expect(blast.calloutEqFalse).toBe(notes);
         expect(blast.threadEqFalse).toBe(threads);
+        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
+        expect(totalUpdateDOM).toBeGreaterThan(1);
         const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBeGreaterThan(1);
+        // Expand may produce a small number of toDOM calls for widgets that
+        // had no previous DOM (e.g. cursor-suppressed annotations that gain a
+        // decoration on fold-state change).
+        expect(totalToDOM).toBeLessThanOrEqual(2);
 
         console.warn(
-          `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} toDOM=${spies.calloutToDOM}; ` +
-            `thread eqFalse=${blast.threadEqFalse}/${threads} toDOM=${spies.threadToDOM} (viewport-scoped toDOM)`,
+          `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +
+            `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();
@@ -891,26 +905,27 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   it("single fold toggle: blast radius is 1", { timeout: 60_000 }, () => {
     const { view, restoreHeights } = makeStressBlockViewFullViewport();
     try {
-      // Fold the second annotation - the first may sit next to the parked cursor.
       const target = view.state.field(annotationDataField)[1];
       expect(target).toBeDefined();
 
       const before = collectBlockWidgets(view);
       expect(before.size).toBe(150);
 
-      const spies = installToDOMSpies();
+      const spies = installDOMSpies();
       try {
         view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: target!.char_start }) });
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
         const totalEqFalse = blast.calloutEqFalse + blast.threadEqFalse;
-        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
         expect(totalEqFalse).toBe(1);
-        expect(totalToDOM).toBe(1);
+        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
+        expect(totalUpdateDOM).toBeLessThanOrEqual(1);
+        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
+        expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} toDOM=${totalToDOM}`,
+          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} updateDOM=${totalUpdateDOM} toDOM=${totalToDOM}`,
         );
       } finally {
         spies.restore();

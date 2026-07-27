@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { CLS } from "./annotationConstants";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
@@ -1928,5 +1929,137 @@ describe("ThreadWidget", () => {
     const pasteFromSpan = new Event("paste", { bubbles: true });
     Object.defineProperty(pasteFromSpan, "target", { value: span });
     expect(w.ignoreEvent(pasteFromSpan)).toBe(false);
+  });
+});
+
+describe("CalloutWidget.updateDOM", () => {
+  const view = makeEditorView();
+
+  it("collapses: returns true, removes body, adds IS_COLLAPSED class", () => {
+    const ann = makeAnnotation({ body: "some body text" });
+    const oldWidget = new CalloutWidget(ann, false, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
+
+    const newWidget = new CalloutWidget(ann, true, 0, false, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(true);
+  });
+
+  it("expands: returns true, adds body with rendered markdown", () => {
+    const ann = makeAnnotation({ body: "expanded body" });
+    const oldWidget = new CalloutWidget(ann, true, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+
+    const newWidget = new CalloutWidget(ann, false, 0, false, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    const body = dom.querySelector(`.${CLS.CALLOUT_BODY}`);
+    expect(body).not.toBeNull();
+    expect(body!.innerHTML).toBeTruthy();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
+  });
+
+  it("returns false for content change", () => {
+    const ann1 = makeAnnotation({ original: "<!---n | body1--->" });
+    const ann2 = makeAnnotation({ original: "<!---n | body2--->" });
+    const oldWidget = new CalloutWidget(ann1, false, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new CalloutWidget(ann2, false, 0, false, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+
+  it("returns false for firing state change", () => {
+    const ann = makeAnnotation();
+    const oldWidget = new CalloutWidget(ann, false, 0, false, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new CalloutWidget(ann, false, 0, true, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+});
+
+describe("ThreadWidget.updateDOM", () => {
+  const view = makeEditorView();
+
+  it("collapses: returns true, removes body elements", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "Q: first?\nA: reply one.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+
+    const newWidget = new ThreadWidget(ann, 0, true, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.THREAD_QUESTION}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)).toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(true);
+  });
+
+  it("expands: returns true, adds body elements", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "Q: first?\nA: reply one.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, true, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
+
+    const newWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+
+    expect(result).toBe(true);
+    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
+    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
+  });
+
+  it("returns false for turn change", () => {
+    const ann = makeAnnotation({
+      annotation_type: "thread",
+      body: "Q: first?\nA: reply one.\nQ: second?\nA: reply two.",
+    });
+    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new ThreadWidget(ann, 1, false, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
+  });
+
+  it("returns false for content change", () => {
+    const ann1 = makeAnnotation({
+      annotation_type: "thread",
+      original: "<!---thread-1--->",
+      body: "Q: first?\nA: reply.",
+    });
+    const ann2 = makeAnnotation({
+      annotation_type: "thread",
+      original: "<!---thread-2--->",
+      body: "Q: different?\nA: different reply.",
+    });
+    const oldWidget = new ThreadWidget(ann1, 0, false, 0, false);
+    const dom = oldWidget.toDOM(view);
+
+    const newWidget = new ThreadWidget(ann2, 0, false, 0, false);
+    const result = newWidget.updateDOM(dom, view, oldWidget);
+    expect(result).toBe(false);
   });
 });
