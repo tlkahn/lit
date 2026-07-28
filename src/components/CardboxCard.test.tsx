@@ -300,6 +300,78 @@ describe("CardboxCard", () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 
+  // --- Flip control tests ---
+
+  it("shows flip button when annotation has original", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-flip")).toBeInTheDocument();
+  });
+
+  it("hides flip button when annotation has no original", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
+  });
+
+  it("root data-flipped is false by default", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("clicking flip toggles data-flipped and does not expand", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    fireEvent.click(flip);
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(flip).toHaveAttribute("aria-label", "Show annotation");
+    fireEvent.click(flip);
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    expect(flip).toHaveAttribute("aria-label", "Show original quote");
+  });
+
+  it("flip button sits outside expand hit-path when card clicked elsewhere still expands", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("cardbox-card"));
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
   // --- Card linking tests ---
 
   const linkedCards: CardboxAnnotation[] = [

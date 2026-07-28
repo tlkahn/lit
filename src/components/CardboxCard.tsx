@@ -144,7 +144,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   const cardRef = useRef<HTMLDivElement>(null);
   const prevPinnedRef = useRef(isPinned);
   const [justPinned, setJustPinned] = useState(false);
+  const [flipped, setFlipped] = useState(false);
   const [noteEditing, setNoteEditing] = useState(false);
+  const canFlip = Boolean(annotation.original);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -184,14 +186,30 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-expanded={expanded}
       data-pinned={isPinned || undefined}
       data-color-tag={colorTag || undefined}
+      data-flipped={flipped}
     >
-      {isPinned && (
-        <span
-          className="nerd-font absolute top-2 right-2 text-sm text-interactive-accent"
-          data-testid="pin-icon"
-          aria-hidden="true"
-        >{'󰐃'}</span>
-      )}
+      <div className="absolute top-2 right-2 flex items-center gap-1">
+        {isPinned && (
+          <span
+            className="nerd-font text-sm text-interactive-accent"
+            data-testid="pin-icon"
+            aria-hidden="true"
+          >{'󰐃'}</span>
+        )}
+        {canFlip && (
+          <button
+            type="button"
+            className="nerd-font text-sm text-text-muted hover:text-text-normal"
+            data-testid="card-flip"
+            aria-label={flipped ? "Show annotation" : "Show original quote"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setFlipped((v) => !v);
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >{''}</button>
+        )}
+      </div>
       {/* Collapsed content - always visible */}
       <div className="flex items-start gap-2">
         <span
