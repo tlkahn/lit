@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
-import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
+import { renderMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
 /** Inline sub-component: slip-note editor body (textarea / display states). */
@@ -170,7 +170,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
   const certainty = certaintyMark(annotation.certainty);
   const renderedBody = useMemo(() => renderMarkdown(annotation.body ?? ""), [annotation.body]);
-  const renderedOriginal = useMemo(() => renderInlineMarkdown(annotation.original ?? ""), [annotation.original]);
 
   return (
     <div
@@ -193,15 +192,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           aria-hidden="true"
         >{'󰐃'}</span>
       )}
-      {/* Original quote - always visible when present */}
-      {annotation.original && (
-        <div
-          className={`mb-2 border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
-          data-testid="card-original"
-          dangerouslySetInnerHTML={{ __html: renderedOriginal }}
-        />
-      )}
-
       {/* Collapsed content - always visible */}
       <div className="flex items-start gap-2">
         <span
@@ -227,9 +217,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             {certainty}
           </span>
         )}
-        <span className="text-text-faint" data-testid="card-source">
-          {annotation.source_page_title}
-        </span>
         {linkedCards && linkedCards.length > 0 && (
           <span className="text-text-faint" data-testid="card-link-count">
             &middot;{linkedCards.length}

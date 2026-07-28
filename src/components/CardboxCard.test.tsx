@@ -32,7 +32,7 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-annotation-type", "question");
   });
 
-  it("renders collapsed state with badge, truncated body, and source", () => {
+  it("renders collapsed state with badge and body without source", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -43,12 +43,12 @@ describe("CardboxCard", () => {
     );
     expect(screen.getByTestId("card-type-badge")).toBeInTheDocument();
     expect(screen.getByTestId("card-body")).toBeInTheDocument();
-    expect(screen.getByTestId("card-source")).toHaveTextContent("Test Document");
+    expect(screen.queryByTestId("card-source")).not.toBeInTheDocument();
     // Navigate link should not be visible in collapsed state (parent has opacity: 0)
     expect(screen.getByTestId("card-navigate")).not.toBeVisible();
   });
 
-  it("renders expanded state with full body, original, date, and navigate link", () => {
+  it("renders expanded state with body, date, and navigate but no original or source", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -58,12 +58,13 @@ describe("CardboxCard", () => {
       />,
     );
     expect(screen.getByTestId("card-body")).toHaveTextContent(baseAnnotation.body!);
-    expect(screen.getByTestId("card-original")).toHaveTextContent(baseAnnotation.original!);
+    expect(screen.queryByTestId("card-original")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-source")).not.toBeInTheDocument();
     expect(screen.getByTestId("card-date")).toHaveTextContent("2026-06-15");
     expect(screen.getByTestId("card-navigate")).toBeVisible();
   });
 
-  it("shows original quote in collapsed state", () => {
+  it("does not show original quote on front by default", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -72,45 +73,10 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    expect(screen.getByTestId("card-original")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-original")).not.toBeInTheDocument();
   });
 
-  it("applies line-clamp-2 to original in collapsed state", () => {
-    render(
-      <CardboxCard
-        annotation={baseAnnotation}
-        expanded={false}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-      />,
-    );
-    expect(screen.getByTestId("card-original").className).toContain("line-clamp-2");
-  });
-
-  it("removes line-clamp from original when expanded", () => {
-    render(
-      <CardboxCard
-        annotation={baseAnnotation}
-        expanded={true}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-      />,
-    );
-    expect(screen.getByTestId("card-original").className).not.toContain("line-clamp-2");
-  });
-
-  it("renders original as markdown HTML", () => {
-    render(
-      <CardboxCard
-        annotation={{ ...baseAnnotation, original: "**bold** text" }}
-        expanded={true}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-      />,
-    );
-    const orig = screen.getByTestId("card-original");
-    expect(orig.innerHTML).toContain("<strong>bold</strong>");
-  });
+  it.todo("renders original as markdown HTML on back face");
 
   it("shows certainty mark for tentative", () => {
     render(
