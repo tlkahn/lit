@@ -1,12 +1,22 @@
+//! Rust-side DSL emitter for source write-back (cycle C sn path).
+//!
+//! North star: FE `generateDsl` for the sn subset. Non-goals for now:
+//! `mark` codes, `lang=`, forced `opts.form` override, eliding default
+//! sentence scope (Rust always emits explicit scope tokens).
+
 use super::scanner::extract_id;
 use super::types::{AnnotationType, Certainty, Scope, ScopeKind};
 
+#[derive(Debug, Clone)]
 pub struct EmitFields {
     pub id: Option<String>,
     pub annotation_type: AnnotationType,
     pub certainty: Certainty,
     pub scope: Scope,
     pub body: String,
+    /// Must be `YYYY-MM` or `YYYY-MM-DD` to round-trip via the parser's
+    /// `DATE_RE`. Other strings pass through emit but will not survive a
+    /// parse cycle.
     pub date: Option<String>,
 }
 
