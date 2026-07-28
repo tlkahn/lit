@@ -40,6 +40,13 @@ describe("CardboxShortcutsOverlay", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("lists F to flip card", () => {
+    render(<CardboxShortcutsOverlay open={true} onClose={() => {}} />);
+    expect(screen.getByText(/flip card/i)).toBeInTheDocument();
+    const flipEntry = screen.getByText(/flip card/i).closest('[data-testid="shortcut-entry"]')!;
+    expect(flipEntry.querySelector("kbd")).toHaveTextContent("F");
+  });
+
   it("calls onClose when ? is pressed (toggle off)", () => {
     const onClose = vi.fn();
     render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);

@@ -165,8 +165,13 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         e.stopPropagation();
         onToggleExpand();
       }
+      if ((e.key === "f" || e.key === "F") && !e.metaKey && !e.ctrlKey && !e.altKey && canFlip) {
+        e.preventDefault();
+        e.stopPropagation();
+        setFlipped((v) => !v);
+      }
     },
-    [expanded, onToggleExpand],
+    [expanded, onToggleExpand, canFlip],
   );
 
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";

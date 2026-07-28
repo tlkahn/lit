@@ -452,6 +452,59 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
   });
 
+  it("F key on focused card flips when original exists", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    const card = screen.getByTestId("cardbox-card");
+    card.focus();
+    fireEvent.keyDown(card, { key: "f" });
+    expect(card).toHaveAttribute("data-flipped", "true");
+    expect(onToggle).not.toHaveBeenCalled();
+    fireEvent.keyDown(card, { key: "F" });
+    expect(card).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("F key does nothing when annotation has no original", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const card = screen.getByTestId("cardbox-card");
+    card.focus();
+    fireEvent.keyDown(card, { key: "f" });
+    expect(card).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("F key ignored with modifier", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const card = screen.getByTestId("cardbox-card");
+    card.focus();
+    fireEvent.keyDown(card, { key: "f", metaKey: true });
+    expect(card).toHaveAttribute("data-flipped", "false");
+    fireEvent.keyDown(card, { key: "f", ctrlKey: true });
+    expect(card).toHaveAttribute("data-flipped", "false");
+    fireEvent.keyDown(card, { key: "f", altKey: true });
+    expect(card).toHaveAttribute("data-flipped", "false");
+  });
+
   it("flip button sits outside expand hit-path when card clicked elsewhere still expands", () => {
     const onToggle = vi.fn();
     render(
