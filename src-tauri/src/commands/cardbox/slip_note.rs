@@ -279,15 +279,23 @@ pub(crate) fn do_sync_slip_note_to_source(
     // Drain JSON fallback before reindex: md is authoritative once written.
     drain_sync_fallback(root, parent_uuid)?;
 
-    let removed = gi.batch_reindex(
+    let removed = match gi.batch_reindex(
         &crate::graph::indexer::DiffResult {
             new: vec![],
             changed: vec![page_id.clone()],
             deleted: vec![],
         },
         ann_opts,
-    )
-    .map_err(|e| e.to_string())?;
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                "sync: reindex failed for {}: {} (file written, index stale)",
+                page_id, e
+            );
+            vec![]
+        }
+    };
 
     Ok(SyncOutput {
         result: SyncResult {
@@ -477,6 +485,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
             .map_err(|e| e.to_string())?
     };
 
+    let pre_drained: usize = sn_map.keys()
+        .filter(|k| layout.notes.remove(*k).is_some())
+        .count();
+
     let pending: Vec<(String, String)> = layout
         .notes
         .iter()
@@ -485,9 +497,14 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
         .collect();
 
     if pending.is_empty() {
+        if pre_drained > 0 {
+            let lit_dir = root.join(".lit");
+            std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+            super::persist_layout(&lit_dir, &layout)?;
+        }
         return Ok(MigrateOutput {
             result: MigrateResult {
-                migrated: 0,
+                migrated: pre_drained,
                 failed: 0,
                 skipped: 0,
                 changed_pages: vec![],
@@ -658,7 +675,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
 
     Ok(MigrateOutput {
         result: MigrateResult {
-            migrated,
+            migrated: migrated + pre_drained,
             failed,
             skipped,
             changed_pages,
@@ -1632,6 +1649,96 @@ mod tests {
         let effective = reconcile_slip_notes(&gi, &layout2).unwrap();
         assert!(!effective.contains_key("p1"),
             "note must not resurrect after sn delete + fallback drain: {:?}", effective);
+    }
+
+    #[test]
+    fn migrate_drains_json_for_already_indexed_sn() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Existing sn body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote {
+                body: "Legacy note".to_string(),
+                updated_at: None,
+            },
+        );
+        write_layout(dir.path(), &layout);
+
+        let original_content = read_md(dir.path(), "a.md");
+
+        let result =
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+                .unwrap().result;
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "pre-pass must drain JSON key when sn already exists: {:?}", on_disk.notes);
+        assert!(result.migrated >= 1, "drain should count as migrated");
+
+        let post_content = read_md(dir.path(), "a.md");
+        assert_eq!(original_content, post_content,
+            "file content must be unchanged for drain-only migrate");
+    }
+
+    #[test]
+    fn migrate_indexed_dual_state_no_resurrect_after_sn_delete() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Existing sn body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote {
+                body: "Legacy note".to_string(),
+                updated_at: None,
+            },
+        );
+        write_layout(dir.path(), &layout);
+
+        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            .unwrap();
+
+        // Externally delete the sn from file, reindex
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> more.\n",
+        );
+        gi.batch_reindex(
+            &crate::graph::indexer::DiffResult {
+                new: vec![],
+                changed: vec!["a.md".to_string()],
+                deleted: vec![],
+            },
+            &AnnotationIndexOpts::default(),
+        ).unwrap();
+
+        let layout2 = cardbox_layout::load_layout(dir.path());
+        let effective = reconcile_slip_notes(&gi, &layout2).unwrap();
+        assert!(!effective.contains_key("p1"),
+            "dual-state: note must not resurrect after sn delete + JSON drain: {:?}", effective);
     }
 
     #[test]
