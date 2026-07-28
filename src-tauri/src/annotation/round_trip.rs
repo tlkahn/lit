@@ -346,4 +346,88 @@ mod tests {
         assert_eq!(ann.body, Some("The body.".to_string()));
         assert_eq!(ann.form, AnnotationForm::Block);
     }
+
+    // --- Emit -> Parse round-trip tests ---
+
+    use crate::annotation::emit::{emit_annotation, EmitFields};
+
+    fn emit_then_parse(fields: &EmitFields) -> Annotation {
+        let dsl = emit_annotation(fields);
+        parse_one(&dsl)
+    }
+
+    #[test]
+    fn emit_parse_slipnote_compact_round_trip() {
+        let fields = EmitFields {
+            id: Some("f0e1d2c3-0000-0000-0000-000000000000".to_string()),
+            annotation_type: AnnotationType::SlipNote,
+            certainty: Certainty::Neutral,
+            scope: Scope::Anchor("parent-uuid".to_string()),
+            body: "Compare with Braudel".to_string(),
+            date: Some("2026-07-28".to_string()),
+        };
+        let ann = emit_then_parse(&fields);
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+        assert_eq!(ann.body, Some("Compare with Braudel".to_string()));
+        assert_eq!(ann.date, Some("2026-07-28".to_string()));
+        assert_eq!(ann.uuid, Some("f0e1d2c3-0000-0000-0000-000000000000".to_string()));
+        assert_eq!(ann.certainty, Certainty::Neutral);
+        assert_eq!(ann.form, AnnotationForm::Compact);
+    }
+
+    #[test]
+    fn emit_parse_slipnote_block_round_trip() {
+        let fields = EmitFields {
+            id: Some("aabbccdd-0000-0000-0000-000000000000".to_string()),
+            annotation_type: AnnotationType::SlipNote,
+            certainty: Certainty::Neutral,
+            scope: Scope::Anchor("parent-uuid".to_string()),
+            body: "Compare with Braudel.\n\nAlso see chapter 4.".to_string(),
+            date: Some("2026-07-28".to_string()),
+        };
+        let ann = emit_then_parse(&fields);
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+        assert_eq!(ann.body, Some("Compare with Braudel.\n\nAlso see chapter 4.".to_string()));
+        assert_eq!(ann.date, Some("2026-07-28".to_string()));
+        assert_eq!(ann.uuid, Some("aabbccdd-0000-0000-0000-000000000000".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Block);
+    }
+
+    #[test]
+    fn emit_parse_slipnote_certainty_and_no_id() {
+        let fields = EmitFields {
+            id: None,
+            annotation_type: AnnotationType::SlipNote,
+            certainty: Certainty::Tentative,
+            scope: Scope::Anchor("ref".to_string()),
+            body: "uncertain link".to_string(),
+            date: None,
+        };
+        let ann = emit_then_parse(&fields);
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.certainty, Certainty::Tentative);
+        assert_eq!(ann.scope, Scope::Anchor("ref".to_string()));
+        assert_eq!(ann.body, Some("uncertain link".to_string()));
+        assert_eq!(ann.uuid, None);
+        assert_eq!(ann.date, None);
+    }
+
+    #[test]
+    fn emit_parse_slipnote_cjk_emoji_body() {
+        let fields = EmitFields {
+            id: Some("cjk-test-1".to_string()),
+            annotation_type: AnnotationType::SlipNote,
+            certainty: Certainty::Neutral,
+            scope: Scope::Anchor("parent".to_string()),
+            body: "参照: 第四章 🎉".to_string(),
+            date: Some("2026-07".to_string()),
+        };
+        let ann = emit_then_parse(&fields);
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.body, Some("参照: 第四章 🎉".to_string()));
+        assert_eq!(ann.date, Some("2026-07".to_string()));
+        assert_eq!(ann.uuid, Some("cjk-test-1".to_string()));
+    }
 }
