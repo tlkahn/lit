@@ -5,6 +5,7 @@ pub mod compact;
 pub mod block;
 pub mod marks;
 pub mod parser;
+pub mod emit;
 pub mod scope_resolver;
 #[cfg(test)]
 mod round_trip;
