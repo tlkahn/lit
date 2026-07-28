@@ -176,6 +176,49 @@ pub(crate) fn resolve_parent_in_page<'a>(
 }
 
 // ---------------------------------------------------------------------------
+// Reindex outcome interpreter (shared by sync + migrate)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub(crate) struct ReindexOutcome {
+    pub removed: Vec<(String, String)>,
+    pub retry: bool,
+}
+
+pub(crate) fn interpret_reindex_outcome<E: std::fmt::Display>(
+    result: Result<Vec<(String, String)>, E>,
+    page_id: &str,
+) -> ReindexOutcome {
+    match result {
+        Ok(r) => ReindexOutcome { removed: r, retry: false },
+        Err(e) => {
+            tracing::warn!(
+                "reindex failed for {}: {} (file written, index stale; retry scheduled)",
+                page_id, e
+            );
+            ReindexOutcome { removed: vec![], retry: true }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Emit plan (shared by sync + migrate wrappers)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct SlipEmitPlan {
+    pub file_modified: bool,
+    pub graph_side_effects: bool,
+}
+
+pub(crate) fn sync_emit_plan(synced: bool, reindex_retry: bool) -> SlipEmitPlan {
+    SlipEmitPlan {
+        file_modified: synced,
+        graph_side_effects: synced && !reindex_retry,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cycle E - sync_slip_note_to_source (pure core + Tauri wrapper)
 // ---------------------------------------------------------------------------
 
@@ -193,6 +236,22 @@ pub struct SyncResult {
 pub(crate) struct SyncOutput {
     pub result: SyncResult,
     pub removed_annotations: Vec<(String, String)>,
+    pub reindex_retry: bool,
+}
+
+enum WritePhase {
+    TrueNoop {
+        child_uuid: String,
+        page_id: String,
+    },
+    DriftHeal {
+        child_uuid: String,
+        page_id: String,
+    },
+    Wrote {
+        child_uuid: String,
+        page_id: String,
+    },
 }
 
 pub(crate) fn do_sync_slip_note_to_source(
@@ -200,9 +259,12 @@ pub(crate) fn do_sync_slip_note_to_source(
     gi: &crate::graph::indexer::GraphIndex,
     registry: &crate::workspace::write_hash::WriteHashRegistry,
     ann_opts: &crate::annotation::lang::AnnotationIndexOpts,
+    file_lock: &crate::workspace::file_lock::FilePathLock,
     parent_uuid: &str,
     body: &str,
 ) -> Result<SyncOutput, String> {
+    let now = chrono::Utc::now();
+
     let (page_id, store_position) = {
         let store = gi.store();
         let ann = store
@@ -212,44 +274,72 @@ pub(crate) fn do_sync_slip_note_to_source(
         (ann.source_page_id.clone(), Some((ann.char_start, ann.char_end)))
     };
 
-    let page = crate::workspace::ops::read_page(root, &page_id, registry)
-        .map_err(|e| e.to_string())?;
-    let page_body = &page.body;
+    let phase = file_lock.with_lock(&root.join(&page_id), || -> Result<WritePhase, String> {
+        let page = crate::workspace::ops::read_page(root, &page_id, registry)
+            .map_err(|e| e.to_string())?;
+        let page_body = &page.body;
 
-    let anns = parse_annotations_builtin(page_body);
-    let parent = resolve_parent_in_page(&anns, parent_uuid, store_position)?;
+        let anns = parse_annotations_builtin(page_body);
+        let parent = resolve_parent_in_page(&anns, parent_uuid, store_position)?;
 
-    // v1: earliest char_start wins when multiple sn exist for one parent
-    let existing_child = anns
-        .iter()
-        .filter(|a| {
-            a.annotation_type == AnnotationType::SlipNote
-                && matches!(&a.scope, Scope::Anchor(v) if v == parent_uuid)
-        })
-        .min_by_key(|a| a.char_start)
-        .map(|a| ChildSpan {
-            uuid: a.uuid.clone().unwrap_or_default(),
-            char_start: a.char_start,
-            char_end: a.char_end,
-        });
+        let existing_child = anns
+            .iter()
+            .filter(|a| {
+                a.annotation_type == AnnotationType::SlipNote
+                    && matches!(&a.scope, Scope::Anchor(v) if v == parent_uuid)
+            })
+            .min_by_key(|a| a.char_start)
+            .map(|a| ChildSpan {
+                uuid: a.uuid.clone().unwrap_or_default(),
+                char_start: a.char_start,
+                char_end: a.char_end,
+            });
 
-    let now = chrono::Utc::now();
-    let dsl_date = now.format("%Y-%m-%d").to_string();
-    let child_uuid = existing_child
-        .as_ref()
-        .map(|c| c.uuid.clone())
-        .filter(|u| !u.is_empty())
-        .or_else(|| {
-            // Unauthored child: check store for an indexed slip note linked to parent
-            let store = gi.store();
-            let sn_map = store.list_slip_notes_for_parents().ok()?;
-            sn_map.get(parent_uuid).map(|sn| sn.uuid.clone())
-        })
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let child_uuid = existing_child
+            .as_ref()
+            .map(|c| c.uuid.clone())
+            .filter(|u| !u.is_empty())
+            .or_else(|| {
+                let store = gi.store();
+                let sn_map = store.list_slip_notes_for_parents().ok()?;
+                sn_map.get(parent_uuid).map(|sn| sn.uuid.clone())
+            })
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // Noop: empty body with no existing child
-    if body.trim().is_empty() && existing_child.is_none() {
-        return Ok(SyncOutput {
+        // Noop / drift heal: empty body with no existing child in file
+        if body.trim().is_empty() && existing_child.is_none() {
+            let index_has_sn = {
+                let store = gi.store();
+                store.list_slip_notes_for_parents()
+                    .map(|m| m.contains_key(parent_uuid))
+                    .unwrap_or(false)
+            };
+            if !index_has_sn {
+                return Ok(WritePhase::TrueNoop { child_uuid, page_id: page_id.clone() });
+            }
+            return Ok(WritePhase::DriftHeal { child_uuid, page_id: page_id.clone() });
+        }
+
+        let dsl_date = now.format("%Y-%m-%d").to_string();
+        let new_body = apply_slip_note_edit(
+            page_body,
+            parent.char_start,
+            parent.char_end,
+            parent_uuid,
+            existing_child.as_ref(),
+            body,
+            &dsl_date,
+            &child_uuid,
+        )?;
+
+        crate::workspace::ops::write_page(root, &page_id, &new_body, &page.meta.frontmatter, registry)
+            .map_err(|e| e.to_string())?;
+
+        Ok(WritePhase::Wrote { child_uuid, page_id: page_id.clone() })
+    })?;
+
+    match phase {
+        WritePhase::TrueNoop { child_uuid, page_id } => Ok(SyncOutput {
             result: SyncResult {
                 parent_uuid: parent_uuid.to_string(),
                 body: String::new(),
@@ -259,55 +349,82 @@ pub(crate) fn do_sync_slip_note_to_source(
                 page_id,
             },
             removed_annotations: vec![],
-        });
-    }
-
-    let new_body = apply_slip_note_edit(
-        page_body,
-        parent.char_start,
-        parent.char_end,
-        parent_uuid,
-        existing_child.as_ref(),
-        body,
-        &dsl_date,
-        &child_uuid,
-    )?;
-
-    crate::workspace::ops::write_page(root, &page_id, &new_body, &page.meta.frontmatter, registry)
-        .map_err(|e| e.to_string())?;
-
-    // Drain JSON fallback before reindex: md is authoritative once written.
-    drain_sync_fallback(root, parent_uuid)?;
-
-    let removed = match gi.batch_reindex(
-        &crate::graph::indexer::DiffResult {
-            new: vec![],
-            changed: vec![page_id.clone()],
-            deleted: vec![],
-        },
-        ann_opts,
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(
-                "sync: reindex failed for {}: {} (file written, index stale)",
-                page_id, e
+            reindex_retry: false,
+        }),
+        WritePhase::DriftHeal { child_uuid, page_id } => {
+            let outcome = interpret_reindex_outcome(
+                gi.batch_reindex(
+                    &crate::graph::indexer::DiffResult {
+                        new: vec![],
+                        changed: vec![page_id.clone()],
+                        deleted: vec![],
+                    },
+                    ann_opts,
+                ),
+                &page_id,
             );
-            vec![]
+            Ok(SyncOutput {
+                result: SyncResult {
+                    parent_uuid: parent_uuid.to_string(),
+                    body: String::new(),
+                    updated_at: now.to_rfc3339(),
+                    sn_uuid: child_uuid,
+                    synced: true,
+                    page_id,
+                },
+                removed_annotations: outcome.removed,
+                reindex_retry: outcome.retry,
+            })
         }
-    };
+        WritePhase::Wrote { child_uuid, page_id } => {
+            drain_sync_fallback(root, parent_uuid)?;
 
-    Ok(SyncOutput {
-        result: SyncResult {
-            parent_uuid: parent_uuid.to_string(),
-            body: body.trim().to_string(),
-            updated_at: now.to_rfc3339(),
-            sn_uuid: child_uuid,
-            synced: true,
-            page_id,
-        },
-        removed_annotations: removed,
-    })
+            let outcome = interpret_reindex_outcome(
+                gi.batch_reindex(
+                    &crate::graph::indexer::DiffResult {
+                        new: vec![],
+                        changed: vec![page_id.clone()],
+                        deleted: vec![],
+                    },
+                    ann_opts,
+                ),
+                &page_id,
+            );
+
+            Ok(SyncOutput {
+                result: SyncResult {
+                    parent_uuid: parent_uuid.to_string(),
+                    body: body.trim().to_string(),
+                    updated_at: now.to_rfc3339(),
+                    sn_uuid: child_uuid,
+                    synced: true,
+                    page_id,
+                },
+                removed_annotations: outcome.removed,
+                reindex_retry: outcome.retry,
+            })
+        }
+    }
+}
+
+pub(crate) fn schedule_slip_reindex_retry(
+    queue: &Arc<crate::commands::reindex_queue::ReindexQueue>,
+    root: std::path::PathBuf,
+    page_id: String,
+    gi: Arc<crate::graph::indexer::GraphIndex>,
+    opts_fn: impl Fn() -> crate::annotation::lang::AnnotationIndexOpts + Send + 'static,
+    on_done: impl Fn(&Result<Vec<(String, String)>, crate::graph::error::GraphError>) + Send + 'static,
+) {
+    queue.schedule(
+        root,
+        crate::commands::reindex_queue::ChangeKind::Changed,
+        page_id,
+        crate::commands::reindex_queue::fresh_opts_run(
+            opts_fn,
+            move |diff, ann| gi.batch_reindex(diff, ann),
+        ),
+        on_done,
+    );
 }
 
 /// Requires single-writer per page; callers hold CardboxLock to serialize
@@ -319,6 +436,8 @@ pub fn sync_slip_note_to_source(
     graph_state: State<Arc<crate::commands::graph::GraphRegistry>>,
     registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
     lock: State<super::CardboxLock>,
+    file_lock: State<Arc<crate::workspace::file_lock::FilePathLock>>,
+    queue: State<Arc<crate::commands::reindex_queue::ReindexQueue>>,
     app_handle: tauri::AppHandle,
     parent_uuid: String,
     body: String,
@@ -336,19 +455,33 @@ pub fn sync_slip_note_to_source(
     };
 
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
-    let output = do_sync_slip_note_to_source(&root, &gi, &registry, &ann_opts, &parent_uuid, &body)?;
+    let output = do_sync_slip_note_to_source(&root, &gi, &registry, &ann_opts, &file_lock, &parent_uuid, &body)?;
 
-    if output.result.synced {
-        crate::commands::graph::emit_reindex_side_effects(
-            &app_handle,
-            &Ok(output.removed_annotations),
-        );
+    let plan = sync_emit_plan(output.result.synced, output.reindex_retry);
 
+    if plan.file_modified {
         let _ = window.emit(
             "workspace://file-modified",
             crate::workspace::watcher::FileEvent {
                 path: output.result.page_id.clone(),
             },
+        );
+    }
+
+    if plan.graph_side_effects {
+        crate::commands::graph::emit_reindex_side_effects(
+            &app_handle,
+            &Ok(output.removed_annotations),
+        );
+    } else if output.reindex_retry {
+        let handle = app_handle.clone();
+        schedule_slip_reindex_retry(
+            queue.inner(),
+            root,
+            output.result.page_id.clone(),
+            gi,
+            move || crate::preferences::annotation_index_opts(&handle),
+            move |result| crate::commands::graph::emit_reindex_side_effects(&app_handle, result),
         );
     }
 
@@ -468,6 +601,7 @@ pub struct MigrateResult {
 pub(crate) struct MigrateOutput {
     pub result: MigrateResult,
     pub removed_annotations: Vec<(String, String)>,
+    pub reindex_retry_pages: Vec<String>,
 }
 
 pub(crate) fn do_migrate_cardbox_slip_notes(
@@ -475,6 +609,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     gi: &crate::graph::indexer::GraphIndex,
     registry: &crate::workspace::write_hash::WriteHashRegistry,
     ann_opts: &crate::annotation::lang::AnnotationIndexOpts,
+    file_lock: &crate::workspace::file_lock::FilePathLock,
 ) -> Result<MigrateOutput, String> {
     let mut layout = cardbox_layout::load_layout(root);
 
@@ -510,6 +645,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 changed_pages: vec![],
             },
             removed_annotations: vec![],
+            reindex_retry_pages: vec![],
         });
     }
 
@@ -544,121 +680,125 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     let mut drained_keys: Vec<String> = Vec::new();
     let mut changed_pages: Vec<String> = Vec::new();
     let mut all_removed: Vec<(String, String)> = Vec::new();
+    let mut reindex_retry_pages: Vec<String> = Vec::new();
 
     for (page_id, entries) in &by_page {
-        let page = match crate::workspace::ops::read_page(root, page_id, registry) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!("migrate: failed to read {}: {}", page_id, e);
-                failed += entries.len();
-                continue;
-            }
-        };
+        let write_result = file_lock.with_lock(&root.join(page_id), || -> Result<(String, usize, Vec<String>), (usize, String)> {
+            let page = crate::workspace::ops::read_page(root, page_id, registry)
+                .map_err(|e| (entries.len(), e.to_string()))?;
 
-        let mut current_body = page.body.clone();
-        let mut page_migrated = 0;
+            let mut current_body = page.body.clone();
+            let mut page_migrated = 0usize;
+            let mut page_drained: Vec<String> = Vec::new();
 
-        for (parent_uuid, note_body, store_position) in entries {
-            let anns = parse_annotations_builtin(&current_body);
+            for (parent_uuid, note_body, store_position) in entries {
+                let anns = parse_annotations_builtin(&current_body);
 
-            let parent = match resolve_parent_in_page(&anns, parent_uuid, *store_position) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!("migrate: {}", e);
-                    failed += 1;
-                    continue;
-                }
-            };
+                let parent = match resolve_parent_in_page(&anns, parent_uuid, *store_position) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!("migrate: {}", e);
+                        failed += 1;
+                        continue;
+                    }
+                };
 
-            let existing_child = anns
-                .iter()
-                .filter(|a| {
-                    a.annotation_type == AnnotationType::SlipNote
-                        && matches!(&a.scope, Scope::Anchor(v) if v == parent_uuid)
-                })
-                .min_by_key(|a| a.char_start)
-                .map(|a| ChildSpan {
-                    uuid: a.uuid.clone().unwrap_or_default(),
-                    char_start: a.char_start,
-                    char_end: a.char_end,
-                });
+                let existing_child = anns
+                    .iter()
+                    .filter(|a| {
+                        a.annotation_type == AnnotationType::SlipNote
+                            && matches!(&a.scope, Scope::Anchor(v) if v == parent_uuid)
+                    })
+                    .min_by_key(|a| a.char_start)
+                    .map(|a| ChildSpan {
+                        uuid: a.uuid.clone().unwrap_or_default(),
+                        char_start: a.char_start,
+                        char_end: a.char_end,
+                    });
 
-            if existing_child.is_some() {
-                drained_keys.push(parent_uuid.clone());
-                page_migrated += 1;
-                migrated += 1;
-                continue;
-            }
-
-            let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-            let child_uuid = uuid::Uuid::new_v4().to_string();
-
-            match apply_slip_note_edit(
-                &current_body,
-                parent.char_start,
-                parent.char_end,
-                parent_uuid,
-                None,
-                note_body,
-                &today,
-                &child_uuid,
-            ) {
-                Ok(new_body) => {
-                    current_body = new_body;
-                    drained_keys.push(parent_uuid.clone());
+                if existing_child.is_some() {
+                    page_drained.push(parent_uuid.clone());
                     page_migrated += 1;
                     migrated += 1;
+                    continue;
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "migrate: failed to apply edit for {} in {}: {}",
-                        parent_uuid,
-                        page_id,
-                        e
+
+                let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                let child_uuid = uuid::Uuid::new_v4().to_string();
+
+                match apply_slip_note_edit(
+                    &current_body,
+                    parent.char_start,
+                    parent.char_end,
+                    parent_uuid,
+                    None,
+                    note_body,
+                    &today,
+                    &child_uuid,
+                ) {
+                    Ok(new_body) => {
+                        current_body = new_body;
+                        page_drained.push(parent_uuid.clone());
+                        page_migrated += 1;
+                        migrated += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "migrate: failed to apply edit for {} in {}: {}",
+                            parent_uuid, page_id, e
+                        );
+                        failed += 1;
+                    }
+                }
+            }
+
+            if page_migrated > 0 {
+                if let Err(e) = crate::workspace::ops::write_page(
+                    root,
+                    page_id,
+                    &current_body,
+                    &page.meta.frontmatter,
+                    registry,
+                ) {
+                    tracing::warn!("migrate: failed to write {}: {}", page_id, e);
+                    for (uuid, _, _) in entries {
+                        page_drained.retain(|k| k != uuid);
+                    }
+                    failed += page_migrated;
+                    migrated -= page_migrated;
+                    return Err((0, e.to_string()));
+                }
+            }
+
+            Ok((page_id.clone(), page_migrated, page_drained))
+        });
+
+        match write_result {
+            Ok((pid, page_migrated, page_drained)) => {
+                drained_keys.extend(page_drained);
+                if page_migrated > 0 {
+                    // Reindex outside lock
+                    let outcome = interpret_reindex_outcome(
+                        gi.batch_reindex(
+                            &crate::graph::indexer::DiffResult {
+                                new: vec![],
+                                changed: vec![pid.clone()],
+                                deleted: vec![],
+                            },
+                            ann_opts,
+                        ),
+                        &pid,
                     );
-                    failed += 1;
+                    all_removed.extend(outcome.removed);
+                    if outcome.retry {
+                        reindex_retry_pages.push(pid.clone());
+                    }
+                    changed_pages.push(pid);
                 }
             }
-        }
-
-        if page_migrated > 0 {
-            if let Err(e) = crate::workspace::ops::write_page(
-                root,
-                page_id,
-                &current_body,
-                &page.meta.frontmatter,
-                registry,
-            ) {
-                tracing::warn!("migrate: failed to write {}: {}", page_id, e);
-                for (uuid, _, _) in entries {
-                    drained_keys.retain(|k| k != uuid);
-                }
-                failed += page_migrated;
-                migrated -= page_migrated;
-                continue;
+            Err((extra_fail, _)) => {
+                failed += extra_fail;
             }
-
-            match gi.batch_reindex(
-                &crate::graph::indexer::DiffResult {
-                    new: vec![],
-                    changed: vec![page_id.clone()],
-                    deleted: vec![],
-                },
-                ann_opts,
-            ) {
-                Ok(removed) => {
-                    all_removed.extend(removed);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "migrate: reindex failed for {}: {} (file written, index stale)",
-                        page_id, e
-                    );
-                }
-            }
-
-            // File was written even if reindex failed
-            changed_pages.push(page_id.clone());
         }
     }
 
@@ -681,6 +821,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
             changed_pages,
         },
         removed_annotations: all_removed,
+        reindex_retry_pages,
     })
 }
 
@@ -691,6 +832,8 @@ pub fn migrate_cardbox_slip_notes(
     graph_state: State<Arc<crate::commands::graph::GraphRegistry>>,
     registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
     lock: State<super::CardboxLock>,
+    file_lock: State<Arc<crate::workspace::file_lock::FilePathLock>>,
+    queue: State<Arc<crate::commands::reindex_queue::ReindexQueue>>,
     app_handle: tauri::AppHandle,
 ) -> Result<MigrateResult, String> {
     let _guard = lock.0.lock().unwrap();
@@ -706,20 +849,35 @@ pub fn migrate_cardbox_slip_notes(
     };
 
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
-    let output = do_migrate_cardbox_slip_notes(&root, &gi, &registry, &ann_opts)?;
-
-    if !output.result.changed_pages.is_empty() {
-        crate::commands::graph::emit_reindex_side_effects(
-            &app_handle,
-            &Ok(output.removed_annotations),
-        );
-    }
+    let output = do_migrate_cardbox_slip_notes(&root, &gi, &registry, &ann_opts, &file_lock)?;
 
     for page_id in &output.result.changed_pages {
         let _ = window.emit(
             "workspace://file-modified",
             crate::workspace::watcher::FileEvent {
                 path: page_id.clone(),
+            },
+        );
+    }
+
+    if !output.removed_annotations.is_empty() || (!output.result.changed_pages.is_empty() && output.reindex_retry_pages.is_empty()) {
+        crate::commands::graph::emit_reindex_side_effects(
+            &app_handle,
+            &Ok(output.removed_annotations),
+        );
+    }
+
+    for page_id in &output.reindex_retry_pages {
+        let handle = app_handle.clone();
+        schedule_slip_reindex_retry(
+            queue.inner(),
+            root.clone(),
+            page_id.clone(),
+            Arc::clone(&gi),
+            move || crate::preferences::annotation_index_opts(&handle),
+            {
+                let handle = app_handle.clone();
+                move |result| crate::commands::graph::emit_reindex_side_effects(&handle, result)
             },
         );
     }
@@ -736,10 +894,15 @@ mod tests {
     use super::*;
     use crate::annotation::lang::AnnotationIndexOpts;
     use crate::graph::indexer::GraphIndex;
+    use crate::workspace::file_lock::FilePathLock;
     use crate::workspace::write_hash::WriteHashRegistry;
 
     fn create_workspace() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+
+    fn make_file_lock() -> FilePathLock {
+        FilePathLock::new()
     }
 
     fn write_md(root: &std::path::Path, rel_path: &str, content: &str) {
@@ -1122,7 +1285,7 @@ mod tests {
         let reg = WriteHashRegistry::new();
 
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Compare with Braudel",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "Compare with Braudel",
         )
         .unwrap().result;
 
@@ -1150,12 +1313,12 @@ mod tests {
         let reg = WriteHashRegistry::new();
 
         let r1 = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "First body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "First body",
         )
         .unwrap().result;
 
         let r2 = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Second body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "Second body",
         )
         .unwrap().result;
 
@@ -1179,7 +1342,7 @@ mod tests {
         let reg = WriteHashRegistry::new();
 
         do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
         )
         .unwrap();
 
@@ -1187,7 +1350,7 @@ mod tests {
         assert!(mid.contains("sn"));
 
         do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "",
         )
         .unwrap();
 
@@ -1219,6 +1382,7 @@ mod tests {
             &gi,
             &reg,
             &AnnotationIndexOpts::default(),
+            &make_file_lock(),
             &parent_uuid,
             "A note on unstamped",
         )
@@ -1265,7 +1429,7 @@ mod tests {
         let reg = WriteHashRegistry::new();
 
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
         )
         .unwrap().result;
 
@@ -1285,7 +1449,7 @@ mod tests {
         let reg = WriteHashRegistry::new();
 
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "nonexistent-uuid", "body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "nonexistent-uuid", "body",
         );
 
         assert!(result.is_err());
@@ -1308,7 +1472,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
         )
         .unwrap();
 
@@ -1345,7 +1509,7 @@ mod tests {
 
         // Sync should reuse the store uuid, not mint a new one
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Updated body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "Updated body",
         )
         .unwrap().result;
 
@@ -1358,7 +1522,7 @@ mod tests {
 
         // Second sync should still use the same uuid
         let result2 = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Third body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "Third body",
         )
         .unwrap().result;
         assert_eq!(result2.sn_uuid, store_uuid);
@@ -1385,7 +1549,7 @@ mod tests {
         // Store still has old offsets, but file has shifted parent
 
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
         )
         .unwrap().result;
 
@@ -1413,7 +1577,7 @@ mod tests {
         write_md(dir.path(), "a.md", "No annotations here.\n");
 
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
         );
         assert!(result.is_err(), "should error when parent missing from page body");
         assert!(result.unwrap_err().contains("missing from page body"),
@@ -1494,7 +1658,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         let result =
-            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
                 .unwrap().result;
 
         assert_eq!(result.migrated, 1);
@@ -1505,7 +1669,7 @@ mod tests {
         assert!(file_content.contains("Legacy note"));
 
         let result2 =
-            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
                 .unwrap().result;
         assert_eq!(result2.migrated, 0, "second migration should be idempotent");
     }
@@ -1594,7 +1758,7 @@ mod tests {
         );
         write_layout(dir.path(), &layout);
 
-        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
             .unwrap();
 
         // After migrate, on-disk cardbox.json notes map should NOT contain p1
@@ -1626,7 +1790,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         // Migrate: writes sn to file, drains fallback
-        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
             .unwrap();
 
         // Now externally delete the sn from file
@@ -1679,7 +1843,7 @@ mod tests {
         let original_content = read_md(dir.path(), "a.md");
 
         let result =
-            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
                 .unwrap().result;
 
         let on_disk = cardbox_layout::load_layout(dir.path());
@@ -1717,7 +1881,7 @@ mod tests {
         );
         write_layout(dir.path(), &layout);
 
-        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
             .unwrap();
 
         // Externally delete the sn from file, reindex
@@ -1771,7 +1935,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         let result =
-            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
                 .unwrap().result;
 
         assert_eq!(result.migrated, 1, "good note should migrate");
@@ -1980,7 +2144,7 @@ mod tests {
         );
 
         let result = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
         );
         assert!(result.is_err(), "mismatch should error");
         let err = result.unwrap_err();
@@ -2025,7 +2189,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         let result =
-            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock())
                 .unwrap().result;
 
         assert_eq!(result.migrated, 1, "unstamped parent should migrate via position fallback");
@@ -2127,7 +2291,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         let output = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "new body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "new body",
         ).unwrap();
         assert!(output.result.synced);
 
@@ -2149,7 +2313,7 @@ mod tests {
         let reg = WriteHashRegistry::new();
 
         do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "existing body",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "existing body",
         ).unwrap();
 
         let mut layout = cardbox_layout::load_layout(dir.path());
@@ -2160,7 +2324,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "",
         ).unwrap();
 
         let on_disk = cardbox_layout::load_layout(dir.path());
@@ -2188,7 +2352,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         let output = do_sync_slip_note_to_source(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "",
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "",
         ).unwrap();
         assert!(!output.result.synced);
 
@@ -2229,7 +2393,7 @@ mod tests {
         write_layout(dir.path(), &layout);
 
         let result = do_migrate_cardbox_slip_notes(
-            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(),
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
         ).unwrap().result;
 
         assert_eq!(result.migrated, 2, "both entries should migrate");
@@ -2273,5 +2437,341 @@ mod tests {
 
         let drained = drain_sync_fallback(dir.path(), "p1").unwrap();
         assert!(!drained, "drain must return false when nothing to drain");
+    }
+
+    // -----------------------------------------------------------------------
+    // R7 Cycle 1 tests - interpret_reindex_outcome + SyncOutput.reindex_retry
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn interpret_reindex_outcome_ok_no_retry() {
+        let result: Result<Vec<(String, String)>, String> =
+            Ok(vec![("a.md".to_string(), "u1".to_string())]);
+        let outcome = interpret_reindex_outcome(result, "a.md");
+        assert_eq!(outcome.removed.len(), 1);
+        assert!(!outcome.retry);
+    }
+
+    #[test]
+    fn interpret_reindex_outcome_err_requests_retry() {
+        let result: Result<Vec<(String, String)>, String> = Err("boom".to_string());
+        let outcome = interpret_reindex_outcome(result, "a.md");
+        assert!(outcome.removed.is_empty());
+        assert!(outcome.retry);
+    }
+
+    #[test]
+    fn schedule_slip_reindex_retry_runs_batch_reindex() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi = Arc::new(
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap(),
+        );
+
+        // Write sn into file WITHOUT reindexing - index is now stale
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> end.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Queued note @2026-07-28 --->\n",
+            ),
+        );
+
+        // Precondition: index does not know about the sn yet
+        {
+            let store = gi.store();
+            let sn_map = store.list_slip_notes_for_parents().unwrap();
+            assert!(!sn_map.contains_key("p1"), "precondition: index stale");
+        }
+
+        let spawner: Arc<dyn Fn(Box<dyn FnOnce() + Send + 'static>) + Send + Sync> =
+            Arc::new(|job| { std::thread::spawn(move || job()); });
+        let queue = Arc::new(crate::commands::reindex_queue::ReindexQueue::with_spawner(spawner));
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+
+        let gi_for_schedule = Arc::clone(&gi);
+        schedule_slip_reindex_retry(
+            &queue,
+            dir.path().to_path_buf(),
+            "a.md".to_string(),
+            gi_for_schedule,
+            || AnnotationIndexOpts::default(),
+            move |_result| { let _ = done_tx.send(()); },
+        );
+
+        done_rx.recv_timeout(Duration::from_secs(5))
+            .expect("reindex retry must complete");
+
+        // Index should now have the sn
+        let store = gi.store();
+        let sn_map = store.list_slip_notes_for_parents().unwrap();
+        assert!(sn_map.contains_key("p1"), "retry must reindex: index should have sn for p1");
+    }
+
+    #[test]
+    fn sync_output_reindex_retry_defaults_false_on_happy_path() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
+        ).unwrap();
+
+        assert!(output.result.synced);
+        assert!(!output.reindex_retry);
+    }
+
+    // -----------------------------------------------------------------------
+    // R7 Cycle 3 tests - drift heal on noop path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_empty_heals_stale_index_when_file_has_no_sn() {
+        let dir = create_workspace();
+        // Start with parent + sn in file, build index
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> end.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Precondition: index has sn for p1
+        {
+            let store = gi.store();
+            let sn_map = store.list_slip_notes_for_parents().unwrap();
+            assert!(sn_map.contains_key("p1"), "precondition: index has sn");
+        }
+
+        // Externally rewrite file to parent-only (no reindex)
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+
+        // sync("") should heal: file has no sn, index stale
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "",
+        ).unwrap();
+
+        assert!(output.result.synced, "heal should report synced=true");
+        assert!(!output.reindex_retry, "successful heal should not request retry");
+
+        // Index should now be clear
+        let store = gi.store();
+        let sn_map = store.list_slip_notes_for_parents().unwrap();
+        assert!(!sn_map.contains_key("p1"), "heal should clear ghost sn from index");
+
+        // File unchanged
+        let content = read_md(dir.path(), "a.md");
+        assert!(!content.contains("sn"), "file should still have no sn");
+    }
+
+    // -----------------------------------------------------------------------
+    // R7 Cycle 4 tests - FilePathLock in sync
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_page_rmw_respects_file_path_lock() {
+        use std::sync::Barrier;
+        use std::time::{Duration, Instant};
+
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+        let file_lock = Arc::new(FilePathLock::new());
+        let page_path = dir.path().join("a.md");
+        let barrier = Arc::new(Barrier::new(2));
+        let hold_ms = 80u64;
+
+        // Thread A: hold the page lock for hold_ms
+        let fl_a = Arc::clone(&file_lock);
+        let bar_a = Arc::clone(&barrier);
+        let t_a = std::thread::spawn(move || {
+            fl_a.with_lock(&page_path, || {
+                bar_a.wait();
+                std::thread::sleep(Duration::from_millis(hold_ms));
+            });
+        });
+
+        // Thread B: do_sync on the same page - must wait for A's lock
+        let fl_b = Arc::clone(&file_lock);
+        let bar_b = barrier;
+        let root = dir.path().to_path_buf();
+        let t_b = std::thread::spawn(move || {
+            bar_b.wait();
+            let start = Instant::now();
+            let _ = do_sync_slip_note_to_source(
+                &root, &gi, &reg, &AnnotationIndexOpts::default(), &fl_b, "p1", "A note",
+            );
+            start.elapsed()
+        });
+
+        t_a.join().unwrap();
+        let sync_elapsed = t_b.join().unwrap();
+
+        assert!(sync_elapsed >= Duration::from_millis(hold_ms / 2),
+            "do_sync must wait for FilePathLock (elapsed {:?}, expected >= {}ms)",
+            sync_elapsed, hold_ms / 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // R7 Cycle 5 tests - migrate FilePathLock + retry_pages
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migrate_output_reindex_retry_pages_empty_on_happy_path() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "Migrate me".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let output = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap();
+
+        assert_eq!(output.result.migrated, 1);
+        assert!(output.reindex_retry_pages.is_empty(),
+            "happy-path migrate should have no retry pages");
+    }
+
+    #[test]
+    fn migrate_page_rmw_respects_file_path_lock() {
+        use std::sync::Barrier;
+        use std::time::{Duration, Instant};
+
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "Migrate under lock".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let file_lock = Arc::new(FilePathLock::new());
+        let page_path = dir.path().join("a.md");
+        let barrier = Arc::new(Barrier::new(2));
+        let hold_ms = 80u64;
+
+        let fl_a = Arc::clone(&file_lock);
+        let bar_a = Arc::clone(&barrier);
+        let t_a = std::thread::spawn(move || {
+            fl_a.with_lock(&page_path, || {
+                bar_a.wait();
+                std::thread::sleep(Duration::from_millis(hold_ms));
+            });
+        });
+
+        let fl_b = Arc::clone(&file_lock);
+        let bar_b = barrier;
+        let root = dir.path().to_path_buf();
+        let t_b = std::thread::spawn(move || {
+            bar_b.wait();
+            let start = Instant::now();
+            let _ = do_migrate_cardbox_slip_notes(
+                &root, &gi, &reg, &AnnotationIndexOpts::default(), &fl_b,
+            );
+            start.elapsed()
+        });
+
+        t_a.join().unwrap();
+        let migrate_elapsed = t_b.join().unwrap();
+
+        assert!(migrate_elapsed >= Duration::from_millis(hold_ms / 2),
+            "do_migrate must wait for FilePathLock (elapsed {:?}, expected >= {}ms)",
+            migrate_elapsed, hold_ms / 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // R7 Cycle 6 tests - emit plan
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_emit_plan_synced_retry_emits_file_only() {
+        let plan = sync_emit_plan(true, true);
+        assert!(plan.file_modified);
+        assert!(!plan.graph_side_effects);
+    }
+
+    #[test]
+    fn sync_emit_plan_synced_no_retry_emits_both() {
+        let plan = sync_emit_plan(true, false);
+        assert!(plan.file_modified);
+        assert!(plan.graph_side_effects);
+    }
+
+    #[test]
+    fn sync_emit_plan_not_synced_emits_nothing() {
+        let plan = sync_emit_plan(false, false);
+        assert!(!plan.file_modified);
+        assert!(!plan.graph_side_effects);
+    }
+
+    #[test]
+    fn sync_empty_true_noop_when_file_and_index_lack_sn() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "",
+        ).unwrap();
+
+        assert!(!output.result.synced, "true noop when neither file nor index has sn");
+        assert!(!output.reindex_retry);
     }
 }
