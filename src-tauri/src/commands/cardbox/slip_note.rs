@@ -284,16 +284,20 @@ pub(crate) fn do_sync_slip_note_to_source(
     })
 }
 
+/// Requires single-writer per page; callers hold CardboxLock to serialize
+/// slip-note + layout writers process-wide.
 #[tauri::command]
 pub fn sync_slip_note_to_source(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
     graph_state: State<Arc<crate::commands::graph::GraphRegistry>>,
     registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    lock: State<super::CardboxLock>,
     app_handle: tauri::AppHandle,
     parent_uuid: String,
     body: String,
 ) -> Result<SyncResult, String> {
+    let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
     let gi = {
