@@ -375,6 +375,19 @@
   background: rgba(255, 193, 7, 0.05);
 }
 
+/* Slipnote type colors */
+.cm-annotation-pill[data-annotation-type="slipnote"] {
+  background: rgba(38, 166, 154, 0.15);
+  color: rgb(38, 166, 154);
+}
+.cm-annotation-marker[data-annotation-type="slipnote"] {
+  color: rgb(38, 166, 154);
+}
+.cm-annotation-callout[data-annotation-type="slipnote"] {
+  border-inline-start-color: rgba(38, 166, 154, 0.6);
+  background: rgba(38, 166, 154, 0.05);
+}
+
 /* Thread type colors */
 .cm-annotation-pill[data-annotation-type="thread"] {
   background: rgba(171, 71, 188, 0.15);
