@@ -292,7 +292,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               {!canFlip && annotation.source_page_title && (
                 <button
                   type="button"
-                  className="text-text-faint hover:text-text-muted"
+                  className="text-text-muted hover:text-text-normal"
                   data-testid="card-source"
                   onClick={(e) => { e.stopPropagation(); onNavigate(); }}
                 >
@@ -418,14 +418,16 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                   if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
                 }}
               />
-              <button
-                type="button"
-                className="mt-2 text-xs text-text-faint hover:text-text-muted"
-                data-testid="card-source"
-                onClick={(e) => { e.stopPropagation(); onNavigate(); }}
-              >
-                {annotation.source_page_title}
-              </button>
+              {annotation.source_page_title && (
+                <button
+                  type="button"
+                  className="mt-2 text-xs text-text-muted hover:text-text-normal"
+                  data-testid="card-source"
+                  onClick={(e) => { e.stopPropagation(); onNavigate(); }}
+                >
+                  {annotation.source_page_title}
+                </button>
+              )}
             </div>
           )}
         </div>

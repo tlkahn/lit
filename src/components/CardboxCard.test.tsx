@@ -1013,6 +1013,48 @@ describe("CardboxCard", () => {
     );
   });
 
+  // --- Source WCAG and empty-title tests ---
+
+  it("source buttons use WCAG AA compliant text color classes", () => {
+    const { rerender } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    const backSource = screen.getByTestId("card-source");
+    expect(backSource.className).toContain("text-text-muted");
+    expect(backSource.className).not.toContain("text-text-faint");
+
+    rerender(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const frontSource = screen.getByTestId("card-source");
+    expect(frontSource.className).toContain("text-text-muted");
+    expect(frontSource.className).not.toContain("text-text-faint");
+  });
+
+  it("does not render back-face source button when title is empty", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, source_page_title: "" }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.queryByTestId("card-source")).not.toBeInTheDocument();
+  });
+
   // --- Back-face link guard tests ---
 
   it("does not toggle expand when clicking a markdown link on the back quote", () => {
