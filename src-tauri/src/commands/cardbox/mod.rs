@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
 pub(crate) mod merge_to_draft;
+pub(crate) mod slip_note;
 
 pub struct CardboxLock(Mutex<()>);
 
@@ -283,8 +284,8 @@ pub fn read_cardbox_layout(
     layout.links.sort();
     layout.links.dedup();
 
-    // Prune stale UUIDs and reconcile groups
-    super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+    // Prune stale UUIDs, reconcile groups, and overlay sn-derived notes
+    let notes_changed = super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let all_uuids = gi.list_all_cardbox_annotation_uuids()?;
         let valid_uuids: HashSet<&str> = all_uuids.iter().map(|s| s.as_str()).collect();
         prune_layout(&mut layout, &valid_uuids);
@@ -292,8 +293,17 @@ pub fn read_cardbox_layout(
         let mut seen = HashSet::new();
         layout.pinned.retain(|uuid| seen.insert(uuid.clone()));
         layout.notes.retain(|uuid, _| valid_uuids.contains(uuid.as_str()));
-        Ok(())
+
+        let changed = slip_note::reconcile_slip_notes(gi, &mut layout)
+            .map_err(|e| crate::graph::error::GraphError::Other(e))?;
+        Ok(changed)
     })?;
+
+    if notes_changed {
+        let lit_dir = root.join(".lit");
+        std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+        persist_layout(&lit_dir, &layout)?;
+    }
 
     Ok(layout)
 }

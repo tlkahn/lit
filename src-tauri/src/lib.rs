@@ -440,6 +440,8 @@ pub fn run() {
             commands::cardbox::batch_pin_cards,
             commands::cardbox::batch_unpin_cards,
             commands::cardbox::merge_to_draft::merge_cards_to_draft,
+            commands::cardbox::slip_note::sync_slip_note_to_source,
+            commands::cardbox::slip_note::migrate_cardbox_slip_notes,
             commands::export::export_data,
             commands::export::export_subgraph,
             commands::lkg::export_lkg,
