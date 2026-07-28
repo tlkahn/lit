@@ -11,6 +11,7 @@ pub enum AnnotationType {
     Translation,
     Llm,
     Thread,
+    SlipNote,
     Mark,
     Bare,
 }
@@ -26,6 +27,7 @@ impl AnnotationType {
             "tr" => Some(Self::Translation),
             "llm" => Some(Self::Llm),
             "th" => Some(Self::Thread),
+            "sn" => Some(Self::SlipNote),
             _ => None,
         }
     }
@@ -409,6 +411,24 @@ mod tests {
         assert_eq!(json, "\"thread\"");
         let parsed: AnnotationType = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, AnnotationType::Thread);
+    }
+
+    #[test]
+    fn annotation_type_slipnote() {
+        assert_eq!(AnnotationType::from_str("sn"), Some(AnnotationType::SlipNote));
+    }
+
+    #[test]
+    fn annotation_type_slipnote_word_does_not_map() {
+        assert_eq!(AnnotationType::from_str("slipnote"), None);
+    }
+
+    #[test]
+    fn slipnote_annotation_type_serializes_lowercase() {
+        let json = serde_json::to_string(&AnnotationType::SlipNote).unwrap();
+        assert_eq!(json, "\"slipnote\"");
+        let parsed: AnnotationType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, AnnotationType::SlipNote);
     }
 
     #[test]

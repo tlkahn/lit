@@ -349,6 +349,24 @@ mod tests {
         assert_eq!(ann.mark, None);
     }
 
+    #[test]
+    fn block_slipnote_with_anchor() {
+        let inner = "sn\n^\"parent-uuid\"\n@2026-07-28\n---\nCompare with Braudel's take on Mediterranean trade.";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+        assert_eq!(ann.date, Some("2026-07-28".to_string()));
+        assert_eq!(ann.body, Some("Compare with Braudel's take on Mediterranean trade.".to_string()));
+    }
+
+    #[test]
+    fn block_slipnote_multiline_body() {
+        let inner = "sn\n^\"parent-uuid\"\n@2026-07-28\n---\nCompare with Braudel.\n\nAlso see chapter 4.";
+        let ann = parse_block(inner, marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.body, Some("Compare with Braudel.\n\nAlso see chapter 4.".to_string()));
+    }
+
     // --- lang: header line ---
 
     #[test]

@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { TYPE_ICON, certaintyMark, certaintyClass, truncateBody, getMarkIcon, CLS } from "./annotationConstants";
 import type { AnnotationType } from "../../lib/ipc";
 import { useMarkConfigStore } from "../../stores/markConfig";
 
 const ALL_TYPES: AnnotationType[] = [
-  "note", "question", "todo", "crossref", "apparatus", "translation", "llm", "bare",
+  "note", "question", "todo", "crossref", "apparatus", "translation",
+  "llm", "thread", "slipnote", "mark", "bare",
 ];
 
 describe("annotationConstants", () => {
@@ -13,6 +16,29 @@ describe("annotationConstants", () => {
       expect(TYPE_ICON[t]).toBeDefined();
       expect(TYPE_ICON[t].length).toBeGreaterThan(0);
     }
+  });
+
+  it("annotation.css defines pill/marker/callout colors for slipnote", () => {
+    const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
+    expect(css).toMatch(
+      /\.cm-annotation-pill\[data-annotation-type="slipnote"\]/,
+    );
+    expect(css).toMatch(
+      /\.cm-annotation-marker\[data-annotation-type="slipnote"\]/,
+    );
+    expect(css).toMatch(
+      /\.cm-annotation-callout\[data-annotation-type="slipnote"\]/,
+    );
+  });
+
+  it("index.css defines cardbox --ann-color for slipnote", () => {
+    const css = readFileSync(
+      resolve(__dirname, "../../index.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\[data-testid="cardbox-card"\]\[data-annotation-type="slipnote"\]\s*\{\s*--ann-color:/,
+    );
   });
 
   it("llm icon is ⚡", () => {

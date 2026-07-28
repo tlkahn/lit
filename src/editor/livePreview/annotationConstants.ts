@@ -55,6 +55,7 @@ export const TYPE_ICON: Record<AnnotationType, string> = {
   translation: "译",
   llm: "⚡",
   thread: "◇",
+  slipnote: "S",
   mark: "◆",
   bare: "…",
 };
