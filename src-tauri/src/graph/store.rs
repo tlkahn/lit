@@ -4684,6 +4684,46 @@ mod tests {
         assert_eq!(rowids_before, rowids_after);
     }
 
+    #[test]
+    fn upsert_annotations_body_change_keeps_authored_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let authored_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        let ann = super::IndexableAnnotation {
+            uuid: Some(authored_uuid.to_string()),
+            char_start: 10,
+            ..make_annotation("note", Some("body A"))
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let uuid1: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(uuid1, authored_uuid);
+
+        // Same authored uuid, different body - should update in place
+        let ann2 = super::IndexableAnnotation {
+            uuid: Some(authored_uuid.to_string()),
+            char_start: 10,
+            ..make_annotation("note", Some("body B"))
+        };
+        store.upsert_annotations("a.md", &[ann2]).unwrap();
+
+        let (uuid2, body2): (String, Option<String>) = store.conn.query_row(
+            "SELECT uuid, body FROM annotations WHERE node_id = 'a.md'", [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(uuid2, authored_uuid, "authored uuid must be preserved");
+        assert_eq!(body2.as_deref(), Some("body B"), "body must be updated");
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "should be exactly one row");
+    }
+
     // --- match_annotations: greedy position-sorted pairing ---
 
     #[test]
