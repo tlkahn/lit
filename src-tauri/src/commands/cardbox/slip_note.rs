@@ -222,6 +222,12 @@ pub(crate) fn sync_emit_plan(
     }
 }
 
+/// Emit immediate graph side effects iff at least one changed page
+/// reindexed successfully (not present in retry_pages).
+pub(crate) fn migrate_graph_emit(changed_pages: &[String], retry_pages: &[String]) -> bool {
+    changed_pages.iter().any(|p| !retry_pages.iter().any(|r| r == p))
+}
+
 // ---------------------------------------------------------------------------
 // Cycle E - sync_slip_note_to_source (pure core + Tauri wrapper)
 // ---------------------------------------------------------------------------
@@ -876,7 +882,7 @@ pub fn migrate_cardbox_slip_notes(
         );
     }
 
-    if !output.removed_annotations.is_empty() || (!output.result.changed_pages.is_empty() && output.reindex_retry_pages.is_empty()) {
+    if migrate_graph_emit(&output.result.changed_pages, &output.reindex_retry_pages) {
         crate::commands::graph::emit_reindex_side_effects(
             &app_handle,
             &Ok(output.removed_annotations),
@@ -2918,6 +2924,46 @@ mod tests {
 
         assert!(output.result.synced);
         assert!(output.file_changed, "write path must mark file_changed");
+    }
+
+    // -----------------------------------------------------------------------
+    // R8 Cycle 3 tests - migrate_graph_emit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn migrate_graph_emit_all_success() {
+        let changed = vec!["a.md".into(), "b.md".into()];
+        let retry: Vec<String> = vec![];
+        assert!(migrate_graph_emit(&changed, &retry));
+    }
+
+    #[test]
+    fn migrate_graph_emit_all_retry() {
+        let changed = vec!["a.md".into(), "b.md".into()];
+        let retry = vec!["a.md".into(), "b.md".into()];
+        assert!(!migrate_graph_emit(&changed, &retry));
+    }
+
+    #[test]
+    fn migrate_graph_emit_mixed_success_emits() {
+        // Old algebra: !removed.is_empty() || (!changed.is_empty() && retry.is_empty())
+        // with removed=[] and mixed retry returned false (insert-only bug).
+        // New helper must emit when any changed page succeeded.
+        let changed = vec!["a.md".into(), "b.md".into()];
+        let retry = vec!["b.md".into()];
+        assert!(migrate_graph_emit(&changed, &retry));
+    }
+
+    #[test]
+    fn migrate_graph_emit_empty_changed() {
+        assert!(!migrate_graph_emit(&[], &[]));
+    }
+
+    #[test]
+    fn migrate_graph_emit_single_retry() {
+        let changed = vec!["a.md".into()];
+        let retry = vec!["a.md".into()];
+        assert!(!migrate_graph_emit(&changed, &retry));
     }
 
     #[test]
