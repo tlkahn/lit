@@ -964,6 +964,40 @@ describe("CardboxCard", () => {
 
   // --- Source attribution tests ---
 
+  it("clicking back-face source navigates and does not toggle expand", () => {
+    const onNavigate = vi.fn();
+    const onToggleExpand = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggleExpand}
+        onNavigate={onNavigate}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    onToggleExpand.mockClear();
+    fireEvent.click(screen.getByTestId("card-source"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onToggleExpand).not.toHaveBeenCalled();
+  });
+
+  it("clicking front-face source (no original) navigates and does not toggle expand", () => {
+    const onNavigate = vi.fn();
+    const onToggleExpand = vi.fn();
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={onToggleExpand}
+        onNavigate={onNavigate}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-source"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onToggleExpand).not.toHaveBeenCalled();
+  });
+
   it("shows source on front when annotation has no original", () => {
     render(
       <CardboxCard
