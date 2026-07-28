@@ -284,8 +284,8 @@ pub fn read_cardbox_layout(
     layout.links.sort();
     layout.links.dedup();
 
-    // Prune stale UUIDs, reconcile groups, and overlay sn-derived notes
-    let notes_changed = super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+    // Prune stale UUIDs and overlay sn-derived notes
+    let effective_notes = super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
         let all_uuids = gi.list_all_cardbox_annotation_uuids()?;
         let valid_uuids: HashSet<&str> = all_uuids.iter().map(|s| s.as_str()).collect();
         prune_layout(&mut layout, &valid_uuids);
@@ -294,16 +294,19 @@ pub fn read_cardbox_layout(
         layout.pinned.retain(|uuid| seen.insert(uuid.clone()));
         layout.notes.retain(|uuid, _| valid_uuids.contains(uuid.as_str()));
 
-        let changed = slip_note::reconcile_slip_notes(gi, &mut layout)
+        let notes = slip_note::reconcile_slip_notes(gi, &layout)
             .map_err(|e| crate::graph::error::GraphError::Other(e))?;
-        Ok(changed)
+        Ok(notes)
     })?;
 
-    if notes_changed {
-        let lit_dir = root.join(".lit");
-        std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-        persist_layout(&lit_dir, &layout)?;
-    }
+    // Persist only if prune/links/groups/pinned/colors changed on disk
+    // (sn overlay is display-only and not persisted)
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+    persist_layout(&lit_dir, &layout)?;
+
+    // Apply sn overlay for display (not persisted)
+    layout.notes = effective_notes;
 
     Ok(layout)
 }

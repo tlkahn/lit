@@ -254,10 +254,38 @@ pub fn sync_slip_note_to_source(
 // Cycle F - Reconcile notes cache + migration
 // ---------------------------------------------------------------------------
 
+/// Build effective notes by overlaying sn-derived bodies on top of fallback.
+/// sn_map wins on key conflict; empty sn body means the key is absent.
+pub(crate) fn overlay_notes_from_sn(
+    fallback: &HashMap<String, CardNote>,
+    sn_map: &HashMap<String, crate::graph::types::CardboxAnnotation>,
+) -> HashMap<String, CardNote> {
+    let mut out = fallback.clone();
+    for (parent, sn) in sn_map {
+        let body = unsanitize_sn_body(sn.body.as_deref().unwrap_or(""));
+        if body.is_empty() {
+            out.remove(parent);
+            continue;
+        }
+        out.insert(parent.clone(), CardNote {
+            body,
+            updated_at: sn.date.clone(),
+        });
+    }
+    out
+}
+
+/// Apply sn overlay to layout.notes for display purposes.
+/// layout.notes is treated as fallback-only; sn-derived entries are NOT
+/// persisted into it. The overlay is computed at read time.
+///
+/// Returns the effective notes map (fallback + sn overlay). The caller
+/// should set `layout.notes = effective` on the returned layout but NOT
+/// persist that to disk.
 pub(crate) fn reconcile_slip_notes(
     gi: &crate::graph::indexer::GraphIndex,
-    layout: &mut CardboxLayout,
-) -> Result<bool, String> {
+    layout: &CardboxLayout,
+) -> Result<HashMap<String, CardNote>, String> {
     let sn_map = {
         let store = gi.store();
         store
@@ -265,27 +293,7 @@ pub(crate) fn reconcile_slip_notes(
             .map_err(|e| e.to_string())?
     };
 
-    let mut changed = false;
-    for (parent_uuid, sn) in &sn_map {
-        let sn_body = unsanitize_sn_body(sn.body.as_deref().unwrap_or(""));
-        if sn_body.is_empty() {
-            continue;
-        }
-        let note = CardNote {
-            body: sn_body.clone(),
-            updated_at: sn.date.clone(),
-        };
-        let should_update = match layout.notes.get(parent_uuid) {
-            Some(existing) => existing.body != sn_body,
-            None => true,
-        };
-        if should_update {
-            layout.notes.insert(parent_uuid.clone(), note);
-            changed = true;
-        }
-    }
-
-    Ok(changed)
+    Ok(overlay_notes_from_sn(&layout.notes, &sn_map))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -344,6 +352,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     let mut migrated = 0usize;
     let mut failed = 0usize;
     let pending_count = pending.len();
+    let mut drained_keys: Vec<String> = Vec::new();
 
     for (page_id, entries) in &by_page {
         let page = match crate::workspace::ops::read_page(root, page_id, registry) {
@@ -385,6 +394,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 });
 
             if existing_child.is_some() {
+                drained_keys.push(parent_uuid.clone());
                 page_migrated += 1;
                 migrated += 1;
                 continue;
@@ -405,6 +415,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
             ) {
                 Ok(new_body) => {
                     current_body = new_body;
+                    drained_keys.push(parent_uuid.clone());
                     page_migrated += 1;
                     migrated += 1;
                 }
@@ -429,6 +440,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 registry,
             ) {
                 tracing::warn!("migrate: failed to write {}: {}", page_id, e);
+                // Revert drain for this page's entries
+                for (uuid, _) in entries {
+                    drained_keys.retain(|k| k != uuid);
+                }
                 failed += page_migrated;
                 migrated -= page_migrated;
                 continue;
@@ -445,7 +460,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
         }
     }
 
-    reconcile_slip_notes(gi, &mut layout)?;
+    // Drain fallback keys for successfully migrated entries
+    for key in &drained_keys {
+        layout.notes.remove(key);
+    }
 
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
@@ -1053,12 +1071,13 @@ mod tests {
         let gi =
             GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
-        let mut layout = CardboxLayout::default();
-        let changed = reconcile_slip_notes(&gi, &mut layout).unwrap();
+        let layout = CardboxLayout::default();
+        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
 
-        assert!(changed);
-        assert!(layout.notes.contains_key("p1"));
-        assert_eq!(layout.notes["p1"].body, "Slip note body");
+        assert!(effective.contains_key("p1"));
+        assert_eq!(effective["p1"].body, "Slip note body");
+        // layout.notes is NOT mutated (sn overlay is display-only)
+        assert!(layout.notes.is_empty());
     }
 
     #[test]
@@ -1081,9 +1100,8 @@ mod tests {
             },
         );
 
-        let changed = reconcile_slip_notes(&gi, &mut layout).unwrap();
-        assert!(!changed, "no sn exists so JSON note should be preserved unchanged");
-        assert_eq!(layout.notes["p1"].body, "JSON-only note");
+        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        assert_eq!(effective["p1"].body, "JSON-only note");
     }
 
     #[test]
@@ -1141,12 +1159,153 @@ mod tests {
             },
         );
 
-        let changed = reconcile_slip_notes(&gi, &mut layout).unwrap();
-        assert!(!changed, "no sn to reconcile");
+        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
         assert!(
-            layout.notes.contains_key("deleted-uuid"),
+            effective.contains_key("deleted-uuid"),
             "orphaned note stays until pruned by read_cardbox_layout"
         );
+    }
+
+    #[test]
+    fn f_reconcile_clears_note_when_sn_removed() {
+        let dir = create_workspace();
+        // Step 1: with sn present, overlay includes sn body
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Slip note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let layout = CardboxLayout::default();
+        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        assert!(effective.contains_key("p1"));
+
+        // Step 2: remove sn from file, reindex, reconcile
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> more.\n",
+        );
+        gi.batch_reindex(
+            &crate::graph::indexer::DiffResult {
+                new: vec![],
+                changed: vec!["a.md".to_string()],
+                deleted: vec![],
+            },
+            &AnnotationIndexOpts::default(),
+        ).unwrap();
+
+        // layout.notes never had p1 (sn overlay is display-only)
+        let effective2 = reconcile_slip_notes(&gi, &layout).unwrap();
+        assert!(!effective2.contains_key("p1"),
+            "sn removed from md -> effective notes must not have p1: {:?}", effective2);
+    }
+
+    #[test]
+    fn f_reconcile_keeps_json_only_fallback() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote {
+                body: "JSON-only note".to_string(),
+                updated_at: None,
+            },
+        );
+
+        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        assert_eq!(effective["p1"].body, "JSON-only note");
+    }
+
+    #[test]
+    fn f_migrate_drains_fallback_key_after_sn_write() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote {
+                body: "Legacy note".to_string(),
+                updated_at: None,
+            },
+        );
+        write_layout(dir.path(), &layout);
+
+        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            .unwrap();
+
+        // After migrate, on-disk cardbox.json notes map should NOT contain p1
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "migrate must drain fallback key once sn exists: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn f_external_sn_delete_after_migrate_no_resurrect() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote {
+                body: "Legacy note".to_string(),
+                updated_at: None,
+            },
+        );
+        write_layout(dir.path(), &layout);
+
+        // Migrate: writes sn to file, drains fallback
+        do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+            .unwrap();
+
+        // Now externally delete the sn from file
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        gi.batch_reindex(
+            &crate::graph::indexer::DiffResult {
+                new: vec![],
+                changed: vec!["a.md".to_string()],
+                deleted: vec![],
+            },
+            &AnnotationIndexOpts::default(),
+        ).unwrap();
+
+        // Reconcile: sn gone, fallback drained -> note should not resurrect
+        let layout2 = cardbox_layout::load_layout(dir.path());
+        let effective = reconcile_slip_notes(&gi, &layout2).unwrap();
+        assert!(!effective.contains_key("p1"),
+            "note must not resurrect after sn delete + fallback drain: {:?}", effective);
     }
 
     #[test]
