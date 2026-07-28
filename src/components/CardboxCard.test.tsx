@@ -918,6 +918,26 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Typing guard tests ---
+
+  it("F in slip-note textarea does not flip the card", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-add"));
+    const ta = screen.getByTestId("card-note-textarea");
+    fireEvent.keyDown(ta, { key: "f" });
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    fireEvent.keyDown(ta, { key: "F" });
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+  });
+
   // --- Glyph correctness tests ---
 
   it("Add note icon is fa-square_plus (U+F0FE), not a gear", () => {

@@ -161,6 +161,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const tag = target.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT" || target.isContentEditable) return;
       if (e.key === "Escape" && expanded) {
         e.stopPropagation();
         onToggleExpand();
