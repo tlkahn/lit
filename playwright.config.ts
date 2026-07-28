@@ -7,12 +7,22 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: "html",
-  use: {
-    ...devices["Desktop Chrome"],
-    launchOptions: {
-      args: ["--enable-webgl-swiftshader"],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: {
+          args: ["--enable-webgl-swiftshader"],
+        },
+      },
     },
-  },
+    {
+      name: "webkit",
+      testMatch: "cardbox-flip.spec.ts",
+      use: { ...devices["Desktop Safari"] },
+    },
+  ],
   webServer: {
     command: "bun run dev",
     port: 1420,
