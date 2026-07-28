@@ -193,7 +193,7 @@ pub(crate) fn interpret_reindex_outcome<E: std::fmt::Display>(
         Ok(r) => ReindexOutcome { removed: r, retry: false },
         Err(e) => {
             tracing::warn!(
-                "reindex failed for {}: {} (file written, index stale; retry scheduled)",
+                "reindex failed for {}: {} (index stale; retry requested)",
                 page_id, e
             );
             ReindexOutcome { removed: vec![], retry: true }
@@ -211,10 +211,14 @@ pub(crate) struct SlipEmitPlan {
     pub graph_side_effects: bool,
 }
 
-pub(crate) fn sync_emit_plan(synced: bool, reindex_retry: bool) -> SlipEmitPlan {
+pub(crate) fn sync_emit_plan(
+    file_changed: bool,
+    index_touched: bool,
+    reindex_retry: bool,
+) -> SlipEmitPlan {
     SlipEmitPlan {
-        file_modified: synced,
-        graph_side_effects: synced && !reindex_retry,
+        file_modified: file_changed,
+        graph_side_effects: index_touched && !reindex_retry,
     }
 }
 
@@ -237,6 +241,8 @@ pub(crate) struct SyncOutput {
     pub result: SyncResult,
     pub removed_annotations: Vec<(String, String)>,
     pub reindex_retry: bool,
+    /// True when page bytes were written (Wrote). False for TrueNoop / DriftHeal.
+    pub file_changed: bool,
 }
 
 enum WritePhase {
@@ -350,6 +356,7 @@ pub(crate) fn do_sync_slip_note_to_source(
             },
             removed_annotations: vec![],
             reindex_retry: false,
+            file_changed: false,
         }),
         WritePhase::DriftHeal { child_uuid, page_id } => {
             // delete-equivalent: md already has no sn
@@ -377,6 +384,7 @@ pub(crate) fn do_sync_slip_note_to_source(
                 },
                 removed_annotations: outcome.removed,
                 reindex_retry: outcome.retry,
+                file_changed: false,
             })
         }
         WritePhase::Wrote { child_uuid, page_id } => {
@@ -405,6 +413,7 @@ pub(crate) fn do_sync_slip_note_to_source(
                 },
                 removed_annotations: outcome.removed,
                 reindex_retry: outcome.retry,
+                file_changed: true,
             })
         }
     }
@@ -460,7 +469,11 @@ pub fn sync_slip_note_to_source(
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
     let output = do_sync_slip_note_to_source(&root, &gi, &registry, &ann_opts, &file_lock, &parent_uuid, &body)?;
 
-    let plan = sync_emit_plan(output.result.synced, output.reindex_retry);
+    let plan = sync_emit_plan(
+        output.file_changed,
+        output.result.synced,
+        output.reindex_retry,
+    );
 
     if plan.file_modified {
         let _ = window.emit(
@@ -2819,28 +2832,92 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // R7 Cycle 6 tests - emit plan
+    // R7 Cycle 6 / R8 Cycle 2 tests - emit plan (file vs index)
     // -----------------------------------------------------------------------
 
     #[test]
-    fn sync_emit_plan_synced_retry_emits_file_only() {
-        let plan = sync_emit_plan(true, true);
-        assert!(plan.file_modified);
+    fn sync_emit_plan_drift_heal_ok_graph_only() {
+        let plan = sync_emit_plan(false, true, false);
+        assert!(!plan.file_modified);
+        assert!(plan.graph_side_effects);
+    }
+
+    #[test]
+    fn sync_emit_plan_drift_heal_retry_emits_nothing_immediate() {
+        let plan = sync_emit_plan(false, true, true);
+        assert!(!plan.file_modified);
         assert!(!plan.graph_side_effects);
     }
 
     #[test]
-    fn sync_emit_plan_synced_no_retry_emits_both() {
-        let plan = sync_emit_plan(true, false);
+    fn sync_emit_plan_wrote_ok_emits_both() {
+        let plan = sync_emit_plan(true, true, false);
         assert!(plan.file_modified);
         assert!(plan.graph_side_effects);
     }
 
     #[test]
-    fn sync_emit_plan_not_synced_emits_nothing() {
-        let plan = sync_emit_plan(false, false);
+    fn sync_emit_plan_wrote_retry_file_only() {
+        let plan = sync_emit_plan(true, true, true);
+        assert!(plan.file_modified);
+        assert!(!plan.graph_side_effects);
+    }
+
+    #[test]
+    fn sync_emit_plan_true_noop_emits_nothing() {
+        let plan = sync_emit_plan(false, false, false);
         assert!(!plan.file_modified);
         assert!(!plan.graph_side_effects);
+    }
+
+    #[test]
+    fn sync_drift_heal_marks_file_unchanged() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> end.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Externally rewrite file to parent-only (no reindex)
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "",
+        ).unwrap();
+
+        assert!(output.result.synced, "heal reports work done");
+        assert!(!output.file_changed, "heal must not claim file bytes changed");
+    }
+
+    #[test]
+    fn sync_write_marks_file_changed() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(), "p1", "A note",
+        ).unwrap();
+
+        assert!(output.result.synced);
+        assert!(output.file_changed, "write path must mark file_changed");
     }
 
     #[test]
