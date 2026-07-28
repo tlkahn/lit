@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
-import { renderMarkdown } from "../lib/renderMarkdown";
+import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 
 /** Inline sub-component: slip-note editor body (textarea / display states). */
@@ -172,6 +172,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
   const certainty = certaintyMark(annotation.certainty);
   const renderedBody = useMemo(() => renderMarkdown(annotation.body ?? ""), [annotation.body]);
+  const renderedOriginal = useMemo(() => renderInlineMarkdown(annotation.original ?? ""), [annotation.original]);
 
   return (
     <div
@@ -194,7 +195,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             className="nerd-font text-sm text-interactive-accent"
             data-testid="pin-icon"
             aria-hidden="true"
-          >{'󰐃'}</span>
+          >{'\u{F0403}'}</span>
         )}
         {canFlip && (
           <button
@@ -210,149 +211,166 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           >{''}</button>
         )}
       </div>
-      {/* Collapsed content - always visible */}
-      <div className="flex items-start gap-2">
-        <span
-          className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
-          data-annotation-type={annotation.annotation_type}
-          data-testid="card-type-badge"
-        >
-          {icon}
-        </span>
-        <div
-          className={`prose prose-sm min-w-0 flex-1 text-sm${expanded ? "" : " line-clamp-3"}`}
-          data-testid="card-body"
-          dangerouslySetInnerHTML={{ __html: renderedBody }}
-          onClick={(e) => {
-            if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
-          }}
-        />
-      </div>
-
-      <div className="mt-2 flex items-center gap-2 text-xs">
-        {certainty && (
-          <span className="font-semibold text-text-muted" data-testid="card-certainty">
-            {certainty}
-          </span>
-        )}
-        {linkedCards && linkedCards.length > 0 && (
-          <span className="text-text-faint" data-testid="card-link-count">
-            &middot;{linkedCards.length}
-          </span>
-        )}
-        {note && (
-          <span
-            className="text-text-faint"
-            data-testid="card-note-indicator"
-            title="Has slip note"
-          >&#9998;</span>
-        )}
-      </div>
-
-      {/* Expanded content */}
-      <div
-        className="grid transition-all duration-200 ease-out"
-        style={{
-          gridTemplateRows: expanded ? "1fr" : "0fr",
-          opacity: expanded ? 1 : 0,
-        }}
-      >
-        <div className="overflow-hidden" {...(!expanded ? { inert: "" as unknown as boolean } : {})}>
-          <div className="mt-3 space-y-2">
-            {annotation.date && (
-              <div className="text-xs text-text-faint" data-testid="card-date">
-                {annotation.date}
-              </div>
-            )}
-            <div className="flex items-center gap-3">
-              <button
-                className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNavigate();
-                }}
-                data-testid="card-navigate"
+      <div className="cardbox-card-scene">
+        <div className={`cardbox-card-rotator${flipped ? " is-flipped" : ""}`}>
+          <div className="cardbox-card-face cardbox-card-face-front" data-testid="card-face-front" aria-hidden={flipped}>
+            <div className="flex items-start gap-2">
+              <span
+                className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
+                data-annotation-type={annotation.annotation_type}
+                data-testid="card-type-badge"
               >
-                <span className="nerd-font" aria-hidden="true">{'󰈙'}</span>
-                Open in document
-              </button>
-              {onShowConnections && (
-                <button
-                  className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onShowConnections();
-                  }}
-                  data-testid="card-show-connections"
-                >
-                  <span className="nerd-font" aria-hidden="true">{'󰌹'}</span>
-                  Show connections
-                </button>
+                {icon}
+              </span>
+              <div
+                className={`prose prose-sm min-w-0 flex-1 text-sm${expanded ? "" : " line-clamp-3"}`}
+                data-testid="card-body"
+                dangerouslySetInnerHTML={{ __html: renderedBody }}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
+                }}
+              />
+            </div>
+
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              {certainty && (
+                <span className="font-semibold text-text-muted" data-testid="card-certainty">
+                  {certainty}
+                </span>
               )}
-              {onSetNote && !note && !noteEditing && (
-                <button
-                  className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                  data-testid="card-note-add"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNoteEditing(true);
-                  }}
-                >
-                  <span className="nerd-font" aria-hidden="true">{''}</span> Add note
-                </button>
+              {linkedCards && linkedCards.length > 0 && (
+                <span className="text-text-faint" data-testid="card-link-count">
+                  &middot;{linkedCards.length}
+                </span>
+              )}
+              {note && (
+                <span
+                  className="text-text-faint"
+                  data-testid="card-note-indicator"
+                  title="Has slip note"
+                >&#9998;</span>
               )}
             </div>
-            {linkedCards && linkedCards.length > 0 && (
-              <div
-                data-testid="card-linked-section"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="mt-2 text-[10px] font-semibold uppercase text-text-muted">Linked</div>
-                <div className="mt-1 max-h-32 space-y-1 overflow-y-auto">
-                  {linkedCards.map((card) => (
-                    <div
-                      key={card.uuid}
-                      className="group flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-xs hover:bg-bg-hover"
-                      data-testid="linked-card-preview"
+
+            {/* Expanded content */}
+            <div
+              className="grid transition-all duration-200 ease-out"
+              style={{
+                gridTemplateRows: expanded ? "1fr" : "0fr",
+                opacity: expanded ? 1 : 0,
+              }}
+            >
+              <div className="overflow-hidden" {...(!expanded ? { inert: "" as unknown as boolean } : {})}>
+                <div className="mt-3 space-y-2">
+                  {annotation.date && (
+                    <div className="text-xs text-text-faint" data-testid="card-date">
+                      {annotation.date}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onFocusCard?.(card.uuid);
+                        onNavigate();
                       }}
+                      data-testid="card-navigate"
                     >
-                      <span className="shrink-0 text-[10px]">
-                        {TYPE_ICON[card.annotation_type as AnnotationType] ?? "…"}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-text-muted">
-                        {truncateBody(card.body ?? card.original, 60)}
-                      </span>
+                      <span className="nerd-font" aria-hidden="true">{'\u{F0219}'}</span>
+                      Open in document
+                    </button>
+                    {onShowConnections && (
                       <button
-                        className="shrink-0 text-text-faint opacity-0 hover:text-text-normal group-hover:opacity-100"
-                        aria-label="Remove link"
-                        data-testid="remove-link-button"
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onRemoveLink?.(card.uuid);
+                          onShowConnections();
+                        }}
+                        data-testid="card-show-connections"
+                      >
+                        <span className="nerd-font" aria-hidden="true">{'\u{F0339}'}</span>
+                        Show connections
+                      </button>
+                    )}
+                    {onSetNote && !note && !noteEditing && (
+                      <button
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
+                        data-testid="card-note-add"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNoteEditing(true);
                         }}
                       >
-                        &times;
+                        <span className="nerd-font" aria-hidden="true">{''}</span> Add note
                       </button>
+                    )}
+                  </div>
+                  {linkedCards && linkedCards.length > 0 && (
+                    <div
+                      data-testid="card-linked-section"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="mt-2 text-[10px] font-semibold uppercase text-text-muted">Linked</div>
+                      <div className="mt-1 max-h-32 space-y-1 overflow-y-auto">
+                        {linkedCards.map((card) => (
+                          <div
+                            key={card.uuid}
+                            className="group flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-xs hover:bg-bg-hover"
+                            data-testid="linked-card-preview"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onFocusCard?.(card.uuid);
+                            }}
+                          >
+                            <span className="shrink-0 text-[10px]">
+                              {TYPE_ICON[card.annotation_type as AnnotationType] ?? "…"}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-text-muted">
+                              {truncateBody(card.body ?? card.original, 60)}
+                            </span>
+                            <button
+                              className="shrink-0 text-text-faint opacity-0 hover:text-text-normal group-hover:opacity-100"
+                              aria-label="Remove link"
+                              data-testid="remove-link-button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRemoveLink?.(card.uuid);
+                              }}
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  )}
+                  {onSetNote && (note || noteEditing) && (
+                    <CardNoteEditor
+                      note={note}
+                      editing={noteEditing}
+                      onStartEditing={() => setNoteEditing(true)}
+                      onStopEditing={() => setNoteEditing(false)}
+                      onSetNote={onSetNote}
+                      onExportNote={onExportNote}
+                    />
+                  )}
                 </div>
               </div>
-            )}
-            {onSetNote && (note || noteEditing) && (
-              <CardNoteEditor
-                note={note}
-                editing={noteEditing}
-                onStartEditing={() => setNoteEditing(true)}
-                onStopEditing={() => setNoteEditing(false)}
-                onSetNote={onSetNote}
-                onExportNote={onExportNote}
-              />
-            )}
+            </div>
           </div>
+          {canFlip && (
+            <div className="cardbox-card-face cardbox-card-face-back" data-testid="card-face-back" aria-hidden={!flipped}>
+              <div
+                className="border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted"
+                data-testid="card-original"
+                dangerouslySetInnerHTML={{ __html: renderedOriginal }}
+              />
+              <div className="mt-2 text-xs text-text-faint" data-testid="card-source">
+                {annotation.source_page_title}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

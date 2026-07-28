@@ -32,7 +32,7 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-annotation-type", "question");
   });
 
-  it("renders collapsed state with badge and body without source", () => {
+  it("renders collapsed state with badge and body without source on front", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -43,12 +43,13 @@ describe("CardboxCard", () => {
     );
     expect(screen.getByTestId("card-type-badge")).toBeInTheDocument();
     expect(screen.getByTestId("card-body")).toBeInTheDocument();
-    expect(screen.queryByTestId("card-source")).not.toBeInTheDocument();
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-source"]')).toBeNull();
     // Navigate link should not be visible in collapsed state (parent has opacity: 0)
     expect(screen.getByTestId("card-navigate")).not.toBeVisible();
   });
 
-  it("renders expanded state with body, date, and navigate but no original or source", () => {
+  it("renders expanded state with body, date, and navigate but no original or source on front", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -58,8 +59,9 @@ describe("CardboxCard", () => {
       />,
     );
     expect(screen.getByTestId("card-body")).toHaveTextContent(baseAnnotation.body!);
-    expect(screen.queryByTestId("card-original")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("card-source")).not.toBeInTheDocument();
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-original"]')).toBeNull();
+    expect(front.querySelector('[data-testid="card-source"]')).toBeNull();
     expect(screen.getByTestId("card-date")).toHaveTextContent("2026-06-15");
     expect(screen.getByTestId("card-navigate")).toBeVisible();
   });
@@ -73,10 +75,23 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    expect(screen.queryByTestId("card-original")).not.toBeInTheDocument();
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-original"]')).toBeNull();
   });
 
-  it.todo("renders original as markdown HTML on back face");
+  it("renders original as markdown HTML on back face", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: "**bold** text" }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    const orig = screen.getByTestId("card-original");
+    expect(orig.innerHTML).toContain("<strong>bold</strong>");
+  });
 
   it("shows certainty mark for tentative", () => {
     render(
@@ -356,6 +371,68 @@ describe("CardboxCard", () => {
     fireEvent.click(flip);
     expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
     expect(flip).toHaveAttribute("aria-label", "Show original quote");
+  });
+
+  it("flipped card shows original quote and source attribution", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-original")).toHaveTextContent(baseAnnotation.original!);
+    expect(screen.getByTestId("card-source")).toHaveTextContent("Test Document");
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("card-face-back")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("front face hides annotation body from a11y tree when flipped", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("card-face-back")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("expanded chrome remains on front face only", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    const front = screen.getByTestId("card-face-front");
+    const back = screen.getByTestId("card-face-back");
+    expect(front.querySelector('[data-testid="card-navigate"]')).toBeInTheDocument();
+    expect(back.querySelector('[data-testid="card-navigate"]')).toBeNull();
+  });
+
+  it("flipping back to front restores annotation aria visibility", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    fireEvent.click(flip);
+    fireEvent.click(flip);
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
   });
 
   it("flip button sits outside expand hit-path when card clicked elsewhere still expands", () => {
