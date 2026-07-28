@@ -1156,6 +1156,7 @@ export type AnnotationType =
   | "translation"
   | "llm"
   | "thread"
+  | "slipnote"
   | "mark"
   | "bare";
 

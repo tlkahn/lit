@@ -313,6 +313,20 @@ describe("generateDsl", () => {
       expect(generateDsl(fields({ type: "thread" }))).toBe("<!--- th --->");
     });
 
+    it("slipnote → sn", () => {
+      expect(generateDsl(fields({ type: "slipnote" }))).toBe("<!--- sn --->");
+    });
+
+    it("slipnote with anchor scope and body", () => {
+      const dsl = generateDsl(fields({
+        type: "slipnote",
+        scope: { kind: "anchor", value: "p" },
+        body: "x",
+      }));
+      expect(dsl).toContain("sn");
+      expect(dsl).toContain('^"p"');
+    });
+
     it("bare (null) with no body → minimal", () => {
       expect(generateDsl(fields())).toBe("<!---  --->");
     });
@@ -475,6 +489,25 @@ describe("annotationToFields", () => {
   it("translation annotation_type passes through", () => {
     const f = annotationToFields(makeAnnotation({ annotation_type: "translation" }));
     expect(f.type).toBe("translation");
+  });
+
+  it("slipnote annotation_type passes through", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "slipnote" }));
+    expect(f.type).toBe("slipnote");
+  });
+
+  it("slipnote annotationToFields + generateDsl round-trip preserves sn keyword", () => {
+    const ann = makeAnnotation({
+      annotation_type: "slipnote",
+      scope: { kind: "anchor", value: "parent-uuid" },
+      body: "Compare with Braudel",
+      date: "2026-07-28",
+      original: '<!--- sn ^"parent-uuid" | Compare with Braudel @2026-07-28 --->',
+    });
+    const dsl = generateDsl(annotationToFields(ann));
+    expect(dsl).toContain("sn");
+    expect(dsl).toContain('^"parent-uuid"');
+    expect(dsl).toContain("Compare with Braudel");
   });
 
   describe("mark mapping", () => {

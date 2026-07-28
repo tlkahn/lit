@@ -87,6 +87,7 @@ const TYPE_KEYWORDS: Record<string, string> = {
   translation: "tr",
   llm: "llm",
   thread: "th",
+  slipnote: "sn",
 };
 
 function serializeType(type: AnnotationType | null): string {
