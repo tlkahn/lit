@@ -27,7 +27,7 @@ pub fn parse_compact(inner: &str, mark_codes: &[String]) -> Annotation {
     let mut mark: Option<String> = None;
     let mut lang: Option<String> = None;
 
-    let type_keywords = ["todo", "app", "llm", "cf", "tr", "th", "n", "q"];
+    let type_keywords = ["todo", "app", "llm", "cf", "tr", "th", "sn", "n", "q"];
     for &kw in &type_keywords {
         if remaining.starts_with(kw) {
             let after = &remaining[kw.len()..];
@@ -460,6 +460,31 @@ mod tests {
         assert_eq!(ann.annotation_type, AnnotationType::Thread);
         assert!(ann.is_structured);
         assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn slipnote_compact_with_anchor_and_body() {
+        let ann = parse_compact(r#"sn ^"parent-uuid" | Compare with Braudel @2026-07-28"#, marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.certainty, Certainty::Neutral);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+        assert_eq!(ann.body, Some("Compare with Braudel".to_string()));
+        assert_eq!(ann.date, Some("2026-07-28".to_string()));
+    }
+
+    #[test]
+    fn slipnote_compact_bare_eos() {
+        let ann = parse_compact("sn", marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert!(ann.is_structured);
+        assert_eq!(ann.body, None);
+    }
+
+    #[test]
+    fn slipnote_compact_with_certainty() {
+        let ann = parse_compact(r#"sn? ^"uuid" | tentative note"#, marks::builtin_mark_codes());
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.certainty, Certainty::Tentative);
     }
 
     #[test]

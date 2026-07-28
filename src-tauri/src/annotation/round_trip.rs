@@ -308,6 +308,34 @@ mod tests {
     }
 
     #[test]
+    fn compact_slipnote_with_anchor_round_trip() {
+        let ann = parse_one(r#"<!--- sn ^"parent-uuid" | Compare with Braudel @2026-07-28 --->"#);
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+        assert_eq!(ann.body, Some("Compare with Braudel".to_string()));
+        assert_eq!(ann.date, Some("2026-07-28".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Compact);
+    }
+
+    #[test]
+    fn block_slipnote_with_anchor_round_trip() {
+        let ann = parse_one("<!---\nsn\n^\"parent-uuid\"\n@2026-07-28\n---\nCompare with Braudel.\n\nAlso see chapter 4.\n--->");
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+        assert_eq!(ann.date, Some("2026-07-28".to_string()));
+        assert_eq!(ann.body, Some("Compare with Braudel.\n\nAlso see chapter 4.".to_string()));
+        assert_eq!(ann.form, AnnotationForm::Block);
+    }
+
+    #[test]
+    fn compact_slipnote_with_id_round_trip() {
+        let ann = parse_one(r#"<!---[f0e1d2c3-0000-0000-0000-000000000000] sn ^"parent-uuid" | Compare @2026-07-28 --->"#);
+        assert_eq!(ann.uuid, Some("f0e1d2c3-0000-0000-0000-000000000000".to_string()));
+        assert_eq!(ann.annotation_type, AnnotationType::SlipNote);
+        assert_eq!(ann.scope, Scope::Anchor("parent-uuid".to_string()));
+    }
+
+    #[test]
     fn block_with_uuid_id_round_trip() {
         let ann = parse_one("<!---[550e8400-e29b-41d4-a716-446655440000]\nn!\n\\p\n@2026-03-28\n---\nThe body.\n--->");
         assert_eq!(ann.uuid, Some("550e8400-e29b-41d4-a716-446655440000".to_string()));

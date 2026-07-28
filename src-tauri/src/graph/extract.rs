@@ -399,6 +399,7 @@ pub fn extract_annotations(
                 AnnotationType::Translation => "translation",
                 AnnotationType::Llm => "llm",
                 AnnotationType::Thread => "thread",
+                AnnotationType::SlipNote => "slipnote",
                 AnnotationType::Mark => "mark",
                 AnnotationType::Bare => "bare",
             }
@@ -1189,5 +1190,15 @@ mod tests {
         // Without the custom code it falls back to a bare annotation.
         let builtin = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(builtin[0].annotation_type, "bare");
+    }
+
+    #[test]
+    fn extract_slipnote_annotation_type() {
+        let content = r#"Text<!--- sn ^"parent-uuid" | a slip note @2026-07-28 --->"#;
+        let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].annotation_type, "slipnote");
+        assert_eq!(result[0].scope_kind, "anchor");
+        assert_eq!(result[0].scope_value, "parent-uuid");
     }
 }
