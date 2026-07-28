@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { CardboxCard } from "./CardboxCard";
+import { CardboxCard, showCardFlipped } from "./CardboxCard";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 const baseAnnotation: CardboxAnnotation = {
@@ -1035,7 +1035,13 @@ describe("CardboxCard", () => {
 
   // --- Flip state reset tests ---
 
-  it("resets flipped when original becomes empty on the same instance", () => {
+  it("showCardFlipped is false when canFlip is false even if state is true", () => {
+    expect(showCardFlipped(true, false)).toBe(false);
+    expect(showCardFlipped(true, true)).toBe(true);
+    expect(showCardFlipped(false, true)).toBe(false);
+  });
+
+  it("clears flip presentation when original becomes empty on the same instance", () => {
     const { rerender } = render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -1056,7 +1062,14 @@ describe("CardboxCard", () => {
       />,
     );
 
-    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    const root = screen.getByTestId("cardbox-card");
+    const rotator = root.querySelector(".cardbox-card-rotator")!;
+    const front = screen.getByTestId("card-face-front");
+
+    expect(root).toHaveAttribute("data-flipped", "false");
+    expect(rotator.classList.contains("is-flipped")).toBe(false);
+    expect(front).not.toHaveAttribute("inert");
+    expect(front).toHaveAttribute("aria-hidden", "false");
     expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
     expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
   });

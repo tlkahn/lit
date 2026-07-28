@@ -123,6 +123,10 @@ function CardNoteEditor({
   );
 }
 
+export function showCardFlipped(flipped: boolean, canFlip: boolean): boolean {
+  return flipped && canFlip;
+}
+
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
@@ -147,6 +151,10 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   const [flipped, setFlipped] = useState(false);
   const [noteEditing, setNoteEditing] = useState(false);
   const canFlip = Boolean(annotation.original);
+  if (!canFlip && flipped) {
+    setFlipped(false);
+  }
+  const showFlipped = showCardFlipped(flipped, canFlip);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -158,10 +166,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     prevPinnedRef.current = isPinned;
     setJustPinned(false);
   }, [isPinned]);
-
-  useEffect(() => {
-    if (!canFlip) setFlipped(false);
-  }, [canFlip]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -199,7 +203,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-expanded={expanded}
       data-pinned={isPinned || undefined}
       data-color-tag={colorTag || undefined}
-      data-flipped={flipped}
+      data-flipped={showFlipped}
     >
       <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
         {isPinned && (
@@ -214,8 +218,8 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             type="button"
             className="nerd-font text-sm text-text-muted hover:text-text-normal"
             data-testid="card-flip"
-            aria-label={flipped ? "Show annotation" : "Show original quote"}
-            title={flipped ? "Show annotation (F)" : "Show original quote (F)"}
+            aria-label={showFlipped ? "Show annotation" : "Show original quote"}
+            title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
             onClick={(e) => {
               e.stopPropagation();
               setFlipped((v) => !v);
@@ -225,8 +229,8 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         )}
       </div>
       <div className="cardbox-card-scene">
-        <div className={`cardbox-card-rotator${flipped ? " is-flipped" : ""}`}>
-          <div className="cardbox-card-face cardbox-card-face-front pr-8" data-testid="card-face-front" aria-hidden={flipped} {...(flipped ? { inert: "" as unknown as boolean } : {})}>
+        <div className={`cardbox-card-rotator${showFlipped ? " is-flipped" : ""}`}>
+          <div className="cardbox-card-face cardbox-card-face-front pr-8" data-testid="card-face-front" aria-hidden={showFlipped} {...(showFlipped ? { inert: "" as unknown as boolean } : {})}>
             <div className="flex items-start gap-2">
               <span
                 className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
@@ -383,7 +387,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             </div>
           </div>
           {canFlip && (
-            <div className="cardbox-card-face cardbox-card-face-back pr-8" data-testid="card-face-back" aria-hidden={!flipped} {...(!flipped ? { inert: "" as unknown as boolean } : {})}>
+            <div className="cardbox-card-face cardbox-card-face-back pr-8" data-testid="card-face-back" aria-hidden={!showFlipped} {...(!showFlipped ? { inert: "" as unknown as boolean } : {})}>
               <div
                 className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
                 data-testid="card-original"
