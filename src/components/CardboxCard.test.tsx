@@ -918,6 +918,22 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Content gutter tests ---
+
+  it("reserves right gutter so body does not sit under pin/flip chrome", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        isPinned
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const front = screen.getByTestId("card-face-front");
+    expect(front.className).toMatch(/pr-8/);
+  });
+
   // --- Back quote clamp tests ---
 
   it("applies line-clamp-2 to back quote when collapsed", () => {

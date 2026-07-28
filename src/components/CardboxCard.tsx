@@ -215,6 +215,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             className="nerd-font text-sm text-text-muted hover:text-text-normal"
             data-testid="card-flip"
             aria-label={flipped ? "Show annotation" : "Show original quote"}
+            title={flipped ? "Show annotation (F)" : "Show original quote (F)"}
             onClick={(e) => {
               e.stopPropagation();
               setFlipped((v) => !v);
@@ -225,7 +226,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       </div>
       <div className="cardbox-card-scene">
         <div className={`cardbox-card-rotator${flipped ? " is-flipped" : ""}`}>
-          <div className="cardbox-card-face cardbox-card-face-front" data-testid="card-face-front" aria-hidden={flipped} {...(flipped ? { inert: "" as unknown as boolean } : {})}>
+          <div className="cardbox-card-face cardbox-card-face-front pr-8" data-testid="card-face-front" aria-hidden={flipped} {...(flipped ? { inert: "" as unknown as boolean } : {})}>
             <div className="flex items-start gap-2">
               <span
                 className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
@@ -377,7 +378,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             </div>
           </div>
           {canFlip && (
-            <div className="cardbox-card-face cardbox-card-face-back" data-testid="card-face-back" aria-hidden={!flipped} {...(!flipped ? { inert: "" as unknown as boolean } : {})}>
+            <div className="cardbox-card-face cardbox-card-face-back pr-8" data-testid="card-face-back" aria-hidden={!flipped} {...(!flipped ? { inert: "" as unknown as boolean } : {})}>
               <div
                 className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
                 data-testid="card-original"
