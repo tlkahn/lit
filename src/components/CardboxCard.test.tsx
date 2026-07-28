@@ -1116,6 +1116,23 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
   });
 
+  // --- Flip a11y tests ---
+
+  it("flip button exposes pressed state", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    expect(flip).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(flip);
+    expect(flip).toHaveAttribute("aria-pressed", "true");
+  });
+
   // --- Enter/Space isolation tests ---
 
   it("Enter and Space on flip button do not bubble to card expand handlers", () => {

@@ -233,9 +233,10 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         {canFlip && (
           <button
             type="button"
-            className="nerd-font text-sm text-text-muted hover:text-text-normal"
+            className="nerd-font text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
             data-testid="card-flip"
             aria-label={showFlipped ? "Show annotation" : "Show original quote"}
+            aria-pressed={showFlipped}
             title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
             onClick={(e) => {
               e.stopPropagation();
