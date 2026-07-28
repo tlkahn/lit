@@ -1607,6 +1607,18 @@ impl Store {
             ])?;
         }
 
+        let deleted_uuids: Vec<String> = diff.deletes.iter()
+            .map(|&old_idx| existing[old_idx].uuid.clone())
+            .collect();
+
+        for &old_idx in &diff.deletes {
+            self.conn.execute(
+                "DELETE FROM annotations_fts WHERE rowid = ?1",
+                [existing[old_idx].id],
+            )?;
+            self.conn.execute("DELETE FROM annotations WHERE id = ?1", [existing[old_idx].id])?;
+        }
+
         let mut insert_stmt = self.conn.prepare(
             "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid, original)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
@@ -1632,24 +1644,7 @@ impl Store {
             inserted_rowids.push(self.conn.last_insert_rowid());
         }
 
-        let deleted_uuids: Vec<String> = diff.deletes.iter()
-            .map(|&old_idx| existing[old_idx].uuid.clone())
-            .collect();
-
-        for &old_idx in &diff.deletes {
-            self.conn.execute("DELETE FROM annotations WHERE id = ?1", [existing[old_idx].id])?;
-        }
-
-        // Incremental FTS maintenance: only touch rows that changed
-        if !diff.inserts.is_empty() || !diff.deletes.is_empty() {
-            // Delete FTS rows for removed annotations
-            for &old_idx in &diff.deletes {
-                self.conn.execute(
-                    "DELETE FROM annotations_fts WHERE rowid = ?1",
-                    [existing[old_idx].id],
-                )?;
-            }
-            // Insert FTS rows for newly added annotations
+        if !diff.inserts.is_empty() {
             let mut fts_insert = self.conn.prepare(
                 "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
                  SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
@@ -1778,7 +1773,13 @@ impl Store {
 
     pub fn list_all_cardbox_annotation_uuids(&self) -> Result<Vec<String>, GraphError> {
         let mut stmt = self.conn.prepare(
-            "SELECT a.uuid FROM annotations a JOIN nodes n ON n.id = a.node_id",
+            "SELECT a.uuid FROM annotations a
+             JOIN nodes n ON n.id = a.node_id
+             WHERE NOT (
+                 a.annotation_type = 'slipnote'
+                 AND a.scope_kind = 'anchor'
+                 AND a.scope_value IN (SELECT a2.uuid FROM annotations a2)
+             )",
         )?;
         let rows = stmt
             .query_map([], |row| row.get(0))?
@@ -1793,6 +1794,11 @@ impl Store {
                     a.scope_kind, a.scope_value, a.original
              FROM annotations a
              JOIN nodes n ON n.id = a.node_id
+             WHERE NOT (
+                 a.annotation_type = 'slipnote'
+                 AND a.scope_kind = 'anchor'
+                 AND a.scope_value IN (SELECT a2.uuid FROM annotations a2)
+             )
              ORDER BY a.node_id, a.char_start",
         )?;
         let rows = stmt
@@ -1815,6 +1821,83 @@ impl Store {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn get_annotation_by_uuid(&self, uuid: &str) -> Result<Option<CardboxAnnotation>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.uuid, a.annotation_type, a.certainty, a.body, a.date,
+                    a.node_id, n.title, a.source_line, a.char_start, a.char_end,
+                    a.scope_kind, a.scope_value, a.original
+             FROM annotations a
+             JOIN nodes n ON n.id = a.node_id
+             WHERE a.uuid = ?1",
+        )?;
+        let mut rows = stmt
+            .query_map(rusqlite::params![uuid], |row| {
+                Ok(CardboxAnnotation {
+                    uuid: row.get(0)?,
+                    annotation_type: row.get(1)?,
+                    certainty: row.get(2)?,
+                    body: row.get(3)?,
+                    date: row.get(4)?,
+                    source_page_id: row.get(5)?,
+                    source_page_title: row.get(6)?,
+                    source_line: row.get(7)?,
+                    char_start: row.get(8)?,
+                    char_end: row.get(9)?,
+                    scope_kind: row.get(10)?,
+                    scope_value: row.get(11)?,
+                    original: row.get(12)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows.pop())
+    }
+
+    pub fn list_slip_notes_for_parents(&self) -> Result<std::collections::HashMap<String, CardboxAnnotation>, GraphError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.uuid, a.annotation_type, a.certainty, a.body, a.date,
+                    a.node_id, n.title, a.source_line, a.char_start, a.char_end,
+                    a.scope_kind, a.scope_value, a.original
+             FROM annotations a
+             JOIN nodes n ON n.id = a.node_id
+             WHERE a.annotation_type = 'slipnote'
+               AND a.scope_kind = 'anchor'
+               AND a.scope_value IN (SELECT a2.uuid FROM annotations a2)
+             ORDER BY a.node_id, a.char_start",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(CardboxAnnotation {
+                    uuid: row.get(0)?,
+                    annotation_type: row.get(1)?,
+                    certainty: row.get(2)?,
+                    body: row.get(3)?,
+                    date: row.get(4)?,
+                    source_page_id: row.get(5)?,
+                    source_page_title: row.get(6)?,
+                    source_line: row.get(7)?,
+                    char_start: row.get(8)?,
+                    char_end: row.get(9)?,
+                    scope_kind: row.get(10)?,
+                    scope_value: row.get(11)?,
+                    original: row.get(12)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut map = std::collections::HashMap::new();
+        for sn in rows {
+            let parent_uuid = sn.scope_value.clone();
+            map.entry(parent_uuid)
+                .and_modify(|existing: &mut CardboxAnnotation| {
+                    if sn.char_start < existing.char_start {
+                        *existing = sn.clone();
+                    }
+                })
+                .or_insert(sn);
+        }
+        Ok(map)
     }
 
     pub fn list_annotations(&self, node_id: Option<&str>, type_filter: Option<&str>, limit: i64) -> Result<Vec<AnnotationSearchResult>, GraphError> {
@@ -4601,6 +4684,46 @@ mod tests {
         assert_eq!(rowids_before, rowids_after);
     }
 
+    #[test]
+    fn upsert_annotations_body_change_keeps_authored_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        let authored_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        let ann = super::IndexableAnnotation {
+            uuid: Some(authored_uuid.to_string()),
+            char_start: 10,
+            ..make_annotation("note", Some("body A"))
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+
+        let uuid1: String = store.conn.query_row(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(uuid1, authored_uuid);
+
+        // Same authored uuid, different body - should update in place
+        let ann2 = super::IndexableAnnotation {
+            uuid: Some(authored_uuid.to_string()),
+            char_start: 10,
+            ..make_annotation("note", Some("body B"))
+        };
+        store.upsert_annotations("a.md", &[ann2]).unwrap();
+
+        let (uuid2, body2): (String, Option<String>) = store.conn.query_row(
+            "SELECT uuid, body FROM annotations WHERE node_id = 'a.md'", [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert_eq!(uuid2, authored_uuid, "authored uuid must be preserved");
+        assert_eq!(body2.as_deref(), Some("body B"), "body must be updated");
+
+        let count: i64 = store.conn.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1, "should be exactly one row");
+    }
+
     // --- match_annotations: greedy position-sorted pairing ---
 
     #[test]
@@ -6403,6 +6526,132 @@ mod tests {
         let uuids = store.list_all_cardbox_annotation_uuids().unwrap();
         assert_eq!(uuids.len(), 1);
         assert_eq!(uuids[0], "u1");
+    }
+
+    #[test]
+    fn list_all_cardbox_annotations_excludes_linked_slipnotes() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let parent = IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("parent note".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("parent-uuid".into()),
+            original: None, lang: None,
+        };
+        let linked_sn = IndexableAnnotation {
+            annotation_type: "slipnote".into(), certainty: "neutral".into(), body: Some("slip body".into()),
+            date: Some("2026-07-28".into()), source_line: 2, char_start: 20, char_end: 60, scope_kind: "anchor".into(), scope_value: "parent-uuid".into(), uuid: Some("sn-uuid".into()),
+            original: None, lang: None,
+        };
+        store.upsert_annotations("a.md", &[parent, linked_sn]).unwrap();
+        let results = store.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 1, "linked slipnote should be excluded");
+        assert_eq!(results[0].uuid, "parent-uuid");
+    }
+
+    #[test]
+    fn list_all_cardbox_annotation_uuids_excludes_linked_slipnotes() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let parent = IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("parent".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("parent-uuid".into()),
+            original: None, lang: None,
+        };
+        let linked_sn = IndexableAnnotation {
+            annotation_type: "slipnote".into(), certainty: "neutral".into(), body: Some("slip".into()),
+            date: None, source_line: 2, char_start: 20, char_end: 60, scope_kind: "anchor".into(), scope_value: "parent-uuid".into(), uuid: Some("sn-uuid".into()),
+            original: None, lang: None,
+        };
+        store.upsert_annotations("a.md", &[parent, linked_sn]).unwrap();
+        let uuids = store.list_all_cardbox_annotation_uuids().unwrap();
+        assert_eq!(uuids.len(), 1);
+        assert_eq!(uuids[0], "parent-uuid");
+    }
+
+    #[test]
+    fn list_all_cardbox_annotations_includes_orphan_slipnotes() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let orphan_sn = IndexableAnnotation {
+            annotation_type: "slipnote".into(), certainty: "neutral".into(), body: Some("orphan slip".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 30, scope_kind: "anchor".into(), scope_value: "nonexistent-uuid".into(), uuid: Some("sn-uuid".into()),
+            original: None, lang: None,
+        };
+        store.upsert_annotations("a.md", &[orphan_sn]).unwrap();
+        let results = store.list_all_cardbox_annotations().unwrap();
+        assert_eq!(results.len(), 1, "orphan slipnote should be included as card");
+        assert_eq!(results[0].uuid, "sn-uuid");
+    }
+
+    #[test]
+    fn get_annotation_by_uuid_found() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let ann = IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("hello".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("target-uuid".into()),
+            original: Some("<!--- n: _ | hello --->".into()), lang: None,
+        };
+        store.upsert_annotations("a.md", &[ann]).unwrap();
+        let result = store.get_annotation_by_uuid("target-uuid").unwrap();
+        assert!(result.is_some());
+        let ca = result.unwrap();
+        assert_eq!(ca.uuid, "target-uuid");
+        assert_eq!(ca.source_page_id, "a.md");
+        assert_eq!(ca.original.as_deref(), Some("<!--- n: _ | hello --->"));
+    }
+
+    #[test]
+    fn get_annotation_by_uuid_not_found() {
+        let store = Store::open_memory().unwrap();
+        let result = store.get_annotation_by_uuid("missing").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn list_slip_notes_for_parents_basic() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let parent = IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("parent".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("p1".into()),
+            original: None, lang: None,
+        };
+        let sn = IndexableAnnotation {
+            annotation_type: "slipnote".into(), certainty: "neutral".into(), body: Some("slip body".into()),
+            date: Some("2026-07-28".into()), source_line: 2, char_start: 20, char_end: 60, scope_kind: "anchor".into(), scope_value: "p1".into(), uuid: Some("sn1".into()),
+            original: None, lang: None,
+        };
+        store.upsert_annotations("a.md", &[parent, sn]).unwrap();
+        let map = store.list_slip_notes_for_parents().unwrap();
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("p1"));
+        assert_eq!(map["p1"].body.as_deref(), Some("slip body"));
+    }
+
+    #[test]
+    fn list_slip_notes_for_parents_earliest_char_start_wins() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "Alpha", &[], json!({})), 1).unwrap();
+        let parent = IndexableAnnotation {
+            annotation_type: "note".into(), certainty: "neutral".into(), body: Some("parent".into()),
+            date: None, source_line: 1, char_start: 0, char_end: 10, scope_kind: "words".into(), scope_value: "1".into(), uuid: Some("p1".into()),
+            original: None, lang: None,
+        };
+        let sn1 = IndexableAnnotation {
+            annotation_type: "slipnote".into(), certainty: "neutral".into(), body: Some("first".into()),
+            date: None, source_line: 2, char_start: 20, char_end: 40, scope_kind: "anchor".into(), scope_value: "p1".into(), uuid: Some("sn-first".into()),
+            original: None, lang: None,
+        };
+        let sn2 = IndexableAnnotation {
+            annotation_type: "slipnote".into(), certainty: "neutral".into(), body: Some("second".into()),
+            date: None, source_line: 3, char_start: 50, char_end: 70, scope_kind: "anchor".into(), scope_value: "p1".into(), uuid: Some("sn-second".into()),
+            original: None, lang: None,
+        };
+        store.upsert_annotations("a.md", &[parent, sn1, sn2]).unwrap();
+        let map = store.list_slip_notes_for_parents().unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["p1"].body.as_deref(), Some("first"), "earliest char_start should win");
     }
 
     #[test]
