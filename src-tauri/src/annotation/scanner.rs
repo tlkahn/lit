@@ -14,6 +14,14 @@ static ID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[([a-zA-Z0-9][a-zA-Z0-9_.\-]*)\]").unwrap()
 });
 
+pub(crate) fn is_valid_authored_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.as_bytes()[0].is_ascii_alphanumeric()
+        && id.bytes().skip(1).all(|b| {
+            b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-'
+        })
+}
+
 pub(crate) fn extract_id(inner: &str) -> (Option<String>, &str) {
     if let Some(caps) = ID_RE.captures(inner) {
         let id = caps.get(1).unwrap().as_str().to_string();
@@ -514,5 +522,33 @@ mod tests {
         assert_eq!(anns.len(), 1);
         assert_eq!(anns[0].id, Some("abc-123".to_string()));
         assert!(anns[0].inner.starts_with("n!"));
+    }
+
+    #[test]
+    fn is_valid_authored_id_agrees_with_extract_id() {
+        let samples = [
+            ("abc", true),
+            ("a1b2c3d4-e5f6-7890-abcd-ef1234567890", true),
+            ("my.id_v2", true),
+            ("", false),
+            ("-bad", false),
+            ("has space", false),
+        ];
+        for (id, expected) in samples {
+            assert_eq!(
+                is_valid_authored_id(id),
+                expected,
+                "is_valid_authored_id({:?})",
+                id
+            );
+            let bracketed = format!("[{}]", id);
+            let (parsed, _) = extract_id(&bracketed);
+            assert_eq!(
+                parsed.is_some(),
+                expected,
+                "extract_id({:?}) should agree",
+                bracketed
+            );
+        }
     }
 }

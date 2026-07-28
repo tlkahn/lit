@@ -4,7 +4,7 @@
 //! `mark` codes, `lang=`, forced `opts.form` override, eliding default
 //! sentence scope (Rust always emits explicit scope tokens).
 
-use super::scanner::extract_id;
+use super::scanner::{extract_id, is_valid_authored_id};
 use super::types::{AnnotationType, Certainty, Scope, ScopeKind};
 
 #[derive(Debug, Clone)]
@@ -193,6 +193,10 @@ pub struct EnsureAuthoredUuid {
 /// `[id]`. If one exists, returns it with the text unchanged. If missing,
 /// injects `[uuid]` immediately after the opening fence token.
 ///
+/// `uuid` must pass [`is_valid_authored_id`] (same charset as scanner `ID_RE`).
+/// Invalid values are not written; the call returns `changed=false` and
+/// fires a `debug_assert` so cycle-C mistakes surface in dev builds.
+///
 /// Non-fence inputs are returned unchanged; `id` is set to `uuid` so callers
 /// always have a usable anchor.
 pub fn ensure_authored_uuid(original: &str, uuid: &str) -> EnsureAuthoredUuid {
@@ -214,6 +218,20 @@ pub fn ensure_authored_uuid(original: &str, uuid: &str) -> EnsureAuthoredUuid {
     if let Some(id) = maybe_id {
         return EnsureAuthoredUuid {
             id,
+            original: original.to_string(),
+            changed: false,
+        };
+    }
+
+    if !is_valid_authored_id(uuid) {
+        #[cfg(not(test))]
+        debug_assert!(
+            false,
+            "ensure_authored_uuid: uuid {:?} is not a scanner-valid authored id",
+            uuid
+        );
+        return EnsureAuthoredUuid {
+            id: uuid.to_string(),
             original: original.to_string(),
             changed: false,
         };
@@ -468,6 +486,55 @@ mod tests {
         assert!(r.changed, "invalid bracket token should not be treated as an authored id");
         assert_eq!(r.id, "new");
         assert!(r.original.contains("[new]"), "should stamp uuid, got: {}", r.original);
+    }
+
+    #[test]
+    fn ensure_authored_uuid_rejects_empty_uuid() {
+        let original = "<!--- n | body --->";
+        let r = ensure_authored_uuid(original, "");
+        assert!(!r.changed, "empty uuid must not stamp");
+        assert_eq!(r.id, "");
+        assert_eq!(r.original, original);
+    }
+
+    #[test]
+    fn ensure_authored_uuid_rejects_leading_hyphen_uuid() {
+        let original = "<!--- n | body --->";
+        let r = ensure_authored_uuid(original, "-bad");
+        assert!(!r.changed, "leading-hyphen uuid must not stamp");
+        assert_eq!(r.id, "-bad");
+        assert_eq!(r.original, original);
+    }
+
+    #[test]
+    fn ensure_authored_uuid_rejects_space_uuid() {
+        let original = "<!--- n | body --->";
+        let r = ensure_authored_uuid(original, "has space");
+        assert!(!r.changed, "space uuid must not stamp");
+        assert_eq!(r.id, "has space");
+        assert_eq!(r.original, original);
+    }
+
+    #[test]
+    fn ensure_authored_uuid_accepts_graph_shaped_uuid() {
+        let original = "<!--- n | body --->";
+        let r = ensure_authored_uuid(original, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+        assert!(r.changed);
+        assert_eq!(r.id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+        assert_eq!(
+            r.original,
+            "<!---[a1b2c3d4-e5f6-7890-abcd-ef1234567890] n | body --->"
+        );
+    }
+
+    #[test]
+    fn ensure_authored_uuid_invalid_uuid_does_not_restamp() {
+        let original = "<!--- n | body --->";
+        let r1 = ensure_authored_uuid(original, "");
+        assert!(!r1.changed);
+        let r2 = ensure_authored_uuid(&r1.original, "");
+        assert!(!r2.changed);
+        assert_eq!(r2.original, original, "must not accumulate stamps");
     }
 
     #[test]
