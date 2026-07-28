@@ -167,6 +167,23 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     setJustPinned(false);
   }, [isPinned]);
 
+  const flipCard = useCallback(() => {
+    if (!canFlip) return;
+    const root = cardRef.current;
+    const active = document.activeElement as HTMLElement | null;
+    const insideFace = Boolean(
+      active &&
+        root &&
+        active !== root &&
+        root.contains(active) &&
+        active.closest(".cardbox-card-face"),
+    );
+    setFlipped((v) => !v);
+    if (insideFace) {
+      requestAnimationFrame(() => root?.focus());
+    }
+  }, [canFlip]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -179,10 +196,10 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       if ((e.key === "f" || e.key === "F") && !e.metaKey && !e.ctrlKey && !e.altKey && canFlip) {
         e.preventDefault();
         e.stopPropagation();
-        setFlipped((v) => !v);
+        flipCard();
       }
     },
-    [expanded, onToggleExpand, canFlip],
+    [expanded, onToggleExpand, canFlip, flipCard],
   );
 
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
@@ -222,7 +239,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
             onClick={(e) => {
               e.stopPropagation();
-              setFlipped((v) => !v);
+              flipCard();
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >{'\u{F2F1}'}</button>

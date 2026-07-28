@@ -1074,6 +1074,31 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
   });
 
+  // --- Focus handoff tests ---
+
+  it("moves focus to the card root when F flips while focus is inside a face", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const root = screen.getByTestId("cardbox-card");
+    const navigate = screen.getByTestId("card-navigate");
+    navigate.focus();
+    expect(document.activeElement).toBe(navigate);
+
+    fireEvent.keyDown(navigate, { key: "f" });
+
+    expect(root).toHaveAttribute("data-flipped", "true");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(document.activeElement).toBe(root);
+    fireEvent.keyDown(root, { key: "f" });
+    expect(root).toHaveAttribute("data-flipped", "false");
+  });
+
   // --- Face inert tests ---
 
   it("marks the hidden face inert (not only aria-hidden)", () => {
