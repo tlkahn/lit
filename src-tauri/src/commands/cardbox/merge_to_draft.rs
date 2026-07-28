@@ -332,7 +332,11 @@ pub async fn merge_cards_to_draft(
                     }
                 }
             }
-            prepare_draft_content(&uuids, &all, &layout, &citekey_map)
+            let effective = super::slip_note::reconcile_slip_notes(gi, &layout)
+                .map_err(|e| crate::graph::error::GraphError::Other(e))?;
+            let mut effective_layout = layout.clone();
+            effective_layout.notes = effective;
+            prepare_draft_content(&uuids, &all, &effective_layout, &citekey_map)
                 .map_err(crate::graph::error::GraphError::Other)
         },
     )?;
@@ -814,6 +818,43 @@ mod tests {
 
         // Exactly one frontmatter source entry.
         assert_eq!(content.matches("  - \"[[").count(), 1);
+    }
+
+    #[test]
+    fn draft_includes_sn_backed_notes() {
+        use crate::commands::cardbox::slip_note::overlay_notes_from_sn;
+
+        let all = vec![
+            make_annotation_with_original("a", "p1", "Page One", Some("quote")),
+        ];
+        let uuids = vec!["a".to_string()];
+
+        let mut layout = CardboxLayout::default();
+
+        let mut sn_map = HashMap::new();
+        sn_map.insert("a".to_string(), CardboxAnnotation {
+            uuid: "sn1".to_string(),
+            annotation_type: "slipnote".to_string(),
+            certainty: "neutral".to_string(),
+            body: Some("sn prose from source".to_string()),
+            date: Some("2026-07-28".to_string()),
+            source_page_id: "p1".to_string(),
+            source_page_title: "Page One".to_string(),
+            source_line: 1,
+            char_start: 0,
+            char_end: 10,
+            scope_kind: "anchor".to_string(),
+            scope_value: "a".to_string(),
+            original: None,
+        });
+
+        layout.notes = overlay_notes_from_sn(&layout.notes, &sn_map);
+
+        let citekey_map: HashMap<String, Option<String>> = HashMap::new();
+        let (body, _) = prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+
+        assert!(body.contains("sn prose from source"),
+            "draft must include sn-backed notes: {}", body);
     }
 
     #[test]

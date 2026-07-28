@@ -207,6 +207,22 @@ fn do_toggle_group_collapsed(
     Ok(())
 }
 
+pub(crate) fn merge_structural_layout(
+    disk: &mut CardboxLayout,
+    client: CardboxLayout,
+    sn_parents: Option<&HashSet<String>>,
+) {
+    disk.order = client.order;
+    disk.links = client.links;
+    disk.groups = client.groups;
+    disk.pinned = client.pinned;
+    disk.colors = client.colors;
+    disk.version = disk.version.max(client.version);
+    if let Some(parents) = sn_parents {
+        slip_note::strip_sn_backed_notes(&mut disk.notes, parents);
+    }
+}
+
 fn prune_layout(layout: &mut CardboxLayout, valid_uuids: &HashSet<&str>) {
     // Prune stale UUIDs from each group's order
     for group in layout.groups.values_mut() {
@@ -325,22 +341,21 @@ pub fn write_cardbox_layout(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
     let mut disk_layout = cardbox_layout::load_layout(&root);
-    disk_layout.order = layout.order;
-    disk_layout.links = layout.links;
-    disk_layout.groups = layout.groups;
-    disk_layout.pinned = layout.pinned;
-    disk_layout.colors = layout.colors;
-    disk_layout.version = disk_layout.version.max(layout.version);
 
-    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
-        if let Ok(sn_parents) = slip_note::sn_parent_key_set(&gi) {
-            slip_note::strip_sn_backed_notes(&mut disk_layout.notes, &sn_parents);
-        } else {
-            tracing::warn!("write_cardbox_layout: sn_parent_key_set failed, strip skipped");
+    let sn_parents = if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+        match slip_note::sn_parent_key_set(&gi) {
+            Ok(parents) => Some(parents),
+            Err(_) => {
+                tracing::warn!("write_cardbox_layout: sn_parent_key_set failed, strip skipped");
+                None
+            }
         }
     } else {
         tracing::warn!("write_cardbox_layout: no graph index, sn strip skipped");
-    }
+        None
+    };
+
+    merge_structural_layout(&mut disk_layout, layout, sn_parents.as_ref());
 
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
@@ -579,40 +594,32 @@ pub(super) fn blockquote(text: &str) -> String {
         .join("\n")
 }
 
-#[tauri::command]
-pub fn export_card_note(
-    window: tauri::Window,
-    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
-    graph_state: State<Arc<super::graph::GraphRegistry>>,
-    lock: State<CardboxLock>,
-    registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
-    app_handle: tauri::AppHandle,
-    uuid: String,
+pub(crate) fn do_export_card_note(
+    root: &std::path::Path,
+    gi: &crate::graph::indexer::GraphIndex,
+    registry: &crate::workspace::write_hash::WriteHashRegistry,
+    uuid: &str,
 ) -> Result<String, String> {
-    let _guard = lock.0.lock().unwrap();
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    let layout = cardbox_layout::load_layout(&root);
+    let layout = cardbox_layout::load_layout(root);
+    let effective = slip_note::reconcile_slip_notes(gi, &layout)?;
 
-    let note = layout.notes.get(&uuid)
+    let note = effective.get(uuid)
         .ok_or_else(|| format!("No note for card {}", uuid))?;
 
-    let ann = super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
-        let all = gi.list_all_cardbox_annotations()?;
-        all.into_iter()
-            .find(|a| a.uuid == uuid)
-            .ok_or_else(|| crate::graph::error::GraphError::Other(
-                format!("Annotation {} not found", uuid),
-            ))
-    })?;
+    let all = gi.list_all_cardbox_annotations()
+        .map_err(|e| e.to_string())?;
+    let ann = all.into_iter()
+        .find(|a| a.uuid == uuid)
+        .ok_or_else(|| format!("Annotation {} not found", uuid))?;
 
     let base = sanitize_filename(&format!("Note on {}", ann.source_page_title));
-    let filename = dedup_filename(&root, &base);
+    let filename = dedup_filename(root, &base);
     let file_path = root.join(&filename);
 
     let mut content = String::new();
     content.push_str("---\n");
     content.push_str(&format!("source: \"{}\"\n", escape_yaml_double_quoted(&ann.source_page_id)));
-    content.push_str(&format!("annotation_uuid: \"{}\"\n", escape_yaml_double_quoted(&uuid)));
+    content.push_str(&format!("annotation_uuid: \"{}\"\n", escape_yaml_double_quoted(uuid)));
     if let Some(ref updated_at) = note.updated_at {
         content.push_str(&format!("created: \"{}\"\n", escape_yaml_double_quoted(updated_at)));
     }
@@ -629,6 +636,27 @@ pub fn export_card_note(
 
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
     registry.record(&file_path, &content);
+
+    Ok(filename)
+}
+
+#[tauri::command]
+pub fn export_card_note(
+    window: tauri::Window,
+    workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
+    lock: State<CardboxLock>,
+    registry: State<Arc<crate::workspace::write_hash::WriteHashRegistry>>,
+    app_handle: tauri::AppHandle,
+    uuid: String,
+) -> Result<String, String> {
+    let _guard = lock.0.lock().unwrap();
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+
+    let filename = super::graph::with_graph_index(&workspace_state, &graph_state, window.label(), |gi| {
+        do_export_card_note(&root, gi, &registry, &uuid)
+            .map_err(|e| crate::graph::error::GraphError::Other(e))
+    })?;
 
     super::page::reindex_and_emit(&graph_state, &app_handle, &root.to_path_buf(), |gi, ann_flag| {
         gi.add_file(&filename, ann_flag)
@@ -3075,46 +3103,74 @@ mod tests {
     }
 
     #[test]
+    fn export_card_note_reads_sn_overlay() {
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | sn body @2026-07-28 --->\n",
+            ),
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let layout = super::CardboxLayout::default();
+        write_layout(dir.path(), &layout);
+
+        let filename = super::do_export_card_note(dir.path(), &gi, &reg, "p1").unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join(&filename)).unwrap();
+        assert!(content.contains("sn body"),
+            "exported file must contain sn-derived body: {}", content);
+    }
+
+    #[test]
     fn write_layout_ignores_client_notes_payload() {
         let dir = create_workspace();
-        write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Slip note body @2026-07-28 --->\n",
+            ),
+        );
         let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
-        let anns = gi.list_all_cardbox_annotations().unwrap();
-        assert_eq!(anns.len(), 1);
-        let real_uuid = anns[0].uuid.clone();
 
-        let disk = super::CardboxLayout {
+        let mut disk = super::CardboxLayout {
             version: 1,
-            order: vec![real_uuid.clone()],
+            order: vec!["p1".to_string()],
             ..Default::default()
         };
-        write_layout(dir.path(), &disk);
-
-        let mut client = super::CardboxLayout {
-            version: 2,
-            order: vec![real_uuid.clone()],
-            ..Default::default()
-        };
-        client.notes.insert("p1".to_string(), super::CardNote {
-            body: "stale note from FE".to_string(),
+        disk.notes.insert("p1".to_string(), super::CardNote {
+            body: "old disk note".to_string(),
             updated_at: None,
         });
 
-        let root = dir.path();
-        let mut merged = super::cardbox_layout::load_layout(root);
-        merged.order = client.order;
-        merged.links = client.links;
-        merged.groups = client.groups;
-        merged.pinned = client.pinned;
-        merged.colors = client.colors;
-        merged.version = merged.version.max(client.version);
+        let client = super::CardboxLayout {
+            version: 2,
+            order: vec!["p1".to_string()],
+            notes: {
+                let mut m = HashMap::new();
+                m.insert("p1".to_string(), super::CardNote {
+                    body: "stale note from FE".to_string(),
+                    updated_at: None,
+                });
+                m
+            },
+            ..Default::default()
+        };
 
-        let lit_dir = root.join(".lit");
-        super::persist_layout(&lit_dir, &merged).unwrap();
+        let sn_parents = super::slip_note::sn_parent_key_set(&gi).unwrap();
+        super::merge_structural_layout(&mut disk, client, Some(&sn_parents));
 
-        let result = read_layout(dir.path());
-        assert!(!result.notes.contains_key("p1"),
-            "client notes payload must not leak to disk: {:?}", result.notes);
-        assert_eq!(result.version, 2);
+        assert!(!disk.notes.contains_key("p1"),
+            "sn-backed notes must be stripped: {:?}", disk.notes);
+        assert_eq!(disk.version, 2);
+        assert_eq!(disk.order, vec!["p1"]);
     }
 }

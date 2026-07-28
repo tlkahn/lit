@@ -286,6 +286,14 @@ pub(crate) fn do_sync_slip_note_to_source(
     )
     .map_err(|e| e.to_string())?;
 
+    // Drain JSON fallback for this parent so stale entries don't resurrect on sn delete.
+    let mut layout = cardbox_layout::load_layout(root);
+    if layout.notes.remove(parent_uuid).is_some() {
+        let lit_dir = root.join(".lit");
+        std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+        super::persist_layout(&lit_dir, &layout)?;
+    }
+
     Ok(SyncOutput {
         result: SyncResult {
             parent_uuid: parent_uuid.to_string(),
@@ -1259,7 +1267,7 @@ mod tests {
     }
 
     #[test]
-    fn e6_sync_does_not_write_layout_notes() {
+    fn e6_sync_does_not_insert_sn_into_layout_notes() {
         let dir = create_workspace();
         write_md(
             dir.path(),
@@ -1977,6 +1985,100 @@ mod tests {
             Some("2026-07-28T12:30:00+00:00"),
             "already-RFC3339 should pass through unchanged"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // H1 tests - sync drains JSON fallback
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_drains_json_fallback_on_create() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "old json note".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "new body",
+        ).unwrap();
+        assert!(output.result.synced);
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "sync create must drain JSON fallback: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn sync_drains_json_fallback_on_delete() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "existing body",
+        ).unwrap();
+
+        let mut layout = cardbox_layout::load_layout(dir.path());
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "stale json".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "",
+        ).unwrap();
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "sync delete must drain JSON fallback: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn sync_noop_preserves_fallback() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "json note".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "",
+        ).unwrap();
+        assert!(!output.result.synced);
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(on_disk.notes.contains_key("p1"),
+            "noop sync must preserve JSON fallback: {:?}", on_disk.notes);
     }
 
     #[test]
