@@ -213,7 +213,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               setFlipped((v) => !v);
             }}
             onPointerDown={(e) => e.stopPropagation()}
-          >{''}</button>
+          >{'\u{F2F1}'}</button>
         )}
       </div>
       <div className="cardbox-card-scene">
@@ -306,7 +306,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                           setNoteEditing(true);
                         }}
                       >
-                        <span className="nerd-font" aria-hidden="true">{''}</span> Add note
+                        <span className="nerd-font" aria-hidden="true">{'\u{F0FE}'}</span> Add note
                       </button>
                     )}
                   </div>

@@ -918,6 +918,35 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Glyph correctness tests ---
+
+  it("Add note icon is fa-square_plus (U+F0FE), not a gear", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    const icon = screen.getByTestId("card-note-add").querySelector(".nerd-font");
+    expect(icon?.textContent?.codePointAt(0)).toBe(0xf0fe);
+  });
+
+  it("flip icon is fa-rotate (U+F2F1)", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    expect(flip.textContent?.codePointAt(0)).toBe(0xf2f1);
+  });
+
   // --- WCAG AA color contrast tests ---
 
   it("action buttons use WCAG AA compliant text color classes", () => {
