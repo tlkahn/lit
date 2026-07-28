@@ -57,18 +57,16 @@ pub fn apply_slip_note_edit(
 
     let mut result = String::from(&body[..parent_byte_start]);
     result.push_str(&stamp.original);
-    let delta: isize = stamp.original.len() as isize - parent_original.len() as isize;
     let after_parent = parent_byte_end;
 
     if trimmed_body.is_empty() {
         if let Some(child) = existing_child {
             let (child_byte_start, child_byte_end) =
                 utf16_offsets_to_byte(body, child.char_start, child.char_end);
-            let adj_child_start = (child_byte_start as isize + delta) as usize;
 
-            result.push_str(
-                &body[after_parent..parent_byte_start + adj_child_start - parent_byte_start],
-            );
+            // child spans are in original body space; delta only affects
+            // the stamped parent prefix already written to `result`
+            result.push_str(&body[after_parent..child_byte_start]);
 
             let trailing_newlines = result
                 .as_bytes()
@@ -748,6 +746,55 @@ mod tests {
                 .unwrap();
 
         assert_eq!(result, body);
+    }
+
+    #[test]
+    fn c_delete_child_with_unstamped_parent() {
+        let body = concat!(
+            "Passage.\n\n",
+            "<!--- n: \\s | Parent --->\n\n",
+            "<!---[child-uuid] sn: ^\"new-parent-uuid\" | Old body @2026-07-28 --->\n\n",
+            "YY trailing\n",
+        );
+        let anns = parse_annotations_builtin(body);
+        let (cs, ce, _) = find_parent_in_body(body, &anns, "note");
+        let child = find_child_span(&anns, "new-parent-uuid").unwrap();
+
+        let result = apply_slip_note_edit(
+            body, cs, ce, "new-parent-uuid", Some(&child), "", "2026-07-29", &child.uuid,
+        )
+        .unwrap();
+
+        let re_parsed = parse_annotations_builtin(&result);
+        assert_eq!(re_parsed.len(), 1, "should have exactly parent, no sn: {}", result);
+        assert_eq!(re_parsed[0].annotation_type, AnnotationType::Note);
+        assert!(re_parsed[0].uuid.as_deref() == Some("new-parent-uuid"),
+            "parent should be stamped: {}", result);
+        assert!(!result.contains("sn"), "sn should be removed: {}", result);
+        assert!(!result.contains("<!---[child"), "no child fence fragment: {}", result);
+        assert!(result.contains("YY trailing"), "trailing content preserved: {}", result);
+    }
+
+    #[test]
+    fn c_delete_child_prestamped_still_works() {
+        // delta=0 path: parent already stamped, delete should still work
+        let body = concat!(
+            "Passage.\n\n",
+            "<!---[parent-uuid] n: \\s | Parent note --->\n\n",
+            "<!---[child-uuid] sn: ^\"parent-uuid\" | Old body @2026-07-28 --->\n",
+        );
+        let anns = parse_annotations_builtin(body);
+        let (cs, ce, _) = find_parent_in_body(body, &anns, "note");
+        let child = find_child_span(&anns, "parent-uuid").unwrap();
+
+        let result =
+            apply_slip_note_edit(body, cs, ce, "parent-uuid", Some(&child), "", "2026-07-29", &child.uuid)
+                .unwrap();
+
+        assert!(!result.contains("sn:"), "sn removed: {}", result);
+        assert!(result.contains("Parent note"));
+        let re_parsed = parse_annotations_builtin(&result);
+        assert_eq!(re_parsed.len(), 1);
     }
 
     #[test]
