@@ -393,8 +393,6 @@ select:disabled {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   min-width: 0;
-}
-.cardbox-card-face {
   pointer-events: none;
 }
 .cardbox-card-rotator:not(.is-flipped) .cardbox-card-face-front,
@@ -408,7 +406,6 @@ select:disabled {
 .cardbox-card-rotator.is-flipped .cardbox-card-face-front {
   position: absolute;
   inset: 0;
-  width: 100%;
   overflow: auto;
 }
 @media (prefers-reduced-motion: reduce) {

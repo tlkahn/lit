@@ -219,6 +219,7 @@ test.describe("Height Model", () => {
   test("unflipped card height follows front, not long back quote", async ({ page }) => {
     await page.goto(URL);
     await page.waitForSelector("#card-long-quote [data-testid='cardbox-card']");
+    await page.evaluate(() => document.fonts.ready);
     const heights = await page.evaluate(() => {
       const root = document.querySelector("#card-long-quote [data-testid='cardbox-card']")!;
       const front = root.querySelector("[data-testid='card-face-front']") as HTMLElement;
@@ -236,6 +237,31 @@ test.describe("Height Model", () => {
     expect(heights.back).toBeGreaterThan(heights.front * 2);
     expect(heights.rotator).toBeLessThanOrEqual(heights.front + 1);
     expect(heights.root).toBeLessThan(heights.back);
+  });
+});
+
+test.describe("Flip + Expand Height", () => {
+  test("flip while expanded keeps rotator height at least back content", async ({ page }) => {
+    await page.goto(URL);
+    await page.waitForSelector("[data-testid='cardbox-card']");
+    await page.evaluate(() => document.fonts.ready);
+
+    await card(page, "card-a").click();
+    await expect(card(page, "card-a")).toHaveAttribute("data-expanded", "true");
+    await flipBtn(page, "card-a").click();
+    await expect(card(page, "card-a")).toHaveAttribute("data-flipped", "true");
+
+    const heights = await page.evaluate(() => {
+      const root = document.querySelector("#card-a [data-testid='cardbox-card']")!;
+      const rotator = root.querySelector(".cardbox-card-rotator") as HTMLElement;
+      const back = root.querySelector("[data-testid='card-face-back']") as HTMLElement;
+      return {
+        rotator: rotator.getBoundingClientRect().height,
+        back: back.getBoundingClientRect().height,
+      };
+    });
+    expect(heights.rotator).toBeGreaterThan(8);
+    expect(heights.rotator).toBeGreaterThanOrEqual(heights.back - 1);
   });
 });
 
