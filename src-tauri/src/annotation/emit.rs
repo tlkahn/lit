@@ -169,29 +169,52 @@ fn emit_block(
     lines.join("\n")
 }
 
-/// If `original` already contains an authored `[id]` (validated against scanner
-/// ID rules), return that id and `false`. Otherwise inject `[uuid]` immediately
-/// after the opening fence token and return the stamped string with `true`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsureAuthoredUuid {
+    /// Stable id children should anchor to (`^"id"`).
+    pub id: String,
+    /// Full annotation text to splice into the page (possibly stamped).
+    pub original: String,
+    /// True iff `original` was modified by stamping.
+    pub changed: bool,
+}
+
+/// Ensure the annotation fence in `original` carries a scanner-valid authored
+/// `[id]`. If one exists, returns it with the text unchanged. If missing,
+/// injects `[uuid]` immediately after the opening fence token.
 ///
-/// Non-fence inputs are returned unchanged with `false`.
-pub fn ensure_authored_uuid(original: &str, uuid: &str) -> (String, bool) {
+/// Non-fence inputs are returned unchanged; `id` is set to `uuid` so callers
+/// always have a usable anchor.
+pub fn ensure_authored_uuid(original: &str, uuid: &str) -> EnsureAuthoredUuid {
     let (fence, rest) = if let Some(r) = original.strip_prefix("<!---") {
         ("<!---", r)
     } else if let Some(r) = original.strip_prefix("%%!") {
         ("%%!", r)
     } else {
-        return (original.to_string(), false);
+        return EnsureAuthoredUuid {
+            id: uuid.to_string(),
+            original: original.to_string(),
+            changed: false,
+        };
     };
 
     let trimmed = rest.trim_start();
     let (maybe_id, _) = extract_id(trimmed);
 
     if let Some(id) = maybe_id {
-        return (id, false);
+        return EnsureAuthoredUuid {
+            id,
+            original: original.to_string(),
+            changed: false,
+        };
     }
 
     let stamped = format!("{}[{}]{}", fence, uuid, rest);
-    (stamped, true)
+    EnsureAuthoredUuid {
+        id: uuid.to_string(),
+        original: stamped,
+        changed: true,
+    }
 }
 
 /// Convert a UTF-16 offset pair into byte offsets within `text`.
@@ -322,97 +345,118 @@ mod tests {
     #[test]
     fn ensure_authored_uuid_inserts_when_missing() {
         let original = "<!--- n | hello --->";
-        let (result, changed) = ensure_authored_uuid(original, "my-uuid");
-        assert!(changed);
-        assert_eq!(result, "<!---[my-uuid] n | hello --->");
+        let r = ensure_authored_uuid(original, "my-uuid");
+        assert!(r.changed);
+        assert_eq!(r.id, "my-uuid");
+        assert_eq!(r.original, "<!---[my-uuid] n | hello --->");
     }
 
     #[test]
     fn ensure_authored_uuid_noop_when_present() {
         let original = "<!---[existing-id] n | hello --->";
-        let (result, changed) = ensure_authored_uuid(original, "my-uuid");
-        assert!(!changed);
-        assert_eq!(result, "existing-id");
+        let r = ensure_authored_uuid(original, "my-uuid");
+        assert!(!r.changed);
+        assert_eq!(r.id, "existing-id");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_returns_existing_id_even_if_different() {
         let original = "<!---[different-id] n | hello --->";
-        let (result, changed) = ensure_authored_uuid(original, "my-uuid");
-        assert!(!changed);
-        assert_eq!(result, "different-id");
+        let r = ensure_authored_uuid(original, "my-uuid");
+        assert!(!r.changed);
+        assert_eq!(r.id, "different-id");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_handles_block_form() {
         let original = "<!---\nn\n---\nbody\n--->";
-        let (result, changed) = ensure_authored_uuid(original, "my-uuid");
-        assert!(changed);
-        assert_eq!(result, "<!---[my-uuid]\nn\n---\nbody\n--->");
+        let r = ensure_authored_uuid(original, "my-uuid");
+        assert!(r.changed);
+        assert_eq!(r.id, "my-uuid");
+        assert_eq!(r.original, "<!---[my-uuid]\nn\n---\nbody\n--->");
     }
 
     #[test]
     fn ensure_authored_uuid_handles_percent_fence() {
         let original = "%%! n | hello %%";
-        let (result, changed) = ensure_authored_uuid(original, "my-uuid");
-        assert!(changed);
-        assert_eq!(result, "%%![my-uuid] n | hello %%");
+        let r = ensure_authored_uuid(original, "my-uuid");
+        assert!(r.changed);
+        assert_eq!(r.id, "my-uuid");
+        assert_eq!(r.original, "%%![my-uuid] n | hello %%");
     }
 
     #[test]
     fn ensure_authored_uuid_handles_percent_with_existing_id() {
         let original = "%%![existing] n | hello %%";
-        let (result, changed) = ensure_authored_uuid(original, "my-uuid");
-        assert!(!changed);
-        assert_eq!(result, "existing");
+        let r = ensure_authored_uuid(original, "my-uuid");
+        assert!(!r.changed);
+        assert_eq!(r.id, "existing");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_space_before_bracket_html_fence() {
         let original = "<!--- [abc] n | body --->";
-        let (result, changed) = ensure_authored_uuid(original, "new");
-        assert!(!changed, "should detect existing id, not stamp");
-        assert_eq!(result, "abc");
+        let r = ensure_authored_uuid(original, "new");
+        assert!(!r.changed, "should detect existing id, not stamp");
+        assert_eq!(r.id, "abc");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_newline_before_bracket_html_fence() {
         let original = "<!---\n[abc]\nn\n--->";
-        let (result, changed) = ensure_authored_uuid(original, "new");
-        assert!(!changed, "should detect existing id, not stamp");
-        assert_eq!(result, "abc");
+        let r = ensure_authored_uuid(original, "new");
+        assert!(!r.changed, "should detect existing id, not stamp");
+        assert_eq!(r.id, "abc");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_space_before_bracket_percent_fence() {
         let original = "%%! [abc] n | body %%";
-        let (result, changed) = ensure_authored_uuid(original, "new");
-        assert!(!changed, "should detect existing id, not stamp");
-        assert_eq!(result, "abc");
+        let r = ensure_authored_uuid(original, "new");
+        assert!(!r.changed, "should detect existing id, not stamp");
+        assert_eq!(r.id, "abc");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_newline_before_bracket_percent_fence() {
         let original = "%%!\n[abc]\nn\n%%";
-        let (result, changed) = ensure_authored_uuid(original, "new");
-        assert!(!changed, "should detect existing id, not stamp");
-        assert_eq!(result, "abc");
+        let r = ensure_authored_uuid(original, "new");
+        assert!(!r.changed, "should detect existing id, not stamp");
+        assert_eq!(r.id, "abc");
+        assert_eq!(r.original, original);
     }
 
     #[test]
     fn ensure_authored_uuid_empty_bracket_is_not_authored_id() {
         let original = "<!---[] n | body --->";
-        let (result, changed) = ensure_authored_uuid(original, "new");
-        assert!(changed, "empty brackets should not be treated as an authored id");
-        assert!(result.contains("[new]"), "should stamp uuid, got: {}", result);
+        let r = ensure_authored_uuid(original, "new");
+        assert!(r.changed, "empty brackets should not be treated as an authored id");
+        assert_eq!(r.id, "new");
+        assert!(r.original.contains("[new]"), "should stamp uuid, got: {}", r.original);
     }
 
     #[test]
     fn ensure_authored_uuid_invalid_bracket_token_is_not_authored_id() {
         let original = "<!---[-bad] n | body --->";
-        let (result, changed) = ensure_authored_uuid(original, "new");
-        assert!(changed, "invalid bracket token should not be treated as an authored id");
-        assert!(result.contains("[new]"), "should stamp uuid, got: {}", result);
+        let r = ensure_authored_uuid(original, "new");
+        assert!(r.changed, "invalid bracket token should not be treated as an authored id");
+        assert_eq!(r.id, "new");
+        assert!(r.original.contains("[new]"), "should stamp uuid, got: {}", r.original);
+    }
+
+    #[test]
+    fn ensure_authored_uuid_non_fence_returns_uuid_as_id() {
+        let original = "not a fence at all";
+        let r = ensure_authored_uuid(original, "fallback-uuid");
+        assert!(!r.changed);
+        assert_eq!(r.id, "fallback-uuid");
+        assert_eq!(r.original, original);
     }
 
     #[test]
