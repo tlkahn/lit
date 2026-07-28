@@ -48,6 +48,13 @@ pub fn apply_slip_note_edit(
     let (parent_byte_start, parent_byte_end) =
         utf16_offsets_to_byte(body, parent_char_start, parent_char_end);
 
+    if parent_byte_start > parent_byte_end || parent_byte_end > body.len() {
+        return Err(format!(
+            "invalid parent span: {}..{} in body of len {}",
+            parent_byte_start, parent_byte_end, body.len()
+        ));
+    }
+
     let parent_original = &body[parent_byte_start..parent_byte_end];
     let stamp = ensure_authored_uuid(parent_original, parent_uuid);
 
@@ -60,9 +67,20 @@ pub fn apply_slip_note_edit(
             let (child_byte_start, child_byte_end) =
                 utf16_offsets_to_byte(body, child.char_start, child.char_end);
 
-            // child spans are in original body space; delta only affects
-            // the stamped parent prefix already written to `result`
-            result.push_str(&body[after_parent..child_byte_start]);
+            if child_byte_start < after_parent {
+                return Err(format!(
+                    "child span start {} before parent end {}",
+                    child_byte_start, after_parent
+                ));
+            }
+
+            result.push_str(
+                body.get(after_parent..child_byte_start)
+                    .ok_or_else(|| format!(
+                        "invalid slice {}..{} in body of len {}",
+                        after_parent, child_byte_start, body.len()
+                    ))?,
+            );
 
             let trailing_newlines = result
                 .as_bytes()
@@ -97,7 +115,17 @@ pub fn apply_slip_note_edit(
     if let Some(child) = existing_child {
         let (child_byte_start, child_byte_end) =
             utf16_offsets_to_byte(body, child.char_start, child.char_end);
-        result.push_str(&body[after_parent..child_byte_start]);
+        if child_byte_start < after_parent {
+            return Err(format!(
+                "child span start {} before parent end {}",
+                child_byte_start, after_parent
+            ));
+        }
+        result.push_str(
+            body.get(after_parent..child_byte_start).ok_or_else(|| {
+                format!("invalid slice {}..{} in body of len {}", after_parent, child_byte_start, body.len())
+            })?,
+        );
         result.push_str(&dsl);
         result.push_str(&body[child_byte_end..]);
     } else {
@@ -190,7 +218,8 @@ pub(crate) fn do_sync_slip_note_to_source(
             char_end: a.char_end,
         });
 
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let now = chrono::Utc::now();
+    let dsl_date = now.format("%Y-%m-%d").to_string();
     let child_uuid = existing_child
         .as_ref()
         .map(|c| c.uuid.clone())
@@ -203,6 +232,21 @@ pub(crate) fn do_sync_slip_note_to_source(
         })
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    // Noop: empty body with no existing child
+    if body.trim().is_empty() && existing_child.is_none() {
+        return Ok(SyncOutput {
+            result: SyncResult {
+                parent_uuid: parent_uuid.to_string(),
+                body: String::new(),
+                updated_at: now.to_rfc3339(),
+                sn_uuid: child_uuid,
+                synced: false,
+                page_id,
+            },
+            removed_annotations: vec![],
+        });
+    }
+
     let new_body = apply_slip_note_edit(
         page_body,
         parent.char_start,
@@ -210,7 +254,7 @@ pub(crate) fn do_sync_slip_note_to_source(
         parent_uuid,
         existing_child.as_ref(),
         body,
-        &today,
+        &dsl_date,
         &child_uuid,
     )?;
 
@@ -231,7 +275,7 @@ pub(crate) fn do_sync_slip_note_to_source(
         result: SyncResult {
             parent_uuid: parent_uuid.to_string(),
             body: body.trim().to_string(),
-            updated_at: today,
+            updated_at: now.to_rfc3339(),
             sn_uuid: child_uuid,
             synced: true,
             page_id,
@@ -1062,6 +1106,48 @@ mod tests {
             "parent should be stamped: {}",
             file_content
         );
+    }
+
+    #[test]
+    fn c_err_on_child_span_before_parent() {
+        let body = concat!(
+            "<!---[child-uuid] sn: ^\"parent-uuid\" | Note @2026-07-28 --->\n\n",
+            "<!---[parent-uuid] n: \\s | Parent --->\n",
+        );
+        let child = ChildSpan {
+            uuid: "child-uuid".to_string(),
+            char_start: 0,
+            char_end: 5,
+        };
+        // parent spans after child - inverted
+        let result = apply_slip_note_edit(
+            body, 10, 20, "parent-uuid", Some(&child), "New body", "2026-07-28", "child-uuid",
+        );
+        assert!(result.is_err(), "child before parent should return Err");
+    }
+
+    #[test]
+    fn e_sync_result_updated_at_is_rfc3339() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let result = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+        )
+        .unwrap().result;
+
+        // RFC3339 contains 'T' and timezone info
+        assert!(result.updated_at.contains('T'),
+            "updated_at should be RFC3339: {}", result.updated_at);
+        chrono::DateTime::parse_from_rfc3339(&result.updated_at)
+            .expect("updated_at must parse as RFC3339");
     }
 
     #[test]
