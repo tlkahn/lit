@@ -139,20 +139,36 @@ pub(crate) fn do_sync_slip_note_to_source(
     parent_uuid: &str,
     body: &str,
 ) -> Result<SyncResult, String> {
-    let parent_ann = {
+    // Use store only to discover which page the parent lives on
+    let page_id = {
         let store = gi.store();
-        store
+        let ann = store
             .get_annotation_by_uuid(parent_uuid)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("Annotation with uuid '{}' not found", parent_uuid))?
+            .ok_or_else(|| format!("Annotation with uuid '{}' not found", parent_uuid))?;
+        ann.source_page_id.clone()
     };
 
-    let page_id = &parent_ann.source_page_id;
-    let page = crate::workspace::ops::read_page(root, page_id, registry)
+    let page = crate::workspace::ops::read_page(root, &page_id, registry)
         .map_err(|e| e.to_string())?;
     let page_body = &page.body;
 
+    // Resolve parent from fresh parse by authored uuid.
+    // Unstamped parents won't have an authored id in the file, so fall back
+    // to the store's position-based match as a secondary lookup.
     let anns = parse_annotations_builtin(page_body);
+
+    let parent = anns
+        .iter()
+        .find(|a| a.uuid.as_deref() == Some(parent_uuid))
+        .or_else(|| {
+            let store = gi.store();
+            let store_ann = store.get_annotation_by_uuid(parent_uuid).ok()??;
+            anns.iter().find(|a| {
+                a.char_start == store_ann.char_start && a.char_end == store_ann.char_end
+            })
+        })
+        .ok_or_else(|| format!("parent {} missing from page body", parent_uuid))?;
 
     let existing_child = anns
         .iter()
@@ -176,8 +192,8 @@ pub(crate) fn do_sync_slip_note_to_source(
 
     let new_body = apply_slip_note_edit(
         page_body,
-        parent_ann.char_start,
-        parent_ann.char_end,
+        parent.char_start,
+        parent.char_end,
         parent_uuid,
         existing_child.as_ref(),
         body,
@@ -185,14 +201,13 @@ pub(crate) fn do_sync_slip_note_to_source(
         &child_uuid,
     )?;
 
-    crate::workspace::ops::write_page(root, page_id, &new_body, &page.meta.frontmatter, registry)
+    crate::workspace::ops::write_page(root, &page_id, &new_body, &page.meta.frontmatter, registry)
         .map_err(|e| e.to_string())?;
 
-    let page_id_owned = page_id.to_string();
     gi.batch_reindex(
         &crate::graph::indexer::DiffResult {
             new: vec![],
-            changed: vec![page_id_owned],
+            changed: vec![page_id.clone()],
             deleted: vec![],
         },
         ann_opts,
@@ -1051,6 +1066,63 @@ mod tests {
             layout_after.notes.is_empty(),
             "sync should not write notes to layout"
         );
+    }
+
+    #[test]
+    fn e_sync_uses_file_offsets_when_store_stale() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Shift the parent by prepending text WITHOUT reindexing
+        write_md(
+            dir.path(),
+            "a.md",
+            "PREPENDED PARAGRAPH\n\nText <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        // Store still has old offsets, but file has shifted parent
+
+        let result = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+        )
+        .unwrap();
+
+        assert!(result.synced);
+        let file_content = read_md(dir.path(), "a.md");
+        assert!(file_content.contains("PREPENDED PARAGRAPH"), "preamble preserved: {}", file_content);
+        assert!(file_content.contains("A note"), "note written: {}", file_content);
+        // Parse should find parent + sn, both well-formed
+        let anns = parse_annotations_builtin(&file_content);
+        assert_eq!(anns.len(), 2, "parent + sn: {}", file_content);
+    }
+
+    #[test]
+    fn e_sync_err_when_parent_uuid_missing_from_file() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Overwrite file with no annotations (but keep it so read_page works)
+        write_md(dir.path(), "a.md", "No annotations here.\n");
+
+        let result = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+        );
+        assert!(result.is_err(), "should error when parent missing from page body");
+        assert!(result.unwrap_err().contains("missing from page body"),
+            "error should mention missing parent");
     }
 
     // -----------------------------------------------------------------------
