@@ -918,6 +918,31 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Face inert tests ---
+
+  it("marks the hidden face inert (not only aria-hidden)", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const front = screen.getByTestId("card-face-front");
+    const back = screen.getByTestId("card-face-back");
+
+    expect(front).not.toHaveAttribute("inert");
+    expect(back).toHaveAttribute("inert");
+
+    fireEvent.click(screen.getByTestId("card-flip"));
+
+    expect(front).toHaveAttribute("inert");
+    expect(front).toHaveAttribute("aria-hidden", "true");
+    expect(back).not.toHaveAttribute("inert");
+    expect(back).toHaveAttribute("aria-hidden", "false");
+  });
+
   // --- Typing guard tests ---
 
   it("F in slip-note textarea does not flip the card", () => {
