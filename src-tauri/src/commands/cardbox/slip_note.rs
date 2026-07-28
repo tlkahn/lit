@@ -129,6 +129,13 @@ pub struct SyncResult {
     pub updated_at: String,
     pub sn_uuid: String,
     pub synced: bool,
+    pub page_id: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct SyncOutput {
+    pub result: SyncResult,
+    pub removed_annotations: Vec<(String, String)>,
 }
 
 pub(crate) fn do_sync_slip_note_to_source(
@@ -138,7 +145,7 @@ pub(crate) fn do_sync_slip_note_to_source(
     ann_opts: &crate::annotation::lang::AnnotationIndexOpts,
     parent_uuid: &str,
     body: &str,
-) -> Result<SyncResult, String> {
+) -> Result<SyncOutput, String> {
     // Use store only to discover which page the parent lives on
     let page_id = {
         let store = gi.store();
@@ -204,7 +211,7 @@ pub(crate) fn do_sync_slip_note_to_source(
     crate::workspace::ops::write_page(root, &page_id, &new_body, &page.meta.frontmatter, registry)
         .map_err(|e| e.to_string())?;
 
-    gi.batch_reindex(
+    let removed = gi.batch_reindex(
         &crate::graph::indexer::DiffResult {
             new: vec![],
             changed: vec![page_id.clone()],
@@ -214,12 +221,16 @@ pub(crate) fn do_sync_slip_note_to_source(
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(SyncResult {
-        parent_uuid: parent_uuid.to_string(),
-        body: body.trim().to_string(),
-        updated_at: today,
-        sn_uuid: child_uuid,
-        synced: true,
+    Ok(SyncOutput {
+        result: SyncResult {
+            parent_uuid: parent_uuid.to_string(),
+            body: body.trim().to_string(),
+            updated_at: today,
+            sn_uuid: child_uuid,
+            synced: true,
+            page_id,
+        },
+        removed_annotations: removed,
     })
 }
 
@@ -245,24 +256,22 @@ pub fn sync_slip_note_to_source(
     };
 
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
-    let result = do_sync_slip_note_to_source(&root, &gi, &registry, &ann_opts, &parent_uuid, &body)?;
+    let output = do_sync_slip_note_to_source(&root, &gi, &registry, &ann_opts, &parent_uuid, &body)?;
+
+    // Emit reindex side effects (graph-updated + annotations-removed)
+    crate::commands::graph::emit_reindex_side_effects(
+        &app_handle,
+        &Ok(output.removed_annotations),
+    );
 
     let _ = window.emit(
         "workspace://file-modified",
         crate::workspace::watcher::FileEvent {
-            path: {
-                let store = gi.store();
-                store
-                    .get_annotation_by_uuid(&parent_uuid)
-                    .ok()
-                    .flatten()
-                    .map(|a| a.source_page_id)
-                    .unwrap_or_default()
-            },
+            path: output.result.page_id.clone(),
         },
     );
 
-    Ok(result)
+    Ok(output.result)
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +325,7 @@ pub struct MigrateResult {
     pub migrated: usize,
     pub failed: usize,
     pub skipped: usize,
+    pub changed_pages: Vec<String>,
 }
 
 pub(crate) fn do_migrate_cardbox_slip_notes(
@@ -345,6 +355,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
             migrated: 0,
             failed: 0,
             skipped: 0,
+            changed_pages: vec![],
         });
     }
 
@@ -368,6 +379,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     let mut failed = 0usize;
     let pending_count = pending.len();
     let mut drained_keys: Vec<String> = Vec::new();
+    let mut changed_pages: Vec<String> = Vec::new();
 
     for (page_id, entries) in &by_page {
         let page = match crate::workspace::ops::read_page(root, page_id, registry) {
@@ -455,7 +467,6 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 registry,
             ) {
                 tracing::warn!("migrate: failed to write {}: {}", page_id, e);
-                // Revert drain for this page's entries
                 for (uuid, _) in entries {
                     drained_keys.retain(|k| k != uuid);
                 }
@@ -464,14 +475,24 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 continue;
             }
 
-            let _ = gi.batch_reindex(
+            if let Err(e) = gi.batch_reindex(
                 &crate::graph::indexer::DiffResult {
                     new: vec![],
                     changed: vec![page_id.clone()],
                     deleted: vec![],
                 },
                 ann_opts,
-            );
+            ) {
+                tracing::warn!("migrate: reindex failed for {}: {}", page_id, e);
+                for (uuid, _) in entries {
+                    drained_keys.retain(|k| k != uuid);
+                }
+                failed += page_migrated;
+                migrated -= page_migrated;
+                continue;
+            }
+
+            changed_pages.push(page_id.clone());
         }
     }
 
@@ -490,6 +511,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
         migrated,
         failed,
         skipped,
+        changed_pages,
     })
 }
 
@@ -515,7 +537,18 @@ pub fn migrate_cardbox_slip_notes(
     };
 
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
-    do_migrate_cardbox_slip_notes(&root, &gi, &registry, &ann_opts)
+    let result = do_migrate_cardbox_slip_notes(&root, &gi, &registry, &ann_opts)?;
+
+    for page_id in &result.changed_pages {
+        let _ = window.emit(
+            "workspace://file-modified",
+            crate::workspace::watcher::FileEvent {
+                path: page_id.clone(),
+            },
+        );
+    }
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -915,7 +948,7 @@ mod tests {
         let result = do_sync_slip_note_to_source(
             dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Compare with Braudel",
         )
-        .unwrap();
+        .unwrap().result;
 
         assert!(result.synced);
         assert_eq!(result.parent_uuid, "p1");
@@ -943,12 +976,12 @@ mod tests {
         let r1 = do_sync_slip_note_to_source(
             dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "First body",
         )
-        .unwrap();
+        .unwrap().result;
 
         let r2 = do_sync_slip_note_to_source(
             dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Second body",
         )
-        .unwrap();
+        .unwrap().result;
 
         assert_eq!(r1.sn_uuid, r2.sn_uuid, "child uuid should be stable");
 
@@ -1013,7 +1046,7 @@ mod tests {
             &parent_uuid,
             "A note on unstamped",
         )
-        .unwrap();
+        .unwrap().result;
 
         assert!(result.synced);
 
@@ -1091,13 +1124,12 @@ mod tests {
         let result = do_sync_slip_note_to_source(
             dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
         )
-        .unwrap();
+        .unwrap().result;
 
         assert!(result.synced);
         let file_content = read_md(dir.path(), "a.md");
         assert!(file_content.contains("PREPENDED PARAGRAPH"), "preamble preserved: {}", file_content);
         assert!(file_content.contains("A note"), "note written: {}", file_content);
-        // Parse should find parent + sn, both well-formed
         let anns = parse_annotations_builtin(&file_content);
         assert_eq!(anns.len(), 2, "parent + sn: {}", file_content);
     }
