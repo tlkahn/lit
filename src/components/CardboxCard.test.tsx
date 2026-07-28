@@ -420,6 +420,23 @@ describe("CardboxCard", () => {
     expect(back.querySelector('[data-testid="card-navigate"]')).toBeNull();
   });
 
+  it("rotator has is-flipped class iff data-flipped", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const rotator = screen.getByTestId("cardbox-card").querySelector(".cardbox-card-rotator")!;
+    expect(rotator.classList.contains("is-flipped")).toBe(false);
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(rotator.classList.contains("is-flipped")).toBe(true);
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(rotator.classList.contains("is-flipped")).toBe(false);
+  });
+
   it("flipping back to front restores annotation aria visibility", () => {
     render(
       <CardboxCard
