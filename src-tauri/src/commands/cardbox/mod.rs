@@ -869,7 +869,7 @@ pub fn batch_unpin_cards(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use crate::graph::indexer::GraphIndex;
     use crate::annotation::lang::AnnotationIndexOpts;
 
@@ -3129,7 +3129,7 @@ mod tests {
     }
 
     #[test]
-    fn write_layout_ignores_client_notes_payload() {
+    fn merge_structural_layout_strips_sn_backed_client_notes() {
         let dir = create_workspace();
         write_md(
             dir.path(),
@@ -3172,5 +3172,40 @@ mod tests {
             "sn-backed notes must be stripped: {:?}", disk.notes);
         assert_eq!(disk.version, 2);
         assert_eq!(disk.order, vec!["p1"]);
+    }
+
+    #[test]
+    fn merge_structural_layout_ignores_client_notes_without_sn() {
+        let mut disk = super::CardboxLayout {
+            version: 1,
+            order: vec!["p2".to_string()],
+            ..Default::default()
+        };
+        disk.notes.insert("p2".to_string(), super::CardNote {
+            body: "disk only".to_string(),
+            updated_at: None,
+        });
+
+        let client = super::CardboxLayout {
+            version: 2,
+            order: vec!["p1".to_string(), "p2".to_string()],
+            notes: {
+                let mut m = HashMap::new();
+                m.insert("p1".to_string(), super::CardNote {
+                    body: "stale FE note".to_string(),
+                    updated_at: None,
+                });
+                m
+            },
+            ..Default::default()
+        };
+
+        let sn_parents = HashSet::new();
+        super::merge_structural_layout(&mut disk, client, Some(&sn_parents));
+
+        assert!(!disk.notes.contains_key("p1"),
+            "client stale payload must not leak into disk: {:?}", disk.notes);
+        assert!(disk.notes.contains_key("p2"),
+            "pre-existing disk-only notes must be preserved: {:?}", disk.notes);
     }
 }

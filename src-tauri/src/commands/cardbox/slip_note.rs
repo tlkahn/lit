@@ -276,6 +276,9 @@ pub(crate) fn do_sync_slip_note_to_source(
     crate::workspace::ops::write_page(root, &page_id, &new_body, &page.meta.frontmatter, registry)
         .map_err(|e| e.to_string())?;
 
+    // Drain JSON fallback before reindex: md is authoritative once written.
+    drain_sync_fallback(root, parent_uuid)?;
+
     let removed = gi.batch_reindex(
         &crate::graph::indexer::DiffResult {
             new: vec![],
@@ -285,14 +288,6 @@ pub(crate) fn do_sync_slip_note_to_source(
         ann_opts,
     )
     .map_err(|e| e.to_string())?;
-
-    // Drain JSON fallback for this parent so stale entries don't resurrect on sn delete.
-    let mut layout = cardbox_layout::load_layout(root);
-    if layout.notes.remove(parent_uuid).is_some() {
-        let lit_dir = root.join(".lit");
-        std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-        super::persist_layout(&lit_dir, &layout)?;
-    }
 
     Ok(SyncOutput {
         result: SyncResult {
@@ -363,6 +358,20 @@ pub(crate) fn strip_sn_backed_notes(
     sn_parents: &std::collections::HashSet<String>,
 ) {
     notes.retain(|parent, _| !sn_parents.contains(parent));
+}
+
+/// Drain a single JSON fallback entry for `parent_uuid` from cardbox.json.
+/// Returns `Ok(true)` if an entry was removed, `Ok(false)` if nothing to drain.
+pub(crate) fn drain_sync_fallback(root: &std::path::Path, parent_uuid: &str) -> Result<bool, String> {
+    let mut layout = cardbox_layout::load_layout(root);
+    if layout.notes.remove(parent_uuid).is_some() {
+        let lit_dir = root.join(".lit");
+        std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+        super::persist_layout(&lit_dir, &layout)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Collect the set of parent uuids that have an active slip note in the index.
@@ -2126,5 +2135,36 @@ mod tests {
         let anns = parse_annotations_builtin(&file_content);
         let sn_count = anns.iter().filter(|a| a.annotation_type == AnnotationType::SlipNote).count();
         assert_eq!(sn_count, 2, "two sn annotations in file: {}", file_content);
+    }
+
+    // -----------------------------------------------------------------------
+    // drain_sync_fallback unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drain_sync_fallback_removes_json_entry() {
+        let dir = create_workspace();
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "stale json".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let drained = drain_sync_fallback(dir.path(), "p1").unwrap();
+        assert!(drained, "drain must return true when entry existed");
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "drained entry must not remain on disk: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn drain_sync_fallback_noop_when_absent() {
+        let dir = create_workspace();
+        write_layout(dir.path(), &CardboxLayout::default());
+
+        let drained = drain_sync_fallback(dir.path(), "p1").unwrap();
+        assert!(!drained, "drain must return false when nothing to drain");
     }
 }
