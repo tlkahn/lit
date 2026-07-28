@@ -159,6 +159,10 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     setJustPinned(false);
   }, [isPinned]);
 
+  useEffect(() => {
+    if (!canFlip) setFlipped(false);
+  }, [canFlip]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       const target = e.target as HTMLElement;

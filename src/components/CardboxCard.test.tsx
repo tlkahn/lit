@@ -918,6 +918,34 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Flip state reset tests ---
+
+  it("resets flipped when original becomes empty on the same instance", () => {
+    const { rerender } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+
+    rerender(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
+  });
+
   // --- Face inert tests ---
 
   it("marks the hidden face inert (not only aria-hidden)", () => {
