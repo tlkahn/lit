@@ -6,16 +6,9 @@ resolver = "2"
 # dev builds: full-text search and unlinked mentions scan the whole workspace
 # per query, and unoptimized regex/grep is ~25x slower (a no-hit search over a
 # 345 MB workspace: ~950ms dev vs ~35ms release). Workspace-member crates are
-# unaffected by the "*" glob, so incremental compiles stay fast; sibling path
-# deps that change often are pinned back to opt-level 0 below.
+# unaffected by the "*" glob, so incremental compiles stay fast.
 [profile.dev.package."*"]
 opt-level = 2
-
-[profile.dev.package.research-hub]
-opt-level = 0
-
-[profile.dev.package.lit-cli]
-opt-level = 0
 
 [profile.dev.package.turboref-core]
 opt-level = 0
@@ -82,8 +75,8 @@ llm-core = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 llm-openai = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 llm-anthropic = { git = "https://github.com/tlkahn/llm-rs.git", rev = "665090e" }
 futures = "0.3"
-research-hub = { path = "../../research-hub" }
-lit-cli = { path = "../../lit-cli" }
+research-hub = { git = "https://github.com/tlkahn/research-hub.git", rev = "90e3fad" }
+lit-cli = { git = "https://github.com/tlkahn/lit-cli.git", rev = "8e105c8" }
 tokio-stream = "0.1"
 uuid = { version = "1", features = ["v4"] }
 argon2 = "0.5"
