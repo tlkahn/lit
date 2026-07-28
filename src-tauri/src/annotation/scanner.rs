@@ -14,7 +14,7 @@ static ID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[([a-zA-Z0-9][a-zA-Z0-9_.\-]*)\]").unwrap()
 });
 
-fn extract_id(inner: &str) -> (Option<String>, &str) {
+pub(crate) fn extract_id(inner: &str) -> (Option<String>, &str) {
     if let Some(caps) = ID_RE.captures(inner) {
         let id = caps.get(1).unwrap().as_str().to_string();
         let remaining = &inner[caps.get(0).unwrap().end()..];
