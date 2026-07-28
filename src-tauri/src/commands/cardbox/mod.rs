@@ -324,16 +324,27 @@ pub fn write_cardbox_layout(
     let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
-    let mut layout = layout;
+    let mut disk_layout = cardbox_layout::load_layout(&root);
+    disk_layout.order = layout.order;
+    disk_layout.links = layout.links;
+    disk_layout.groups = layout.groups;
+    disk_layout.pinned = layout.pinned;
+    disk_layout.colors = layout.colors;
+    disk_layout.version = disk_layout.version.max(layout.version);
+
     if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
         if let Ok(sn_parents) = slip_note::sn_parent_key_set(&gi) {
-            slip_note::strip_sn_backed_notes(&mut layout.notes, &sn_parents);
+            slip_note::strip_sn_backed_notes(&mut disk_layout.notes, &sn_parents);
+        } else {
+            tracing::warn!("write_cardbox_layout: sn_parent_key_set failed, strip skipped");
         }
+    } else {
+        tracing::warn!("write_cardbox_layout: no graph index, sn strip skipped");
     }
 
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-    persist_layout(&lit_dir, &layout)
+    persist_layout(&lit_dir, &disk_layout)
 }
 
 #[tauri::command]
@@ -630,6 +641,34 @@ pub fn export_card_note(
     Ok(filename)
 }
 
+fn with_guarded_note_write<F>(
+    window: &tauri::Window,
+    workspace_state: &State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: &State<Arc<super::graph::GraphRegistry>>,
+    lock: &State<CardboxLock>,
+    uuid: &str,
+    f: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut CardboxLayout) -> Result<(), String>,
+{
+    let _guard = lock.0.lock().unwrap();
+    let root = crate::commands::workspace::get_workspace_root(workspace_state, window.label())?;
+
+    if let Some(gi) = super::page::lookup_graph_index(graph_state, &root) {
+        let sn_parents = slip_note::sn_parent_key_set(&gi)?;
+        slip_note::check_sn_guard(uuid, &sn_parents)?;
+    } else {
+        tracing::warn!("with_guarded_note_write: no graph index, sn guard skipped");
+    }
+
+    let lit_dir = root.join(".lit");
+    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+    let mut layout = cardbox_layout::load_layout(&root);
+    f(&mut layout)?;
+    persist_layout(&lit_dir, &layout)
+}
+
 #[tauri::command]
 pub fn set_card_note(
     window: tauri::Window,
@@ -639,13 +678,7 @@ pub fn set_card_note(
     uuid: String,
     body: String,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
-        let sn_parents = slip_note::sn_parent_key_set(&gi)?;
-        slip_note::check_sn_guard(&uuid, &sn_parents)?;
-    }
-
-    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
+    with_guarded_note_write(&window, &workspace_state, &graph_state, &lock, &uuid, |layout| {
         let trimmed = body.trim().to_string();
         if trimmed.is_empty() {
             layout.notes.remove(&uuid);
@@ -668,13 +701,7 @@ pub fn clear_card_note(
     lock: State<CardboxLock>,
     uuid: String,
 ) -> Result<(), String> {
-    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
-    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
-        let sn_parents = slip_note::sn_parent_key_set(&gi)?;
-        slip_note::check_sn_guard(&uuid, &sn_parents)?;
-    }
-
-    with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
+    with_guarded_note_write(&window, &workspace_state, &graph_state, &lock, &uuid, |layout| {
         layout.notes.remove(&uuid);
         layout.version = layout.version.max(4);
         Ok(())
@@ -3045,5 +3072,49 @@ mod tests {
         assert_eq!(gi.list_all_cardbox_annotations().unwrap().len(), 200);
         eprintln!("[perf][#851] index build, 200 CJK annotations in one file: {elapsed:?}");
         assert!(elapsed < std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn write_layout_ignores_client_notes_payload() {
+        let dir = create_workspace();
+        write_md(dir.path(), "a.md", "<!--- n: _ | note --->");
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let anns = gi.list_all_cardbox_annotations().unwrap();
+        assert_eq!(anns.len(), 1);
+        let real_uuid = anns[0].uuid.clone();
+
+        let disk = super::CardboxLayout {
+            version: 1,
+            order: vec![real_uuid.clone()],
+            ..Default::default()
+        };
+        write_layout(dir.path(), &disk);
+
+        let mut client = super::CardboxLayout {
+            version: 2,
+            order: vec![real_uuid.clone()],
+            ..Default::default()
+        };
+        client.notes.insert("p1".to_string(), super::CardNote {
+            body: "stale note from FE".to_string(),
+            updated_at: None,
+        });
+
+        let root = dir.path();
+        let mut merged = super::cardbox_layout::load_layout(root);
+        merged.order = client.order;
+        merged.links = client.links;
+        merged.groups = client.groups;
+        merged.pinned = client.pinned;
+        merged.colors = client.colors;
+        merged.version = merged.version.max(client.version);
+
+        let lit_dir = root.join(".lit");
+        super::persist_layout(&lit_dir, &merged).unwrap();
+
+        let result = read_layout(dir.path());
+        assert!(!result.notes.contains_key("p1"),
+            "client notes payload must not leak to disk: {:?}", result.notes);
+        assert_eq!(result.version, 2);
     }
 }

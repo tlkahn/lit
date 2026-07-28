@@ -496,6 +496,14 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
         }
     }
 
+    for entries in by_page.values_mut() {
+        entries.sort_by(|a, b| {
+            let pos_a = a.2.map(|p| p.0).unwrap_or(0);
+            let pos_b = b.2.map(|p| p.0).unwrap_or(0);
+            pos_b.cmp(&pos_a)
+        });
+    }
+
     let mut migrated = 0usize;
     let mut failed = 0usize;
     let pending_count = pending.len();
@@ -608,12 +616,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                     all_removed.extend(removed);
                 }
                 Err(e) => {
-                    tracing::warn!("migrate: reindex failed for {}: {}", page_id, e);
-                    for (uuid, _, _) in entries {
-                        drained_keys.retain(|k| k != uuid);
-                    }
-                    failed += page_migrated;
-                    migrated -= page_migrated;
+                    tracing::warn!(
+                        "migrate: reindex failed for {}: {} (file written, index stale)",
+                        page_id, e
+                    );
                 }
             }
 
@@ -1971,5 +1977,52 @@ mod tests {
             Some("2026-07-28T12:30:00+00:00"),
             "already-RFC3339 should pass through unchanged"
         );
+    }
+
+    #[test]
+    fn f_migrate_two_unstamped_same_page_forward_order() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "First text <!--- n: _ | Early parent ---> middle <!--- n: _ | Late parent ---> end.\n",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let (uuid_early, uuid_late) = {
+            let store = gi.store();
+            let anns = store.list_all_cardbox_annotations().unwrap();
+            assert_eq!(anns.len(), 2, "should have two annotations");
+            let early = anns.iter().min_by_key(|a| a.char_start).unwrap();
+            let late = anns.iter().max_by_key(|a| a.char_start).unwrap();
+            (early.uuid.clone(), late.uuid.clone())
+        };
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(uuid_early.clone(), CardNote {
+            body: "Note on early".to_string(),
+            updated_at: None,
+        });
+        layout.notes.insert(uuid_late.clone(), CardNote {
+            body: "Note on late".to_string(),
+            updated_at: None,
+        });
+        write_layout(dir.path(), &layout);
+
+        let result = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(),
+        ).unwrap().result;
+
+        assert_eq!(result.migrated, 2, "both entries should migrate");
+        assert_eq!(result.failed, 0, "no failures");
+
+        let file_content = read_md(dir.path(), "a.md");
+        assert!(file_content.contains("Note on early"), "early note in file: {}", file_content);
+        assert!(file_content.contains("Note on late"), "late note in file: {}", file_content);
+
+        let anns = parse_annotations_builtin(&file_content);
+        let sn_count = anns.iter().filter(|a| a.annotation_type == AnnotationType::SlipNote).count();
+        assert_eq!(sn_count, 2, "two sn annotations in file: {}", file_content);
     }
 }
