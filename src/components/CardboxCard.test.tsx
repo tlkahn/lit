@@ -918,6 +918,26 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Back-face link guard tests ---
+
+  it("does not toggle expand when clicking a markdown link on the back quote", () => {
+    const onToggleExpand = vi.fn();
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: "see [x](https://example.com)" }}
+        expanded={false}
+        onToggleExpand={onToggleExpand}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    onToggleExpand.mockClear();
+    const link = screen.getByTestId("card-original").querySelector("a");
+    expect(link).toBeTruthy();
+    fireEvent.click(link!);
+    expect(onToggleExpand).not.toHaveBeenCalled();
+  });
+
   // --- Flip state reset tests ---
 
   it("resets flipped when original becomes empty on the same instance", () => {

@@ -377,6 +377,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 className="border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted"
                 data-testid="card-original"
                 dangerouslySetInnerHTML={{ __html: renderedOriginal }}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
+                }}
               />
               <div className="mt-2 text-xs text-text-faint" data-testid="card-source">
                 {annotation.source_page_title}
