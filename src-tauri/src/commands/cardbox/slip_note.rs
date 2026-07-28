@@ -352,6 +352,9 @@ pub(crate) fn do_sync_slip_note_to_source(
             reindex_retry: false,
         }),
         WritePhase::DriftHeal { child_uuid, page_id } => {
+            // delete-equivalent: md already has no sn
+            drain_sync_fallback(root, parent_uuid)?;
+
             let outcome = interpret_reindex_outcome(
                 gi.batch_reindex(
                     &crate::graph::indexer::DiffResult {
@@ -2584,6 +2587,91 @@ mod tests {
         assert!(!sn_map.contains_key("p1"), "heal should clear ghost sn from index");
 
         // File unchanged
+        let content = read_md(dir.path(), "a.md");
+        assert!(!content.contains("sn"), "file should still have no sn");
+    }
+
+    #[test]
+    fn sync_drift_heal_drains_json_fallback() {
+        let dir = create_workspace();
+        // Parent + sn in file, build index so sn is indexed for p1.
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> end.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Dual-state: stale JSON fallback alongside indexed sn.
+        let mut layout = cardbox_layout::load_layout(dir.path());
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote {
+                body: "stale json body".to_string(),
+                updated_at: None,
+            },
+        );
+        write_layout(dir.path(), &layout);
+
+        // Externally rewrite file to parent-only (no reindex) - index still has sn.
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+
+        // Preconditions: dual-state + file lacks sn.
+        {
+            let store = gi.store();
+            let sn_map = store.list_slip_notes_for_parents().unwrap();
+            assert!(sn_map.contains_key("p1"), "precondition: index has sn");
+        }
+        let pre_layout = cardbox_layout::load_layout(dir.path());
+        assert!(pre_layout.notes.contains_key("p1"), "precondition: JSON has p1");
+        assert!(
+            !read_md(dir.path(), "a.md").contains("sn"),
+            "precondition: file has no sn"
+        );
+
+        let output = do_sync_slip_note_to_source(
+            dir.path(),
+            &gi,
+            &reg,
+            &AnnotationIndexOpts::default(),
+            &make_file_lock(),
+            "p1",
+            "",
+        )
+        .unwrap();
+
+        assert!(output.result.synced, "heal should report synced=true");
+        assert!(!output.reindex_retry, "successful heal should not request retry");
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(
+            !on_disk.notes.contains_key("p1"),
+            "drift heal must drain JSON fallback: {:?}",
+            on_disk.notes
+        );
+
+        {
+            let store = gi.store();
+            let sn_map = store.list_slip_notes_for_parents().unwrap();
+            assert!(!sn_map.contains_key("p1"), "heal should clear ghost sn from index");
+        }
+
+        let effective = reconcile_slip_notes(&gi, &on_disk).unwrap();
+        assert!(
+            !effective.contains_key("p1"),
+            "effective notes must not resurrect p1 after heal+drain: {:?}",
+            effective
+        );
+
         let content = read_md(dir.path(), "a.md");
         assert!(!content.contains("sn"), "file should still have no sn");
     }
