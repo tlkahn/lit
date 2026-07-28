@@ -918,6 +918,23 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Source attribution tests ---
+
+  it("shows source on front when annotation has no original", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-source"]')).toHaveTextContent(
+      "Test Document",
+    );
+  });
+
   // --- Back-face link guard tests ---
 
   it("does not toggle expand when clicking a markdown link on the back quote", () => {

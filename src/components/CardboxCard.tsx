@@ -262,6 +262,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                   title="Has slip note"
                 >&#9998;</span>
               )}
+              {!canFlip && annotation.source_page_title && (
+                <span className="text-text-faint" data-testid="card-source">
+                  {annotation.source_page_title}
+                </span>
+              )}
             </div>
 
             {/* Expanded content */}
