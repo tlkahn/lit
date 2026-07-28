@@ -201,7 +201,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-color-tag={colorTag || undefined}
       data-flipped={flipped}
     >
-      <div className="absolute top-2 right-2 flex items-center gap-1">
+      <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
         {isPinned && (
           <span
             className="nerd-font text-sm text-interactive-accent"

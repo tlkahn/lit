@@ -203,6 +203,16 @@ test.describe("Pointer Events", () => {
     expect(clicks).toBe(1);
     await expect(card(page, "card-a")).toHaveAttribute("data-flipped", "false");
   });
+
+  test("flip button left edge flips and does not expand", async ({ page }) => {
+    await page.goto(URL);
+    await page.waitForSelector("[data-testid='cardbox-card']");
+    await page.evaluate(() => document.fonts.ready);
+
+    await flipBtn(page, "card-a").click({ position: { x: 2, y: 18 } });
+    await expect(card(page, "card-a")).toHaveAttribute("data-flipped", "true");
+    await expect(card(page, "card-a")).toHaveAttribute("data-expanded", "false");
+  });
 });
 
 test.describe("Height Model", () => {
