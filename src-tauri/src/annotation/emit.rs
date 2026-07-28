@@ -218,8 +218,18 @@ pub fn ensure_authored_uuid(original: &str, uuid: &str) -> EnsureAuthoredUuid {
 }
 
 /// Convert a UTF-16 offset pair into byte offsets within `text`.
-/// Returns `(byte_start, byte_end)`.
+/// Returns `(byte_start, byte_end)` with `byte_start <= byte_end` guaranteed.
+///
+/// Mid-char offsets snap forward to the next char boundary. Offsets past the
+/// end of `text` clamp to `text.len()`. If `utf16_start > utf16_end`, the
+/// mapped offsets are swapped so the invariant holds.
 pub fn utf16_offsets_to_byte(text: &str, utf16_start: usize, utf16_end: usize) -> (usize, usize) {
+    let (lo, hi) = if utf16_start <= utf16_end {
+        (utf16_start, utf16_end)
+    } else {
+        (utf16_end, utf16_start)
+    };
+
     let mut utf16_pos = 0;
     let mut byte_start = text.len();
     let mut byte_end = text.len();
@@ -227,11 +237,11 @@ pub fn utf16_offsets_to_byte(text: &str, utf16_start: usize, utf16_end: usize) -
     let mut found_end = false;
 
     for (byte_idx, ch) in text.char_indices() {
-        if !found_start && utf16_pos >= utf16_start {
+        if !found_start && utf16_pos >= lo {
             byte_start = byte_idx;
             found_start = true;
         }
-        if !found_end && utf16_pos >= utf16_end {
+        if !found_end && utf16_pos >= hi {
             byte_end = byte_idx;
             found_end = true;
             break;
@@ -490,5 +500,29 @@ mod tests {
         // "Hello " = 6 UTF-16 units, "你好" = 2 UTF-16 units, "!" = 1
         let (start, end) = utf16_offsets_to_byte(text, 6, 8);
         assert_eq!(&text[start..end], "你好");
+    }
+
+    #[test]
+    fn utf16_zero_width() {
+        let text = "abc";
+        let (start, end) = utf16_offsets_to_byte(text, 1, 1);
+        assert_eq!(start, 1);
+        assert_eq!(end, 1);
+        assert_eq!(&text[start..end], "");
+    }
+
+    #[test]
+    fn utf16_oob_both_past_end() {
+        let text = "abc";
+        let (start, end) = utf16_offsets_to_byte(text, 10, 20);
+        assert_eq!(start, 3);
+        assert_eq!(end, 3);
+    }
+
+    #[test]
+    fn utf16_inverted_range() {
+        let text = "abc";
+        let (start, end) = utf16_offsets_to_byte(text, 5, 2);
+        assert!(start <= end, "byte_start ({start}) must be <= byte_end ({end})");
     }
 }
