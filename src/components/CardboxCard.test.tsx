@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { CardboxCard } from "./CardboxCard";
+import { CardboxCard, showCardFlipped } from "./CardboxCard";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 const baseAnnotation: CardboxAnnotation = {
@@ -32,7 +32,7 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-annotation-type", "question");
   });
 
-  it("renders collapsed state with badge, truncated body, and source", () => {
+  it("renders collapsed state with badge and body without source on front", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -43,12 +43,13 @@ describe("CardboxCard", () => {
     );
     expect(screen.getByTestId("card-type-badge")).toBeInTheDocument();
     expect(screen.getByTestId("card-body")).toBeInTheDocument();
-    expect(screen.getByTestId("card-source")).toHaveTextContent("Test Document");
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-source"]')).toBeNull();
     // Navigate link should not be visible in collapsed state (parent has opacity: 0)
     expect(screen.getByTestId("card-navigate")).not.toBeVisible();
   });
 
-  it("renders expanded state with full body, original, date, and navigate link", () => {
+  it("renders expanded state with body, date, and navigate but no original or source on front", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -58,12 +59,14 @@ describe("CardboxCard", () => {
       />,
     );
     expect(screen.getByTestId("card-body")).toHaveTextContent(baseAnnotation.body!);
-    expect(screen.getByTestId("card-original")).toHaveTextContent(baseAnnotation.original!);
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-original"]')).toBeNull();
+    expect(front.querySelector('[data-testid="card-source"]')).toBeNull();
     expect(screen.getByTestId("card-date")).toHaveTextContent("2026-06-15");
     expect(screen.getByTestId("card-navigate")).toBeVisible();
   });
 
-  it("shows original quote in collapsed state", () => {
+  it("does not show original quote on front by default", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -72,42 +75,20 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    expect(screen.getByTestId("card-original")).toBeInTheDocument();
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-original"]')).toBeNull();
   });
 
-  it("applies line-clamp-2 to original in collapsed state", () => {
-    render(
-      <CardboxCard
-        annotation={baseAnnotation}
-        expanded={false}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-      />,
-    );
-    expect(screen.getByTestId("card-original").className).toContain("line-clamp-2");
-  });
-
-  it("removes line-clamp from original when expanded", () => {
-    render(
-      <CardboxCard
-        annotation={baseAnnotation}
-        expanded={true}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-      />,
-    );
-    expect(screen.getByTestId("card-original").className).not.toContain("line-clamp-2");
-  });
-
-  it("renders original as markdown HTML", () => {
+  it("renders original as markdown HTML on back face", () => {
     render(
       <CardboxCard
         annotation={{ ...baseAnnotation, original: "**bold** text" }}
-        expanded={true}
+        expanded={false}
         onToggleExpand={() => {}}
         onNavigate={() => {}}
       />,
     );
+    fireEvent.click(screen.getByTestId("card-flip"));
     const orig = screen.getByTestId("card-original");
     expect(orig.innerHTML).toContain("<strong>bold</strong>");
   });
@@ -159,6 +140,38 @@ describe("CardboxCard", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("cardbox-card"));
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("clicking back face toggles expand", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(onToggle).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("card-face-back"));
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("Escape collapses even when flipped", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+    fireEvent.keyDown(screen.getByTestId("cardbox-card"), { key: "Escape" });
     expect(onToggle).toHaveBeenCalledOnce();
   });
 
@@ -332,6 +345,210 @@ describe("CardboxCard", () => {
     const link = screen.getByTestId("card-body").querySelector("a")!;
     fireEvent.click(link);
     expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  // --- Flip control tests ---
+
+  it("shows flip button when annotation has original", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-flip")).toBeInTheDocument();
+  });
+
+  it("hides flip button when annotation has no original", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
+  });
+
+  it("root data-flipped is false by default", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("clicking flip toggles data-flipped and does not expand", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    fireEvent.click(flip);
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(flip).toHaveAttribute("aria-label", "Show annotation");
+    fireEvent.click(flip);
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    expect(flip).toHaveAttribute("aria-label", "Show original quote");
+  });
+
+  it("flipped card shows original quote and source attribution", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-original")).toHaveTextContent(baseAnnotation.original!);
+    expect(screen.getByTestId("card-source")).toHaveTextContent("Test Document");
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("card-face-back")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("front face hides annotation body from a11y tree when flipped", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("card-face-back")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("expanded chrome remains on front face only", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    const front = screen.getByTestId("card-face-front");
+    const back = screen.getByTestId("card-face-back");
+    expect(front.querySelector('[data-testid="card-navigate"]')).toBeInTheDocument();
+    expect(back.querySelector('[data-testid="card-navigate"]')).toBeNull();
+  });
+
+  it("rotator has is-flipped class iff data-flipped", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const rotator = screen.getByTestId("cardbox-card").querySelector(".cardbox-card-rotator")!;
+    expect(rotator.classList.contains("is-flipped")).toBe(false);
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(rotator.classList.contains("is-flipped")).toBe(true);
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(rotator.classList.contains("is-flipped")).toBe(false);
+  });
+
+  it("flipping back to front restores annotation aria visibility", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    fireEvent.click(flip);
+    fireEvent.click(flip);
+    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("F key on focused card flips when original exists", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    const card = screen.getByTestId("cardbox-card");
+    card.focus();
+    fireEvent.keyDown(card, { key: "f" });
+    expect(card).toHaveAttribute("data-flipped", "true");
+    expect(onToggle).not.toHaveBeenCalled();
+    fireEvent.keyDown(card, { key: "F" });
+    expect(card).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("F key does nothing when annotation has no original", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const card = screen.getByTestId("cardbox-card");
+    card.focus();
+    fireEvent.keyDown(card, { key: "f" });
+    expect(card).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("F key ignored with modifier", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const card = screen.getByTestId("cardbox-card");
+    card.focus();
+    fireEvent.keyDown(card, { key: "f", metaKey: true });
+    expect(card).toHaveAttribute("data-flipped", "false");
+    fireEvent.keyDown(card, { key: "f", ctrlKey: true });
+    expect(card).toHaveAttribute("data-flipped", "false");
+    fireEvent.keyDown(card, { key: "f", altKey: true });
+    expect(card).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("flip button sits outside expand hit-path when card clicked elsewhere still expands", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("cardbox-card"));
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 
   // --- Card linking tests ---
@@ -699,6 +916,350 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-note-textarea")).not.toBeInTheDocument();
     // "Add note" button reappears (noteEditing=false, note is undefined)
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
+  });
+
+  // --- Content gutter tests ---
+
+  it("reserves right gutter so body does not sit under pin/flip chrome", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        isPinned
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const front = screen.getByTestId("card-face-front");
+    expect(front.className).toMatch(/pr-8/);
+  });
+
+  // --- Back quote clamp tests ---
+
+  it("applies line-clamp-2 to back quote when collapsed", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-original").className).toContain("line-clamp-2");
+  });
+
+  it("removes line-clamp from back quote when expanded", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-original").className).not.toContain("line-clamp-2");
+  });
+
+  // --- Source attribution tests ---
+
+  it("clicking back-face source navigates and does not toggle expand", () => {
+    const onNavigate = vi.fn();
+    const onToggleExpand = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggleExpand}
+        onNavigate={onNavigate}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    onToggleExpand.mockClear();
+    fireEvent.click(screen.getByTestId("card-source"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onToggleExpand).not.toHaveBeenCalled();
+  });
+
+  it("clicking front-face source (no original) navigates and does not toggle expand", () => {
+    const onNavigate = vi.fn();
+    const onToggleExpand = vi.fn();
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={onToggleExpand}
+        onNavigate={onNavigate}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-source"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onToggleExpand).not.toHaveBeenCalled();
+  });
+
+  it("shows source on front when annotation has no original", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const front = screen.getByTestId("card-face-front");
+    expect(front.querySelector('[data-testid="card-source"]')).toHaveTextContent(
+      "Test Document",
+    );
+  });
+
+  // --- Source WCAG and empty-title tests ---
+
+  it("source buttons use WCAG AA compliant text color classes", () => {
+    const { rerender } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    const backSource = screen.getByTestId("card-source");
+    expect(backSource.className).toContain("text-text-muted");
+    expect(backSource.className).not.toContain("text-text-faint");
+
+    rerender(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const frontSource = screen.getByTestId("card-source");
+    expect(frontSource.className).toContain("text-text-muted");
+    expect(frontSource.className).not.toContain("text-text-faint");
+  });
+
+  it("does not render back-face source button when title is empty", () => {
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, source_page_title: "" }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.queryByTestId("card-source")).not.toBeInTheDocument();
+  });
+
+  // --- Back-face link guard tests ---
+
+  it("does not toggle expand when clicking a markdown link on the back quote", () => {
+    const onToggleExpand = vi.fn();
+    render(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: "see [x](https://example.com)" }}
+        expanded={false}
+        onToggleExpand={onToggleExpand}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    onToggleExpand.mockClear();
+    const link = screen.getByTestId("card-original").querySelector("a");
+    expect(link).toBeTruthy();
+    fireEvent.click(link!);
+    expect(onToggleExpand).not.toHaveBeenCalled();
+  });
+
+  // --- Flip state reset tests ---
+
+  it("showCardFlipped is false when canFlip is false even if state is true", () => {
+    expect(showCardFlipped(true, false)).toBe(false);
+    expect(showCardFlipped(true, true)).toBe(true);
+    expect(showCardFlipped(false, true)).toBe(false);
+  });
+
+  it("clears flip presentation when original becomes empty on the same instance", () => {
+    const { rerender } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+
+    rerender(
+      <CardboxCard
+        annotation={{ ...baseAnnotation, original: null }}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+    const root = screen.getByTestId("cardbox-card");
+    const rotator = root.querySelector(".cardbox-card-rotator")!;
+    const front = screen.getByTestId("card-face-front");
+
+    expect(root).toHaveAttribute("data-flipped", "false");
+    expect(rotator.classList.contains("is-flipped")).toBe(false);
+    expect(front).not.toHaveAttribute("inert");
+    expect(front).toHaveAttribute("aria-hidden", "false");
+    expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
+  });
+
+  // --- Flip a11y tests ---
+
+  it("flip button exposes pressed state", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    expect(flip).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(flip);
+    expect(flip).toHaveAttribute("aria-pressed", "true");
+  });
+
+  // --- Enter/Space isolation tests ---
+
+  it("Enter and Space on flip button do not bubble to card expand handlers", () => {
+    const onToggleExpand = vi.fn();
+    const onGridEnter = vi.fn();
+    render(
+      <div
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            const t = e.target as HTMLElement;
+            if (t.closest('[data-testid="cardbox-card"]')) onGridEnter();
+          }
+        }}
+      >
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={onToggleExpand}
+          onNavigate={() => {}}
+        />
+      </div>,
+    );
+    const flip = screen.getByTestId("card-flip");
+    flip.focus();
+    fireEvent.keyDown(flip, { key: "Enter" });
+    expect(onGridEnter).not.toHaveBeenCalled();
+    fireEvent.keyDown(flip, { key: " " });
+    expect(onGridEnter).not.toHaveBeenCalled();
+  });
+
+  // --- Focus handoff tests ---
+
+  it("moves focus to the card root when F flips while focus is inside a face", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const root = screen.getByTestId("cardbox-card");
+    const navigate = screen.getByTestId("card-navigate");
+    navigate.focus();
+    expect(document.activeElement).toBe(navigate);
+
+    fireEvent.keyDown(navigate, { key: "f" });
+
+    expect(root).toHaveAttribute("data-flipped", "true");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(document.activeElement).toBe(root);
+    fireEvent.keyDown(root, { key: "f" });
+    expect(root).toHaveAttribute("data-flipped", "false");
+  });
+
+  // --- Face inert tests ---
+
+  it("marks the hidden face inert (not only aria-hidden)", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const front = screen.getByTestId("card-face-front");
+    const back = screen.getByTestId("card-face-back");
+
+    expect(front).not.toHaveAttribute("inert");
+    expect(back).toHaveAttribute("inert");
+
+    fireEvent.click(screen.getByTestId("card-flip"));
+
+    expect(front).toHaveAttribute("inert");
+    expect(front).toHaveAttribute("aria-hidden", "true");
+    expect(back).not.toHaveAttribute("inert");
+    expect(back).toHaveAttribute("aria-hidden", "false");
+  });
+
+  // --- Typing guard tests ---
+
+  it("F in slip-note textarea does not flip the card", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-note-add"));
+    const ta = screen.getByTestId("card-note-textarea");
+    fireEvent.keyDown(ta, { key: "f" });
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    fireEvent.keyDown(ta, { key: "F" });
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+  });
+
+  // --- Glyph correctness tests ---
+
+  it("Add note icon is fa-square_plus (U+F0FE), not a gear", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    const icon = screen.getByTestId("card-note-add").querySelector(".nerd-font");
+    expect(icon?.textContent?.codePointAt(0)).toBe(0xf0fe);
+  });
+
+  it("flip icon is fa-rotate (U+F2F1)", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const flip = screen.getByTestId("card-flip");
+    expect(flip.textContent?.codePointAt(0)).toBe(0xf2f1);
   });
 
   // --- WCAG AA color contrast tests ---
