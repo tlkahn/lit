@@ -3,6 +3,11 @@
 //! North star: FE `generateDsl` for the sn subset. Non-goals for now:
 //! `mark` codes, `lang=`, forced `opts.form` override, eliding default
 //! sentence scope (Rust always emits explicit scope tokens).
+//!
+//! **Hazard (cycle C):** freeform `body` characters that collide with fence
+//! grammar (`--->`, a body line that is exactly `---`) are not escaped here.
+//! Cycle C write-back must escape, reject, or otherwise encode user slip-note
+//! text before calling `emit_annotation`.
 
 use super::scanner::{extract_id, is_valid_authored_id};
 use super::types::{AnnotationType, Certainty, Scope, ScopeKind};
