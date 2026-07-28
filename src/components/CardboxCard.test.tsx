@@ -143,6 +143,38 @@ describe("CardboxCard", () => {
     expect(onToggle).toHaveBeenCalledOnce();
   });
 
+  it("clicking back face toggles expand", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(onToggle).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("card-face-back"));
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("Escape collapses even when flipped", () => {
+    const onToggle = vi.fn();
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={onToggle}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+    fireEvent.keyDown(screen.getByTestId("cardbox-card"), { key: "Escape" });
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
   it("calls onToggleExpand on Escape when expanded", () => {
     const onToggle = vi.fn();
     render(
