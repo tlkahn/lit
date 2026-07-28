@@ -274,6 +274,7 @@ pub fn read_cardbox_layout(
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
 
     let mut layout = cardbox_layout::load_layout(&root);
+    let snapshot = layout.clone();
 
     // Normalize links: sort within pairs, sort full list, dedup
     for pair in &mut layout.links {
@@ -299,11 +300,12 @@ pub fn read_cardbox_layout(
         Ok(notes)
     })?;
 
-    // Persist only if prune/links/groups/pinned/colors changed on disk
-    // (sn overlay is display-only and not persisted)
-    let lit_dir = root.join(".lit");
-    std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
-    persist_layout(&lit_dir, &layout)?;
+    // Persist only if normalize/prune actually changed something
+    if layout != snapshot {
+        let lit_dir = root.join(".lit");
+        std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
+        persist_layout(&lit_dir, &layout)?;
+    }
 
     // Apply sn overlay for display (not persisted)
     layout.notes = effective_notes;
@@ -315,11 +317,20 @@ pub fn read_cardbox_layout(
 pub fn write_cardbox_layout(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
     lock: State<CardboxLock>,
     layout: CardboxLayout,
 ) -> Result<(), String> {
     let _guard = lock.0.lock().unwrap();
     let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+
+    let mut layout = layout;
+    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+        if let Ok(sn_parents) = slip_note::sn_parent_key_set(&gi) {
+            slip_note::strip_sn_backed_notes(&mut layout.notes, &sn_parents);
+        }
+    }
+
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
     persist_layout(&lit_dir, &layout)
@@ -623,10 +634,17 @@ pub fn export_card_note(
 pub fn set_card_note(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
     lock: State<CardboxLock>,
     uuid: String,
     body: String,
 ) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+        let sn_parents = slip_note::sn_parent_key_set(&gi)?;
+        slip_note::check_sn_guard(&uuid, &sn_parents)?;
+    }
+
     with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         let trimmed = body.trim().to_string();
         if trimmed.is_empty() {
@@ -646,9 +664,16 @@ pub fn set_card_note(
 pub fn clear_card_note(
     window: tauri::Window,
     workspace_state: State<crate::commands::workspace::WorkspaceRegistry>,
+    graph_state: State<Arc<super::graph::GraphRegistry>>,
     lock: State<CardboxLock>,
     uuid: String,
 ) -> Result<(), String> {
+    let root = crate::commands::workspace::get_workspace_root(&workspace_state, window.label())?;
+    if let Some(gi) = super::page::lookup_graph_index(&graph_state, &root) {
+        let sn_parents = slip_note::sn_parent_key_set(&gi)?;
+        slip_note::check_sn_guard(&uuid, &sn_parents)?;
+    }
+
     with_cardbox_layout(&window, &workspace_state, &lock, |layout| {
         layout.notes.remove(&uuid);
         layout.version = layout.version.max(4);

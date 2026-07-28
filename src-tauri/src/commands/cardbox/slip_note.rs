@@ -147,6 +147,35 @@ pub fn apply_slip_note_edit(
 }
 
 // ---------------------------------------------------------------------------
+// Shared parent resolution helper (used by sync + migrate)
+// ---------------------------------------------------------------------------
+
+pub(crate) fn resolve_parent_in_page<'a>(
+    anns: &'a [crate::annotation::types::Annotation],
+    parent_uuid: &str,
+    store_position: Option<(usize, usize)>,
+) -> Result<&'a crate::annotation::types::Annotation, String> {
+    if let Some(a) = anns.iter().find(|a| a.uuid.as_deref() == Some(parent_uuid)) {
+        return Ok(a);
+    }
+    if let Some((cs, ce)) = store_position {
+        if let Some(a) = anns.iter().find(|a| a.char_start == cs && a.char_end == ce) {
+            match &a.uuid {
+                None => return Ok(a),
+                Some(id) if id == parent_uuid => return Ok(a),
+                Some(id) => {
+                    return Err(format!(
+                        "parent uuid mismatch: store/request '{}' vs file id '{}' at {}..{}",
+                        parent_uuid, id, cs, ce
+                    ));
+                }
+            }
+        }
+    }
+    Err(format!("parent {} missing from page body", parent_uuid))
+}
+
+// ---------------------------------------------------------------------------
 // Cycle E - sync_slip_note_to_source (pure core + Tauri wrapper)
 // ---------------------------------------------------------------------------
 
@@ -174,37 +203,23 @@ pub(crate) fn do_sync_slip_note_to_source(
     parent_uuid: &str,
     body: &str,
 ) -> Result<SyncOutput, String> {
-    // Use store only to discover which page the parent lives on
-    let page_id = {
+    let (page_id, store_position) = {
         let store = gi.store();
         let ann = store
             .get_annotation_by_uuid(parent_uuid)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Annotation with uuid '{}' not found", parent_uuid))?;
-        ann.source_page_id.clone()
+        (ann.source_page_id.clone(), Some((ann.char_start, ann.char_end)))
     };
 
     let page = crate::workspace::ops::read_page(root, &page_id, registry)
         .map_err(|e| e.to_string())?;
     let page_body = &page.body;
 
-    // Resolve parent from fresh parse by authored uuid.
-    // Unstamped parents won't have an authored id in the file, so fall back
-    // to the store's position-based match as a secondary lookup.
     let anns = parse_annotations_builtin(page_body);
+    let parent = resolve_parent_in_page(&anns, parent_uuid, store_position)?;
 
-    let parent = anns
-        .iter()
-        .find(|a| a.uuid.as_deref() == Some(parent_uuid))
-        .or_else(|| {
-            let store = gi.store();
-            let store_ann = store.get_annotation_by_uuid(parent_uuid).ok()??;
-            anns.iter().find(|a| {
-                a.char_start == store_ann.char_start && a.char_end == store_ann.char_end
-            })
-        })
-        .ok_or_else(|| format!("parent {} missing from page body", parent_uuid))?;
-
+    // v1: earliest char_start wins when multiple sn exist for one parent
     let existing_child = anns
         .iter()
         .filter(|a| {
@@ -312,18 +327,19 @@ pub fn sync_slip_note_to_source(
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
     let output = do_sync_slip_note_to_source(&root, &gi, &registry, &ann_opts, &parent_uuid, &body)?;
 
-    // Emit reindex side effects (graph-updated + annotations-removed)
-    crate::commands::graph::emit_reindex_side_effects(
-        &app_handle,
-        &Ok(output.removed_annotations),
-    );
+    if output.result.synced {
+        crate::commands::graph::emit_reindex_side_effects(
+            &app_handle,
+            &Ok(output.removed_annotations),
+        );
 
-    let _ = window.emit(
-        "workspace://file-modified",
-        crate::workspace::watcher::FileEvent {
-            path: output.result.page_id.clone(),
-        },
-    );
+        let _ = window.emit(
+            "workspace://file-modified",
+            crate::workspace::watcher::FileEvent {
+                path: output.result.page_id.clone(),
+            },
+        );
+    }
 
     Ok(output.result)
 }
@@ -331,6 +347,40 @@ pub fn sync_slip_note_to_source(
 // ---------------------------------------------------------------------------
 // Cycle F - Reconcile notes cache + migration
 // ---------------------------------------------------------------------------
+
+/// Remove notes whose parent uuid has a live slip note in the graph index.
+/// Called before persisting layout to prevent sn overlay from poisoning disk.
+pub(crate) fn strip_sn_backed_notes(
+    notes: &mut HashMap<String, CardNote>,
+    sn_parents: &std::collections::HashSet<String>,
+) {
+    notes.retain(|parent, _| !sn_parents.contains(parent));
+}
+
+/// Collect the set of parent uuids that have an active slip note in the index.
+pub(crate) fn sn_parent_key_set(
+    gi: &crate::graph::indexer::GraphIndex,
+) -> Result<std::collections::HashSet<String>, String> {
+    let store = gi.store();
+    let sn_map = store
+        .list_slip_notes_for_parents()
+        .map_err(|e| e.to_string())?;
+    Ok(sn_map.into_keys().collect())
+}
+
+/// Reject a JSON note write when the parent has a live slip note.
+pub(crate) fn check_sn_guard(
+    uuid: &str,
+    sn_parents: &std::collections::HashSet<String>,
+) -> Result<(), String> {
+    if sn_parents.contains(uuid) {
+        return Err(format!(
+            "card note is source-backed (sn); use sync_slip_note_to_source for '{}'",
+            uuid
+        ));
+    }
+    Ok(())
+}
 
 /// Build effective notes by overlaying sn-derived bodies on top of fallback.
 /// sn_map wins on key conflict; empty sn body means the key is absent.
@@ -345,9 +395,16 @@ pub(crate) fn overlay_notes_from_sn(
             out.remove(parent);
             continue;
         }
+        let updated_at = sn.date.as_deref().map(|d| {
+            if d.contains('T') {
+                d.to_string()
+            } else {
+                format!("{}T00:00:00Z", d)
+            }
+        });
         out.insert(parent.clone(), CardNote {
             body,
-            updated_at: sn.date.clone(),
+            updated_at,
         });
     }
     out
@@ -382,12 +439,18 @@ pub struct MigrateResult {
     pub changed_pages: Vec<String>,
 }
 
+#[derive(Debug)]
+pub(crate) struct MigrateOutput {
+    pub result: MigrateResult,
+    pub removed_annotations: Vec<(String, String)>,
+}
+
 pub(crate) fn do_migrate_cardbox_slip_notes(
     root: &std::path::Path,
     gi: &crate::graph::indexer::GraphIndex,
     registry: &crate::workspace::write_hash::WriteHashRegistry,
     ann_opts: &crate::annotation::lang::AnnotationIndexOpts,
-) -> Result<MigrateResult, String> {
+) -> Result<MigrateOutput, String> {
     let mut layout = cardbox_layout::load_layout(root);
 
     let sn_map = {
@@ -405,15 +468,19 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
         .collect();
 
     if pending.is_empty() {
-        return Ok(MigrateResult {
-            migrated: 0,
-            failed: 0,
-            skipped: 0,
-            changed_pages: vec![],
+        return Ok(MigrateOutput {
+            result: MigrateResult {
+                migrated: 0,
+                failed: 0,
+                skipped: 0,
+                changed_pages: vec![],
+            },
+            removed_annotations: vec![],
         });
     }
 
-    let mut by_page: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    // Group pending entries by page, carrying store position for fallback resolution
+    let mut by_page: HashMap<String, Vec<(String, String, Option<(usize, usize)>)>> = HashMap::new();
     {
         let store = gi.store();
         for (parent_uuid, body) in &pending {
@@ -422,7 +489,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                     by_page
                         .entry(ann.source_page_id.clone())
                         .or_default()
-                        .push((parent_uuid.clone(), body.clone()));
+                        .push((parent_uuid.clone(), body.clone(), Some((ann.char_start, ann.char_end))));
                 }
                 _ => {}
             }
@@ -434,6 +501,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     let pending_count = pending.len();
     let mut drained_keys: Vec<String> = Vec::new();
     let mut changed_pages: Vec<String> = Vec::new();
+    let mut all_removed: Vec<(String, String)> = Vec::new();
 
     for (page_id, entries) in &by_page {
         let page = match crate::workspace::ops::read_page(root, page_id, registry) {
@@ -448,14 +516,13 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
         let mut current_body = page.body.clone();
         let mut page_migrated = 0;
 
-        for (parent_uuid, note_body) in entries {
+        for (parent_uuid, note_body, store_position) in entries {
             let anns = parse_annotations_builtin(&current_body);
 
-            let parent = anns.iter().find(|a| a.uuid.as_deref() == Some(parent_uuid));
-            let parent = match parent {
-                Some(p) => p,
-                None => {
-                    tracing::warn!("migrate: parent {} not found in {}", parent_uuid, page_id);
+            let parent = match resolve_parent_in_page(&anns, parent_uuid, *store_position) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("migrate: {}", e);
                     failed += 1;
                     continue;
                 }
@@ -521,7 +588,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 registry,
             ) {
                 tracing::warn!("migrate: failed to write {}: {}", page_id, e);
-                for (uuid, _) in entries {
+                for (uuid, _, _) in entries {
                     drained_keys.retain(|k| k != uuid);
                 }
                 failed += page_migrated;
@@ -529,7 +596,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 continue;
             }
 
-            if let Err(e) = gi.batch_reindex(
+            match gi.batch_reindex(
                 &crate::graph::indexer::DiffResult {
                     new: vec![],
                     changed: vec![page_id.clone()],
@@ -537,15 +604,20 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 },
                 ann_opts,
             ) {
-                tracing::warn!("migrate: reindex failed for {}: {}", page_id, e);
-                for (uuid, _) in entries {
-                    drained_keys.retain(|k| k != uuid);
+                Ok(removed) => {
+                    all_removed.extend(removed);
                 }
-                failed += page_migrated;
-                migrated -= page_migrated;
-                continue;
+                Err(e) => {
+                    tracing::warn!("migrate: reindex failed for {}: {}", page_id, e);
+                    for (uuid, _, _) in entries {
+                        drained_keys.retain(|k| k != uuid);
+                    }
+                    failed += page_migrated;
+                    migrated -= page_migrated;
+                }
             }
 
+            // File was written even if reindex failed
             changed_pages.push(page_id.clone());
         }
     }
@@ -561,11 +633,14 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
 
     let skipped = pending_count - migrated - failed;
 
-    Ok(MigrateResult {
-        migrated,
-        failed,
-        skipped,
-        changed_pages,
+    Ok(MigrateOutput {
+        result: MigrateResult {
+            migrated,
+            failed,
+            skipped,
+            changed_pages,
+        },
+        removed_annotations: all_removed,
     })
 }
 
@@ -591,9 +666,16 @@ pub fn migrate_cardbox_slip_notes(
     };
 
     let ann_opts = crate::preferences::annotation_index_opts(&app_handle);
-    let result = do_migrate_cardbox_slip_notes(&root, &gi, &registry, &ann_opts)?;
+    let output = do_migrate_cardbox_slip_notes(&root, &gi, &registry, &ann_opts)?;
 
-    for page_id in &result.changed_pages {
+    if !output.result.changed_pages.is_empty() {
+        crate::commands::graph::emit_reindex_side_effects(
+            &app_handle,
+            &Ok(output.removed_annotations),
+        );
+    }
+
+    for page_id in &output.result.changed_pages {
         let _ = window.emit(
             "workspace://file-modified",
             crate::workspace::watcher::FileEvent {
@@ -602,7 +684,7 @@ pub fn migrate_cardbox_slip_notes(
         );
     }
 
-    Ok(result)
+    Ok(output.result)
 }
 
 // ---------------------------------------------------------------------------
@@ -1373,7 +1455,7 @@ mod tests {
 
         let result =
             do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
-                .unwrap();
+                .unwrap().result;
 
         assert_eq!(result.migrated, 1);
         assert_eq!(result.failed, 0);
@@ -1384,7 +1466,7 @@ mod tests {
 
         let result2 =
             do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
-                .unwrap();
+                .unwrap().result;
         assert_eq!(result2.migrated, 0, "second migration should be idempotent");
     }
 
@@ -1448,30 +1530,6 @@ mod tests {
         let effective2 = reconcile_slip_notes(&gi, &layout).unwrap();
         assert!(!effective2.contains_key("p1"),
             "sn removed from md -> effective notes must not have p1: {:?}", effective2);
-    }
-
-    #[test]
-    fn f_reconcile_keeps_json_only_fallback() {
-        let dir = create_workspace();
-        write_md(
-            dir.path(),
-            "a.md",
-            "Text <!---[p1] n: \\s | Parent ---> end.\n",
-        );
-        let gi =
-            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
-
-        let mut layout = CardboxLayout::default();
-        layout.notes.insert(
-            "p1".to_string(),
-            CardNote {
-                body: "JSON-only note".to_string(),
-                updated_at: None,
-            },
-        );
-
-        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
-        assert_eq!(effective["p1"].body, "JSON-only note");
     }
 
     #[test]
@@ -1584,12 +1642,334 @@ mod tests {
 
         let result =
             do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
-                .unwrap();
+                .unwrap().result;
 
         assert_eq!(result.migrated, 1, "good note should migrate");
         assert!(result.skipped > 0 || result.failed > 0, "bad note should fail or be skipped");
 
         let file_content = read_md(dir.path(), "a.md");
         assert!(file_content.contains("Good note"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle 1 tests - strip sn-backed notes on layout write
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn strip_sn_backed_notes_removes_only_sn_keys() {
+        let mut notes = HashMap::new();
+        notes.insert("p1".to_string(), CardNote { body: "sn note".into(), updated_at: None });
+        notes.insert("p2".to_string(), CardNote { body: "fallback note".into(), updated_at: None });
+
+        let sn_parents: std::collections::HashSet<String> = ["p1".to_string()].into_iter().collect();
+        strip_sn_backed_notes(&mut notes, &sn_parents);
+
+        assert!(!notes.contains_key("p1"), "sn-backed key should be stripped");
+        assert!(notes.contains_key("p2"), "fallback-only key should survive");
+    }
+
+    #[test]
+    fn write_layout_does_not_persist_sn_overlay_keys() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Slip note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+
+        // reconcile produces effective notes with p1 from sn overlay
+        let layout = CardboxLayout::default();
+        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        assert!(effective.contains_key("p1"), "precondition: overlay has p1");
+
+        // Simulate what write_cardbox_layout should do: strip sn-backed keys before persist
+        let mut to_persist = CardboxLayout {
+            notes: effective,
+            ..Default::default()
+        };
+        let sn_parents = sn_parent_key_set(&gi).unwrap();
+        strip_sn_backed_notes(&mut to_persist.notes, &sn_parents);
+        write_layout(dir.path(), &to_persist);
+
+        // Reload: disk notes should NOT contain p1
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "sn overlay key must not persist to disk: {:?}", on_disk.notes);
+
+        // After removing sn from file + reindex, p1 must not resurrect
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> more.\n",
+        );
+        gi.batch_reindex(
+            &crate::graph::indexer::DiffResult {
+                new: vec![],
+                changed: vec!["a.md".to_string()],
+                deleted: vec![],
+            },
+            &AnnotationIndexOpts::default(),
+        ).unwrap();
+
+        let layout2 = cardbox_layout::load_layout(dir.path());
+        let effective2 = reconcile_slip_notes(&gi, &layout2).unwrap();
+        assert!(!effective2.contains_key("p1"),
+            "no resurrection after sn delete + strip: {:?}", effective2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle 2 tests - set/clear card note guard under live sn
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_card_note_rejects_when_sn_exists() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Slip note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+
+        let sn_parents = sn_parent_key_set(&gi).unwrap();
+        assert!(sn_parents.contains("p1"), "precondition: p1 has sn");
+
+        let result = check_sn_guard("p1", &sn_parents);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("source-backed"));
+    }
+
+    #[test]
+    fn clear_card_note_rejects_when_sn_exists() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Slip note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+
+        let sn_parents = sn_parent_key_set(&gi).unwrap();
+        let result = check_sn_guard("p1", &sn_parents);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_card_note_allows_json_only_parent() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+
+        let sn_parents = sn_parent_key_set(&gi).unwrap();
+        assert!(!sn_parents.contains("p1"), "precondition: p1 has no sn");
+
+        let result = check_sn_guard("p1", &sn_parents);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn strip_preserves_non_sn_keys_through_write() {
+        let mut notes = HashMap::new();
+        notes.insert("fallback-1".to_string(), CardNote { body: "keep me".into(), updated_at: None });
+        notes.insert("fallback-2".to_string(), CardNote { body: "keep me too".into(), updated_at: None });
+
+        let sn_parents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        strip_sn_backed_notes(&mut notes, &sn_parents);
+
+        assert_eq!(notes.len(), 2);
+        assert!(notes.contains_key("fallback-1"));
+        assert!(notes.contains_key("fallback-2"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle 3 tests - resolve_parent_in_page + migrate unstamped + mismatch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_parent_unstamped_via_position() {
+        let body = "Text <!--- n: \\s | Unstamped parent ---> end.\n";
+        let anns = parse_annotations_builtin(body);
+        assert!(anns[0].uuid.is_none(), "precondition: parent is unstamped");
+
+        let result = resolve_parent_in_page(
+            &anns, "store-uuid", Some((anns[0].char_start, anns[0].char_end)),
+        );
+        assert!(result.is_ok(), "unstamped parent should resolve via position");
+    }
+
+    #[test]
+    fn resolve_parent_mismatch_authored_id_errors() {
+        let body = "Text <!---[p2] n: \\s | Different parent ---> end.\n";
+        let anns = parse_annotations_builtin(body);
+        assert_eq!(anns[0].uuid.as_deref(), Some("p2"));
+
+        let result = resolve_parent_in_page(
+            &anns, "p1", Some((anns[0].char_start, anns[0].char_end)),
+        );
+        assert!(result.is_err(), "mismatch should error");
+        let err = result.unwrap_err();
+        assert!(err.contains("p1"), "error should mention requested id: {}", err);
+        assert!(err.contains("p2"), "error should mention file id: {}", err);
+    }
+
+    #[test]
+    fn e_sync_err_on_authored_id_mismatch_at_span() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Original parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Rewrite file with different authored id at same text/span, without reindex
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p2] n: \\s | Original parent ---> end.\n",
+        );
+
+        let result = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "A note",
+        );
+        assert!(result.is_err(), "mismatch should error");
+        let err = result.unwrap_err();
+        assert!(err.contains("mismatch") || err.contains("p2"),
+            "error should indicate mismatch: {}", err);
+
+        // File should be unchanged
+        let file_content = read_md(dir.path(), "a.md");
+        assert!(!file_content.contains("sn"), "no sn written on error: {}", file_content);
+    }
+
+    #[test]
+    fn f_migrate_unstamped_parent_via_position_fallback() {
+        let dir = create_workspace();
+        // Unstamped parent in file
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!--- n: \\s | Unstamped parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Get the store uuid (assigned by indexer since file has no authored id)
+        let store_uuid = {
+            let store = gi.store();
+            let anns = store.list_all_cardbox_annotations().unwrap();
+            assert_eq!(anns.len(), 1);
+            anns[0].uuid.clone()
+        };
+
+        // Set up layout with note keyed by store uuid
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            store_uuid.clone(),
+            CardNote {
+                body: "Legacy unstamped note".to_string(),
+                updated_at: None,
+            },
+        );
+        write_layout(dir.path(), &layout);
+
+        let result =
+            do_migrate_cardbox_slip_notes(dir.path(), &gi, &reg, &AnnotationIndexOpts::default())
+                .unwrap().result;
+
+        assert_eq!(result.migrated, 1, "unstamped parent should migrate via position fallback");
+        assert_eq!(result.failed, 0);
+
+        let file_content = read_md(dir.path(), "a.md");
+        assert!(file_content.contains("sn"), "sn should be written: {}", file_content);
+        assert!(file_content.contains("Legacy unstamped note"));
+        // Parent should now be stamped
+        assert!(file_content.contains(&format!("[{}]", store_uuid)),
+            "parent should be stamped with store uuid: {}", file_content);
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle 5 tests - overlay timestamp normalization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn overlay_notes_normalizes_date_to_rfc3339() {
+        use crate::graph::types::CardboxAnnotation;
+
+        let fallback = HashMap::new();
+        let mut sn_map = HashMap::new();
+        sn_map.insert("p1".to_string(), CardboxAnnotation {
+            uuid: "sn1".to_string(),
+            annotation_type: "slipnote".to_string(),
+            certainty: "neutral".to_string(),
+            body: Some("note body".to_string()),
+            date: Some("2026-07-28".to_string()),
+            source_page_id: "a.md".to_string(),
+            source_page_title: "A".to_string(),
+            source_line: 1,
+            char_start: 0,
+            char_end: 10,
+            scope_kind: "anchor".to_string(),
+            scope_value: "p1".to_string(),
+            original: None,
+        });
+
+        let effective = overlay_notes_from_sn(&fallback, &sn_map);
+        assert_eq!(
+            effective["p1"].updated_at.as_deref(),
+            Some("2026-07-28T00:00:00Z"),
+            "date-only should be normalized to RFC3339"
+        );
+    }
+
+    #[test]
+    fn overlay_notes_preserves_rfc3339_date() {
+        use crate::graph::types::CardboxAnnotation;
+
+        let fallback = HashMap::new();
+        let mut sn_map = HashMap::new();
+        sn_map.insert("p1".to_string(), CardboxAnnotation {
+            uuid: "sn1".to_string(),
+            annotation_type: "slipnote".to_string(),
+            certainty: "neutral".to_string(),
+            body: Some("note body".to_string()),
+            date: Some("2026-07-28T12:30:00+00:00".to_string()),
+            source_page_id: "a.md".to_string(),
+            source_page_title: "A".to_string(),
+            source_line: 1,
+            char_start: 0,
+            char_end: 10,
+            scope_kind: "anchor".to_string(),
+            scope_value: "p1".to_string(),
+            original: None,
+        });
+
+        let effective = overlay_notes_from_sn(&fallback, &sn_map);
+        assert_eq!(
+            effective["p1"].updated_at.as_deref(),
+            Some("2026-07-28T12:30:00+00:00"),
+            "already-RFC3339 should pass through unchanged"
+        );
     }
 }

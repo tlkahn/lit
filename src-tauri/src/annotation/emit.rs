@@ -4,10 +4,12 @@
 //! `mark` codes, `lang=`, forced `opts.form` override, eliding default
 //! sentence scope (Rust always emits explicit scope tokens).
 //!
-//! **Hazard (cycle C):** freeform `body` characters that collide with fence
-//! grammar (`--->`, a body line that is exactly `---`) are not escaped here.
-//! Cycle C write-back must escape, reject, or otherwise encode user slip-note
-//! text before calling `emit_annotation`.
+//! **Hazard (cycles C/E):** freeform `body` characters that collide with fence
+//! grammar (`--->`) are encoded by the caller using ZWSP: `--->` becomes
+//! `---\u{200B}>` (see `sanitize_body_for_fence` / `unsanitize_sn_body` in
+//! `commands/cardbox/slip_note.rs`). This is lossless through the app's
+//! sanitize/unsanitize round-trip but permanent in the file and invisible
+//! to FTS queries for the raw `--->` literal.
 
 use super::scanner::{extract_id, is_valid_authored_id};
 use super::types::{AnnotationType, Certainty, Scope, ScopeKind};
