@@ -179,6 +179,14 @@ fn emit_block(
     lines.join("\n")
 }
 
+fn try_invalid_bracket_token(s: &str) -> Option<usize> {
+    if !s.starts_with('[') {
+        return None;
+    }
+    let close = s.find(']')?;
+    Some(close + 1)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnsureAuthoredUuid {
     /// Stable id children should anchor to (`^"id"`).
@@ -237,7 +245,14 @@ pub fn ensure_authored_uuid(original: &str, uuid: &str) -> EnsureAuthoredUuid {
         };
     }
 
-    let stamped = format!("{}[{}]{}", fence, uuid, rest);
+    let leading_ws = &rest[..rest.len() - trimmed.len()];
+    let stamped = if let Some(bracket_end) = try_invalid_bracket_token(trimmed) {
+        let after = &trimmed[bracket_end..];
+        format!("{}{}[{}]{}", fence, leading_ws, uuid, after)
+    } else {
+        format!("{}[{}]{}", fence, uuid, rest)
+    };
+
     EnsureAuthoredUuid {
         id: uuid.to_string(),
         original: stamped,
@@ -471,21 +486,40 @@ mod tests {
     }
 
     #[test]
-    fn ensure_authored_uuid_empty_bracket_is_not_authored_id() {
+    fn ensure_authored_uuid_replaces_empty_bracket() {
         let original = "<!---[] n | body --->";
         let r = ensure_authored_uuid(original, "new");
         assert!(r.changed, "empty brackets should not be treated as an authored id");
         assert_eq!(r.id, "new");
-        assert!(r.original.contains("[new]"), "should stamp uuid, got: {}", r.original);
+        assert_eq!(r.original, "<!---[new] n | body --->");
     }
 
     #[test]
-    fn ensure_authored_uuid_invalid_bracket_token_is_not_authored_id() {
+    fn ensure_authored_uuid_replaces_invalid_bracket_token() {
         let original = "<!---[-bad] n | body --->";
         let r = ensure_authored_uuid(original, "new");
         assert!(r.changed, "invalid bracket token should not be treated as an authored id");
         assert_eq!(r.id, "new");
-        assert!(r.original.contains("[new]"), "should stamp uuid, got: {}", r.original);
+        assert_eq!(r.original, "<!---[new] n | body --->");
+    }
+
+    #[test]
+    fn ensure_authored_uuid_replaces_invalid_bracket_with_leading_space() {
+        let original = "<!--- [-bad] n | body --->";
+        let r = ensure_authored_uuid(original, "new");
+        assert!(r.changed);
+        assert_eq!(r.original, "<!--- [new] n | body --->");
+    }
+
+    #[test]
+    fn ensure_authored_uuid_replace_then_parse_recovers_type() {
+        use crate::annotation::parser::parse_annotations_builtin;
+        let original = "<!---[] n | body --->";
+        let r = ensure_authored_uuid(original, "new");
+        let anns = parse_annotations_builtin(&r.original);
+        assert_eq!(anns.len(), 1, "should parse one annotation");
+        assert_eq!(anns[0].annotation_type, AnnotationType::Note);
+        assert_eq!(anns[0].uuid.as_deref(), Some("new"));
     }
 
     #[test]
