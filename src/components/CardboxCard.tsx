@@ -379,7 +379,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           {canFlip && (
             <div className="cardbox-card-face cardbox-card-face-back" data-testid="card-face-back" aria-hidden={!flipped} {...(!flipped ? { inert: "" as unknown as boolean } : {})}>
               <div
-                className="border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted"
+                className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
                 data-testid="card-original"
                 dangerouslySetInnerHTML={{ __html: renderedOriginal }}
                 onClick={(e) => {

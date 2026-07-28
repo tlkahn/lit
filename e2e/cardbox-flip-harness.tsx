@@ -36,6 +36,22 @@ const cardB: CardboxAnnotation = {
   original: "Original quote for card B",
 };
 
+const cardLongQuote: CardboxAnnotation = {
+  uuid: "card-long-quote",
+  annotation_type: "note",
+  certainty: "neutral",
+  body: "Short body",
+  date: null,
+  source_page_id: "long.md",
+  source_page_title: "Long Quote Source",
+  source_line: 1,
+  char_start: 0,
+  char_end: 10,
+  scope_kind: "words",
+  scope_value: "1",
+  original: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(20),
+};
+
 const cardC: CardboxAnnotation = {
   uuid: "card-c",
   annotation_type: "todo",
@@ -64,16 +80,18 @@ function HarnessApp() {
     });
   }, []);
 
-  const noop = useCallback(() => {}, []);
+  const navClicks = useCallback(() => {
+    (window as any).__navClicks = ((window as any).__navClicks ?? 0) + 1;
+  }, []);
 
   return (
-    <div style={{ display: "flex", gap: 16, padding: 16 }}>
+    <div style={{ display: "flex", gap: 16, padding: 16, flexWrap: "wrap" }}>
       <div id="card-a" style={{ width: 300 }}>
         <CardboxCard
           annotation={cardA}
           expanded={expandedSet.has("card-a")}
           onToggleExpand={() => toggleExpand("card-a")}
-          onNavigate={noop}
+          onNavigate={navClicks}
         />
       </div>
       <div id="card-b" style={{ width: 300 }}>
@@ -81,7 +99,7 @@ function HarnessApp() {
           annotation={cardB}
           expanded={expandedSet.has("card-b")}
           onToggleExpand={() => toggleExpand("card-b")}
-          onNavigate={noop}
+          onNavigate={navClicks}
         />
       </div>
       <div id="card-c" style={{ width: 300 }}>
@@ -89,7 +107,15 @@ function HarnessApp() {
           annotation={cardC}
           expanded={expandedSet.has("card-c")}
           onToggleExpand={() => toggleExpand("card-c")}
-          onNavigate={noop}
+          onNavigate={navClicks}
+        />
+      </div>
+      <div id="card-long-quote" style={{ width: 300 }}>
+        <CardboxCard
+          annotation={cardLongQuote}
+          expanded={expandedSet.has("card-long-quote")}
+          onToggleExpand={() => toggleExpand("card-long-quote")}
+          onNavigate={navClicks}
         />
       </div>
     </div>

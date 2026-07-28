@@ -397,6 +397,13 @@ select:disabled {
 .cardbox-card-face-back {
   transform: rotateY(180deg);
 }
+.cardbox-card-rotator:not(.is-flipped) .cardbox-card-face-back,
+.cardbox-card-rotator.is-flipped .cardbox-card-face-front {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  overflow: auto;
+}
 @media (prefers-reduced-motion: reduce) {
   .cardbox-card-rotator {
     transition: none;

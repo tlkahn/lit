@@ -918,6 +918,34 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-note-add")).toBeInTheDocument();
   });
 
+  // --- Back quote clamp tests ---
+
+  it("applies line-clamp-2 to back quote when collapsed", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-original").className).toContain("line-clamp-2");
+  });
+
+  it("removes line-clamp from back quote when expanded", () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-original").className).not.toContain("line-clamp-2");
+  });
+
   // --- Source attribution tests ---
 
   it("shows source on front when annotation has no original", () => {

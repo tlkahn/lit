@@ -192,6 +192,30 @@ test.describe("Flip + Expand Interaction", () => {
   });
 });
 
+test.describe("Height Model", () => {
+  test("unflipped card height follows front, not long back quote", async ({ page }) => {
+    await page.goto(URL);
+    await page.waitForSelector("#card-long-quote [data-testid='cardbox-card']");
+    const heights = await page.evaluate(() => {
+      const root = document.querySelector("#card-long-quote [data-testid='cardbox-card']")!;
+      const front = root.querySelector("[data-testid='card-face-front']") as HTMLElement;
+      const back = root.querySelector("[data-testid='card-face-back']") as HTMLElement;
+      const rotator = root.querySelector(".cardbox-card-rotator") as HTMLElement;
+      return {
+        root: root.getBoundingClientRect().height,
+        front: front.getBoundingClientRect().height,
+        back: back.scrollHeight,
+        rotator: rotator.getBoundingClientRect().height,
+        flipped: root.getAttribute("data-flipped"),
+      };
+    });
+    expect(heights.flipped).toBe("false");
+    expect(heights.back).toBeGreaterThan(heights.front * 2);
+    expect(heights.rotator).toBeLessThanOrEqual(heights.front + 1);
+    expect(heights.root).toBeLessThan(heights.back);
+  });
+});
+
 test.describe("No-original Negative Case", () => {
   test("card without original has no flip button or back face", async ({
     page,
