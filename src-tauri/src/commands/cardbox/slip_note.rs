@@ -195,6 +195,12 @@ pub(crate) fn do_sync_slip_note_to_source(
         .as_ref()
         .map(|c| c.uuid.clone())
         .filter(|u| !u.is_empty())
+        .or_else(|| {
+            // Unauthored child: check store for an indexed slip note linked to parent
+            let store = gi.store();
+            let sn_map = store.list_slip_notes_for_parents().ok()?;
+            sn_map.get(parent_uuid).map(|sn| sn.uuid.clone())
+        })
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let new_body = apply_slip_note_edit(
@@ -1099,6 +1105,51 @@ mod tests {
             layout_after.notes.is_empty(),
             "sync should not write notes to layout"
         );
+    }
+
+    #[test]
+    fn e_sync_reuses_store_uuid_for_unauthored_child() {
+        let dir = create_workspace();
+        // File has parent + sn WITHOUT authored [id] on the sn
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> more.\n\n",
+                "<!--- sn: ^\"p1\" | Hand-written note @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // The indexer assigns a uuid to the unauthored sn
+        let store_uuid = {
+            let store = gi.store();
+            let sn_map = store.list_slip_notes_for_parents().unwrap();
+            sn_map.get("p1").unwrap().uuid.clone()
+        };
+        assert!(!store_uuid.is_empty());
+
+        // Sync should reuse the store uuid, not mint a new one
+        let result = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Updated body",
+        )
+        .unwrap().result;
+
+        assert_eq!(result.sn_uuid, store_uuid, "should reuse store uuid for unauthored child");
+
+        // File should now have the authored [uuid]
+        let file_content = read_md(dir.path(), "a.md");
+        assert!(file_content.contains(&format!("[{}]", store_uuid)),
+            "file should have authored uuid: {}", file_content);
+
+        // Second sync should still use the same uuid
+        let result2 = do_sync_slip_note_to_source(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), "p1", "Third body",
+        )
+        .unwrap().result;
+        assert_eq!(result2.sn_uuid, store_uuid);
     }
 
     #[test]
