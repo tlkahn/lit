@@ -1074,6 +1074,36 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
   });
 
+  // --- Enter/Space isolation tests ---
+
+  it("Enter and Space on flip button do not bubble to card expand handlers", () => {
+    const onToggleExpand = vi.fn();
+    const onGridEnter = vi.fn();
+    render(
+      <div
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            const t = e.target as HTMLElement;
+            if (t.closest('[data-testid="cardbox-card"]')) onGridEnter();
+          }
+        }}
+      >
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={onToggleExpand}
+          onNavigate={() => {}}
+        />
+      </div>,
+    );
+    const flip = screen.getByTestId("card-flip");
+    flip.focus();
+    fireEvent.keyDown(flip, { key: "Enter" });
+    expect(onGridEnter).not.toHaveBeenCalled();
+    fireEvent.keyDown(flip, { key: " " });
+    expect(onGridEnter).not.toHaveBeenCalled();
+  });
+
   // --- Focus handoff tests ---
 
   it("moves focus to the card root when F flips while focus is inside a face", async () => {

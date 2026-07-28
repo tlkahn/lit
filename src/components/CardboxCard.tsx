@@ -241,6 +241,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               e.stopPropagation();
               flipCard();
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+              }
+            }}
             onPointerDown={(e) => e.stopPropagation()}
           >{'\u{F2F1}'}</button>
         )}
