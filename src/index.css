@@ -394,6 +394,13 @@ select:disabled {
   -webkit-backface-visibility: hidden;
   min-width: 0;
 }
+.cardbox-card-face {
+  pointer-events: none;
+}
+.cardbox-card-rotator:not(.is-flipped) .cardbox-card-face-front,
+.cardbox-card-rotator.is-flipped .cardbox-card-face-back {
+  pointer-events: auto;
+}
 .cardbox-card-face-back {
   transform: rotateY(180deg);
 }

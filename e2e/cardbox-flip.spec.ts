@@ -192,6 +192,19 @@ test.describe("Flip + Expand Interaction", () => {
   });
 });
 
+test.describe("Pointer Events", () => {
+  test("unflipped expanded front navigate receives the click", async ({ page }) => {
+    await page.goto(URL);
+    await page.waitForSelector("[data-testid='cardbox-card']");
+    await card(page, "card-a").click();
+    await expect(card(page, "card-a")).toHaveAttribute("data-expanded", "true");
+    await page.locator("#card-a [data-testid='card-navigate']").click();
+    const clicks = await page.evaluate(() => (window as any).__navClicks ?? 0);
+    expect(clicks).toBe(1);
+    await expect(card(page, "card-a")).toHaveAttribute("data-flipped", "false");
+  });
+});
+
 test.describe("Height Model", () => {
   test("unflipped card height follows front, not long back quote", async ({ page }) => {
     await page.goto(URL);
