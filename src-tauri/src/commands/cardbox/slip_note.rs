@@ -23,18 +23,14 @@ pub struct ChildSpan {
 }
 
 fn sanitize_body_for_fence(body: &str) -> String {
-    let mut out = String::with_capacity(body.len());
-    for line in body.split('\n') {
-        let trimmed = line.trim();
-        if trimmed == "---" || trimmed == "--->" || trimmed.ends_with("--->") {
-            out.push_str(&line.replace("---", "\\-\\-\\-"));
-        } else {
-            out.push_str(line);
-        }
-        out.push('\n');
-    }
-    out.pop();
-    out
+    // ZWSP breaks the scanner close delimiter: "--->" becomes "---\u{200B}>"
+    // Bare "---" lines are left alone: block split_head_body only splits on
+    // the first separator, so subsequent --- lines are safe in the body.
+    body.replace("--->", "---\u{200B}>")
+}
+
+pub(crate) fn unsanitize_sn_body(body: &str) -> String {
+    body.replace("---\u{200B}>", "--->")
 }
 
 pub fn apply_slip_note_edit(
@@ -271,7 +267,7 @@ pub(crate) fn reconcile_slip_notes(
 
     let mut changed = false;
     for (parent_uuid, sn) in &sn_map {
-        let sn_body = sn.body.as_deref().unwrap_or("").to_string();
+        let sn_body = unsanitize_sn_body(sn.body.as_deref().unwrap_or(""));
         if sn_body.is_empty() {
             continue;
         }
@@ -711,13 +707,18 @@ mod tests {
         let anns = parse_annotations_builtin(body);
         let (cs, ce, _) = find_parent_in_body(body, &anns, "note");
 
+        let input_body = "before\n---\nafter";
         let result = apply_slip_note_edit(
-            body, cs, ce, "parent-uuid", None, "line with --- in it", "2026-07-28", "child-uuid",
+            body, cs, ce, "parent-uuid", None, input_body, "2026-07-28", "child-uuid",
         )
         .unwrap();
 
         let re_parsed = parse_annotations_builtin(&result);
         assert_eq!(re_parsed.len(), 2, "fence chars should not break parsing: {}", result);
+        let sn = re_parsed.iter().find(|a| a.annotation_type == AnnotationType::SlipNote).unwrap();
+        let sn_body = unsanitize_sn_body(sn.body.as_deref().unwrap());
+        assert!(sn_body.contains("---"), "bare --- must round-trip without backslash escaping: {}", sn_body);
+        assert!(!sn_body.contains("\\-\\-\\-"), "must not contain lossy backslash escape: {}", sn_body);
     }
 
     #[test]
@@ -726,13 +727,59 @@ mod tests {
         let anns = parse_annotations_builtin(body);
         let (cs, ce, _) = find_parent_in_body(body, &anns, "note");
 
+        let input_body = "body with ---> in it";
         let result = apply_slip_note_edit(
-            body, cs, ce, "parent-uuid", None, "body with ---> in it", "2026-07-28", "child-uuid",
+            body, cs, ce, "parent-uuid", None, input_body, "2026-07-28", "child-uuid",
         )
         .unwrap();
 
         let re_parsed = parse_annotations_builtin(&result);
         assert_eq!(re_parsed.len(), 2, "close-fence should not break parsing: {}", result);
+        let sn = re_parsed.iter().find(|a| a.annotation_type == AnnotationType::SlipNote).unwrap();
+        let sn_body = unsanitize_sn_body(sn.body.as_deref().unwrap().trim());
+        assert_eq!(sn_body, input_body, "body must round-trip through sanitize/unsanitize");
+        // No stray residue outside annotation spans
+        let ann_end = re_parsed.iter().map(|a| a.char_end).max().unwrap();
+        let trailing = &result[ann_end..].trim();
+        assert!(!trailing.contains("in it"), "no residue outside ann spans: {}", result);
+    }
+
+    #[test]
+    fn c_body_fence_safety_close_fence_multiline() {
+        let body = "Passage.\n\n<!---[parent-uuid] n: \\s | Parent --->\n";
+        let anns = parse_annotations_builtin(body);
+        let (cs, ce, _) = find_parent_in_body(body, &anns, "note");
+
+        let input_body = "line\n--->\nline";
+        let result = apply_slip_note_edit(
+            body, cs, ce, "parent-uuid", None, input_body, "2026-07-28", "child-uuid",
+        )
+        .unwrap();
+
+        let re_parsed = parse_annotations_builtin(&result);
+        assert_eq!(re_parsed.len(), 2, "multiline close-fence should not break parsing: {}", result);
+        let sn = re_parsed.iter().find(|a| a.annotation_type == AnnotationType::SlipNote).unwrap();
+        let sn_body = unsanitize_sn_body(sn.body.as_deref().unwrap().trim());
+        assert_eq!(sn_body, input_body, "multiline body with ---> must round-trip");
+    }
+
+    #[test]
+    fn c_body_midline_close_fence_no_residue() {
+        let body = "Passage.\n\n<!---[parent-uuid] n: \\s | Parent --->\n";
+        let anns = parse_annotations_builtin(body);
+        let (cs, ce, _) = find_parent_in_body(body, &anns, "note");
+
+        let input_body = "mid-line ---> text";
+        let result = apply_slip_note_edit(
+            body, cs, ce, "parent-uuid", None, input_body, "2026-07-28", "child-uuid",
+        )
+        .unwrap();
+
+        let re_parsed = parse_annotations_builtin(&result);
+        assert_eq!(re_parsed.len(), 2, "only parent + sn: {}", result);
+        let sn = re_parsed.iter().find(|a| a.annotation_type == AnnotationType::SlipNote).unwrap();
+        let sn_body = unsanitize_sn_body(sn.body.as_deref().unwrap().trim());
+        assert_eq!(sn_body, input_body, "compact with mid-line ---> must round-trip");
     }
 
     #[test]
