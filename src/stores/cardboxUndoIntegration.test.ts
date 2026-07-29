@@ -41,7 +41,17 @@ describe("cardbox undo integration", () => {
       if (cmd === "toggle_group_collapsed") return null;
       if (cmd === "pin_cardbox_card") return null;
       if (cmd === "unpin_cardbox_card") return null;
-      if (cmd === "sync_slip_note_to_source") return null;
+      // Shaped like the real SyncResult so future consumers of the return
+      // value (K5 aligns updated_at from it) are exercised by these tests.
+      if (cmd === "sync_slip_note_to_source")
+        return {
+          parent_uuid: "u1",
+          body: "note",
+          updated_at: "2026-07-29T00:00:00Z",
+          sn_uuid: "sn-1",
+          synced: true,
+          page_id: "a.md",
+        };
       if (cmd === "set_card_color") return null;
       if (cmd === "clear_card_color") return null;
       if (cmd === "batch_set_card_color") return null;

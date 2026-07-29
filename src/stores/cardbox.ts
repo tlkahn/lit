@@ -257,7 +257,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }
   },
   saveLayout: async () => {
-    const { order, links, groups, pinned, notes, layoutVersion, colors } = get();
+    const { order, links, groups, pinned, layoutVersion, colors } = get();
     try {
       await writeCardboxLayout({
         version: Math.max(layoutVersion, 3),
@@ -265,7 +265,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         links,
         groups,
         pinned,
-        notes,
+        // Notes are derived from sn annotations on the backend and client
+        // notes never merge into cardbox.json; send an empty map.
+        notes: {},
         colors,
       });
     } catch {

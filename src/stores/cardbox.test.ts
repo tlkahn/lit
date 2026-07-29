@@ -995,6 +995,22 @@ describe("cardbox store", () => {
       expect(useStatusMessageStore.getState().variant).toBe("error");
     });
 
+    it("saveLayout never transmits client notes (backend derives them from sn)", async () => {
+      useCardboxStore.setState({
+        order: ["u1"],
+        notes: { u1: { body: "in-memory note", updated_at: "2026-07-29T00:00:00Z" } },
+      });
+      let sentNotes: unknown = null;
+      mockInvoke((cmd, args) => {
+        if (cmd === "write_cardbox_layout") {
+          sentNotes = (args?.layout as { notes?: unknown })?.notes;
+        }
+        return null;
+      });
+      await useCardboxStore.getState().saveLayout();
+      expect(sentNotes).toEqual({});
+    });
+
     it("clearNote resolves, keeps the optimistic clear, and shows an error when sync fails", async () => {
       useCardboxStore.setState({
         notes: { u1: { body: "old", updated_at: "2026-07-28T00:00:00Z" } },
