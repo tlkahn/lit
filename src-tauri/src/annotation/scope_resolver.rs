@@ -82,8 +82,10 @@ impl Utf16ByteMap {
     }
 }
 
-/// Byte span of one raw sentence segment in the document, as returned by
-/// `sentencex::segment` (untrimmed; spans partition the content).
+/// Byte span of one raw sentence segment in the document: an untrimmed prose
+/// span as returned by `sentencex::segment`. Whitespace-only segments are
+/// dropped, so the spans do not partition the content - the gaps between
+/// them are whitespace (see `segs()`).
 struct RawSeg {
     raw_start: usize,
     raw_end: usize,
@@ -142,11 +144,13 @@ impl<'a> ScopeResolveCtx<'a> {
 
     /// Full-body sentence segmentation, computed lazily on first use.
     /// `sentencex::segment` returns sentence segments as subslices of the
-    /// input, so each span is recovered by pointer offset. Paragraph
-    /// separators are emitted as a static `"\n\n"` (sentencex 0.1.23), not a
-    /// subslice — those are dropped here, leaving whitespace-only gaps
-    /// between spans. That matches `split_sentences`, which trims separators
-    /// to empty and filters them out.
+    /// input, so each span is recovered by pointer offset. Segments that are
+    /// not subslices (defensive: none observed under the pinned sentencex)
+    /// and whitespace-only segments (paragraph separators, emitted as real
+    /// `"\n\n"` subslices since sentencex 0.1.30) are dropped here, leaving
+    /// whitespace-only gaps between prose spans. That matches
+    /// `split_sentences`, which trims separators to empty and filters them
+    /// out.
     fn segs(&self) -> &[RawSeg] {
         self.segs.get_or_init(|| {
             let base = self.content.as_ptr() as usize;
@@ -160,6 +164,9 @@ impl<'a> ScopeResolveCtx<'a> {
                 }
                 let raw_start = ptr - base;
                 if raw_start < cursor {
+                    continue;
+                }
+                if seg.trim().is_empty() {
                     continue;
                 }
                 cursor = raw_start + seg.len();
@@ -289,7 +296,10 @@ impl<'a> ScopeResolveCtx<'a> {
     /// `O(doc)` — and, because each segment carries its own byte position, a
     /// sentence whose text recurs earlier in the document still resolves to
     /// the occurrence adjacent to the cut. The segment the cut lands inside is
-    /// clipped at `te`, matching `split_sentences(content[..te])`. Fewer than
+    /// clipped at `te` and re-trimmed. This is NOT equivalent to re-segmenting
+    /// the truncated prefix: a segmenter can yield different boundaries on
+    /// `content[..te]` than on the full body (see the parity-test banner and
+    /// #945). Fewer than
     /// `n` available sentences yields the span of all of them; `None` when
     /// there are none, and `None` for `n == 0`: an empty window has no span,
     /// and returning early keeps a zero `n` from walking the whole prefix.
@@ -414,8 +424,10 @@ impl<'a> ScopeResolveCtx<'a> {
     /// Binary-searches for the cut, then walks forward over at most `n`
     /// non-empty segments — `O(log #segs + n)`, and positionally exact even
     /// when the target sentence's text recurs between the cut and itself. The
-    /// segment the cut lands inside is clipped at `ts`, matching
-    /// `split_sentences(content[ts..])`. Fewer than `n` available sentences
+    /// segment the cut lands inside is clipped at `ts` and re-trimmed. This is
+    /// NOT equivalent to re-segmenting the truncated suffix: a segmenter can
+    /// yield different boundaries on `content[ts..]` than on the full body
+    /// (see the parity-test banner and #945). Fewer than `n` available sentences
     /// yields the end of the last one; `None` when there are none, and `None`
     /// for `n == 0`: an empty window has no end, and returning early keeps a
     /// zero `n` from walking the whole suffix.
@@ -666,13 +678,17 @@ mod tests {
     use crate::annotation::scanner::utf16_len;
 
     // -----------------------------------------------------------------------
-    // Reference implementations for the ctx parity tests: they re-segment the
-    // prefix/suffix per call instead of selecting spans out of the shared
-    // full-body segmentation. What they lock is that independence from
-    // `segs()`, not the historical first-occurrence `ws_flexible_find`
-    // semantics: `locate_sentences` carries the same sequential cursor this
-    // PR introduced, deliberately replacing first-occurrence lookup. The
-    // repeated-text tests below are what pin that correctness fix.
+    // Reference implementations for the ctx parity tests. They state the
+    // production semantic — "segment the full content, clip the spans at the
+    // cut" — without sharing any of the cached machinery: sentences are
+    // located by string matching (`locate_sentences`), no `partition_point`,
+    // no pointer arithmetic, no shared segmentation cache. Re-segmenting the
+    // truncated prefix/suffix instead is NOT equivalent: no segmenter
+    // guarantees a truncated text yields the same boundaries as the full
+    // body (e.g. sentencex 0.1.30's sentence-starter heuristic splits
+    // "Repeat me. So" but not "Repeat me. Something else."). The
+    // repeated-text tests below pin `locate_sentences`' sequential-cursor
+    // correctness against first-occurrence lookup.
     // -----------------------------------------------------------------------
 
     /// Whitespace-flexible substring search: matches `needle`'s non-whitespace
@@ -761,28 +777,35 @@ mod tests {
             return None;
         }
         let byte_start = utf16_to_byte(content, char_start);
-        let text_before = &content[..byte_start];
-        let trimmed = text_before.trim_end();
-        if trimmed.is_empty() {
+        let te = content[..byte_start].trim_end().len();
+        if te == 0 {
             return None;
         }
 
-        let spans = locate_sentences(trimmed, lang);
-        if spans.is_empty() {
+        let mut kept: Vec<(usize, usize)> = Vec::new();
+        for (s, e) in locate_sentences(content, lang) {
+            if s >= te {
+                continue;
+            }
+            let clipped = &content[s..e.min(te)];
+            let trimmed = clipped.trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Leading trim is deliberately omitted: `locate_sentences` anchors
+            // `s` at the matched non-whitespace sentence start. If this oracle
+            // ever switches to raw segment bounds, restore two-sided trimming.
+            kept.push((s, s + trimmed.len()));
+        }
+        if kept.is_empty() {
             return None;
         }
 
-        let take = n.min(spans.len());
-        let (first_start, _) = spans[spans.len() - take];
-        let (_, last_end) = spans[spans.len() - 1];
+        let take = n.min(kept.len());
+        let (first_start, _) = kept[kept.len() - take];
+        let (_, last_end) = kept[kept.len() - 1];
 
-        let scope_start_byte = first_start;
-        let scope_end_byte = last_end.min(trimmed.len());
-
-        let scope_start_utf16 = utf16_len(&content[..scope_start_byte]);
-        let scope_end_utf16 = utf16_len(&content[..scope_end_byte]);
-
-        Some((scope_start_utf16, scope_end_utf16))
+        Some((utf16_len(&content[..first_start]), utf16_len(&content[..last_end])))
     }
 
     fn resolve_paragraph(content: &str, char_start: usize, n: usize) -> Option<(usize, usize)> {
@@ -833,22 +856,27 @@ mod tests {
         }
         let byte_start = utf16_to_byte(content, char_start);
         let text_after = &content[byte_start..];
-        let trimmed = text_after.trim_start();
-        if trimmed.is_empty() {
+        let ts = byte_start + (text_after.len() - text_after.trim_start().len());
+        if ts == content.len() {
             return None;
         }
 
-        let spans = locate_sentences(trimmed, lang);
-        if spans.is_empty() {
+        let mut kept: Vec<usize> = Vec::new();
+        for (s, e) in locate_sentences(content, lang) {
+            if e <= ts {
+                continue;
+            }
+            if content[s.max(ts)..e].trim().is_empty() {
+                continue;
+            }
+            kept.push(e);
+        }
+        if kept.is_empty() {
             return None;
         }
 
-        let take = n.min(spans.len());
-        let (_, sent_end) = spans[take - 1];
-
-        let trim_offset = text_after.len() - trimmed.len();
-        let abs_byte = byte_start + trim_offset + sent_end;
-        Some(utf16_len(&content[..abs_byte]))
+        let take = n.min(kept.len());
+        Some(utf16_len(&content[..kept[take - 1]]))
     }
 
     #[test]
@@ -1582,10 +1610,9 @@ mod tests {
 
     #[test]
     fn ctx_segs_cover_content_with_whitespace_gaps_only() {
-        // sentencex 0.1.23 emits paragraph separators as a static "\n\n"
-        // (not a subslice), so `segs()` keeps only true subslice segments:
-        // spans must be monotonic, in-bounds, and any gap between them (or at
-        // either edge) must be pure whitespace (a dropped separator).
+        // `segs()` keeps only prose spans: monotonic, in-bounds, never
+        // whitespace-only, and any gap between them (or at either edge) must
+        // be pure whitespace (a dropped paragraph separator).
         for (content, lang) in [
             ("The dog ran. The cat sat. A third one here.", "en"),
             ("First para.\n\nSecond para. With two sentences.", "en"),
@@ -1600,6 +1627,11 @@ mod tests {
                 assert!(
                     s.raw_start >= prev_end && s.raw_end >= s.raw_start && s.raw_end <= content.len(),
                     "spans must be monotonic and in-bounds in {content:?}"
+                );
+                assert!(
+                    !content[s.raw_start..s.raw_end].trim().is_empty(),
+                    "span {:?} must not be whitespace-only in {content:?}",
+                    &content[s.raw_start..s.raw_end]
                 );
                 assert!(
                     content[prev_end..s.raw_start].trim().is_empty(),
@@ -1731,7 +1763,7 @@ mod tests {
     }
 
     /// Char-boundary UTF-16 offsets, subsampled for large contents so the
-    /// per-offset free-fn re-segmentation stays affordable in tests.
+    /// per-offset free-fn full-body re-segmentation stays affordable in tests.
     fn sampled_u16_offsets(content: &str) -> Vec<usize> {
         let all = all_u16_offsets(content);
         if all.len() <= 400 {
@@ -1751,22 +1783,10 @@ mod tests {
 
     #[test]
     fn ctx_parity_sentence_backward() {
-        // Parity is swept over every prose offset up to and including the
-        // annotation marker start (the production cut position). Cuts strictly
-        // inside the `<!--- ... --->` marker are not production inputs and hit
-        // the accepted prefix-vs-full-body segmentation non-identity
-        // (sentencex lookahead differs around debris like a bare "<!").
         for (content, lang) in sentence_parity_corpus() {
             let content = content.as_str();
-            let limit = content
-                .find("<!---")
-                .map(|b| utf16_len(&content[..b]))
-                .unwrap_or(usize::MAX);
             let ctx = ScopeResolveCtx::new(content, lang);
             for cs in sampled_u16_offsets(content) {
-                if cs > limit {
-                    continue;
-                }
                 for n in [1usize, 2, 3, 100] {
                     assert_eq!(
                         ctx.resolve_sentence(cs, n),
@@ -1780,52 +1800,65 @@ mod tests {
 
     // --- ScopeResolveCtx: forward sentences, asymmetric, mode, extraction ---
 
-    /// Word- and sentence-boundary cut positions (UTF-16): index 0, positions
-    /// following whitespace, and positions following a sentence terminator.
-    /// Mid-word cuts are excluded: truncating a word can fabricate an
-    /// abbreviation-like fragment (e.g. "ra|n." → "n.") whose re-segmentation
-    /// legitimately differs from the cached full-body boundaries — the
-    /// accepted reconstruction non-identity.
-    fn boundary_cut_offsets(content: &str) -> Vec<usize> {
-        let mut offsets = vec![0usize];
-        let mut prev: Option<char> = None;
-        for (b, ch) in content.char_indices() {
-            if let Some(p) = prev {
-                if p.is_whitespace() || matches!(p, '.' | '!' | '?' | '。' | '！' | '？') {
-                    offsets.push(utf16_len(&content[..b]));
-                }
-            }
-            prev = Some(ch);
-        }
-        offsets.push(utf16_len(content));
-        offsets
-    }
-
     #[test]
     fn ctx_parity_forward_sentences() {
-        // Same prose-offset domain rationale as ctx_parity_sentence_backward,
-        // further restricted to boundary cuts (see boundary_cut_offsets).
         for (content, lang) in sentence_parity_corpus() {
             let content = content.as_str();
-            let limit = content
-                .find("<!---")
-                .map(|b| utf16_len(&content[..b]))
-                .unwrap_or(usize::MAX);
             let ctx = ScopeResolveCtx::new(content, lang);
-            let mut cuts = boundary_cut_offsets(content);
-            if cuts.len() > 250 {
-                let stride = cuts.len() / 200;
-                cuts = cuts.into_iter().step_by(stride).collect();
-            }
-            for cs in cuts {
-                if cs > limit {
-                    continue;
-                }
+            for cs in sampled_u16_offsets(content) {
                 for n in [0usize, 1, 2, 100] {
                     assert_eq!(
                         ctx.resolve_forward_sentences(cs, n),
                         resolve_forward_sentences(content, cs, n, lang),
                         "ctx/free-fn forward-sentence mismatch for n={n} at char_start {cs} in {content:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Asymmetric and bidirectional sentence resolution against the
+    /// independent oracle, over mid-word cuts included. The expected values
+    /// compose the same test oracles the one-sided parity sweeps use
+    /// (`resolve_sentence`, `resolve_forward_sentences`), mirroring how
+    /// production composes its own one-sided selectors, so neither side
+    /// shares cached machinery with the other.
+    #[test]
+    fn ctx_parity_asymmetric_bidirectional_sentences() {
+        for (content, lang) in sentence_parity_corpus() {
+            let content = content.as_str();
+            let ctx = ScopeResolveCtx::new(content, lang);
+            for cs in sampled_u16_offsets(content) {
+                for (before, after) in [(0usize, 1usize), (1, 2), (2, 0), (100, 100)] {
+                    let scope = Scope::Asymmetric { unit: ScopeKind::Sentence, before, after };
+                    let expected_start = if before == 0 {
+                        cs
+                    } else {
+                        resolve_sentence(content, cs, before, lang)
+                            .map(|(s, _)| s)
+                            .unwrap_or(cs)
+                    };
+                    let expected_end =
+                        resolve_forward_sentences(content, cs, after, lang).unwrap_or(cs);
+                    assert_eq!(
+                        ctx.resolve_scope_range(cs, &scope),
+                        Some(ScopeRange { start: expected_start, end: expected_end }),
+                        "ctx/oracle asymmetric-sentence mismatch for before={before} after={after} at char_start {cs} in {content:?}"
+                    );
+                }
+                for n in [1usize, 2] {
+                    let expected = resolve_sentence(content, cs, n, lang).map(|(s, e)| ScopeRange {
+                        start: s,
+                        end: resolve_forward_sentences(content, cs, n, lang).unwrap_or(e),
+                    });
+                    assert_eq!(
+                        ctx.resolve_scope_range_with_mode(
+                            cs,
+                            &Scope::Sentence(n),
+                            &ResolutionMode::Bidirectional
+                        ),
+                        expected,
+                        "ctx/oracle bidirectional-sentence mismatch for n={n} at char_start {cs} in {content:?}"
                     );
                 }
             }
@@ -1849,7 +1882,7 @@ mod tests {
         ];
         for (content, lang) in corpus {
             let ctx = ScopeResolveCtx::new(content, lang);
-            for cs in boundary_cut_offsets(content) {
+            for cs in sampled_u16_offsets(content) {
                 for scope in &scopes {
                     assert_eq!(
                         ctx.resolve_scope_range(cs, scope),
