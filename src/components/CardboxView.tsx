@@ -34,7 +34,7 @@ import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
-import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
@@ -59,6 +59,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
   const collapseAll = useCardboxStore((s) => s.collapseAll);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
+  const expand = useCardboxStore((s) => s.expand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
   const resetFilters = useCardboxStore((s) => s.resetFilters);
   const toggleType = useCardboxStore((s) => s.toggleType);
@@ -454,8 +455,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   });
 
   const handleFocusCard = useCallback(
-    (uuid: string) => {
-      toggleExpand(uuid);
+    (uuid: string, highlightNote = false) => {
+      // Force-expand, never toggle: a card whose expandedUuid persisted from an
+      // earlier cardbox visit must not collapse when navigated to (#957).
+      expand(uuid);
       setTimeout(() => {
         const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
         if (!el) return;
@@ -478,13 +481,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
           });
           scroller.scrollTo({ top, behavior: "smooth" });
         }
-        el.classList.remove("card-focus-highlight");
-        void (el as HTMLElement).offsetWidth;
-        el.classList.add("card-focus-highlight");
-        el.addEventListener("animationend", () => el.classList.remove("card-focus-highlight"), { once: true });
+        applyFocusHighlight(el as HTMLElement, { highlightNote });
       }, 250);
     },
-    [toggleExpand, gridRef],
+    [expand, gridRef],
   );
 
   // Consume a pending focus request (set when the cardbox icon in an expanded
@@ -506,12 +506,14 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       filteredUuids: filteredUuidSet,
     });
     if (action.kind === "wait") return;
+    // Capture before setPendingFocusUuid(null) resets the flag alongside the uuid.
+    const highlightNote = useCardboxStore.getState().pendingHighlightNote;
     setPendingFocusUuid(null);
     if (action.kind === "focus") {
       // F2: the card is present but hidden by an active filter; reset filters so
       // it re-renders into the DOM before handleFocusCard's scroll/highlight.
       if (action.clearFilters) resetFilters();
-      handleFocusCard(action.uuid);
+      handleFocusCard(action.uuid, highlightNote);
     }
     // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
   }, [loading, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);

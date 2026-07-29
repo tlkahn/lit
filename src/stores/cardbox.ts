@@ -73,9 +73,11 @@ export interface CardboxStore {
   connectionsForUuid: string | null;
   connectionsSavedFilters: { searchQuery: string; activeTypes: Set<string> | null } | null;
   pendingFocusUuid: string | null;
-  setPendingFocusUuid: (uuid: string | null) => void;
+  pendingHighlightNote: boolean;
+  setPendingFocusUuid: (uuid: string | null, highlightNote?: boolean) => void;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
+  expand: (uuid: string) => void;
   collapseAll: () => void;
   setSearchQuery: (query: string) => void;
   toggleType: (type: string) => void;
@@ -134,7 +136,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   connectionsForUuid: null,
   connectionsSavedFilters: null,
   pendingFocusUuid: null,
-  setPendingFocusUuid: (uuid) => set({ pendingFocusUuid: uuid }),
+  pendingHighlightNote: false,
+  setPendingFocusUuid: (uuid, highlightNote = false) =>
+    set({ pendingFocusUuid: uuid, pendingHighlightNote: uuid ? highlightNote : false }),
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -208,6 +212,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     set((s) => ({
       expandedUuid: s.expandedUuid === uuid ? null : uuid,
     })),
+  expand: (uuid) => set({ expandedUuid: uuid }),
   collapseAll: () => set({ expandedUuid: null }),
   setSearchQuery: (query) => set({ searchQuery: query }),
   toggleType: (type) =>

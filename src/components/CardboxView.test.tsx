@@ -149,3 +149,43 @@ describe("CardboxView memo effectiveness (#850)", () => {
     expect(useCardboxSelectionStore.getState().selectedUuids).toEqual(new Set([B]));
   });
 });
+
+describe("CardboxView pending focus force-expand (#957)", () => {
+  it("pending focus on an already-expanded card keeps it expanded", async () => {
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().toggleExpand(A);
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+
+    act(() => {
+      useCardboxStore.getState().setPendingFocusUuid(A);
+    });
+
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+  });
+
+  it("pending focus expands a collapsed card", async () => {
+    await renderView();
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+
+    act(() => {
+      useCardboxStore.getState().setPendingFocusUuid(B);
+    });
+
+    expect(useCardboxStore.getState().expandedUuid).toBe(B);
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+  });
+
+  it("consuming pending focus resets pendingHighlightNote", async () => {
+    await renderView();
+
+    act(() => {
+      useCardboxStore.getState().setPendingFocusUuid(A, true);
+    });
+
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+    expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
+  });
+});

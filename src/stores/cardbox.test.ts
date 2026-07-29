@@ -133,6 +133,23 @@ describe("cardbox store", () => {
     expect(useCardboxStore.getState().expandedUuid).toBe("u2");
   });
 
+  it("expand sets expandedUuid", () => {
+    useCardboxStore.getState().expand("u1");
+    expect(useCardboxStore.getState().expandedUuid).toBe("u1");
+  });
+
+  it("expand keeps already-expanded uuid expanded (idempotent)", () => {
+    useCardboxStore.getState().expand("u1");
+    useCardboxStore.getState().expand("u1");
+    expect(useCardboxStore.getState().expandedUuid).toBe("u1");
+  });
+
+  it("expand switches to new uuid", () => {
+    useCardboxStore.getState().expand("u1");
+    useCardboxStore.getState().expand("u2");
+    expect(useCardboxStore.getState().expandedUuid).toBe("u2");
+  });
+
   it("collapseAll resets expandedUuid to null", () => {
     useCardboxStore.getState().toggleExpand("u1");
     useCardboxStore.getState().collapseAll();
@@ -957,6 +974,30 @@ describe("cardbox store", () => {
       useCardboxStore.getState().setPendingFocusUuid("u1");
       useCardboxStore.getState().setPendingFocusUuid(null);
       expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+    });
+
+    it("pendingHighlightNote defaults to false", () => {
+      expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
+    });
+
+    it("setPendingFocusUuid with highlightNote=true sets pendingHighlightNote", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1", true);
+      const s = useCardboxStore.getState();
+      expect(s.pendingFocusUuid).toBe("u1");
+      expect(s.pendingHighlightNote).toBe(true);
+    });
+
+    it("setPendingFocusUuid without highlightNote leaves pendingHighlightNote false", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1");
+      expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
+    });
+
+    it("setPendingFocusUuid(null) resets pendingHighlightNote", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1", true);
+      useCardboxStore.getState().setPendingFocusUuid(null);
+      const s = useCardboxStore.getState();
+      expect(s.pendingFocusUuid).toBeNull();
+      expect(s.pendingHighlightNote).toBe(false);
     });
   });
 

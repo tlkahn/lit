@@ -1130,6 +1130,43 @@ describe("createCardboxLinkButton", () => {
     expect(spy).toHaveBeenCalledTimes(1);
     const event = spy.mock.calls[0]![0] as CustomEvent;
     expect(event.detail.uuid).toBe("abc");
+    expect(event.detail.highlightNote).toBeFalsy();
+    window.removeEventListener("lit:focus-cardbox-card", spy);
+  });
+
+  it("anchored slipnote dispatches the parent uuid with highlightNote", () => {
+    const btn = createCardboxLinkButton(
+      makeAnnotation({
+        uuid: "sn-child",
+        annotation_type: "slipnote",
+        scope: { kind: "anchor", value: "parent-1" },
+      }),
+    )!;
+    const spy = vi.fn();
+    window.addEventListener("lit:focus-cardbox-card", spy);
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.uuid).toBe("parent-1");
+    expect(event.detail.highlightNote).toBe(true);
+    window.removeEventListener("lit:focus-cardbox-card", spy);
+  });
+
+  it("non-anchored slipnote dispatches its own uuid without highlightNote", () => {
+    const btn = createCardboxLinkButton(
+      makeAnnotation({
+        uuid: "sn-orphan",
+        annotation_type: "slipnote",
+        scope: { kind: "paragraph", value: 1 },
+      }),
+    )!;
+    const spy = vi.fn();
+    window.addEventListener("lit:focus-cardbox-card", spy);
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.uuid).toBe("sn-orphan");
+    expect(event.detail.highlightNote).toBeFalsy();
     window.removeEventListener("lit:focus-cardbox-card", spy);
   });
 

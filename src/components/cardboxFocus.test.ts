@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop, applyFocusHighlight } from "./cardboxFocus";
 
 // Lightweight fixtures: plain Set/Map satisfy the UuidCollection structural
 // type, so the resolver can be tested without rendering the heavy CardboxView.
@@ -188,5 +188,59 @@ describe("computeCenteredScrollTop", () => {
         cardHeight: 100,
       }),
     ).toBe(300); // 300 + 250 - (600 - 100) / 2
+  });
+});
+
+describe("applyFocusHighlight", () => {
+  function makeCard(withNote = false): HTMLElement {
+    const card = document.createElement("div");
+    if (withNote) {
+      const note = document.createElement("div");
+      note.dataset.testid = "card-note-display";
+      card.appendChild(note);
+    }
+    return card;
+  }
+
+  it("adds card-focus-highlight to the card element", () => {
+    const card = makeCard();
+    applyFocusHighlight(card, { highlightNote: false });
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
+  });
+
+  it("restarts the animation when the class is already present", () => {
+    const card = makeCard();
+    card.classList.add("card-focus-highlight");
+    applyFocusHighlight(card, { highlightNote: false });
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
+  });
+
+  it("removes card-focus-highlight on animationend", () => {
+    const card = makeCard();
+    applyFocusHighlight(card, { highlightNote: false });
+    card.dispatchEvent(new Event("animationend"));
+    expect(card.classList.contains("card-focus-highlight")).toBe(false);
+  });
+
+  it("highlightNote adds note-focus-highlight to the note display, removed on animationend", () => {
+    const card = makeCard(true);
+    applyFocusHighlight(card, { highlightNote: true });
+    const note = card.querySelector('[data-testid="card-note-display"]')!;
+    expect(note.classList.contains("note-focus-highlight")).toBe(true);
+    note.dispatchEvent(new Event("animationend"));
+    expect(note.classList.contains("note-focus-highlight")).toBe(false);
+  });
+
+  it("does not touch the note display when highlightNote is false", () => {
+    const card = makeCard(true);
+    applyFocusHighlight(card, { highlightNote: false });
+    const note = card.querySelector('[data-testid="card-note-display"]')!;
+    expect(note.classList.contains("note-focus-highlight")).toBe(false);
+  });
+
+  it("highlightNote without a note display does not throw and still highlights the card", () => {
+    const card = makeCard(false);
+    expect(() => applyFocusHighlight(card, { highlightNote: true })).not.toThrow();
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
   });
 });

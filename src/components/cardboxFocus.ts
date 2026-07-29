@@ -64,6 +64,29 @@ export function resolvePendingFocus(input: {
   return { kind: "focus", uuid: pendingFocusUuid, clearFilters: false };
 }
 
+// Remove -> force reflow -> re-add so the CSS animation restarts even when the
+// element still carries the class from an earlier focus; the class is dropped
+// again once the animation finishes.
+function restartAnimation(el: Element, cls: string): void {
+  el.classList.remove(cls);
+  void (el as HTMLElement).offsetWidth;
+  el.classList.add(cls);
+  el.addEventListener("animationend", () => el.classList.remove(cls), { once: true });
+}
+
+/**
+ * One-shot focus feedback on a cardbox card: pulses the card's focus ring, and
+ * — when navigating from an anchored slip-note — also pulses the card's NOTE
+ * section (`[data-testid="card-note-display"]`, absent when the card has no note).
+ */
+export function applyFocusHighlight(cardEl: HTMLElement, opts: { highlightNote: boolean }): void {
+  restartAnimation(cardEl, "card-focus-highlight");
+  if (opts.highlightNote) {
+    const note = cardEl.querySelector('[data-testid="card-note-display"]');
+    if (note) restartAnimation(note, "note-focus-highlight");
+  }
+}
+
 // Distance to scroll the cardbox grid container so the target card is vertically
 // centered *within that container only* — never touching ancestor scrollers
 // (which would carry the pane header out of view). Result is clamped to the
