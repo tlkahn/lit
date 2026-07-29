@@ -244,6 +244,26 @@ select:disabled {
   --tw-prose-td-borders: var(--background-modifier-border);
 }
 
+/* #965: neutralize typography backticks, inline-code chip, collapsed-card pre clamp */
+.prose code::before,
+.prose code::after { content: none; }
+
+.prose code:not(pre code),
+[data-testid="card-original"] code {
+  background-color: var(--code-background);
+  color: var(--code-normal);
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+  font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace);
+}
+
+[data-testid="cardbox-card"] .line-clamp-3 pre {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .prose pre {
   overflow-x: auto;
   max-width: 100%;
