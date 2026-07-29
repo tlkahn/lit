@@ -837,22 +837,27 @@ mod tests {
         }
         let byte_start = utf16_to_byte(content, char_start);
         let text_after = &content[byte_start..];
-        let trimmed = text_after.trim_start();
-        if trimmed.is_empty() {
+        let ts = byte_start + (text_after.len() - text_after.trim_start().len());
+        if ts == content.len() {
             return None;
         }
 
-        let spans = locate_sentences(trimmed, lang);
-        if spans.is_empty() {
+        let mut kept: Vec<usize> = Vec::new();
+        for (s, e) in locate_sentences(content, lang) {
+            if e <= ts {
+                continue;
+            }
+            if content[s.max(ts)..e].trim().is_empty() {
+                continue;
+            }
+            kept.push(e);
+        }
+        if kept.is_empty() {
             return None;
         }
 
-        let take = n.min(spans.len());
-        let (_, sent_end) = spans[take - 1];
-
-        let trim_offset = text_after.len() - trimmed.len();
-        let abs_byte = byte_start + trim_offset + sent_end;
-        Some(utf16_len(&content[..abs_byte]))
+        let take = n.min(kept.len());
+        Some(utf16_len(&content[..kept[take - 1]]))
     }
 
     #[test]
@@ -1807,8 +1812,8 @@ mod tests {
 
     #[test]
     fn ctx_parity_forward_sentences() {
-        // Same prose-offset domain rationale as ctx_parity_sentence_backward,
-        // further restricted to boundary cuts (see boundary_cut_offsets).
+        // Same prose-offset domain rationale as ctx_parity_sentence_backward;
+        // sweeps every sampled offset, mid-word cuts included.
         for (content, lang) in sentence_parity_corpus() {
             let content = content.as_str();
             let limit = content
@@ -1816,12 +1821,7 @@ mod tests {
                 .map(|b| utf16_len(&content[..b]))
                 .unwrap_or(usize::MAX);
             let ctx = ScopeResolveCtx::new(content, lang);
-            let mut cuts = boundary_cut_offsets(content);
-            if cuts.len() > 250 {
-                let stride = cuts.len() / 200;
-                cuts = cuts.into_iter().step_by(stride).collect();
-            }
-            for cs in cuts {
+            for cs in sampled_u16_offsets(content) {
                 if cs > limit {
                     continue;
                 }
