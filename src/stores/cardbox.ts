@@ -73,9 +73,16 @@ export interface CardboxStore {
   connectionsForUuid: string | null;
   connectionsSavedFilters: { searchQuery: string; activeTypes: Set<string> | null } | null;
   pendingFocusUuid: string | null;
-  setPendingFocusUuid: (uuid: string | null) => void;
+  pendingHighlightNote: boolean;
+  // True once loadLayout has settled (success or failure). Gates pending-focus
+  // consumption: the NOTE highlight needs the layout's notes in the store, and
+  // the saved order must be applied before scroll positions are computed. Stays
+  // true for the session; notes persist in the store across cardbox visits.
+  layoutLoaded: boolean;
+  setPendingFocusUuid: (uuid: string | null, highlightNote?: boolean) => void;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
+  expand: (uuid: string) => void;
   collapseAll: () => void;
   setSearchQuery: (query: string) => void;
   toggleType: (type: string) => void;
@@ -134,7 +141,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   connectionsForUuid: null,
   connectionsSavedFilters: null,
   pendingFocusUuid: null,
-  setPendingFocusUuid: (uuid) => set({ pendingFocusUuid: uuid }),
+  pendingHighlightNote: false,
+  layoutLoaded: false,
+  setPendingFocusUuid: (uuid, highlightNote = false) =>
+    set({ pendingFocusUuid: uuid, pendingHighlightNote: uuid ? highlightNote : false }),
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -208,6 +218,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     set((s) => ({
       expandedUuid: s.expandedUuid === uuid ? null : uuid,
     })),
+  expand: (uuid) => set({ expandedUuid: uuid }),
   collapseAll: () => set({ expandedUuid: null }),
   setSearchQuery: (query) => set({ searchQuery: query }),
   toggleType: (type) =>
@@ -298,6 +309,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     } catch {
       // Ignore — use default order from annotations
     }
+    // Settle the gate on success AND failure: a pending focus must never hang
+    // waiting for a layout that will never arrive.
+    set({ layoutLoaded: true });
   },
   saveLayout: async () => {
     const { order, links, groups, pinned, layoutVersion, colors } = get();

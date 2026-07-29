@@ -9,6 +9,7 @@ import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore } from "../stores/panes";
 import { usePreferencesStore } from "../stores/preferences";
+import { useCardboxStore } from "../stores/cardbox";
 import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
@@ -278,6 +279,36 @@ describe("ContentArea", () => {
     expect(text).toContain("test");
     expect(text).toContain("tags:");
     expect(text).not.toContain('"tags"');
+  });
+});
+
+describe("ContentArea lit:focus-cardbox-card bridge", () => {
+  beforeEach(() => {
+    useCardboxStore.setState({ pendingFocusUuid: null, pendingHighlightNote: false });
+  });
+
+  it("forwards uuid and highlightNote to the cardbox store", async () => {
+    render(<ContentArea />);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:focus-cardbox-card", {
+          detail: { uuid: "u1", highlightNote: true },
+        }),
+      );
+    });
+    expect(useCardboxStore.getState().pendingFocusUuid).toBe("u1");
+    expect(useCardboxStore.getState().pendingHighlightNote).toBe(true);
+  });
+
+  it("defaults highlightNote to false when the detail omits it", async () => {
+    render(<ContentArea />);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:focus-cardbox-card", { detail: { uuid: "u2" } }),
+      );
+    });
+    expect(useCardboxStore.getState().pendingFocusUuid).toBe("u2");
+    expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
   });
 });
 

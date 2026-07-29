@@ -266,9 +266,10 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
       setShowFrontmatter((prev) => !prev);
     };
     const focusCardboxCardHandler = (e: Event) => {
-      const uuid = (e as CustomEvent<{ uuid: string }>).detail?.uuid;
+      const detail = (e as CustomEvent<{ uuid: string; highlightNote?: boolean }>).detail;
+      const uuid = detail?.uuid;
       if (!uuid) return;
-      useCardboxStore.getState().setPendingFocusUuid(uuid);
+      useCardboxStore.getState().setPendingFocusUuid(uuid, detail?.highlightNote === true);
       setPaneViewMode(usePaneStore.getState().focusedPaneId, "cardbox");
     };
     window.addEventListener("lit:set-view-mode", setModeHandler);

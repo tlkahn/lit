@@ -31,14 +31,20 @@ export type PendingFocusAction =
 
 export function resolvePendingFocus(input: {
   loading: boolean;
+  layoutReady: boolean; // store's layoutLoaded: loadLayout has settled
   pendingFocusUuid: string | null;
   annotationUuids: UuidCollection; // pass the component's annotationMap
   filteredUuids: UuidCollection; // pass the component's filteredUuidSet (F2)
 }): PendingFocusAction {
-  const { loading, pendingFocusUuid, annotationUuids, filteredUuids } = input;
+  const { loading, layoutReady, pendingFocusUuid, annotationUuids, filteredUuids } = input;
 
-  // 1. Nothing to do until annotations have loaded and a focus is requested.
-  if (loading || !pendingFocusUuid) return { kind: "wait" };
+  // 1. Nothing to do until annotations AND the layout have loaded and a focus
+  //    is requested. The layout gate (#958): the NOTE section only renders once
+  //    loadLayout writes notes into the store, and the saved order must be
+  //    applied before scroll positions are computed; consuming earlier skips
+  //    the NOTE pulse on a cold cardbox mount. It precedes the F3 clear below
+  //    so a slow layout read never triggers a spurious clear.
+  if (loading || !layoutReady || !pendingFocusUuid) return { kind: "wait" };
 
   // 2. F3: annotations have settled empty after load — either the fetch failed
   //    (IPC error) or the page genuinely has none. The in-flight case is already
@@ -62,6 +68,36 @@ export function resolvePendingFocus(input: {
 
   // 5. The card is present and visible — focus it.
   return { kind: "focus", uuid: pendingFocusUuid, clearFilters: false };
+}
+
+// Remove -> force reflow -> re-add so the CSS animation restarts even when the
+// element still carries the class from an earlier focus; the class is dropped
+// again once the animation finishes. animationend bubbles and the note pulses
+// inside the card, so only react to this element's own animation; `once` alone
+// would let a descendant's event consume the listener.
+function restartAnimation(el: Element, cls: string): void {
+  el.classList.remove(cls);
+  void (el as HTMLElement).offsetWidth;
+  el.classList.add(cls);
+  const onEnd = (e: Event) => {
+    if (e.target !== el) return;
+    el.classList.remove(cls);
+    el.removeEventListener("animationend", onEnd);
+  };
+  el.addEventListener("animationend", onEnd);
+}
+
+/**
+ * One-shot focus feedback on a cardbox card: pulses the card's focus ring, and
+ * — when navigating from an anchored slip-note — also pulses the card's NOTE
+ * section (`[data-testid="card-note-display"]`, absent when the card has no note).
+ */
+export function applyFocusHighlight(cardEl: HTMLElement, opts: { highlightNote: boolean }): void {
+  restartAnimation(cardEl, "card-focus-highlight");
+  if (opts.highlightNote) {
+    const note = cardEl.querySelector('[data-testid="card-note-display"]');
+    if (note) restartAnimation(note, "note-focus-highlight");
+  }
 }
 
 // Distance to scroll the cardbox grid container so the target card is vertically

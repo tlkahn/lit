@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop, applyFocusHighlight } from "./cardboxFocus";
 
 // Lightweight fixtures: plain Set/Map satisfy the UuidCollection structural
 // type, so the resolver can be tested without rendering the heavy CardboxView.
@@ -9,6 +9,7 @@ describe("resolvePendingFocus", () => {
   it("waits while loading even if the uuid is present", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: true,
         pendingFocusUuid: "x",
         annotationUuids: new Set(["x"]),
@@ -17,9 +18,40 @@ describe("resolvePendingFocus", () => {
     ).toEqual({ kind: "wait" });
   });
 
+  // Layout gate (#958 finding 1): the NOTE section only renders once loadLayout
+  // has written notes into the store, and the saved order must be applied
+  // before scroll positions are computed. Consuming the pending focus earlier
+  // silently skips the NOTE pulse on a cold cardbox mount.
+  it("waits while the layout has not loaded even if the uuid is present and visible", () => {
+    expect(
+      resolvePendingFocus({
+        layoutReady: false,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(["x"]),
+        filteredUuids: new Set(["x"]),
+      }),
+    ).toEqual({ kind: "wait" });
+  });
+
+  // Ordering guard: the layout gate must precede the F3 empty-annotations
+  // clear, so a slow layout read never triggers a spurious clear.
+  it("still waits (not clear) with empty annotations while the layout is loading", () => {
+    expect(
+      resolvePendingFocus({
+        layoutReady: false,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(),
+        filteredUuids: new Set(),
+      }),
+    ).toEqual({ kind: "wait" });
+  });
+
   it("waits when there is no pending uuid", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: null,
         annotationUuids: new Set(["a", "b"]),
@@ -34,6 +66,7 @@ describe("resolvePendingFocus", () => {
   it("waits when the target uuid is absent from current annotations (stale page)", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: "x",
         annotationUuids: new Set(["a", "b"]),
@@ -48,6 +81,7 @@ describe("resolvePendingFocus", () => {
   it("focuses with clearFilters when the uuid is filtered out but present", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: "x",
         annotationUuids: new Set(["x", "b"]),
@@ -62,6 +96,7 @@ describe("resolvePendingFocus", () => {
   it("focuses with clearFilters when everything is filtered out but the uuid is present", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: "x",
         annotationUuids: new Set(["x", "b"]),
@@ -76,6 +111,7 @@ describe("resolvePendingFocus", () => {
   it("clears the stale pending uuid when annotations are empty after load", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: "x",
         annotationUuids: new Set(),
@@ -90,6 +126,7 @@ describe("resolvePendingFocus", () => {
   it("still waits while loading even with empty annotations", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: true,
         pendingFocusUuid: "x",
         annotationUuids: new Set(),
@@ -103,6 +140,7 @@ describe("resolvePendingFocus", () => {
   it("waits when annotations are empty and there is no pending uuid", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: null,
         annotationUuids: new Set(),
@@ -114,6 +152,7 @@ describe("resolvePendingFocus", () => {
   it("focuses when the uuid is present in current annotations", () => {
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: "x",
         annotationUuids: new Set(["x", "b"]),
@@ -126,6 +165,7 @@ describe("resolvePendingFocus", () => {
     const annotationMap = new Map<string, { uuid: string }>([["x", { uuid: "x" }]]);
     expect(
       resolvePendingFocus({
+        layoutReady: true,
         loading: false,
         pendingFocusUuid: "x",
         annotationUuids: annotationMap,
@@ -188,5 +228,75 @@ describe("computeCenteredScrollTop", () => {
         cardHeight: 100,
       }),
     ).toBe(300); // 300 + 250 - (600 - 100) / 2
+  });
+});
+
+describe("applyFocusHighlight", () => {
+  function makeCard(withNote = false): HTMLElement {
+    const card = document.createElement("div");
+    if (withNote) {
+      const note = document.createElement("div");
+      note.dataset.testid = "card-note-display";
+      card.appendChild(note);
+    }
+    return card;
+  }
+
+  it("adds card-focus-highlight to the card element", () => {
+    const card = makeCard();
+    applyFocusHighlight(card, { highlightNote: false });
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
+  });
+
+  it("restarts the animation when the class is already present", () => {
+    const card = makeCard();
+    card.classList.add("card-focus-highlight");
+    applyFocusHighlight(card, { highlightNote: false });
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
+  });
+
+  it("removes card-focus-highlight on animationend", () => {
+    const card = makeCard();
+    applyFocusHighlight(card, { highlightNote: false });
+    card.dispatchEvent(new Event("animationend"));
+    expect(card.classList.contains("card-focus-highlight")).toBe(false);
+  });
+
+  it("highlightNote adds note-focus-highlight to the note display, removed on animationend", () => {
+    const card = makeCard(true);
+    applyFocusHighlight(card, { highlightNote: true });
+    const note = card.querySelector('[data-testid="card-note-display"]')!;
+    expect(note.classList.contains("note-focus-highlight")).toBe(true);
+    note.dispatchEvent(new Event("animationend"));
+    expect(note.classList.contains("note-focus-highlight")).toBe(false);
+  });
+
+  it("does not touch the note display when highlightNote is false", () => {
+    const card = makeCard(true);
+    applyFocusHighlight(card, { highlightNote: false });
+    const note = card.querySelector('[data-testid="card-note-display"]')!;
+    expect(note.classList.contains("note-focus-highlight")).toBe(false);
+  });
+
+  it("highlightNote without a note display does not throw and still highlights the card", () => {
+    const card = makeCard(false);
+    expect(() => applyFocusHighlight(card, { highlightNote: true })).not.toThrow();
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
+  });
+
+  // Real AnimationEvents bubble, and the note is a descendant of the card. The
+  // note's animationend must not consume the card's listener (#958 finding 2);
+  // each listener only reacts to its own element's animation.
+  it("a bubbling animationend from the note does not consume the card's listener", () => {
+    const card = makeCard(true);
+    applyFocusHighlight(card, { highlightNote: true });
+    const note = card.querySelector('[data-testid="card-note-display"]')!;
+
+    note.dispatchEvent(new Event("animationend", { bubbles: true }));
+    expect(note.classList.contains("note-focus-highlight")).toBe(false);
+    expect(card.classList.contains("card-focus-highlight")).toBe(true);
+
+    card.dispatchEvent(new Event("animationend", { bubbles: true }));
+    expect(card.classList.contains("card-focus-highlight")).toBe(false);
   });
 });

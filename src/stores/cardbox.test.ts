@@ -57,6 +57,7 @@ describe("cardbox store", () => {
       connectionsForUuid: null,
       connectionsSavedFilters: null,
       pendingFocusUuid: null,
+      layoutLoaded: false,
       scope: "document",
     });
     mockInvoke((cmd) => {
@@ -130,6 +131,23 @@ describe("cardbox store", () => {
   it("toggleExpand switches to new uuid", () => {
     useCardboxStore.getState().toggleExpand("u1");
     useCardboxStore.getState().toggleExpand("u2");
+    expect(useCardboxStore.getState().expandedUuid).toBe("u2");
+  });
+
+  it("expand sets expandedUuid", () => {
+    useCardboxStore.getState().expand("u1");
+    expect(useCardboxStore.getState().expandedUuid).toBe("u1");
+  });
+
+  it("expand keeps already-expanded uuid expanded (idempotent)", () => {
+    useCardboxStore.getState().expand("u1");
+    useCardboxStore.getState().expand("u1");
+    expect(useCardboxStore.getState().expandedUuid).toBe("u1");
+  });
+
+  it("expand switches to new uuid", () => {
+    useCardboxStore.getState().expand("u1");
+    useCardboxStore.getState().expand("u2");
     expect(useCardboxStore.getState().expandedUuid).toBe("u2");
   });
 
@@ -958,6 +976,34 @@ describe("cardbox store", () => {
       useCardboxStore.getState().setPendingFocusUuid(null);
       expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
     });
+
+    it("pendingHighlightNote defaults to false", () => {
+      expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
+    });
+
+    it("setPendingFocusUuid with highlightNote=true sets pendingHighlightNote", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1", true);
+      const s = useCardboxStore.getState();
+      expect(s.pendingFocusUuid).toBe("u1");
+      expect(s.pendingHighlightNote).toBe(true);
+    });
+
+    it("setPendingFocusUuid without highlightNote resets pendingHighlightNote to false", () => {
+      // Seed a true flag first: omitting the arg must actively reset it, not
+      // just leave the beforeEach default in place.
+      useCardboxStore.getState().setPendingFocusUuid("u0", true);
+      expect(useCardboxStore.getState().pendingHighlightNote).toBe(true);
+      useCardboxStore.getState().setPendingFocusUuid("u1");
+      expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
+    });
+
+    it("setPendingFocusUuid(null) resets pendingHighlightNote", () => {
+      useCardboxStore.getState().setPendingFocusUuid("u1", true);
+      useCardboxStore.getState().setPendingFocusUuid(null);
+      const s = useCardboxStore.getState();
+      expect(s.pendingFocusUuid).toBeNull();
+      expect(s.pendingHighlightNote).toBe(false);
+    });
   });
 
   describe("loadLayout slip-note migration", () => {
@@ -1059,6 +1105,48 @@ describe("cardbox store", () => {
       );
       expect(useStatusMessageStore.getState().variant).toBe("error");
       expect(useCardboxStore.getState().order).toEqual(["u1"]);
+    });
+
+    // layoutLoaded gates pending-focus consumption in CardboxView: the NOTE
+    // highlight needs the layout's notes in the store before the focus fires,
+    // and the saved order must be applied before scroll positions are computed.
+    it("layoutLoaded defaults to false", () => {
+      expect(useCardboxStore.getState().layoutLoaded).toBe(false);
+    });
+
+    it("loadLayout sets layoutLoaded after a successful read", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") return MIGRATE_OK;
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().layoutLoaded).toBe(true);
+    });
+
+    // The flag must settle even on failure, or a pending focus would hang
+    // forever waiting for a layout that will never arrive (same philosophy as
+    // the F3 clear for failed annotation fetches).
+    it("loadLayout sets layoutLoaded even when read_cardbox_layout rejects", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") return MIGRATE_OK;
+        if (cmd === "read_cardbox_layout") throw new Error("layout unreadable");
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().layoutLoaded).toBe(true);
+    });
+
+    it("loadLayout sets layoutLoaded even when migration rejects", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") throw new Error("migrate failed");
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().layoutLoaded).toBe(true);
+      errorSpy.mockRestore();
     });
   });
 

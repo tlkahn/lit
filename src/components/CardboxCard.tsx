@@ -136,7 +136,7 @@ interface CardboxCardProps {
   onToggleExpand: () => void;
   onNavigate: () => void;
   linkedCards?: CardboxAnnotation[];
-  onFocusCard?: (uuid: string) => void;
+  onFocusCard?: (uuid: string, highlightNote?: boolean) => void;
   onRemoveLink?: (targetUuid: string) => void;
   note?: string;
   onSetNote?: (body: string) => void;

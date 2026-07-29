@@ -16,7 +16,7 @@ interface SortableCardProps {
   onToggleExpand: (uuid: string) => void;
   onNavigate: (ann: CardboxAnnotation) => void;
   linkedCards?: CardboxAnnotation[];
-  onFocusCard?: (uuid: string) => void;
+  onFocusCard?: (uuid: string, highlightNote?: boolean) => void;
   onRemoveLink?: (targetUuid: string) => void;
   onShowConnections?: (uuid: string) => void;
   onContextMenu?: (uuid: string, e: React.MouseEvent) => void;

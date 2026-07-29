@@ -18,6 +18,7 @@ export interface FireAnnotationEventDetail {
 
 export interface FocusCardboxCardEventDetail {
   uuid: string;
+  highlightNote?: boolean;
 }
 
 // --- Firing annotations state (Cycle 11) ---
@@ -143,7 +144,16 @@ export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?
 // annotation's UUID has been enriched (freshly typed annotations have none).
 export function createCardboxLinkButton(ann: Annotation): HTMLSpanElement | null {
   if (!ann.uuid) return null;
-  const uuid = ann.uuid;
+  // An anchored slipnote has no card of its own — its body renders as the NOTE
+  // section of its parent card, so target the parent and highlight that section.
+  // An empty anchor value falls back to the slip-note's own card; dispatching
+  // uuid "" would be a dead click.
+  const anchorParent =
+    ann.annotation_type === "slipnote" && ann.scope.kind === "anchor"
+      ? ann.scope.value || null
+      : null;
+  const uuid = anchorParent ?? ann.uuid;
+  const highlightNote = anchorParent !== null;
 
   const btn = document.createElement("span");
   btn.className = CLS.CARDBOX_LINK;
@@ -154,7 +164,7 @@ export function createCardboxLinkButton(ann: Annotation): HTMLSpanElement | null
     e.preventDefault();
     window.dispatchEvent(
       new CustomEvent<FocusCardboxCardEventDetail>("lit:focus-cardbox-card", {
-        detail: { uuid },
+        detail: { uuid, highlightNote },
       }),
     );
   };

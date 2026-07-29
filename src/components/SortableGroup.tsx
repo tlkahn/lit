@@ -24,7 +24,7 @@ interface SortableGroupProps {
   isDropTarget?: boolean;
   onToggleExpand: (uuid: string) => void;
   onNavigate: (ann: CardboxAnnotation) => void;
-  onFocusCard: (uuid: string) => void;
+  onFocusCard: (uuid: string, highlightNote?: boolean) => void;
   onRemoveLink: (targetUuid: string) => void;
   onSetNote?: (uuid: string, body: string) => void;
   onExportNote?: (uuid: string) => void;

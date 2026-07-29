@@ -34,7 +34,7 @@ import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
-import { resolvePendingFocus, computeCenteredScrollTop } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
@@ -59,6 +59,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const fetchAnnotations = useCardboxStore((s) => s.fetchAnnotations);
   const collapseAll = useCardboxStore((s) => s.collapseAll);
   const toggleExpand = useCardboxStore((s) => s.toggleExpand);
+  const expand = useCardboxStore((s) => s.expand);
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
   const resetFilters = useCardboxStore((s) => s.resetFilters);
   const toggleType = useCardboxStore((s) => s.toggleType);
@@ -91,6 +92,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
   const pendingFocusUuid = useCardboxStore((s) => s.pendingFocusUuid);
   const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
+  const layoutLoaded = useCardboxStore((s) => s.layoutLoaded);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
   const batchSetColor = useCardboxStore((s) => s.batchSetColor);
@@ -453,10 +455,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     itemCount: sortedAnnotations.length,
   });
 
+  // Pending scroll/highlight delay from handleFocusCard; cleared on repeat
+  // focus and on unmount so it never fires against a torn-down grid.
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+  }, []);
+
   const handleFocusCard = useCallback(
-    (uuid: string) => {
-      toggleExpand(uuid);
-      setTimeout(() => {
+    (uuid: string, highlightNote = false) => {
+      // Force-expand, never toggle: a card whose expandedUuid persisted from an
+      // earlier cardbox visit must not collapse when navigated to (#957).
+      expand(uuid);
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = setTimeout(() => {
         const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
         if (!el) return;
         // Scroll ONLY the cardbox grid's own scroll container — never any
@@ -478,13 +490,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
           });
           scroller.scrollTo({ top, behavior: "smooth" });
         }
-        el.classList.remove("card-focus-highlight");
-        void (el as HTMLElement).offsetWidth;
-        el.classList.add("card-focus-highlight");
-        el.addEventListener("animationend", () => el.classList.remove("card-focus-highlight"), { once: true });
+        applyFocusHighlight(el as HTMLElement, { highlightNote });
       }, 250);
     },
-    [toggleExpand, gridRef],
+    [expand, gridRef],
   );
 
   // Consume a pending focus request (set when the cardbox icon in an expanded
@@ -498,23 +507,28 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     // effect's fetchAnnotations() synchronously sets loading=true, but effects
     // from the same commit still capture the pre-effect value (false).  Reading
     // getState() sees the update and correctly returns "wait" until the fetch
-    // resolves with fresh annotations.
+    // resolves with fresh annotations. layoutLoaded has no such same-commit
+    // sync-set hazard (loadLayout only flips it after its awaits), so the plain
+    // subscription suffices.
     const action = resolvePendingFocus({
       loading: useCardboxStore.getState().loading,
+      layoutReady: layoutLoaded,
       pendingFocusUuid,
       annotationUuids: annotationMap,
       filteredUuids: filteredUuidSet,
     });
     if (action.kind === "wait") return;
+    // Capture before setPendingFocusUuid(null) resets the flag alongside the uuid.
+    const highlightNote = useCardboxStore.getState().pendingHighlightNote;
     setPendingFocusUuid(null);
     if (action.kind === "focus") {
       // F2: the card is present but hidden by an active filter; reset filters so
       // it re-renders into the DOM before handleFocusCard's scroll/highlight.
       if (action.clearFilters) resetFilters();
-      handleFocusCard(action.uuid);
+      handleFocusCard(action.uuid, highlightNote);
     }
     // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
-  }, [loading, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
+  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
 
   // ---------- Context menu handlers ----------
 

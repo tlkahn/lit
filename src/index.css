@@ -90,14 +90,25 @@
 }
 
 @keyframes card-focus-ring {
-  0%   { box-shadow: 0 0 0 0px var(--interactive-accent); opacity: 0; }
-  15%  { box-shadow: 0 0 0 2px var(--interactive-accent); opacity: 1; }
-  50%  { box-shadow: 0 0 0 4px var(--interactive-accent); opacity: 0.5; }
-  100% { box-shadow: 0 0 0 2px transparent; opacity: 1; }
+  0%   { box-shadow: 0 0 0 0px var(--interactive-accent); }
+  15%  { box-shadow: 0 0 0 2px var(--interactive-accent); }
+  50%  { box-shadow: 0 0 0 4px var(--interactive-accent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
 }
 
 .card-focus-highlight {
   animation: card-focus-ring 1.5s ease-out forwards;
+}
+
+@keyframes note-focus-pulse {
+  0%   { background-color: transparent; }
+  30%  { background-color: color-mix(in srgb, var(--interactive-accent) 25%, transparent); }
+  100% { background-color: transparent; }
+}
+
+.note-focus-highlight {
+  animation: note-focus-pulse 1.5s ease-out;
+  border-radius: 4px;
 }
 
 [data-pane-id] {
