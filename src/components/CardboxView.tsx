@@ -92,6 +92,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
   const pendingFocusUuid = useCardboxStore((s) => s.pendingFocusUuid);
   const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
+  const layoutLoaded = useCardboxStore((s) => s.layoutLoaded);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
   const batchSetColor = useCardboxStore((s) => s.batchSetColor);
@@ -454,12 +455,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     itemCount: sortedAnnotations.length,
   });
 
+  // Pending scroll/highlight delay from handleFocusCard; cleared on repeat
+  // focus and on unmount so it never fires against a torn-down grid.
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+  }, []);
+
   const handleFocusCard = useCallback(
     (uuid: string, highlightNote = false) => {
       // Force-expand, never toggle: a card whose expandedUuid persisted from an
       // earlier cardbox visit must not collapse when navigated to (#957).
       expand(uuid);
-      setTimeout(() => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = setTimeout(() => {
         const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
         if (!el) return;
         // Scroll ONLY the cardbox grid's own scroll container — never any
@@ -498,9 +507,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     // effect's fetchAnnotations() synchronously sets loading=true, but effects
     // from the same commit still capture the pre-effect value (false).  Reading
     // getState() sees the update and correctly returns "wait" until the fetch
-    // resolves with fresh annotations.
+    // resolves with fresh annotations. layoutLoaded has no such same-commit
+    // sync-set hazard (loadLayout only flips it after its awaits), so the plain
+    // subscription suffices.
     const action = resolvePendingFocus({
       loading: useCardboxStore.getState().loading,
+      layoutReady: layoutLoaded,
       pendingFocusUuid,
       annotationUuids: annotationMap,
       filteredUuids: filteredUuidSet,
@@ -516,7 +528,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       handleFocusCard(action.uuid, highlightNote);
     }
     // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
-  }, [loading, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
+  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
 
   // ---------- Context menu handlers ----------
 

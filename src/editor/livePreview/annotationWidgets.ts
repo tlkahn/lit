@@ -146,8 +146,12 @@ export function createCardboxLinkButton(ann: Annotation): HTMLSpanElement | null
   if (!ann.uuid) return null;
   // An anchored slipnote has no card of its own — its body renders as the NOTE
   // section of its parent card, so target the parent and highlight that section.
+  // An empty anchor value falls back to the slip-note's own card; dispatching
+  // uuid "" would be a dead click.
   const anchorParent =
-    ann.annotation_type === "slipnote" && ann.scope.kind === "anchor" ? ann.scope.value : null;
+    ann.annotation_type === "slipnote" && ann.scope.kind === "anchor"
+      ? ann.scope.value || null
+      : null;
   const uuid = anchorParent ?? ann.uuid;
   const highlightNote = anchorParent !== null;
 

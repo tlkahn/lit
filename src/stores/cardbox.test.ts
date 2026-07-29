@@ -57,6 +57,7 @@ describe("cardbox store", () => {
       connectionsForUuid: null,
       connectionsSavedFilters: null,
       pendingFocusUuid: null,
+      layoutLoaded: false,
       scope: "document",
     });
     mockInvoke((cmd) => {
@@ -987,7 +988,11 @@ describe("cardbox store", () => {
       expect(s.pendingHighlightNote).toBe(true);
     });
 
-    it("setPendingFocusUuid without highlightNote leaves pendingHighlightNote false", () => {
+    it("setPendingFocusUuid without highlightNote resets pendingHighlightNote to false", () => {
+      // Seed a true flag first: omitting the arg must actively reset it, not
+      // just leave the beforeEach default in place.
+      useCardboxStore.getState().setPendingFocusUuid("u0", true);
+      expect(useCardboxStore.getState().pendingHighlightNote).toBe(true);
       useCardboxStore.getState().setPendingFocusUuid("u1");
       expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
     });
@@ -1100,6 +1105,48 @@ describe("cardbox store", () => {
       );
       expect(useStatusMessageStore.getState().variant).toBe("error");
       expect(useCardboxStore.getState().order).toEqual(["u1"]);
+    });
+
+    // layoutLoaded gates pending-focus consumption in CardboxView: the NOTE
+    // highlight needs the layout's notes in the store before the focus fires,
+    // and the saved order must be applied before scroll positions are computed.
+    it("layoutLoaded defaults to false", () => {
+      expect(useCardboxStore.getState().layoutLoaded).toBe(false);
+    });
+
+    it("loadLayout sets layoutLoaded after a successful read", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") return MIGRATE_OK;
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().layoutLoaded).toBe(true);
+    });
+
+    // The flag must settle even on failure, or a pending focus would hang
+    // forever waiting for a layout that will never arrive (same philosophy as
+    // the F3 clear for failed annotation fetches).
+    it("loadLayout sets layoutLoaded even when read_cardbox_layout rejects", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") return MIGRATE_OK;
+        if (cmd === "read_cardbox_layout") throw new Error("layout unreadable");
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().layoutLoaded).toBe(true);
+    });
+
+    it("loadLayout sets layoutLoaded even when migration rejects", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") throw new Error("migrate failed");
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().layoutLoaded).toBe(true);
+      errorSpy.mockRestore();
     });
   });
 

@@ -1152,6 +1152,26 @@ describe("createCardboxLinkButton", () => {
     window.removeEventListener("lit:focus-cardbox-card", spy);
   });
 
+  // An empty anchor value would otherwise dispatch uuid "" (a dead click:
+  // no card matches). Fall back to the slip-note's own card instead.
+  it("anchored slipnote with an empty anchor value falls back to its own uuid", () => {
+    const btn = createCardboxLinkButton(
+      makeAnnotation({
+        uuid: "sn-child",
+        annotation_type: "slipnote",
+        scope: { kind: "anchor", value: "" },
+      }),
+    )!;
+    const spy = vi.fn();
+    window.addEventListener("lit:focus-cardbox-card", spy);
+    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    const event = spy.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail.uuid).toBe("sn-child");
+    expect(event.detail.highlightNote).toBe(false);
+    window.removeEventListener("lit:focus-cardbox-card", spy);
+  });
+
   it("non-anchored slipnote dispatches its own uuid without highlightNote", () => {
     const btn = createCardboxLinkButton(
       makeAnnotation({
