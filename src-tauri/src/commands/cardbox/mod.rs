@@ -3024,6 +3024,33 @@ mod tests {
     }
 
     #[test]
+    fn export_card_note_json_only_note_errors() {
+        // K3: a note that exists only as a JSON legacy entry is not exportable.
+        use crate::workspace::write_hash::WriteHashRegistry;
+
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> more.\n",
+        );
+        let gi = GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = super::CardboxLayout::default();
+        layout.notes.insert("p1".to_string(), CardNote {
+            body: "JSON legacy note".to_string(),
+            updated_at: None,
+        });
+        write_layout(dir.path(), &layout);
+
+        let result = super::do_export_card_note(dir.path(), &gi, &reg, "p1");
+        assert!(result.is_err(), "JSON-only note must not export");
+        assert!(result.unwrap_err().contains("No note for card"),
+            "error should say no note exists");
+    }
+
+    #[test]
     fn export_card_note_reads_sn_overlay() {
         use crate::workspace::write_hash::WriteHashRegistry;
 
