@@ -34,7 +34,7 @@ import { DraggedUuidsContext } from "./DraggedUuidsContext";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
-import { resolvePendingFocus, computeCenteredScrollTop, applyFocusHighlight } from "./cardboxFocus";
+import { resolvePendingFocus, computeCenteredScrollTop, computeCollapseScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
@@ -44,6 +44,31 @@ interface DragState {
   parsed: ParsedActiveId;
   overGroupId: string | null;
   draggedUuids: string[];
+}
+
+// Measure a card element against the cardbox grid's own scroll container for
+// the compute*ScrollTop helpers. Scrolling must stay confined to that
+// container — Element.scrollIntoView would also move scrollable ancestors and
+// carry the PaneHeader out of view. Returns null when the card is no longer
+// inside a grid (torn down mid-timeout).
+function measureCardInGrid(el: Element): {
+  scroller: HTMLElement;
+  metrics: Parameters<typeof computeCenteredScrollTop>[0];
+} | null {
+  const scroller = el.closest<HTMLElement>("[data-testid='cardbox-grid']");
+  if (!scroller) return null;
+  const cardRect = el.getBoundingClientRect();
+  const scRect = scroller.getBoundingClientRect();
+  return {
+    scroller,
+    metrics: {
+      scrollTop: scroller.scrollTop,
+      clientHeight: scroller.clientHeight,
+      scrollHeight: scroller.scrollHeight,
+      cardOffsetTop: cardRect.top - scRect.top,
+      cardHeight: cardRect.height,
+    },
+  };
 }
 
 export default function CardboxView({ pagePath }: { pagePath: string }) {
@@ -407,7 +432,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const { gridRef, handleKeyDown: handleGridKeyDown } = useCardboxKeyboard({
     onExpand: (index) => {
       const ann = sortedAnnotations[index];
-      if (ann) toggleExpand(ann.uuid);
+      if (ann) handleToggleExpand(ann.uuid);
     },
     onNavigate: (index) => {
       const ann = sortedAnnotations[index];
@@ -458,9 +483,41 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   // Pending scroll/highlight delay from handleFocusCard; cleared on repeat
   // focus and on unmount so it never fires against a torn-down grid.
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Pending post-collapse visibility check from handleToggleExpand (#939);
+  // same lifecycle rules as focusTimerRef.
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
   }, []);
+
+  // Wraps the store's toggleExpand for every expand/collapse path (card click,
+  // Escape, keyboard toggle, grouped cards). On collapse, once the 200ms
+  // grid-template-rows transition settles, re-center the card within the grid's
+  // own scroll container if it shrank out of view — the reader who scrolled
+  // deep into a long expanded card would otherwise lose their place (#939).
+  // A still-visible card scrolls nothing, and only the grid container ever
+  // moves (never ancestors — same constraint as handleFocusCard).
+  const handleToggleExpand = useCallback(
+    (uuid: string) => {
+      // getState(), not the subscribed expandedUuid: a reactive dep would give
+      // this callback a new identity on every expand/collapse, defeating
+      // memo() on all cards (#850).
+      const collapsing = useCardboxStore.getState().expandedUuid === uuid;
+      toggleExpand(uuid);
+      if (!collapsing) return;
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = setTimeout(() => {
+        const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
+        if (!el) return;
+        const measured = measureCardInGrid(el);
+        if (!measured) return;
+        const top = computeCollapseScrollTop(measured.metrics);
+        if (top !== null) measured.scroller.scrollTo({ top, behavior: "smooth" });
+      }, 250); // 200ms collapse transition + buffer, matching handleFocusCard
+    },
+    [toggleExpand, gridRef],
+  );
 
   const handleFocusCard = useCallback(
     (uuid: string, highlightNote = false) => {
@@ -471,24 +528,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       focusTimerRef.current = setTimeout(() => {
         const el = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
         if (!el) return;
-        // Scroll ONLY the cardbox grid's own scroll container — never any
-        // ancestor. Element.scrollIntoView centers the target in every scrollable
-        // ancestor (overflow:hidden elements are still programmatically
-        // scrollable), which for a near-bottom card moves an outer pane container
-        // and carries the PaneHeader out of view. Centering within #cardbox-grid
-        // alone keeps the header pinned.
-        const scroller = el.closest<HTMLElement>("[data-testid='cardbox-grid']");
-        if (scroller) {
-          const cardRect = el.getBoundingClientRect();
-          const scRect = scroller.getBoundingClientRect();
-          const top = computeCenteredScrollTop({
-            scrollTop: scroller.scrollTop,
-            clientHeight: scroller.clientHeight,
-            scrollHeight: scroller.scrollHeight,
-            cardOffsetTop: cardRect.top - scRect.top,
-            cardHeight: cardRect.height,
-          });
-          scroller.scrollTo({ top, behavior: "smooth" });
+        const measured = measureCardInGrid(el);
+        if (measured) {
+          const top = computeCenteredScrollTop(measured.metrics);
+          measured.scroller.scrollTo({ top, behavior: "smooth" });
         }
         applyFocusHighlight(el as HTMLElement, { highlightNote });
       }, 250);
@@ -1062,7 +1105,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                       expanded={expandedUuid === entry.annotation.uuid}
                       isPinned={pinnedSet.has(entry.annotation.uuid)}
                       colorTag={colors[entry.annotation.uuid]}
-                      onToggleExpand={toggleExpand}
+                      onToggleExpand={handleToggleExpand}
                       onNavigate={handleNavigate}
                       linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
                       onFocusCard={handleFocusCard}
@@ -1084,7 +1127,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                       expandedUuid={expandedUuid}
                       linkedCardsMap={linkedCardsMap}
                       isDropTarget={dragState?.overGroupId === entry.groupId}
-                      onToggleExpand={toggleExpand}
+                      onToggleExpand={handleToggleExpand}
                       onNavigate={handleNavigate}
                       onFocusCard={handleFocusCard}
                       onRemoveLink={handleRemoveLink}
