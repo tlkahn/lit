@@ -52,6 +52,7 @@ describe("cardbox store", () => {
       groups: {},
       pinned: [],
       notes: {},
+      noteSyncs: {},
       colors: {},
       connectionsForUuid: null,
       connectionsSavedFilters: null,
@@ -985,8 +986,10 @@ describe("cardbox store", () => {
       expect(callLog).toEqual(["migrate_cardbox_slip_notes", "read_cardbox_layout"]);
     });
 
-    it("surfaces a notice with the count when migration reports failures", async () => {
+    it("surfaces a notice with the count when migration reports failures, and still reads the layout", async () => {
+      const callLog: string[] = [];
       mockInvoke((cmd) => {
+        callLog.push(cmd);
         if (cmd === "migrate_cardbox_slip_notes")
           return { ...MIGRATE_OK, failed: 2, failures: [{ uuid: "u8", reason: "x" }, { uuid: "u9", reason: "y" }] };
         if (cmd === "read_cardbox_layout") return LAYOUT;
@@ -997,6 +1000,41 @@ describe("cardbox store", () => {
         "2 notes could not be written to source; will retry next open",
       );
       expect(useStatusMessageStore.getState().variant).toBe("error");
+      expect(callLog[callLog.length - 1]).toBe("read_cardbox_layout");
+      expect(useCardboxStore.getState().order).toEqual(["u1"]);
+    });
+
+    it("logs per-note failure reasons to the console when migration reports failures", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const failures = [{ uuid: "u8", reason: "x" }, { uuid: "u9", reason: "y" }];
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes")
+          return { ...MIGRATE_OK, failed: 2, failures };
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[cardbox] slip-note migration failures:",
+        failures,
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("logs the error to the console when migration rejects", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const err = new Error("cardbox.json unreadable");
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") throw err;
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[cardbox] slip-note migration failed:",
+        err,
+      );
+      errorSpy.mockRestore();
     });
 
     it("shows no notice when migration reports zero failures", async () => {
@@ -1101,6 +1139,34 @@ describe("cardbox store", () => {
       expect(note?.updated_at).not.toBe(SYNC_OK.updated_at);
     });
 
+    it("a stale resolve with a coincidentally equal body does not regress updated_at (A -> B -> A)", async () => {
+      const T1 = "2026-07-29T00:00:01Z";
+      const T3 = "2026-07-29T00:00:03Z";
+      let resolveFirst: (value: unknown) => void = () => {};
+      let call = 0;
+      mockInvoke((cmd, args) => {
+        if (cmd === "sync_slip_note_to_source") {
+          call += 1;
+          if (call === 1) {
+            return new Promise((resolve) => { resolveFirst = resolve; });
+          }
+          if (call === 2) return { ...SYNC_OK, body: "B", updated_at: "2026-07-29T00:00:02Z" };
+          return { ...SYNC_OK, body: args?.body, updated_at: T3 };
+        }
+        return null;
+      });
+      const first = useCardboxStore.getState().setNote("u1", "A");
+      await useCardboxStore.getState().setNote("u1", "B");
+      await useCardboxStore.getState().setNote("u1", "A");
+      expect(useCardboxStore.getState().notes["u1"]?.updated_at).toBe(T3);
+      // The first sync resolves late with the same body "A" but a stale timestamp.
+      resolveFirst({ ...SYNC_OK, body: "A", updated_at: T1 });
+      await first;
+      const note = useCardboxStore.getState().notes["u1"];
+      expect(note?.body).toBe("A");
+      expect(note?.updated_at).toBe(T3);
+    });
+
     it("a failed sync does not latch: the next setNote retries normally", async () => {
       const syncCalls: unknown[] = [];
       let failNext = true;
@@ -1121,6 +1187,60 @@ describe("cardbox store", () => {
       const note = useCardboxStore.getState().notes["u1"];
       expect(note?.body).toBe("ab");
       expect(note?.updated_at).toBe(SYNC_OK.updated_at);
+    });
+
+    it("loadLayout preserves a note whose sync is still in flight, then aligns on resolve", async () => {
+      let resolveSync: (value: unknown) => void = () => {};
+      mockInvoke((cmd) => {
+        if (cmd === "sync_slip_note_to_source") {
+          return new Promise((resolve) => { resolveSync = resolve; });
+        }
+        if (cmd === "migrate_cardbox_slip_notes")
+          return { migrated: 0, failed: 0, skipped: 0, changed_pages: [], failures: [] };
+        if (cmd === "read_cardbox_layout")
+          return { version: 3, order: ["u1"], links: [], groups: {}, pinned: [], notes: {} };
+        return null;
+      });
+      const setPromise = useCardboxStore.getState().setNote("u1", "typed");
+      await useCardboxStore.getState().loadLayout();
+      // The read layout has no note for u1, but the sync is still pending —
+      // the optimistic body must survive the layout application.
+      expect(useCardboxStore.getState().notes["u1"]?.body).toBe("typed");
+      resolveSync({ ...SYNC_OK, body: "typed", updated_at: "2026-07-29T00:00:05Z" });
+      await setPromise;
+      const note = useCardboxStore.getState().notes["u1"];
+      expect(note?.body).toBe("typed");
+      expect(note?.updated_at).toBe("2026-07-29T00:00:05Z");
+    });
+
+    it("loadLayout preserves a pending clearNote deletion even when the read layout still has the note", async () => {
+      useCardboxStore.setState({
+        notes: { u1: { body: "old", updated_at: "2026-07-28T00:00:00Z" } },
+      });
+      let resolveSync: (value: unknown) => void = () => {};
+      mockInvoke((cmd) => {
+        if (cmd === "sync_slip_note_to_source") {
+          return new Promise((resolve) => { resolveSync = resolve; });
+        }
+        if (cmd === "migrate_cardbox_slip_notes")
+          return { migrated: 0, failed: 0, skipped: 0, changed_pages: [], failures: [] };
+        if (cmd === "read_cardbox_layout")
+          return {
+            version: 3,
+            order: ["u1"],
+            links: [],
+            groups: {},
+            pinned: [],
+            notes: { u1: { body: "old", updated_at: "2026-07-28T00:00:00Z" } },
+          };
+        return null;
+      });
+      const clearPromise = useCardboxStore.getState().clearNote("u1");
+      await useCardboxStore.getState().loadLayout();
+      expect(useCardboxStore.getState().notes["u1"]).toBeUndefined();
+      resolveSync({ ...SYNC_OK, body: "", synced: false });
+      await clearPromise;
+      expect(useCardboxStore.getState().notes["u1"]).toBeUndefined();
     });
 
     it("saveLayout never transmits client notes (backend derives them from sn)", async () => {

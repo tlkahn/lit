@@ -17,6 +17,7 @@ describe("cardbox undo integration", () => {
       groups: {},
       pinned: [],
       notes: {},
+      noteSyncs: {},
       colors: {},
       connectionsForUuid: null,
       connectionsSavedFilters: null,
