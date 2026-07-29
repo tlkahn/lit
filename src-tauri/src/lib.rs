@@ -430,8 +430,6 @@ pub fn run() {
             commands::cardbox::toggle_group_collapsed,
             commands::cardbox::pin_cardbox_card,
             commands::cardbox::unpin_cardbox_card,
-            commands::cardbox::set_card_note,
-            commands::cardbox::clear_card_note,
             commands::cardbox::export_card_note,
             commands::cardbox::set_card_color,
             commands::cardbox::clear_card_color,

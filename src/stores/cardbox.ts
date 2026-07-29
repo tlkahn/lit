@@ -4,6 +4,7 @@ import type { CardboxAnnotation, GroupInfo, CardNote } from "../lib/ipc";
 import { perfMark, perfMeasure } from "../lib/perf";
 import { useCardboxUndoStore } from "./cardboxUndo";
 import type { UndoEntry } from "./cardboxUndo";
+import { useStatusMessageStore } from "./statusMessage";
 import {
   listAllAnnotations,
   readCardboxLayout,
@@ -18,8 +19,7 @@ import {
   toggleGroupCollapsed,
   pinCardboxCard,
   unpinCardboxCard,
-  setCardNote,
-  clearCardNote,
+  syncSlipNoteToSource,
   exportCardNote,
   setCardColor as setCardColorIpc,
   clearCardColor as clearCardColorIpc,
@@ -257,7 +257,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }
   },
   saveLayout: async () => {
-    const { order, links, groups, pinned, notes, layoutVersion, colors } = get();
+    const { order, links, groups, pinned, layoutVersion, colors } = get();
     try {
       await writeCardboxLayout({
         version: Math.max(layoutVersion, 3),
@@ -265,7 +265,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         links,
         groups,
         pinned,
-        notes,
+        // Notes are derived from sn annotations on the backend and client
+        // notes never merge into cardbox.json; send an empty map.
+        notes: {},
         colors,
       });
     } catch {
@@ -578,7 +580,12 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         notes: { ...s.notes, [uuid]: { body: trimmed, updated_at: new Date().toISOString() } },
       };
     });
-    await setCardNote(uuid, body);
+    try {
+      await syncSlipNoteToSource(uuid, trimmed);
+    } catch {
+      // Note stays in memory for this session; full retry UX is #948.
+      useStatusMessageStore.getState().show("Failed to save note", "error");
+    }
   },
   clearNote: async (uuid) => {
     const prevNote = get().notes[uuid];
@@ -593,7 +600,11 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
       return { notes: rest };
     });
-    await clearCardNote(uuid);
+    try {
+      await syncSlipNoteToSource(uuid, "");
+    } catch {
+      useStatusMessageStore.getState().show("Failed to save note", "error");
+    }
   },
   exportNote: async (uuid) => {
     return exportCardNote(uuid);

@@ -208,15 +208,16 @@ pub(crate) fn build_draft_frontmatter(
 /// Assemble the merged draft body from the selected cards.
 ///
 /// Resolves the requested `uuids` against `all_annotations`, orders them by link
-/// topology (BFS over `layout.links`), pairs each with its slip note (from
-/// `layout.notes`) and citekey (from the pre-computed `citekey_map`, keyed by
-/// `source_page_id`), then renders the markdown body. Returns the body plus the
-/// deduplicated source titles in first-seen order (used for frontmatter and as
-/// the LLM-title fallback).
+/// topology (BFS over `layout.links`), pairs each with its slip note (from the
+/// sn-derived `notes` map) and citekey (from the pre-computed `citekey_map`,
+/// keyed by `source_page_id`), then renders the markdown body. Returns the body
+/// plus the deduplicated source titles in first-seen order (used for
+/// frontmatter and as the LLM-title fallback).
 pub(crate) fn prepare_draft_content(
     uuids: &[String],
     all_annotations: &[CardboxAnnotation],
     layout: &CardboxLayout,
+    notes: &HashMap<String, crate::graph::cardbox_layout::CardNote>,
     citekey_map: &HashMap<String, Option<String>>,
 ) -> Result<(String, Vec<String>), String> {
     // Validate up front so a missing UUID errors with a clear message.
@@ -233,7 +234,7 @@ pub(crate) fn prepare_draft_content(
         let ann = by_uuid
             .get(uuid.as_str())
             .ok_or_else(|| format!("Annotation not found: {}", uuid))?;
-        let slip_note = layout.notes.get(uuid).map(|n| n.body.clone());
+        let slip_note = notes.get(uuid).map(|n| n.body.clone());
         let citekey = citekey_map
             .get(&ann.source_page_id)
             .cloned()
@@ -332,11 +333,9 @@ pub async fn merge_cards_to_draft(
                     }
                 }
             }
-            let effective = super::slip_note::reconcile_slip_notes(gi, &layout)
-                .map_err(|e| crate::graph::error::GraphError::Other(e))?;
-            let mut effective_layout = layout.clone();
-            effective_layout.notes = effective;
-            prepare_draft_content(&uuids, &all, &effective_layout, &citekey_map)
+            let notes = super::slip_note::derive_notes(gi)
+                .map_err(crate::graph::error::GraphError::Other)?;
+            prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map)
                 .map_err(crate::graph::error::GraphError::Other)
         },
     )?;
@@ -703,16 +702,15 @@ mod tests {
 
         let mut layout = CardboxLayout::default();
         layout.links = vec![s2("a", "b")];
-        layout
-            .notes
-            .insert("a".to_string(), slip("My thought on alpha."));
+        let mut notes: HashMap<String, CardNote> = HashMap::new();
+        notes.insert("a".to_string(), slip("My thought on alpha."));
 
         let mut citekey_map: HashMap<String, Option<String>> = HashMap::new();
         citekey_map.insert("p1".to_string(), Some("smith2024".to_string()));
         citekey_map.insert("p2".to_string(), None);
 
         let (body, source_titles) =
-            prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+            prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map).unwrap();
 
         // Two source headings, Page One before Page Two (BFS from a reaches b first,
         // and grouping folds c back into the Page One section).
@@ -763,10 +761,11 @@ mod tests {
         ];
         let uuids = vec!["a".to_string(), "b".to_string()];
         let layout = CardboxLayout::default(); // no notes, no links
+        let notes: HashMap<String, CardNote> = HashMap::new();
         let citekey_map: HashMap<String, Option<String>> = HashMap::new();
 
         let (body, source_titles) =
-            prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+            prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map).unwrap();
 
         assert!(body.contains("> first quote"));
         assert!(body.contains("> second quote"));
@@ -801,10 +800,11 @@ mod tests {
         ];
         let uuids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let layout = CardboxLayout::default();
+        let notes: HashMap<String, CardNote> = HashMap::new();
         let citekey_map: HashMap<String, Option<String>> = HashMap::new();
 
         let (body, source_titles) =
-            prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+            prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map).unwrap();
 
         assert_eq!(body.matches("## Page One").count(), 1);
         assert!(body.contains("> q1"));
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn draft_includes_sn_backed_notes() {
-        use crate::commands::cardbox::slip_note::overlay_notes_from_sn;
+        use crate::commands::cardbox::slip_note::notes_from_sn;
 
         let all = vec![
             make_annotation_with_original("a", "p1", "Page One", Some("quote")),
@@ -848,13 +848,37 @@ mod tests {
             original: None,
         });
 
-        layout.notes = overlay_notes_from_sn(&layout.notes, &sn_map);
+        let notes = notes_from_sn(&sn_map);
+
+        // A JSON-only legacy entry in the layout must play no part.
+        layout.notes.insert("a".to_string(), slip("stale JSON prose"));
 
         let citekey_map: HashMap<String, Option<String>> = HashMap::new();
-        let (body, _) = prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
+        let (body, _) = prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map).unwrap();
 
         assert!(body.contains("sn prose from source"),
             "draft must include sn-backed notes: {}", body);
+        assert!(!body.contains("stale JSON prose"),
+            "draft must ignore JSON-only layout entries: {}", body);
+    }
+
+    #[test]
+    fn draft_ignores_json_only_entries() {
+        // A card whose note exists only in layout.notes (no sn) gets no prose.
+        let all = vec![
+            make_annotation_with_original("a", "p1", "Page One", Some("quote")),
+        ];
+        let uuids = vec!["a".to_string()];
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert("a".to_string(), slip("legacy JSON note"));
+
+        let notes: HashMap<String, CardNote> = HashMap::new();
+        let citekey_map: HashMap<String, Option<String>> = HashMap::new();
+        let (body, _) = prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map).unwrap();
+
+        assert!(!body.contains("legacy JSON note"),
+            "JSON-only entries must not appear in drafts: {}", body);
     }
 
     #[test]

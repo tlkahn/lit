@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useCardboxStore } from "./cardbox";
 import { useCardboxUndoStore } from "./cardboxUndo";
+import { useStatusMessageStore } from "./statusMessage";
 import { mockInvoke } from "../test/tauri-mock";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 
@@ -953,6 +954,75 @@ describe("cardbox store", () => {
       useCardboxStore.getState().setPendingFocusUuid("u1");
       useCardboxStore.getState().setPendingFocusUuid(null);
       expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+    });
+  });
+
+  describe("setNote / clearNote source sync", () => {
+    const SYNC_OK = {
+      parent_uuid: "u1",
+      body: "body",
+      updated_at: "2026-07-29T00:00:00Z",
+      sn_uuid: "sn-1",
+      synced: true,
+      page_id: "a.md",
+    };
+
+    beforeEach(() => {
+      useStatusMessageStore.setState({ message: null, variant: "success", action: null });
+    });
+
+    it("setNote passes the trimmed body to sync_slip_note_to_source", async () => {
+      let syncedBody: unknown = null;
+      mockInvoke((cmd, args) => {
+        if (cmd === "sync_slip_note_to_source") {
+          syncedBody = args?.body;
+          return SYNC_OK;
+        }
+        return null;
+      });
+      await useCardboxStore.getState().setNote("u1", "  body  ");
+      expect(syncedBody).toBe("body");
+    });
+
+    it("setNote resolves, retains the optimistic note, and shows an error when sync fails", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "sync_slip_note_to_source") throw new Error("page IO failed");
+        return null;
+      });
+      await useCardboxStore.getState().setNote("u1", "typed note");
+      expect(useCardboxStore.getState().notes["u1"]?.body).toBe("typed note");
+      expect(useStatusMessageStore.getState().message).toBe("Failed to save note");
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+
+    it("saveLayout never transmits client notes (backend derives them from sn)", async () => {
+      useCardboxStore.setState({
+        order: ["u1"],
+        notes: { u1: { body: "in-memory note", updated_at: "2026-07-29T00:00:00Z" } },
+      });
+      let sentNotes: unknown = null;
+      mockInvoke((cmd, args) => {
+        if (cmd === "write_cardbox_layout") {
+          sentNotes = (args?.layout as { notes?: unknown })?.notes;
+        }
+        return null;
+      });
+      await useCardboxStore.getState().saveLayout();
+      expect(sentNotes).toEqual({});
+    });
+
+    it("clearNote resolves, keeps the optimistic clear, and shows an error when sync fails", async () => {
+      useCardboxStore.setState({
+        notes: { u1: { body: "old", updated_at: "2026-07-28T00:00:00Z" } },
+      });
+      mockInvoke((cmd) => {
+        if (cmd === "sync_slip_note_to_source") throw new Error("page IO failed");
+        return null;
+      });
+      await useCardboxStore.getState().clearNote("u1");
+      expect(useCardboxStore.getState().notes["u1"]).toBeUndefined();
+      expect(useStatusMessageStore.getState().message).toBe("Failed to save note");
+      expect(useStatusMessageStore.getState().variant).toBe("error");
     });
   });
 });
