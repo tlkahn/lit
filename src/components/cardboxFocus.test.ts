@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { resolvePendingFocus, computeCenteredScrollTop, applyFocusHighlight } from "./cardboxFocus";
+import {
+  resolvePendingFocus,
+  computeCenteredScrollTop,
+  computeCollapseScrollTop,
+  applyFocusHighlight,
+} from "./cardboxFocus";
 
 // Lightweight fixtures: plain Set/Map satisfy the UuidCollection structural
 // type, so the resolver can be tested without rendering the heavy CardboxView.
@@ -228,6 +233,102 @@ describe("computeCenteredScrollTop", () => {
         cardHeight: 100,
       }),
     ).toBe(300); // 300 + 250 - (600 - 100) / 2
+  });
+});
+
+describe("computeCollapseScrollTop", () => {
+  // V1: the collapsed card is still fully inside the container viewport — no
+  // correction, so the reader's scroll position is left alone (#939).
+  it("returns null when the card is fully visible", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 500,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 100,
+        cardHeight: 100,
+      }),
+    ).toBeNull();
+  });
+
+  // V2: boundary — card exactly fills the viewport edge-to-edge; still visible.
+  it("returns null when the card exactly spans the viewport edges", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 500,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 0,
+        cardHeight: 600,
+      }),
+    ).toBeNull();
+  });
+
+  // V3: the big-collapse case from #939 — the reader scrolled deep into a long
+  // expanded card; after collapse the card sits entirely above the viewport.
+  it("centers the card when it is entirely above the viewport", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 1000,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: -300,
+        cardHeight: 100,
+      }),
+    ).toBe(450); // 1000 + (-300) - (600 - 100) / 2
+  });
+
+  // V4: top edge clipped (partially above the viewport).
+  it("centers the card when its top is clipped above the viewport", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 300,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: -50,
+        cardHeight: 100,
+      }),
+    ).toBe(0); // desired 300 - 50 - 250 = 0
+  });
+
+  // V5: card extends below the viewport (bottom clipped or fully below).
+  it("centers the card when it extends below the viewport", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 0,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 550,
+        cardHeight: 100,
+      }),
+    ).toBe(300); // 0 + 550 - 250
+  });
+
+  // V6: clamp at the top of the scroll range — never negative.
+  it("clamps the correction at 0", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 100,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: -100,
+        cardHeight: 100,
+      }),
+    ).toBe(0); // desired 100 - 100 - 250 = -250, clamped to 0
+  });
+
+  // V7: clamp at the bottom of the scroll range — same regression class as the
+  // computeCenteredScrollTop C2 case (an overshoot would scroll an ancestor).
+  it("clamps the correction at scrollHeight - clientHeight", () => {
+    expect(
+      computeCollapseScrollTop({
+        scrollTop: 1300,
+        clientHeight: 600,
+        scrollHeight: 2000,
+        cardOffsetTop: 650,
+        cardHeight: 100,
+      }),
+    ).toBe(1400); // desired 1700 clamped to 2000 - 600
   });
 });
 

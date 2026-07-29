@@ -11,6 +11,7 @@ interface ProbeProps {
   expanded: boolean;
   note?: string;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
+  onToggleExpand: (uuid: string) => void;
 }
 
 const probe = vi.hoisted(() => ({
@@ -280,5 +281,118 @@ describe("note highlight waits for layout (#958 finding 1)", () => {
 
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("collapse scroll correction (#939)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Stub the scroller/card geometry that jsdom doesn't lay out. cardTop is the
+  // card's viewport-space top; the scroller's rect top is 0, so cardTop is also
+  // the container-relative offset computeCollapseScrollTop receives.
+  function stubGeometry(opts: {
+    scrollTop: number;
+    clientHeight: number;
+    scrollHeight: number;
+    cardTop: number;
+    cardHeight: number;
+  }) {
+    const scroller = screen.getByTestId("cardbox-grid");
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
+    Object.defineProperties(scroller, {
+      scrollTop: { value: opts.scrollTop, configurable: true },
+      clientHeight: { value: opts.clientHeight, configurable: true },
+      scrollHeight: { value: opts.scrollHeight, configurable: true },
+    });
+    scroller.getBoundingClientRect = () =>
+      ({ top: 0, height: opts.clientHeight } as DOMRect);
+    const card = screen.getByTestId(`probe-card-${A}`);
+    card.getBoundingClientRect = () =>
+      ({ top: opts.cardTop, height: opts.cardHeight } as DOMRect);
+    return scrollTo;
+  }
+
+  it("collapsing a card that landed above the viewport centers it in the grid", async () => {
+    await renderView();
+    const onToggleExpand = probe.latestProps.get(A)!.onToggleExpand;
+    act(() => {
+      onToggleExpand(A); // expand
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+
+    // After collapse the card sits entirely above the viewport (the reader had
+    // scrolled deep into the long expanded body).
+    const scrollTo = stubGeometry({
+      scrollTop: 1000,
+      clientHeight: 600,
+      scrollHeight: 2000,
+      cardTop: -300,
+      cardHeight: 100,
+    });
+
+    vi.useFakeTimers();
+    act(() => {
+      onToggleExpand(A); // collapse
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+    expect(scrollTo).not.toHaveBeenCalled(); // waits out the CSS transition
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    // 1000 + (-300) - (600 - 100) / 2
+    expect(scrollTo).toHaveBeenCalledWith({ top: 450, behavior: "smooth" });
+  });
+
+  it("collapsing a still-visible card does not scroll", async () => {
+    await renderView();
+    const onToggleExpand = probe.latestProps.get(A)!.onToggleExpand;
+    act(() => {
+      onToggleExpand(A); // expand
+    });
+
+    const scrollTo = stubGeometry({
+      scrollTop: 500,
+      clientHeight: 600,
+      scrollHeight: 2000,
+      cardTop: 100,
+      cardHeight: 100,
+    });
+
+    vi.useFakeTimers();
+    act(() => {
+      onToggleExpand(A); // collapse
+    });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("expanding a card never schedules a collapse scroll", async () => {
+    await renderView();
+    const onToggleExpand = probe.latestProps.get(A)!.onToggleExpand;
+
+    // Even out-of-view geometry must not trigger a scroll on expand.
+    const scrollTo = stubGeometry({
+      scrollTop: 1000,
+      clientHeight: 600,
+      scrollHeight: 2000,
+      cardTop: -300,
+      cardHeight: 100,
+    });
+
+    vi.useFakeTimers();
+    act(() => {
+      onToggleExpand(A); // expand (nothing was expanded)
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });

@@ -116,3 +116,23 @@ export function computeCenteredScrollTop(input: {
   const max = Math.max(0, scrollHeight - clientHeight);
   return Math.min(Math.max(desired, 0), max);
 }
+
+// Post-collapse visibility correction (#939): collapsing a long card while
+// scrolled deep into it leaves the shrunken card outside the container's
+// viewport, so the reader loses their place. If the collapsed card is no
+// longer fully visible, return the container-local scrollTop that centers it
+// (clamped, container-only — same ancestor-scroll constraint as
+// computeCenteredScrollTop); return null when the card is still fully visible
+// so an in-view collapse causes no scroll jump.
+export function computeCollapseScrollTop(input: {
+  scrollTop: number; // container.scrollTop
+  clientHeight: number; // container.clientHeight
+  scrollHeight: number; // container.scrollHeight
+  cardOffsetTop: number; // cardRect.top - containerRect.top
+  cardHeight: number; // cardRect.height
+}): number | null {
+  const { clientHeight, cardOffsetTop, cardHeight } = input;
+  const fullyVisible = cardOffsetTop >= 0 && cardOffsetTop + cardHeight <= clientHeight;
+  if (fullyVisible) return null;
+  return computeCenteredScrollTop(input);
+}
