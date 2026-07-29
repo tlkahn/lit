@@ -9,7 +9,7 @@ use crate::annotation::emit::{
 };
 use crate::annotation::parser::parse_annotations_builtin;
 use crate::annotation::types::{AnnotationType, Certainty, Scope};
-use crate::graph::cardbox_layout::{self, CardNote, CardboxLayout};
+use crate::graph::cardbox_layout::{self, CardNote};
 
 // ---------------------------------------------------------------------------
 // Cycle C - Pure body mutation
@@ -562,17 +562,17 @@ pub(crate) fn check_sn_guard(
     Ok(())
 }
 
-/// Build effective notes by overlaying sn-derived bodies on top of fallback.
-/// sn_map wins on key conflict; empty sn body means the key is absent.
-pub(crate) fn overlay_notes_from_sn(
-    fallback: &HashMap<String, CardNote>,
+/// Derive the display notes map purely from the sn annotation map.
+/// Single source of truth: `layout.notes` on disk plays no part here.
+/// Empty sn body means the key is absent. `updated_at` comes from the sn
+/// `@date` (day precision, normalized to RFC3339 midnight UTC).
+pub(crate) fn notes_from_sn(
     sn_map: &HashMap<String, crate::graph::types::CardboxAnnotation>,
 ) -> HashMap<String, CardNote> {
-    let mut out = fallback.clone();
+    let mut out = HashMap::new();
     for (parent, sn) in sn_map {
         let body = unsanitize_sn_body(sn.body.as_deref().unwrap_or(""));
         if body.is_empty() {
-            out.remove(parent);
             continue;
         }
         let updated_at = sn.date.as_deref().map(|d| {
@@ -590,16 +590,9 @@ pub(crate) fn overlay_notes_from_sn(
     out
 }
 
-/// Apply sn overlay to layout.notes for display purposes.
-/// layout.notes is treated as fallback-only; sn-derived entries are NOT
-/// persisted into it. The overlay is computed at read time.
-///
-/// Returns the effective notes map (fallback + sn overlay). The caller
-/// should set `layout.notes = effective` on the returned layout but NOT
-/// persist that to disk.
-pub(crate) fn reconcile_slip_notes(
+/// Fetch the sn map from the graph index and derive the display notes map.
+pub(crate) fn derive_notes(
     gi: &crate::graph::indexer::GraphIndex,
-    layout: &CardboxLayout,
 ) -> Result<HashMap<String, CardNote>, String> {
     let sn_map = {
         let store = gi.store();
@@ -607,8 +600,7 @@ pub(crate) fn reconcile_slip_notes(
             .list_slip_notes_for_parents()
             .map_err(|e| e.to_string())?
     };
-
-    Ok(overlay_notes_from_sn(&layout.notes, &sn_map))
+    Ok(notes_from_sn(&sn_map))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -915,6 +907,7 @@ pub fn migrate_cardbox_slip_notes(
 mod tests {
     use super::*;
     use crate::annotation::lang::AnnotationIndexOpts;
+    use crate::graph::cardbox_layout::CardboxLayout;
     use crate::graph::indexer::GraphIndex;
     use crate::workspace::file_lock::FilePathLock;
     use crate::workspace::write_hash::WriteHashRegistry;
@@ -1611,7 +1604,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn f1_reconcile_populates_notes_from_sn() {
+    fn f1_notes_derived_from_sn_index() {
         let dir = create_workspace();
         write_md(
             dir.path(),
@@ -1624,17 +1617,16 @@ mod tests {
         let gi =
             GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
-        let layout = CardboxLayout::default();
-        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        let effective = derive_notes(&gi).unwrap();
 
         assert!(effective.contains_key("p1"));
         assert_eq!(effective["p1"].body, "Slip note body");
-        // layout.notes is NOT mutated (sn overlay is display-only)
-        assert!(layout.notes.is_empty());
     }
 
     #[test]
-    fn f2_reconcile_preserves_json_only_notes_as_fallback() {
+    fn f2_json_only_notes_are_not_derived() {
+        // Inverts the old fallback semantics: a note that exists only in
+        // cardbox.json (no sn in source) must NOT appear in derived notes.
         let dir = create_workspace();
         write_md(
             dir.path(),
@@ -1652,9 +1644,11 @@ mod tests {
                 updated_at: None,
             },
         );
+        write_layout(dir.path(), &layout);
 
-        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
-        assert_eq!(effective["p1"].body, "JSON-only note");
+        let effective = derive_notes(&gi).unwrap();
+        assert!(!effective.contains_key("p1"),
+            "JSON-only legacy entries must not be displayed: {:?}", effective);
     }
 
     #[test]
@@ -1697,7 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn f4_prune_handles_deleted_parent() {
+    fn f4_dead_parent_json_entry_not_derived() {
         let dir = create_workspace();
         write_md(dir.path(), "a.md", "No annotations.\n");
         let gi =
@@ -1711,18 +1705,19 @@ mod tests {
                 updated_at: None,
             },
         );
+        write_layout(dir.path(), &layout);
 
-        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        let effective = derive_notes(&gi).unwrap();
         assert!(
-            effective.contains_key("deleted-uuid"),
-            "orphaned note stays until pruned by read_cardbox_layout"
+            !effective.contains_key("deleted-uuid"),
+            "dead-parent JSON entry must not be displayed (pruned by migrate)"
         );
     }
 
     #[test]
-    fn f_reconcile_clears_note_when_sn_removed() {
+    fn f_derived_notes_clear_when_sn_removed() {
         let dir = create_workspace();
-        // Step 1: with sn present, overlay includes sn body
+        // Step 1: with sn present, derived notes include sn body
         write_md(
             dir.path(),
             "a.md",
@@ -1733,11 +1728,10 @@ mod tests {
         );
         let gi =
             GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
-        let layout = CardboxLayout::default();
-        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
+        let effective = derive_notes(&gi).unwrap();
         assert!(effective.contains_key("p1"));
 
-        // Step 2: remove sn from file, reindex, reconcile
+        // Step 2: remove sn from file, reindex, derive again
         write_md(
             dir.path(),
             "a.md",
@@ -1752,10 +1746,9 @@ mod tests {
             &AnnotationIndexOpts::default(),
         ).unwrap();
 
-        // layout.notes never had p1 (sn overlay is display-only)
-        let effective2 = reconcile_slip_notes(&gi, &layout).unwrap();
+        let effective2 = derive_notes(&gi).unwrap();
         assert!(!effective2.contains_key("p1"),
-            "sn removed from md -> effective notes must not have p1: {:?}", effective2);
+            "sn removed from md -> derived notes must not have p1: {:?}", effective2);
     }
 
     #[test]
@@ -1830,9 +1823,8 @@ mod tests {
             &AnnotationIndexOpts::default(),
         ).unwrap();
 
-        // Reconcile: sn gone, fallback drained -> note should not resurrect
-        let layout2 = cardbox_layout::load_layout(dir.path());
-        let effective = reconcile_slip_notes(&gi, &layout2).unwrap();
+        // Derive: sn gone -> note should not resurrect
+        let effective = derive_notes(&gi).unwrap();
         assert!(!effective.contains_key("p1"),
             "note must not resurrect after sn delete + fallback drain: {:?}", effective);
     }
@@ -1921,8 +1913,7 @@ mod tests {
             &AnnotationIndexOpts::default(),
         ).unwrap();
 
-        let layout2 = cardbox_layout::load_layout(dir.path());
-        let effective = reconcile_slip_notes(&gi, &layout2).unwrap();
+        let effective = derive_notes(&gi).unwrap();
         assert!(!effective.contains_key("p1"),
             "dual-state: note must not resurrect after sn delete + JSON drain: {:?}", effective);
     }
@@ -1998,10 +1989,9 @@ mod tests {
         let gi =
             GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
 
-        // reconcile produces effective notes with p1 from sn overlay
-        let layout = CardboxLayout::default();
-        let effective = reconcile_slip_notes(&gi, &layout).unwrap();
-        assert!(effective.contains_key("p1"), "precondition: overlay has p1");
+        // derived notes contain p1 from sn
+        let effective = derive_notes(&gi).unwrap();
+        assert!(effective.contains_key("p1"), "precondition: derived notes have p1");
 
         // Simulate what write_cardbox_layout should do: strip sn-backed keys before persist
         let mut to_persist = CardboxLayout {
@@ -2032,8 +2022,7 @@ mod tests {
             &AnnotationIndexOpts::default(),
         ).unwrap();
 
-        let layout2 = cardbox_layout::load_layout(dir.path());
-        let effective2 = reconcile_slip_notes(&gi, &layout2).unwrap();
+        let effective2 = derive_notes(&gi).unwrap();
         assert!(!effective2.contains_key("p1"),
             "no resurrection after sn delete + strip: {:?}", effective2);
     }
@@ -2226,21 +2215,16 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Cycle 5 tests - overlay timestamp normalization
+    // notes_from_sn unit tests (timestamp normalization + empty-body absence)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn overlay_notes_normalizes_date_to_rfc3339() {
-        use crate::graph::types::CardboxAnnotation;
-
-        let fallback = HashMap::new();
-        let mut sn_map = HashMap::new();
-        sn_map.insert("p1".to_string(), CardboxAnnotation {
+    fn sn_ann(body: Option<&str>, date: Option<&str>) -> crate::graph::types::CardboxAnnotation {
+        crate::graph::types::CardboxAnnotation {
             uuid: "sn1".to_string(),
             annotation_type: "slipnote".to_string(),
             certainty: "neutral".to_string(),
-            body: Some("note body".to_string()),
-            date: Some("2026-07-28".to_string()),
+            body: body.map(|s| s.to_string()),
+            date: date.map(|s| s.to_string()),
             source_page_id: "a.md".to_string(),
             source_page_title: "A".to_string(),
             source_line: 1,
@@ -2249,9 +2233,16 @@ mod tests {
             scope_kind: "anchor".to_string(),
             scope_value: "p1".to_string(),
             original: None,
-        });
+        }
+    }
 
-        let effective = overlay_notes_from_sn(&fallback, &sn_map);
+    #[test]
+    fn notes_from_sn_normalizes_date_to_rfc3339() {
+        let mut sn_map = HashMap::new();
+        sn_map.insert("p1".to_string(), sn_ann(Some("note body"), Some("2026-07-28")));
+
+        let effective = notes_from_sn(&sn_map);
+        assert_eq!(effective["p1"].body, "note body");
         assert_eq!(
             effective["p1"].updated_at.as_deref(),
             Some("2026-07-28T00:00:00Z"),
@@ -2260,33 +2251,30 @@ mod tests {
     }
 
     #[test]
-    fn overlay_notes_preserves_rfc3339_date() {
-        use crate::graph::types::CardboxAnnotation;
-
-        let fallback = HashMap::new();
+    fn notes_from_sn_preserves_rfc3339_date() {
         let mut sn_map = HashMap::new();
-        sn_map.insert("p1".to_string(), CardboxAnnotation {
-            uuid: "sn1".to_string(),
-            annotation_type: "slipnote".to_string(),
-            certainty: "neutral".to_string(),
-            body: Some("note body".to_string()),
-            date: Some("2026-07-28T12:30:00+00:00".to_string()),
-            source_page_id: "a.md".to_string(),
-            source_page_title: "A".to_string(),
-            source_line: 1,
-            char_start: 0,
-            char_end: 10,
-            scope_kind: "anchor".to_string(),
-            scope_value: "p1".to_string(),
-            original: None,
-        });
+        sn_map.insert(
+            "p1".to_string(),
+            sn_ann(Some("note body"), Some("2026-07-28T12:30:00+00:00")),
+        );
 
-        let effective = overlay_notes_from_sn(&fallback, &sn_map);
+        let effective = notes_from_sn(&sn_map);
         assert_eq!(
             effective["p1"].updated_at.as_deref(),
             Some("2026-07-28T12:30:00+00:00"),
             "already-RFC3339 should pass through unchanged"
         );
+    }
+
+    #[test]
+    fn notes_from_sn_empty_body_key_absent() {
+        let mut sn_map = HashMap::new();
+        sn_map.insert("p1".to_string(), sn_ann(None, Some("2026-07-28")));
+        sn_map.insert("p2".to_string(), sn_ann(Some(""), Some("2026-07-28")));
+
+        let effective = notes_from_sn(&sn_map);
+        assert!(effective.is_empty(),
+            "empty sn body must not produce a note entry: {:?}", effective);
     }
 
     // -----------------------------------------------------------------------
@@ -2684,7 +2672,7 @@ mod tests {
             assert!(!sn_map.contains_key("p1"), "heal should clear ghost sn from index");
         }
 
-        let effective = reconcile_slip_notes(&gi, &on_disk).unwrap();
+        let effective = derive_notes(&gi).unwrap();
         assert!(
             !effective.contains_key("p1"),
             "effective notes must not resurrect p1 after heal+drain: {:?}",

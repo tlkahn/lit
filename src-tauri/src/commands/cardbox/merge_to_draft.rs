@@ -332,8 +332,8 @@ pub async fn merge_cards_to_draft(
                     }
                 }
             }
-            let effective = super::slip_note::reconcile_slip_notes(gi, &layout)
-                .map_err(|e| crate::graph::error::GraphError::Other(e))?;
+            let effective = super::slip_note::derive_notes(gi)
+                .map_err(crate::graph::error::GraphError::Other)?;
             let mut effective_layout = layout.clone();
             effective_layout.notes = effective;
             prepare_draft_content(&uuids, &all, &effective_layout, &citekey_map)
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn draft_includes_sn_backed_notes() {
-        use crate::commands::cardbox::slip_note::overlay_notes_from_sn;
+        use crate::commands::cardbox::slip_note::notes_from_sn;
 
         let all = vec![
             make_annotation_with_original("a", "p1", "Page One", Some("quote")),
@@ -848,7 +848,7 @@ mod tests {
             original: None,
         });
 
-        layout.notes = overlay_notes_from_sn(&layout.notes, &sn_map);
+        layout.notes = notes_from_sn(&sn_map);
 
         let citekey_map: HashMap<String, Option<String>> = HashMap::new();
         let (body, _) = prepare_draft_content(&uuids, &all, &layout, &citekey_map).unwrap();
