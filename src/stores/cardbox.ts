@@ -4,6 +4,7 @@ import type { CardboxAnnotation, GroupInfo, CardNote } from "../lib/ipc";
 import { perfMark, perfMeasure } from "../lib/perf";
 import { useCardboxUndoStore } from "./cardboxUndo";
 import type { UndoEntry } from "./cardboxUndo";
+import { useStatusMessageStore } from "./statusMessage";
 import {
   listAllAnnotations,
   readCardboxLayout,
@@ -577,7 +578,12 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         notes: { ...s.notes, [uuid]: { body: trimmed, updated_at: new Date().toISOString() } },
       };
     });
-    await syncSlipNoteToSource(uuid, body);
+    try {
+      await syncSlipNoteToSource(uuid, trimmed);
+    } catch {
+      // Note stays in memory for this session; full retry UX is #948.
+      useStatusMessageStore.getState().show("Failed to save note", "error");
+    }
   },
   clearNote: async (uuid) => {
     const prevNote = get().notes[uuid];
@@ -592,7 +598,11 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
       return { notes: rest };
     });
-    await syncSlipNoteToSource(uuid, "");
+    try {
+      await syncSlipNoteToSource(uuid, "");
+    } catch {
+      useStatusMessageStore.getState().show("Failed to save note", "error");
+    }
   },
   exportNote: async (uuid) => {
     return exportCardNote(uuid);
