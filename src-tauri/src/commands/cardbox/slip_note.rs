@@ -774,9 +774,6 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                             reason: format!("write failed for {}: {}", page_id, e),
                         });
                     }
-                    for (uuid, _, _) in entries {
-                        page_drained.retain(|k| k != uuid);
-                    }
                     failed += page_migrated;
                     migrated -= page_migrated;
                     return Err((0, e.to_string()));
@@ -823,6 +820,11 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     let lit_dir = root.join(".lit");
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
     super::persist_layout(&lit_dir, &layout)?;
+
+    // Invariant relied on by the migrate-failure notice (#948): every failed
+    // count has a matching per-entry failure detail.
+    debug_assert_eq!(failed, failures.len(),
+        "failed count must equal failures detail: {:?}", failures);
 
     Ok(MigrateOutput {
         result: MigrateResult {
