@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
+import { flushSync } from "react-dom";
+import { canAnimateFlip, runFlipAnimation } from "./cardFlipAnimation";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import { renderMarkdown, renderInlineMarkdown } from "../lib/renderMarkdown";
 import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
@@ -146,6 +148,8 @@ interface CardboxCardProps {
 
 export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const animatingRef = useRef(false);
   const prevPinnedRef = useRef(isPinned);
   const [justPinned, setJustPinned] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -168,20 +172,28 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   }, [isPinned]);
 
   const flipCard = useCallback(() => {
-    if (!canFlip) return;
+    if (!canFlip || animatingRef.current) return;
     const root = cardRef.current;
+    const stage = stageRef.current;
     const active = document.activeElement as HTMLElement | null;
     const insideFace = Boolean(
-      active &&
-        root &&
-        active !== root &&
-        root.contains(active) &&
-        active.closest(".cardbox-card-face"),
+      active && root && active !== root && stage?.contains(active),
     );
-    setFlipped((v) => !v);
-    if (insideFace) {
-      requestAnimationFrame(() => root?.focus());
+    const refocus = () => {
+      if (insideFace) requestAnimationFrame(() => root?.focus());
+    };
+    if (!stage || !canAnimateFlip(stage)) {
+      setFlipped((v) => !v);
+      refocus();
+      return;
     }
+    animatingRef.current = true;
+    // flushSync so the face swap commits between the two animation phases.
+    void runFlipAnimation(stage, () => flushSync(() => setFlipped((v) => !v)))
+      .finally(() => {
+        animatingRef.current = false;
+        refocus();
+      });
   }, [canFlip]);
 
   const handleKeyDown = useCallback(
@@ -251,9 +263,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           >{'\u{F2F1}'}</button>
         )}
       </div>
-      <div className="cardbox-card-scene">
-        <div className={`cardbox-card-rotator${showFlipped ? " is-flipped" : ""}`}>
-          <div className="cardbox-card-face cardbox-card-face-front pr-8" data-testid="card-face-front" aria-hidden={showFlipped} {...(showFlipped ? { inert: "" as unknown as boolean } : {})}>
+      <div className="cardbox-card-stage" ref={stageRef} data-testid="card-flip-stage">
+        {!showFlipped ? (
+          <div className="pr-8" data-testid="card-face-front">
             <div className="flex items-start gap-2">
               <span
                 className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
@@ -409,29 +421,28 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               </div>
             </div>
           </div>
-          {canFlip && (
-            <div className="cardbox-card-face cardbox-card-face-back pr-8" data-testid="card-face-back" aria-hidden={!showFlipped} {...(!showFlipped ? { inert: "" as unknown as boolean } : {})}>
-              <div
-                className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
-                data-testid="card-original"
-                dangerouslySetInnerHTML={{ __html: renderedOriginal }}
-                onClick={(e) => {
-                  if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
-                }}
-              />
-              {annotation.source_page_title && (
-                <button
-                  type="button"
-                  className="mt-2 text-xs text-text-muted hover:text-text-normal"
-                  data-testid="card-source"
-                  onClick={(e) => { e.stopPropagation(); onNavigate(); }}
-                >
-                  {annotation.source_page_title}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        ) : (
+          <div className="pr-8" data-testid="card-face-back">
+            <div
+              className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
+              data-testid="card-original"
+              dangerouslySetInnerHTML={{ __html: renderedOriginal }}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("a")) e.stopPropagation();
+              }}
+            />
+            {annotation.source_page_title && (
+              <button
+                type="button"
+                className="mt-2 text-xs text-text-muted hover:text-text-normal"
+                data-testid="card-source"
+                onClick={(e) => { e.stopPropagation(); onNavigate(); }}
+              >
+                {annotation.source_page_title}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
