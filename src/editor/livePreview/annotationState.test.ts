@@ -918,6 +918,43 @@ describe("annotationDecorationPlugin", () => {
     view.destroy();
   });
 
+  it("slipnote block annotation → CalloutWidget, not ThreadWidget (#949 smoke)", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\nafter";
+    const state = EditorState.create({
+      doc,
+      selection: { anchor: 28 },
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+
+    const ann = makeAnnotation({
+      form: "block",
+      annotation_type: "slipnote",
+      scope: { kind: "anchor", value: "p1" },
+      char_start: 12,
+      char_end: 27,
+      original: "<!---\nbody\n--->",
+    });
+
+    view.dispatch({ effects: setAnnotationData.of([ann]) });
+
+    const found = collectFromSet(view.state.field(annotationBlockDecorationField).decorations).find(
+      (d) => d.from === 12 && d.to === 27,
+    );
+    expect(found).toBeTruthy();
+    expect(found!.widget).toBeInstanceOf(CalloutWidget);
+    expect(found!.widget).not.toBeInstanceOf(ThreadWidget);
+
+    view.destroy();
+  });
+
   it("InlineAnnotation + mode 'footnote' → MarkerWidget", () => {
     const doc = "first line\ntext <!---n | body---> more";
     const state = EditorState.create({
