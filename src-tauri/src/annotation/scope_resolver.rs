@@ -761,28 +761,32 @@ mod tests {
             return None;
         }
         let byte_start = utf16_to_byte(content, char_start);
-        let text_before = &content[..byte_start];
-        let trimmed = text_before.trim_end();
-        if trimmed.is_empty() {
+        let te = content[..byte_start].trim_end().len();
+        if te == 0 {
             return None;
         }
 
-        let spans = locate_sentences(trimmed, lang);
-        if spans.is_empty() {
+        let mut kept: Vec<(usize, usize)> = Vec::new();
+        for (s, e) in locate_sentences(content, lang) {
+            if s >= te {
+                continue;
+            }
+            let clipped = &content[s..e.min(te)];
+            let trimmed = clipped.trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            kept.push((s, s + trimmed.len()));
+        }
+        if kept.is_empty() {
             return None;
         }
 
-        let take = n.min(spans.len());
-        let (first_start, _) = spans[spans.len() - take];
-        let (_, last_end) = spans[spans.len() - 1];
+        let take = n.min(kept.len());
+        let (first_start, _) = kept[kept.len() - take];
+        let (_, last_end) = kept[kept.len() - 1];
 
-        let scope_start_byte = first_start;
-        let scope_end_byte = last_end.min(trimmed.len());
-
-        let scope_start_utf16 = utf16_len(&content[..scope_start_byte]);
-        let scope_end_utf16 = utf16_len(&content[..scope_end_byte]);
-
-        Some((scope_start_utf16, scope_end_utf16))
+        Some((utf16_len(&content[..first_start]), utf16_len(&content[..last_end])))
     }
 
     fn resolve_paragraph(content: &str, char_start: usize, n: usize) -> Option<(usize, usize)> {
