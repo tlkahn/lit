@@ -275,6 +275,33 @@ pub(crate) fn do_sync_slip_note_to_source(
     parent_uuid: &str,
     body: &str,
 ) -> Result<SyncOutput, String> {
+    do_sync_slip_note_to_source_with_reindex(
+        root,
+        gi,
+        registry,
+        file_lock,
+        parent_uuid,
+        body,
+        |diff| gi.batch_reindex(diff, ann_opts),
+    )
+}
+
+/// Seam variant: `reindex` replaces the direct `gi.batch_reindex` calls so
+/// tests can inject reindex failures (#949).
+pub(crate) fn do_sync_slip_note_to_source_with_reindex<F>(
+    root: &std::path::Path,
+    gi: &crate::graph::indexer::GraphIndex,
+    registry: &crate::workspace::write_hash::WriteHashRegistry,
+    file_lock: &crate::workspace::file_lock::FilePathLock,
+    parent_uuid: &str,
+    body: &str,
+    mut reindex: F,
+) -> Result<SyncOutput, String>
+where
+    F: FnMut(
+        &crate::graph::indexer::DiffResult,
+    ) -> Result<Vec<(String, String)>, crate::graph::error::GraphError>,
+{
     let now = chrono::Utc::now();
 
     let (page_id, store_position) = {
@@ -367,14 +394,11 @@ pub(crate) fn do_sync_slip_note_to_source(
         WritePhase::DriftHeal { child_uuid, page_id } => {
             // delete-equivalent: md already has no sn
             let outcome = interpret_reindex_outcome(
-                gi.batch_reindex(
-                    &crate::graph::indexer::DiffResult {
-                        new: vec![],
-                        changed: vec![page_id.clone()],
-                        deleted: vec![],
-                    },
-                    ann_opts,
-                ),
+                reindex(&crate::graph::indexer::DiffResult {
+                    new: vec![],
+                    changed: vec![page_id.clone()],
+                    deleted: vec![],
+                }),
                 &page_id,
             );
             Ok(SyncOutput {
@@ -393,14 +417,11 @@ pub(crate) fn do_sync_slip_note_to_source(
         }
         WritePhase::Wrote { child_uuid, page_id } => {
             let outcome = interpret_reindex_outcome(
-                gi.batch_reindex(
-                    &crate::graph::indexer::DiffResult {
-                        new: vec![],
-                        changed: vec![page_id.clone()],
-                        deleted: vec![],
-                    },
-                    ann_opts,
-                ),
+                reindex(&crate::graph::indexer::DiffResult {
+                    new: vec![],
+                    changed: vec![page_id.clone()],
+                    deleted: vec![],
+                }),
                 &page_id,
             );
 
@@ -3018,5 +3039,100 @@ mod tests {
 
         assert!(!output.result.synced, "true noop when neither file nor index has sn");
         assert!(!output.reindex_retry);
+    }
+
+    // -----------------------------------------------------------------------
+    // Cycle J2 (#949) - reindex-failure contract via fault-injection seam
+    // (deferred integration test from the #947/#951 review)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_reindex_err_wrote_path_retries_and_keeps_write() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let output = do_sync_slip_note_to_source_with_reindex(
+            dir.path(),
+            &gi,
+            &reg,
+            &make_file_lock(),
+            "p1",
+            "Injected note body",
+            |_diff| Err(crate::graph::error::GraphError::Other("injected reindex failure".into())),
+        )
+        .unwrap();
+
+        assert!(output.reindex_retry, "reindex Err must request retry");
+        assert!(output.file_changed, "write happened before reindex failed");
+        assert!(output.result.synced, "write path reports synced");
+        assert!(output.removed_annotations.is_empty(),
+            "failed reindex yields no removed annotations");
+
+        // The page write persisted despite the reindex failure.
+        let content = read_md(dir.path(), "a.md");
+        assert!(content.contains("Injected note body"),
+            "sn body must survive on disk: {}", content);
+
+        // Gated emit plan: file-modified event still fires, graph side effects
+        // are deferred to the scheduled retry.
+        let plan = sync_emit_plan(
+            output.file_changed,
+            output.result.synced,
+            output.reindex_retry,
+        );
+        assert_eq!(plan, SlipEmitPlan { file_modified: true, graph_side_effects: false });
+    }
+
+    #[test]
+    fn sync_reindex_err_drift_heal_path_retries() {
+        let dir = create_workspace();
+        // Parent + sn in file, build index so the sn is indexed for p1.
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | Parent ---> end.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | Note body @2026-07-28 --->\n",
+            ),
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Externally rewrite file to parent-only (no reindex) - index stale.
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+
+        let output = do_sync_slip_note_to_source_with_reindex(
+            dir.path(),
+            &gi,
+            &reg,
+            &make_file_lock(),
+            "p1",
+            "",
+            |_diff| Err(crate::graph::error::GraphError::Other("injected reindex failure".into())),
+        )
+        .unwrap();
+
+        assert!(output.reindex_retry, "failed heal reindex must request retry");
+        assert!(!output.file_changed, "drift heal never touches file bytes");
+        assert!(output.result.synced, "heal reports synced");
+
+        let plan = sync_emit_plan(
+            output.file_changed,
+            output.result.synced,
+            output.reindex_retry,
+        );
+        assert_eq!(plan, SlipEmitPlan { file_modified: false, graph_side_effects: false });
     }
 }
