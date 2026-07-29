@@ -1800,27 +1800,6 @@ mod tests {
 
     // --- ScopeResolveCtx: forward sentences, asymmetric, mode, extraction ---
 
-    /// Word- and sentence-boundary cut positions (UTF-16): index 0, positions
-    /// following whitespace, and positions following a sentence terminator.
-    /// Mid-word cuts are excluded: truncating a word can fabricate an
-    /// abbreviation-like fragment (e.g. "ra|n." → "n.") whose re-segmentation
-    /// legitimately differs from the cached full-body boundaries — the
-    /// accepted reconstruction non-identity.
-    fn boundary_cut_offsets(content: &str) -> Vec<usize> {
-        let mut offsets = vec![0usize];
-        let mut prev: Option<char> = None;
-        for (b, ch) in content.char_indices() {
-            if let Some(p) = prev {
-                if p.is_whitespace() || matches!(p, '.' | '!' | '?' | '。' | '！' | '？') {
-                    offsets.push(utf16_len(&content[..b]));
-                }
-            }
-            prev = Some(ch);
-        }
-        offsets.push(utf16_len(content));
-        offsets
-    }
-
     #[test]
     fn ctx_parity_forward_sentences() {
         for (content, lang) in sentence_parity_corpus() {
@@ -1832,6 +1811,54 @@ mod tests {
                         ctx.resolve_forward_sentences(cs, n),
                         resolve_forward_sentences(content, cs, n, lang),
                         "ctx/free-fn forward-sentence mismatch for n={n} at char_start {cs} in {content:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Asymmetric and bidirectional sentence resolution against the
+    /// independent oracle, over mid-word cuts included. The expected values
+    /// compose the same test oracles the one-sided parity sweeps use
+    /// (`resolve_sentence`, `resolve_forward_sentences`), mirroring how
+    /// production composes its own one-sided selectors, so neither side
+    /// shares cached machinery with the other.
+    #[test]
+    fn ctx_parity_asymmetric_bidirectional_sentences() {
+        for (content, lang) in sentence_parity_corpus() {
+            let content = content.as_str();
+            let ctx = ScopeResolveCtx::new(content, lang);
+            for cs in sampled_u16_offsets(content) {
+                for (before, after) in [(0usize, 1usize), (1, 2), (2, 0), (100, 100)] {
+                    let scope = Scope::Asymmetric { unit: ScopeKind::Sentence, before, after };
+                    let expected_start = if before == 0 {
+                        cs
+                    } else {
+                        resolve_sentence(content, cs, before, lang)
+                            .map(|(s, _)| s)
+                            .unwrap_or(cs)
+                    };
+                    let expected_end =
+                        resolve_forward_sentences(content, cs, after, lang).unwrap_or(cs);
+                    assert_eq!(
+                        ctx.resolve_scope_range(cs, &scope),
+                        Some(ScopeRange { start: expected_start, end: expected_end }),
+                        "ctx/oracle asymmetric-sentence mismatch for before={before} after={after} at char_start {cs} in {content:?}"
+                    );
+                }
+                for n in [1usize, 2] {
+                    let expected = resolve_sentence(content, cs, n, lang).map(|(s, e)| ScopeRange {
+                        start: s,
+                        end: resolve_forward_sentences(content, cs, n, lang).unwrap_or(e),
+                    });
+                    assert_eq!(
+                        ctx.resolve_scope_range_with_mode(
+                            cs,
+                            &Scope::Sentence(n),
+                            &ResolutionMode::Bidirectional
+                        ),
+                        expected,
+                        "ctx/oracle bidirectional-sentence mismatch for n={n} at char_start {cs} in {content:?}"
                     );
                 }
             }
@@ -1855,7 +1882,7 @@ mod tests {
         ];
         for (content, lang) in corpus {
             let ctx = ScopeResolveCtx::new(content, lang);
-            for cs in boundary_cut_offsets(content) {
+            for cs in sampled_u16_offsets(content) {
                 for scope in &scopes {
                     assert_eq!(
                         ctx.resolve_scope_range(cs, scope),
