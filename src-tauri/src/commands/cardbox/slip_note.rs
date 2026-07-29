@@ -672,7 +672,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     let mut reindex_retry_pages: Vec<String> = Vec::new();
 
     for (page_id, entries) in &by_page {
-        let write_result = file_lock.with_lock(&root.join(page_id), || -> Result<(String, usize, Vec<String>), (usize, String)> {
+        let write_result = file_lock.with_lock(&root.join(page_id), || -> Result<(String, bool, Vec<String>), (usize, String)> {
             let page = match crate::workspace::ops::read_page(root, page_id, registry) {
                 Ok(p) => p,
                 Err(e) => {
@@ -689,6 +689,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
             let mut current_body = page.body.clone();
             let mut page_migrated = 0usize;
             let mut page_drained: Vec<String> = Vec::new();
+            let mut body_changed = false;
 
             for (parent_uuid, note_body, store_position) in entries {
                 let anns = parse_annotations_builtin(&current_body);
@@ -741,6 +742,7 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 ) {
                     Ok(new_body) => {
                         current_body = new_body;
+                        body_changed = true;
                         page_drained.push(parent_uuid.clone());
                         page_migrated += 1;
                         migrated += 1;
@@ -759,7 +761,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 }
             }
 
-            if page_migrated > 0 {
+            // Entries whose sn child already exists in the page leave the body
+            // untouched; skip the write (and the reindex downstream) so an IO
+            // failure can never be attributed to entries that needed no work.
+            if body_changed {
                 if let Err(e) = crate::workspace::ops::write_page(
                     root,
                     page_id,
@@ -780,13 +785,13 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 }
             }
 
-            Ok((page_id.clone(), page_migrated, page_drained))
+            Ok((page_id.clone(), body_changed, page_drained))
         });
 
         match write_result {
-            Ok((pid, page_migrated, page_drained)) => {
+            Ok((pid, wrote, page_drained)) => {
                 drained_keys.extend(page_drained);
-                if page_migrated > 0 {
+                if wrote {
                     // Reindex outside lock
                     let outcome = interpret_reindex_outcome(
                         gi.batch_reindex(
@@ -2135,6 +2140,50 @@ mod tests {
             "migrated entry drained: {:?}", on_disk.notes);
         assert!(on_disk.notes.contains_key("p2"),
             "failed entry retained for retry: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn migrate_already_backed_entries_skip_page_write() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Stale index: page gains a hand-written sn child after indexing, so
+        // sn_map lacks it and the JSON entry stays pending, but the page parse
+        // hits the existing_child branch and nothing needs writing.
+        let page_with_child =
+            "Text <!---[p1] n: \\s | Parent ---> <!---[c1] sn: ^\"p1\" | Existing note @2026-07-28 ---> end.\n";
+        write_md(dir.path(), "a.md", page_with_child);
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "json copy".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap().result;
+
+        assert_eq!(result.migrated, 1, "already-backed entry counts as migrated");
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 0);
+        assert!(result.changed_pages.is_empty(),
+            "unchanged page must not be written or reindexed: {:?}", result.changed_pages);
+
+        assert_eq!(read_md(dir.path(), "a.md"), page_with_child,
+            "page body must be untouched");
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(on_disk.notes.is_empty(),
+            "JSON entry drained even without a page write: {:?}", on_disk.notes);
     }
 
     // -----------------------------------------------------------------------
