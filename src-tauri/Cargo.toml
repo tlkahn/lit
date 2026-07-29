@@ -63,7 +63,9 @@ indexmap = { version = "2", features = ["serde"] }
 tokio = { version = "1", features = ["net", "io-util", "rt", "macros", "time"] }
 lmpdf = { git = "https://github.com/tlkahn/lmpdf.git", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
-sentencex = "0.1"
+# Exact pin: segmentation behavior is load-bearing for annotation scope
+# resolution (#945) - bump deliberately and re-run the ctx parity sweeps.
+sentencex = "=0.1.30"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 base64 = "0.22"

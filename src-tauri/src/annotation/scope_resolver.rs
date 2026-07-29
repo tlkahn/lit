@@ -142,11 +142,13 @@ impl<'a> ScopeResolveCtx<'a> {
 
     /// Full-body sentence segmentation, computed lazily on first use.
     /// `sentencex::segment` returns sentence segments as subslices of the
-    /// input, so each span is recovered by pointer offset. Paragraph
-    /// separators are emitted as a static `"\n\n"` (sentencex 0.1.23), not a
-    /// subslice — those are dropped here, leaving whitespace-only gaps
-    /// between spans. That matches `split_sentences`, which trims separators
-    /// to empty and filters them out.
+    /// input, so each span is recovered by pointer offset. Segments that are
+    /// not subslices (defensive: none observed under the pinned sentencex)
+    /// and whitespace-only segments (paragraph separators, emitted as real
+    /// `"\n\n"` subslices since sentencex 0.1.30) are dropped here, leaving
+    /// whitespace-only gaps between prose spans. That matches
+    /// `split_sentences`, which trims separators to empty and filters them
+    /// out.
     fn segs(&self) -> &[RawSeg] {
         self.segs.get_or_init(|| {
             let base = self.content.as_ptr() as usize;
@@ -160,6 +162,9 @@ impl<'a> ScopeResolveCtx<'a> {
                 }
                 let raw_start = ptr - base;
                 if raw_start < cursor {
+                    continue;
+                }
+                if seg.trim().is_empty() {
                     continue;
                 }
                 cursor = raw_start + seg.len();
@@ -666,13 +671,17 @@ mod tests {
     use crate::annotation::scanner::utf16_len;
 
     // -----------------------------------------------------------------------
-    // Reference implementations for the ctx parity tests: they re-segment the
-    // prefix/suffix per call instead of selecting spans out of the shared
-    // full-body segmentation. What they lock is that independence from
-    // `segs()`, not the historical first-occurrence `ws_flexible_find`
-    // semantics: `locate_sentences` carries the same sequential cursor this
-    // PR introduced, deliberately replacing first-occurrence lookup. The
-    // repeated-text tests below are what pin that correctness fix.
+    // Reference implementations for the ctx parity tests. They state the
+    // production semantic — "segment the full content, clip the spans at the
+    // cut" — without sharing any of the cached machinery: sentences are
+    // located by string matching (`locate_sentences`), no `partition_point`,
+    // no pointer arithmetic, no shared segmentation cache. Re-segmenting the
+    // truncated prefix/suffix instead is NOT equivalent: no segmenter
+    // guarantees a truncated text yields the same boundaries as the full
+    // body (e.g. sentencex 0.1.30's sentence-starter heuristic splits
+    // "Repeat me. So" but not "Repeat me. Something else."). The
+    // repeated-text tests below pin `locate_sentences`' sequential-cursor
+    // correctness against first-occurrence lookup.
     // -----------------------------------------------------------------------
 
     /// Whitespace-flexible substring search: matches `needle`'s non-whitespace
@@ -1591,10 +1600,9 @@ mod tests {
 
     #[test]
     fn ctx_segs_cover_content_with_whitespace_gaps_only() {
-        // sentencex 0.1.23 emits paragraph separators as a static "\n\n"
-        // (not a subslice), so `segs()` keeps only true subslice segments:
-        // spans must be monotonic, in-bounds, and any gap between them (or at
-        // either edge) must be pure whitespace (a dropped separator).
+        // `segs()` keeps only prose spans: monotonic, in-bounds, never
+        // whitespace-only, and any gap between them (or at either edge) must
+        // be pure whitespace (a dropped paragraph separator).
         for (content, lang) in [
             ("The dog ran. The cat sat. A third one here.", "en"),
             ("First para.\n\nSecond para. With two sentences.", "en"),
@@ -1609,6 +1617,11 @@ mod tests {
                 assert!(
                     s.raw_start >= prev_end && s.raw_end >= s.raw_start && s.raw_end <= content.len(),
                     "spans must be monotonic and in-bounds in {content:?}"
+                );
+                assert!(
+                    !content[s.raw_start..s.raw_end].trim().is_empty(),
+                    "span {:?} must not be whitespace-only in {content:?}",
+                    &content[s.raw_start..s.raw_end]
                 );
                 assert!(
                     content[prev_end..s.raw_start].trim().is_empty(),
