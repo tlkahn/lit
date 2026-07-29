@@ -20,6 +20,7 @@ import {
   pinCardboxCard,
   unpinCardboxCard,
   syncSlipNoteToSource,
+  migrateCardboxSlipNotes,
   exportCardNote,
   setCardColor as setCardColorIpc,
   clearCardColor as clearCardColorIpc,
@@ -63,6 +64,10 @@ export interface CardboxStore {
   groups: Record<string, GroupInfo>;
   pinned: string[];
   notes: Record<string, CardNote>;
+  // Per-uuid slip-note sync bookkeeping: `gen` identifies the latest
+  // setNote/clearNote for the uuid (stale resolves must not touch state);
+  // `inFlight` counts unresolved syncs (loadLayout must not clobber them).
+  noteSyncs: Record<string, { gen: number; inFlight: number }>;
   layoutVersion: number;
   colors: Record<string, string>;
   connectionsForUuid: string | null;
@@ -123,6 +128,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   groups: {},
   pinned: [],
   notes: {},
+  noteSyncs: {},
   layoutVersion: 3,
   colors: {},
   connectionsForUuid: null,
@@ -242,16 +248,53 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     })),
   setOrder: (order) => set({ order }),
   loadLayout: async () => {
+    // Migrate legacy layout.notes into sn annotations before reading, so the
+    // layout's notes map reflects source-backed bodies. Failures never block
+    // the read; migration retries on next open.
+    try {
+      const result = await migrateCardboxSlipNotes();
+      const failed = result.failed;
+      if (failed > 0) {
+        console.warn("[cardbox] slip-note migration failures:", result.failures);
+        useStatusMessageStore.getState().show(
+          `${failed} note${failed === 1 ? "" : "s"} could not be written to source; will retry next open`,
+          "error",
+        );
+      }
+    } catch (e) {
+      console.error("[cardbox] slip-note migration failed:", e);
+      useStatusMessageStore.getState().show(
+        "Slip-note migration failed; will retry next open",
+        "error",
+      );
+    }
     try {
       const layout = await readCardboxLayout();
       const groups = layout.groups ?? {};
-      const notes = layout.notes ?? {};
       const colors = layout.colors ?? {};
-      if (layout.order.length > 0) {
-        set({ order: layout.order, links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version, colors });
-      } else {
-        set({ links: layout.links ?? [], groups, pinned: layout.pinned ?? [], notes, layoutVersion: layout.version, colors });
-      }
+      set((s) => {
+        // Apply the read notes, but preserve the in-memory state for any
+        // uuid with a sync still in flight: keep the optimistic note if
+        // present, keep the deletion (pending clearNote) if absent. This is
+        // deliberately not a merge — notes deleted elsewhere must not be
+        // resurrected.
+        const notes = { ...(layout.notes ?? {}) };
+        for (const [uuid, sync] of Object.entries(s.noteSyncs)) {
+          if (sync.inFlight <= 0) continue;
+          const current = s.notes[uuid];
+          if (current) notes[uuid] = current;
+          else delete notes[uuid];
+        }
+        return {
+          ...(layout.order.length > 0 ? { order: layout.order } : {}),
+          links: layout.links ?? [],
+          groups,
+          pinned: layout.pinned ?? [],
+          notes,
+          layoutVersion: layout.version,
+          colors,
+        };
+      });
     } catch {
       // Ignore — use default order from annotations
     }
@@ -571,20 +614,45 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       },
       redo: async () => { await get().setNote(uuid, body); },
     });
+    const gen = (get().noteSyncs[uuid]?.gen ?? 0) + 1;
     set((s) => {
+      const prev = s.noteSyncs[uuid] ?? { gen: 0, inFlight: 0 };
+      const noteSyncs = { ...s.noteSyncs, [uuid]: { gen, inFlight: prev.inFlight + 1 } };
       if (!trimmed) {
         const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
-        return { notes: rest };
+        return { notes: rest, noteSyncs };
       }
       return {
         notes: { ...s.notes, [uuid]: { body: trimmed, updated_at: new Date().toISOString() } },
+        noteSyncs,
       };
     });
     try {
-      await syncSlipNoteToSource(uuid, trimmed);
+      const result = await syncSlipNoteToSource(uuid, trimmed);
+      // Align to the source-of-truth timestamp only if this is still the
+      // latest sync for this uuid; a stale resolve may carry the same body
+      // (A -> B -> A) so body equality is not request identity. Note that
+      // updated_at strings arrive in heterogeneous RFC3339 formats (JS
+      // toISOString `Z`, Rust to_rfc3339 `+00:00`, day-precision from the
+      // DSL) — never order them by string comparison.
+      set((s) => {
+        const current = s.notes[uuid];
+        if (!current || s.noteSyncs[uuid]?.gen !== gen) return s;
+        return {
+          notes: { ...s.notes, [uuid]: { ...current, updated_at: result.updated_at } },
+        };
+      });
     } catch {
-      // Note stays in memory for this session; full retry UX is #948.
+      // The optimistic value stays until the cardbox reloads; there is no
+      // JSON fallback, so a remount or restart before a successful retry
+      // loses the edit. Failure is surfaced via the toast below.
       useStatusMessageStore.getState().show("Failed to save note", "error");
+    } finally {
+      set((s) => {
+        const sync = s.noteSyncs[uuid];
+        if (!sync) return s;
+        return { noteSyncs: { ...s.noteSyncs, [uuid]: { ...sync, inFlight: sync.inFlight - 1 } } };
+      });
     }
   },
   clearNote: async (uuid) => {
@@ -596,14 +664,25 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       undo: async () => { await get().setNote(uuid, prevBody); },
       redo: async () => { await get().clearNote(uuid); },
     });
+    const gen = (get().noteSyncs[uuid]?.gen ?? 0) + 1;
     set((s) => {
+      const prev = s.noteSyncs[uuid] ?? { gen: 0, inFlight: 0 };
       const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
-      return { notes: rest };
+      return {
+        notes: rest,
+        noteSyncs: { ...s.noteSyncs, [uuid]: { gen, inFlight: prev.inFlight + 1 } },
+      };
     });
     try {
       await syncSlipNoteToSource(uuid, "");
     } catch {
       useStatusMessageStore.getState().show("Failed to save note", "error");
+    } finally {
+      set((s) => {
+        const sync = s.noteSyncs[uuid];
+        if (!sync) return s;
+        return { noteSyncs: { ...s.noteSyncs, [uuid]: { ...sync, inFlight: sync.inFlight - 1 } } };
+      });
     }
   },
   exportNote: async (uuid) => {

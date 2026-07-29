@@ -142,6 +142,7 @@ import {
   pinCardboxCard,
   unpinCardboxCard,
   syncSlipNoteToSource,
+  migrateCardboxSlipNotes,
   exportCardNote,
   mergeCardsToDraft,
   setCardColor,
@@ -865,6 +866,14 @@ describe("ipc", () => {
             sn_uuid: "sn-1",
             synced: true,
             page_id: "a.md",
+          };
+        case "migrate_cardbox_slip_notes":
+          return {
+            migrated: 3,
+            failed: 1,
+            skipped: 2,
+            changed_pages: ["a.md"],
+            failures: [{ uuid: "u9", reason: "parent annotation not found" }],
           };
         case "export_card_note":
           return "Note on Test.md";
@@ -2755,6 +2764,17 @@ describe("ipc", () => {
       parentUuid: "u1",
       body: "",
     });
+  });
+
+  it("migrateCardboxSlipNotes calls migrate_cardbox_slip_notes and returns MigrateResult", async () => {
+    const result = await migrateCardboxSlipNotes();
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("migrate_cardbox_slip_notes", {});
+    expect(result.migrated).toBe(3);
+    expect(result.failed).toBe(1);
+    expect(result.skipped).toBe(2);
+    expect(result.changed_pages).toEqual(["a.md"]);
+    expect(result.failures).toEqual([{ uuid: "u9", reason: "parent annotation not found" }]);
   });
 
   it("exportCardNote calls export_card_note and returns markdown", async () => {

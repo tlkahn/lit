@@ -17,6 +17,7 @@ describe("cardbox undo integration", () => {
       groups: {},
       pinned: [],
       notes: {},
+      noteSyncs: {},
       colors: {},
       connectionsForUuid: null,
       connectionsSavedFilters: null,
@@ -193,6 +194,34 @@ describe("cardbox undo integration", () => {
 
       await useCardboxUndoStore.getState().undo();
       expect(useCardboxStore.getState().notes.u1).toBeUndefined();
+    });
+
+    it("undo after a failed sync re-syncs the previous body", async () => {
+      useCardboxStore.setState({ notes: { u1: { body: "original", updated_at: "2024-01-01" } } });
+      const syncCalls: unknown[] = [];
+      let failSync = true;
+      mockInvoke((cmd, args) => {
+        if (cmd === "sync_slip_note_to_source") {
+          syncCalls.push(args?.body);
+          if (failSync) throw new Error("page IO failed");
+          return {
+            parent_uuid: "u1",
+            body: args?.body,
+            updated_at: "2026-07-29T00:00:00Z",
+            sn_uuid: "sn-1",
+            synced: true,
+            page_id: "a.md",
+          };
+        }
+        return null;
+      });
+      await useCardboxStore.getState().setNote("u1", "updated");
+      expect(useCardboxStore.getState().notes.u1?.body).toBe("updated");
+
+      failSync = false;
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxStore.getState().notes.u1?.body).toBe("original");
+      expect(syncCalls).toEqual(["updated", "original"]);
     });
 
     it("clearNote then undo restores the note", async () => {
