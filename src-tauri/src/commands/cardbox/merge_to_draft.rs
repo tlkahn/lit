@@ -899,4 +899,66 @@ mod tests {
         assert!(filename.ends_with(".md"));
         assert!(root.join(&filename).exists());
     }
+
+    // ── Cycle J1 (#949): full pipeline against a real GraphIndex ──────────
+
+    fn write_md(root: &std::path::Path, rel_path: &str, content: &str) {
+        let abs = root.join(rel_path);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(abs, content).unwrap();
+    }
+
+    fn write_layout(root: &std::path::Path, layout: &CardboxLayout) {
+        let lit_dir = root.join(".lit");
+        std::fs::create_dir_all(&lit_dir).unwrap();
+        let content = serde_json::to_string_pretty(layout).unwrap();
+        std::fs::write(lit_dir.join("cardbox.json"), content).unwrap();
+    }
+
+    #[test]
+    fn draft_slip_text_from_real_index() {
+        use crate::annotation::lang::AnnotationIndexOpts;
+        use crate::graph::indexer::GraphIndex;
+
+        let dir = tempfile::tempdir().unwrap();
+        write_md(
+            dir.path(),
+            "a.md",
+            concat!(
+                "Text <!---[p1] n: \\s | First parent ---> more.\n\n",
+                "<!---[sn1] sn: ^\"p1\" | sn prose from source @2026-07-28 --->\n\n",
+                "Other <!---[p2] n: \\s | Second parent ---> end.\n",
+            ),
+        );
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert("p2".to_string(), slip("stale JSON prose"));
+        write_layout(dir.path(), &layout);
+
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let layout = crate::graph::cardbox_layout::load_layout(dir.path());
+
+        // Same pipeline as the merge_cards_to_draft command's Phase 1.
+        let all = gi.list_all_cardbox_annotations().unwrap();
+        let notes = super::super::slip_note::derive_notes(&gi).unwrap();
+        let uuids = vec!["p1".to_string(), "p2".to_string()];
+        let citekey_map: HashMap<String, Option<String>> = HashMap::new();
+
+        let (body, _) =
+            prepare_draft_content(&uuids, &all, &layout, &notes, &citekey_map).unwrap();
+
+        assert!(
+            body.contains("sn prose from source"),
+            "draft must carry the sn-derived note for p1: {}",
+            body
+        );
+        assert!(
+            !body.contains("stale JSON prose"),
+            "draft must not resurrect p2's JSON-only legacy note: {}",
+            body
+        );
+    }
 }
