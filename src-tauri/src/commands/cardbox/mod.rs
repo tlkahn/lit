@@ -3051,7 +3051,7 @@ mod tests {
     }
 
     #[test]
-    fn export_card_note_reads_sn_overlay() {
+    fn export_card_note_reads_sn_body() {
         use crate::workspace::write_hash::WriteHashRegistry;
 
         let dir = create_workspace();
@@ -3119,7 +3119,7 @@ mod tests {
     }
 
     #[test]
-    fn write_layout_client_notes_leave_disk_notes_byte_identical() {
+    fn write_layout_client_notes_leave_disk_notes_verbatim() {
         // Full write path: disk cardbox.json notes bytes survive a client
         // write that carries a notes payload.
         let dir = create_workspace();

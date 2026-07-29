@@ -559,6 +559,9 @@ pub struct MigrateFailure {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MigrateResult {
+    /// Entries whose JSON copy was drained, including those already
+    /// source-backed before this run (notice copy should read "migrated or
+    /// already source-backed", not claim fresh work for all of them).
     pub migrated: usize,
     pub failed: usize,
     pub skipped: usize,
