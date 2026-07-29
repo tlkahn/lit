@@ -1,7 +1,30 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CardboxCard, showCardFlipped } from "./CardboxCard";
 import type { CardboxAnnotation } from "../lib/ipc";
+
+interface FlipDeferred {
+  resolve: () => void;
+  reject: (err: unknown) => void;
+}
+
+/** Give the flip stage a controllable WAAPI stub so flips take the animated path. */
+function installFakeAnimate(stage: HTMLElement) {
+  const deferreds: FlipDeferred[] = [];
+  const animate = vi.fn(() => {
+    let resolve!: () => void;
+    let reject!: (err: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    promise.catch(() => {});
+    deferreds.push({ resolve, reject });
+    return { finished: promise } as unknown as Animation;
+  });
+  (stage as unknown as { animate: typeof animate }).animate = animate;
+  return { animate, deferreds };
+}
 
 const baseAnnotation: CardboxAnnotation = {
   uuid: "test-uuid",
@@ -417,11 +440,9 @@ describe("CardboxCard", () => {
     fireEvent.click(screen.getByTestId("card-flip"));
     expect(screen.getByTestId("card-original")).toHaveTextContent(baseAnnotation.original!);
     expect(screen.getByTestId("card-source")).toHaveTextContent("Test Document");
-    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByTestId("card-face-back")).toHaveAttribute("aria-hidden", "false");
   });
 
-  it("front face hides annotation body from a11y tree when flipped", () => {
+  it("mounts only the visible face: back when flipped, front otherwise", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -430,13 +451,14 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
+    expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("card-flip"));
-    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByTestId("card-face-back")).toHaveAttribute("aria-hidden", "false");
+    expect(screen.queryByTestId("card-face-front")).not.toBeInTheDocument();
+    expect(screen.getByTestId("card-face-back")).toBeInTheDocument();
   });
 
-  it("expanded chrome remains on front face only", () => {
+  it("expanded chrome lives on the front face and unmounts when flipped", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -445,14 +467,14 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    fireEvent.click(screen.getByTestId("card-flip"));
     const front = screen.getByTestId("card-face-front");
-    const back = screen.getByTestId("card-face-back");
     expect(front.querySelector('[data-testid="card-navigate"]')).toBeInTheDocument();
-    expect(back.querySelector('[data-testid="card-navigate"]')).toBeNull();
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.queryByTestId("card-navigate")).not.toBeInTheDocument();
+    expect(screen.getByTestId("card-face-back").querySelector('[data-testid="card-navigate"]')).toBeNull();
   });
 
-  it("rotator has is-flipped class iff data-flipped", () => {
+  it("renders faces inside a flip stage, with no 3D scene/rotator wrappers", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -461,15 +483,15 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
-    const rotator = screen.getByTestId("cardbox-card").querySelector(".cardbox-card-rotator")!;
-    expect(rotator.classList.contains("is-flipped")).toBe(false);
-    fireEvent.click(screen.getByTestId("card-flip"));
-    expect(rotator.classList.contains("is-flipped")).toBe(true);
-    fireEvent.click(screen.getByTestId("card-flip"));
-    expect(rotator.classList.contains("is-flipped")).toBe(false);
+    const root = screen.getByTestId("cardbox-card");
+    const stage = screen.getByTestId("card-flip-stage");
+    expect(stage.contains(screen.getByTestId("card-face-front"))).toBe(true);
+    expect(root.querySelector(".cardbox-card-scene")).toBeNull();
+    expect(root.querySelector(".cardbox-card-rotator")).toBeNull();
+    expect(root.querySelector(".cardbox-card-face")).toBeNull();
   });
 
-  it("flipping back to front restores annotation aria visibility", () => {
+  it("flipping back to front remounts the front face", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -481,7 +503,8 @@ describe("CardboxCard", () => {
     const flip = screen.getByTestId("card-flip");
     fireEvent.click(flip);
     fireEvent.click(flip);
-    expect(screen.getByTestId("card-face-front")).toHaveAttribute("aria-hidden", "false");
+    expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
   });
 
   it("F key on focused card flips when original exists", () => {
@@ -932,6 +955,8 @@ describe("CardboxCard", () => {
     );
     const front = screen.getByTestId("card-face-front");
     expect(front.className).toMatch(/pr-8/);
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("card-face-back").className).toMatch(/pr-8/);
   });
 
   // --- Back quote clamp tests ---
@@ -1105,13 +1130,8 @@ describe("CardboxCard", () => {
     );
 
     const root = screen.getByTestId("cardbox-card");
-    const rotator = root.querySelector(".cardbox-card-rotator")!;
-    const front = screen.getByTestId("card-face-front");
-
     expect(root).toHaveAttribute("data-flipped", "false");
-    expect(rotator.classList.contains("is-flipped")).toBe(false);
-    expect(front).not.toHaveAttribute("inert");
-    expect(front).toHaveAttribute("aria-hidden", "false");
+    expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
     expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
     expect(screen.queryByTestId("card-flip")).not.toBeInTheDocument();
   });
@@ -1188,9 +1208,9 @@ describe("CardboxCard", () => {
     expect(root).toHaveAttribute("data-flipped", "false");
   });
 
-  // --- Face inert tests ---
+  // --- Hidden face tests ---
 
-  it("marks the hidden face inert (not only aria-hidden)", () => {
+  it("hidden face carries no aria-hidden/inert juggling — it is simply unmounted", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -1200,17 +1220,16 @@ describe("CardboxCard", () => {
       />,
     );
     const front = screen.getByTestId("card-face-front");
-    const back = screen.getByTestId("card-face-back");
-
     expect(front).not.toHaveAttribute("inert");
-    expect(back).toHaveAttribute("inert");
+    expect(front).not.toHaveAttribute("aria-hidden");
+    expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("card-flip"));
 
-    expect(front).toHaveAttribute("inert");
-    expect(front).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByTestId("card-face-front")).not.toBeInTheDocument();
+    const back = screen.getByTestId("card-face-back");
     expect(back).not.toHaveAttribute("inert");
-    expect(back).toHaveAttribute("aria-hidden", "false");
+    expect(back).not.toHaveAttribute("aria-hidden");
   });
 
   // --- Typing guard tests ---
@@ -1287,6 +1306,165 @@ describe("CardboxCard", () => {
       expect(btn.className).toContain("text-text-muted");
       expect(btn.className).not.toContain("text-text-faint");
     }
+  });
+
+  // --- Animated flip tests (WAAPI available on the stage) ---
+
+  it("animated flip swaps face content at the midpoint, not on click", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const { animate, deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+
+    fireEvent.click(screen.getByTestId("card-flip"));
+
+    // Out phase playing: content untouched, midpoint not reached yet.
+    expect(animate).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-face-back")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+
+    // Midpoint: faces swapped, in phase started.
+    expect(screen.queryByTestId("card-face-front")).not.toBeInTheDocument();
+    expect(screen.getByTestId("card-face-back")).toBeInTheDocument();
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+    expect(animate).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      deferreds[1]!.resolve();
+    });
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
+  });
+
+  it("ignores flip clicks and F presses while a flip is in flight", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const { animate, deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+    const card = screen.getByTestId("cardbox-card");
+    const flip = screen.getByTestId("card-flip");
+
+    fireEvent.click(flip);
+    expect(animate).toHaveBeenCalledTimes(1);
+
+    // Re-entry during the out phase is ignored.
+    fireEvent.click(flip);
+    fireEvent.keyDown(card, { key: "f" });
+    expect(animate).toHaveBeenCalledTimes(1);
+    expect(card).toHaveAttribute("data-flipped", "false");
+
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+
+    // Re-entry during the in phase is also ignored.
+    fireEvent.click(flip);
+    fireEvent.keyDown(card, { key: "F" });
+    expect(animate).toHaveBeenCalledTimes(2);
+    expect(card).toHaveAttribute("data-flipped", "true");
+
+    await act(async () => {
+      deferreds[1]!.resolve();
+    });
+
+    // After completion a fresh flip starts a new two-phase animation.
+    fireEvent.click(flip);
+    expect(animate).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      deferreds[2]!.resolve();
+    });
+    expect(card).toHaveAttribute("data-flipped", "false");
+    expect(animate).toHaveBeenCalledTimes(4);
+    await act(async () => {
+      deferreds[3]!.resolve();
+    });
+  });
+
+  it("animated flip refocuses the card root when focus was inside a face", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+    const root = screen.getByTestId("cardbox-card");
+    const navigate = screen.getByTestId("card-navigate");
+    navigate.focus();
+    expect(document.activeElement).toBe(navigate);
+
+    fireEvent.keyDown(navigate, { key: "f" });
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+    await act(async () => {
+      deferreds[1]!.resolve();
+    });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    expect(root).toHaveAttribute("data-flipped", "true");
+    expect(document.activeElement).toBe(root);
+  });
+
+  it("unmounting mid-animation is safe (canceled out phase)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { unmount } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+    fireEvent.click(screen.getByTestId("card-flip"));
+    unmount();
+    await act(async () => {
+      deferreds[0]!.reject(new DOMException("aborted", "AbortError"));
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("unmounting mid-animation is safe (phases resolve after unmount)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { unmount } = render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const { animate, deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+    fireEvent.click(screen.getByTestId("card-flip"));
+    unmount();
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+    await act(async () => {
+      deferreds[1]?.resolve();
+    });
+    expect(animate.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("Add note button uses WCAG AA compliant text color classes", () => {

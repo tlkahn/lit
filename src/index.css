@@ -388,44 +388,6 @@ select:disabled {
   animation: pin-pulse 0.4s ease-out;
 }
 
-/* Card flip 3D */
-.cardbox-card-scene {
-  perspective: 1000px;
-}
-.cardbox-card-rotator {
-  display: grid;
-  transform-style: preserve-3d;
-  transition: transform 0.4s ease;
-}
-.cardbox-card-rotator.is-flipped {
-  transform: rotateY(180deg);
-}
-.cardbox-card-face {
-  grid-area: 1 / 1;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  min-width: 0;
-  pointer-events: none;
-}
-.cardbox-card-rotator:not(.is-flipped) .cardbox-card-face-front,
-.cardbox-card-rotator.is-flipped .cardbox-card-face-back {
-  pointer-events: auto;
-}
-.cardbox-card-face-back {
-  transform: rotateY(180deg);
-}
-.cardbox-card-rotator:not(.is-flipped) .cardbox-card-face-back,
-.cardbox-card-rotator.is-flipped .cardbox-card-face-front {
-  position: absolute;
-  inset: 0;
-  overflow: auto;
-}
-@media (prefers-reduced-motion: reduce) {
-  .cardbox-card-rotator {
-    transition: none;
-  }
-}
-
 /* Reveal flash — shared by sidebar file tree and bib entry reveal */
 @keyframes reveal-flash {
   0%   { box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--interactive-accent) 25%, transparent); }
