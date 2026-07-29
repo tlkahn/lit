@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { CardboxCard, showCardFlipped } from "./CardboxCard";
@@ -1480,5 +1482,70 @@ describe("CardboxCard", () => {
     const addBtn = screen.getByTestId("card-note-add");
     expect(addBtn.className).toContain("text-text-muted");
     expect(addBtn.className).not.toContain("text-text-faint");
+  });
+
+  describe("code rendering (#965)", () => {
+    const indexCss = () =>
+      readFileSync(resolve(__dirname, "../index.css"), "utf8");
+
+    it("index.css neutralizes typography-plugin backtick pseudo-elements on prose code", () => {
+      const css = indexCss();
+      expect(css).toMatch(
+        /\.prose code::before,\s*\.prose code::after\s*\{\s*content:\s*none;\s*\}/,
+      );
+    });
+
+    it("index.css styles inline code as a chip on prose and the back face", () => {
+      const css = indexCss();
+      const chipRule = css.match(
+        /\.prose code:not\(pre code\),\s*\[data-testid="card-original"\] code\s*\{[^}]*\}/,
+      );
+      expect(chipRule).not.toBeNull();
+      expect(chipRule![0]).toContain("var(--code-background)");
+      expect(chipRule![0]).toContain("var(--font-monospace-theme");
+    });
+
+    it("index.css clamps pre blocks to one line in collapsed cards", () => {
+      const css = indexCss();
+      const clampRule = css.match(
+        /\[data-testid="cardbox-card"\] \.line-clamp-3 pre\s*\{[^}]*\}/,
+      );
+      expect(clampRule).not.toBeNull();
+      expect(clampRule![0]).toContain("-webkit-line-clamp: 1");
+      expect(clampRule![0]).toContain("overflow: hidden");
+    });
+
+    it("renders inline code in card body without literal backticks", () => {
+      render(
+        <CardboxCard
+          annotation={{ ...baseAnnotation, body: "use `foo()` here" }}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const body = screen.getByTestId("card-body");
+      const code = body.querySelector("code");
+      expect(code).not.toBeNull();
+      expect(code!.textContent).toBe("foo()");
+      expect(body.textContent).not.toContain("`");
+    });
+
+    it("renders inline code on the back face without literal backticks", () => {
+      render(
+        <CardboxCard
+          annotation={{ ...baseAnnotation, original: "call `bar()` now" }}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-flip"));
+      const orig = screen.getByTestId("card-original");
+      const code = orig.querySelector("code");
+      expect(code).not.toBeNull();
+      expect(code!.textContent).toBe("bar()");
+      expect(orig.textContent).not.toContain("`");
+    });
   });
 });
