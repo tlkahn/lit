@@ -552,11 +552,19 @@ pub(crate) fn derive_notes(
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct MigrateFailure {
+    pub uuid: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct MigrateResult {
     pub migrated: usize,
     pub failed: usize,
     pub skipped: usize,
     pub changed_pages: Vec<String>,
+    /// Per-entry detail for `failed`; entries stay in cardbox.json for retry.
+    pub failures: Vec<MigrateFailure>,
 }
 
 #[derive(Debug)]
@@ -605,14 +613,20 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                 failed: 0,
                 skipped: 0,
                 changed_pages: vec![],
+                failures: vec![],
             },
             removed_annotations: vec![],
             reindex_retry_pages: vec![],
         });
     }
 
-    // Group pending entries by page, carrying store position for fallback resolution
+    // Group pending entries by page, carrying store position for fallback
+    // resolution. Entries whose parent uuid is absent from the index entirely
+    // are dead: prune them from cardbox.json and count them skipped.
     let mut by_page: HashMap<String, Vec<(String, String, Option<(usize, usize)>)>> = HashMap::new();
+    let mut dead_parent_keys: Vec<String> = Vec::new();
+    let mut failures: Vec<MigrateFailure> = Vec::new();
+    let mut failed = 0usize;
     {
         let store = gi.store();
         for (parent_uuid, body) in &pending {
@@ -623,9 +637,24 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                         .or_default()
                         .push((parent_uuid.clone(), body.clone(), Some((ann.char_start, ann.char_end))));
                 }
-                _ => {}
+                Ok(None) => {
+                    dead_parent_keys.push(parent_uuid.clone());
+                }
+                Err(e) => {
+                    tracing::warn!("migrate: index lookup failed for {}: {}", parent_uuid, e);
+                    failed += 1;
+                    failures.push(MigrateFailure {
+                        uuid: parent_uuid.clone(),
+                        reason: format!("index lookup failed: {}", e),
+                    });
+                }
             }
         }
+    }
+
+    let skipped = dead_parent_keys.len();
+    for key in &dead_parent_keys {
+        layout.notes.remove(key);
     }
 
     for entries in by_page.values_mut() {
@@ -637,8 +666,6 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     }
 
     let mut migrated = 0usize;
-    let mut failed = 0usize;
-    let pending_count = pending.len();
     let mut drained_keys: Vec<String> = Vec::new();
     let mut changed_pages: Vec<String> = Vec::new();
     let mut all_removed: Vec<(String, String)> = Vec::new();
@@ -646,8 +673,18 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
 
     for (page_id, entries) in &by_page {
         let write_result = file_lock.with_lock(&root.join(page_id), || -> Result<(String, usize, Vec<String>), (usize, String)> {
-            let page = crate::workspace::ops::read_page(root, page_id, registry)
-                .map_err(|e| (entries.len(), e.to_string()))?;
+            let page = match crate::workspace::ops::read_page(root, page_id, registry) {
+                Ok(p) => p,
+                Err(e) => {
+                    for (uuid, _, _) in entries.iter() {
+                        failures.push(MigrateFailure {
+                            uuid: uuid.clone(),
+                            reason: format!("read failed for {}: {}", page_id, e),
+                        });
+                    }
+                    return Err((entries.len(), e.to_string()));
+                }
+            };
 
             let mut current_body = page.body.clone();
             let mut page_migrated = 0usize;
@@ -661,6 +698,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                     Err(e) => {
                         tracing::warn!("migrate: {}", e);
                         failed += 1;
+                        failures.push(MigrateFailure {
+                            uuid: parent_uuid.clone(),
+                            reason: e,
+                        });
                         continue;
                     }
                 };
@@ -710,6 +751,10 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                             parent_uuid, page_id, e
                         );
                         failed += 1;
+                        failures.push(MigrateFailure {
+                            uuid: parent_uuid.clone(),
+                            reason: format!("apply edit failed: {}", e),
+                        });
                     }
                 }
             }
@@ -723,6 +768,12 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
                     registry,
                 ) {
                     tracing::warn!("migrate: failed to write {}: {}", page_id, e);
+                    for uuid in &page_drained {
+                        failures.push(MigrateFailure {
+                            uuid: uuid.clone(),
+                            reason: format!("write failed for {}: {}", page_id, e),
+                        });
+                    }
                     for (uuid, _, _) in entries {
                         page_drained.retain(|k| k != uuid);
                     }
@@ -773,14 +824,13 @@ pub(crate) fn do_migrate_cardbox_slip_notes(
     std::fs::create_dir_all(&lit_dir).map_err(|e| e.to_string())?;
     super::persist_layout(&lit_dir, &layout)?;
 
-    let skipped = pending_count - migrated - failed;
-
     Ok(MigrateOutput {
         result: MigrateResult {
             migrated: migrated + pre_drained,
             failed,
             skipped,
             changed_pages,
+            failures,
         },
         removed_annotations: all_removed,
         reindex_retry_pages,
@@ -1866,6 +1916,125 @@ mod tests {
             "dual-state: note must not resurrect after sn delete + JSON drain: {:?}", effective);
     }
 
+    // -----------------------------------------------------------------------
+    // Cycle K4 tests - migrate prunes dead parents + reports failures
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn k4_migrate_prunes_dead_parent_entries() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "ghost-uuid".to_string(),
+            CardNote { body: "orphaned note".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap().result;
+
+        assert_eq!(result.migrated, 0);
+        assert_eq!(result.failed, 0);
+        assert_eq!(result.skipped, 1, "dead-parent entry counts as skipped");
+        assert!(result.failures.is_empty(), "prune is not a failure: {:?}", result.failures);
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("ghost-uuid"),
+            "dead-parent entry must be pruned from cardbox.json: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn k4_migrate_failure_retained_with_reason() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Stale index: parent p1 indexed, but the page no longer contains it.
+        write_md(dir.path(), "a.md", "No annotations here.\n");
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "cannot migrate".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap().result;
+
+        assert_eq!(result.migrated, 0);
+        assert_eq!(result.failed, 1);
+        assert_eq!(result.skipped, 0);
+        assert_eq!(result.failures.len(), 1, "failure detail expected: {:?}", result.failures);
+        assert_eq!(result.failures[0].uuid, "p1");
+        assert!(result.failures[0].reason.contains("missing from page body"),
+            "reason should be actionable: {}", result.failures[0].reason);
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(on_disk.notes.contains_key("p1"),
+            "failed entry must stay on disk for retry: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn k4_migrate_idempotent_after_prune_and_migrate() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "good note".to_string(), updated_at: None },
+        );
+        layout.notes.insert(
+            "ghost-uuid".to_string(),
+            CardNote { body: "orphaned".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let first = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap().result;
+        assert_eq!(first.migrated, 1);
+        assert_eq!(first.skipped, 1);
+        assert_eq!(first.failed, 0);
+
+        let second = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap().result;
+        assert_eq!(second.migrated, 0, "second run migrates nothing");
+        assert_eq!(second.skipped, 0, "second run prunes nothing");
+        assert_eq!(second.failed, 0);
+        assert!(second.failures.is_empty());
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(on_disk.notes.is_empty(),
+            "healthy workspace converges to empty notes: {:?}", on_disk.notes);
+    }
+
     #[test]
     fn f5_migrate_failure_does_not_abort_others() {
         let dir = create_workspace();
@@ -1900,10 +2069,15 @@ mod tests {
                 .unwrap().result;
 
         assert_eq!(result.migrated, 1, "good note should migrate");
-        assert!(result.skipped > 0 || result.failed > 0, "bad note should fail or be skipped");
+        assert_eq!(result.skipped, 1, "dead-parent note is skipped");
+        assert_eq!(result.failed, 0);
 
         let file_content = read_md(dir.path(), "a.md");
         assert!(file_content.contains("Good note"));
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("missing-parent"),
+            "dead-parent entry pruned: {:?}", on_disk.notes);
     }
 
     // -----------------------------------------------------------------------
