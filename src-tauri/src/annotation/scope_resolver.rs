@@ -1760,22 +1760,10 @@ mod tests {
 
     #[test]
     fn ctx_parity_sentence_backward() {
-        // Parity is swept over every prose offset up to and including the
-        // annotation marker start (the production cut position). Cuts strictly
-        // inside the `<!--- ... --->` marker are not production inputs and hit
-        // the accepted prefix-vs-full-body segmentation non-identity
-        // (sentencex lookahead differs around debris like a bare "<!").
         for (content, lang) in sentence_parity_corpus() {
             let content = content.as_str();
-            let limit = content
-                .find("<!---")
-                .map(|b| utf16_len(&content[..b]))
-                .unwrap_or(usize::MAX);
             let ctx = ScopeResolveCtx::new(content, lang);
             for cs in sampled_u16_offsets(content) {
-                if cs > limit {
-                    continue;
-                }
                 for n in [1usize, 2, 3, 100] {
                     assert_eq!(
                         ctx.resolve_sentence(cs, n),
@@ -1812,19 +1800,10 @@ mod tests {
 
     #[test]
     fn ctx_parity_forward_sentences() {
-        // Same prose-offset domain rationale as ctx_parity_sentence_backward;
-        // sweeps every sampled offset, mid-word cuts included.
         for (content, lang) in sentence_parity_corpus() {
             let content = content.as_str();
-            let limit = content
-                .find("<!---")
-                .map(|b| utf16_len(&content[..b]))
-                .unwrap_or(usize::MAX);
             let ctx = ScopeResolveCtx::new(content, lang);
             for cs in sampled_u16_offsets(content) {
-                if cs > limit {
-                    continue;
-                }
                 for n in [0usize, 1, 2, 100] {
                     assert_eq!(
                         ctx.resolve_forward_sentences(cs, n),
