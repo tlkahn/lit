@@ -82,8 +82,10 @@ impl Utf16ByteMap {
     }
 }
 
-/// Byte span of one raw sentence segment in the document, as returned by
-/// `sentencex::segment` (untrimmed; spans partition the content).
+/// Byte span of one raw sentence segment in the document: an untrimmed prose
+/// span as returned by `sentencex::segment`. Whitespace-only segments are
+/// dropped, so the spans do not partition the content - the gaps between
+/// them are whitespace (see `segs()`).
 struct RawSeg {
     raw_start: usize,
     raw_end: usize,
@@ -294,7 +296,10 @@ impl<'a> ScopeResolveCtx<'a> {
     /// `O(doc)` — and, because each segment carries its own byte position, a
     /// sentence whose text recurs earlier in the document still resolves to
     /// the occurrence adjacent to the cut. The segment the cut lands inside is
-    /// clipped at `te`, matching `split_sentences(content[..te])`. Fewer than
+    /// clipped at `te` and re-trimmed. This is NOT equivalent to re-segmenting
+    /// the truncated prefix: a segmenter can yield different boundaries on
+    /// `content[..te]` than on the full body (see the parity-test banner and
+    /// #945). Fewer than
     /// `n` available sentences yields the span of all of them; `None` when
     /// there are none, and `None` for `n == 0`: an empty window has no span,
     /// and returning early keeps a zero `n` from walking the whole prefix.
@@ -419,8 +424,10 @@ impl<'a> ScopeResolveCtx<'a> {
     /// Binary-searches for the cut, then walks forward over at most `n`
     /// non-empty segments — `O(log #segs + n)`, and positionally exact even
     /// when the target sentence's text recurs between the cut and itself. The
-    /// segment the cut lands inside is clipped at `ts`, matching
-    /// `split_sentences(content[ts..])`. Fewer than `n` available sentences
+    /// segment the cut lands inside is clipped at `ts` and re-trimmed. This is
+    /// NOT equivalent to re-segmenting the truncated suffix: a segmenter can
+    /// yield different boundaries on `content[ts..]` than on the full body
+    /// (see the parity-test banner and #945). Fewer than `n` available sentences
     /// yields the end of the last one; `None` when there are none, and `None`
     /// for `n == 0`: an empty window has no end, and returning early keeps a
     /// zero `n` from walking the whole suffix.
@@ -785,6 +792,9 @@ mod tests {
             if trimmed.is_empty() {
                 continue;
             }
+            // Leading trim is deliberately omitted: `locate_sentences` anchors
+            // `s` at the matched non-whitespace sentence start. If this oracle
+            // ever switches to raw segment bounds, restore two-sided trimming.
             kept.push((s, s + trimmed.len()));
         }
         if kept.is_empty() {
@@ -1753,7 +1763,7 @@ mod tests {
     }
 
     /// Char-boundary UTF-16 offsets, subsampled for large contents so the
-    /// per-offset free-fn re-segmentation stays affordable in tests.
+    /// per-offset free-fn full-body re-segmentation stays affordable in tests.
     fn sampled_u16_offsets(content: &str) -> Vec<usize> {
         let all = all_u16_offsets(content);
         if all.len() <= 400 {
