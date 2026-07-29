@@ -41,8 +41,7 @@ describe("cardbox undo integration", () => {
       if (cmd === "toggle_group_collapsed") return null;
       if (cmd === "pin_cardbox_card") return null;
       if (cmd === "unpin_cardbox_card") return null;
-      if (cmd === "set_card_note") return null;
-      if (cmd === "clear_card_note") return null;
+      if (cmd === "sync_slip_note_to_source") return null;
       if (cmd === "set_card_color") return null;
       if (cmd === "clear_card_color") return null;
       if (cmd === "batch_set_card_color") return null;

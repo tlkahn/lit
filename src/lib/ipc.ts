@@ -1441,12 +1441,22 @@ export async function unpinCardboxCard(uuid: string): Promise<void> {
   return invoke<void>("unpin_cardbox_card", { uuid });
 }
 
-export async function setCardNote(uuid: string, body: string): Promise<void> {
-  return invoke<void>("set_card_note", { uuid, body });
+export interface SyncResult {
+  parent_uuid: string;
+  body: string;
+  updated_at: string;
+  sn_uuid: string;
+  synced: boolean;
+  page_id: string;
 }
 
-export async function clearCardNote(uuid: string): Promise<void> {
-  return invoke<void>("clear_card_note", { uuid });
+/** Write a slip-note body into the parent's source page as an `sn` annotation.
+ *  An empty body deletes the annotation. Sole write path for card notes. */
+export async function syncSlipNoteToSource(
+  parentUuid: string,
+  body: string,
+): Promise<SyncResult> {
+  return invoke<SyncResult>("sync_slip_note_to_source", { parentUuid, body });
 }
 
 export async function exportCardNote(uuid: string): Promise<string> {

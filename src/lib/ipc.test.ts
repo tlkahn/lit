@@ -141,8 +141,7 @@ import {
   toggleGroupCollapsed,
   pinCardboxCard,
   unpinCardboxCard,
-  setCardNote,
-  clearCardNote,
+  syncSlipNoteToSource,
   exportCardNote,
   mergeCardsToDraft,
   setCardColor,
@@ -858,10 +857,15 @@ describe("ipc", () => {
           return null;
         case "unpin_cardbox_card":
           return null;
-        case "set_card_note":
-          return null;
-        case "clear_card_note":
-          return null;
+        case "sync_slip_note_to_source":
+          return {
+            parent_uuid: "u1",
+            body: "My note content",
+            updated_at: "2026-07-29T00:00:00Z",
+            sn_uuid: "sn-1",
+            synced: true,
+            page_id: "a.md",
+          };
         case "export_card_note":
           return "Note on Test.md";
         case "merge_cards_to_draft":
@@ -2732,19 +2736,25 @@ describe("ipc", () => {
 
   // ── Card note (slip) IPC wrappers ─────────────────────────────
 
-  it("setCardNote calls set_card_note with uuid and body", async () => {
-    await setCardNote("u1", "My note content");
+  it("syncSlipNoteToSource calls sync_slip_note_to_source and returns SyncResult", async () => {
+    const result = await syncSlipNoteToSource("u1", "My note content");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("set_card_note", {
-      uuid: "u1",
+    expect(invoke).toHaveBeenCalledWith("sync_slip_note_to_source", {
+      parentUuid: "u1",
       body: "My note content",
     });
+    expect(result.synced).toBe(true);
+    expect(result.body).toBe("My note content");
+    expect(result.updated_at).toBe("2026-07-29T00:00:00Z");
   });
 
-  it("clearCardNote calls clear_card_note", async () => {
-    await clearCardNote("u1");
+  it("syncSlipNoteToSource with empty body deletes the note", async () => {
+    await syncSlipNoteToSource("u1", "");
     const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("clear_card_note", { uuid: "u1" });
+    expect(invoke).toHaveBeenCalledWith("sync_slip_note_to_source", {
+      parentUuid: "u1",
+      body: "",
+    });
   });
 
   it("exportCardNote calls export_card_note and returns markdown", async () => {

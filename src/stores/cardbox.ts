@@ -18,8 +18,7 @@ import {
   toggleGroupCollapsed,
   pinCardboxCard,
   unpinCardboxCard,
-  setCardNote,
-  clearCardNote,
+  syncSlipNoteToSource,
   exportCardNote,
   setCardColor as setCardColorIpc,
   clearCardColor as clearCardColorIpc,
@@ -578,7 +577,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         notes: { ...s.notes, [uuid]: { body: trimmed, updated_at: new Date().toISOString() } },
       };
     });
-    await setCardNote(uuid, body);
+    await syncSlipNoteToSource(uuid, body);
   },
   clearNote: async (uuid) => {
     const prevNote = get().notes[uuid];
@@ -593,7 +592,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const { [uuid]: _omit, ...rest } = s.notes; // eslint-disable-line @typescript-eslint/no-unused-vars
       return { notes: rest };
     });
-    await clearCardNote(uuid);
+    await syncSlipNoteToSource(uuid, "");
   },
   exportNote: async (uuid) => {
     return exportCardNote(uuid);
