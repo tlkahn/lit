@@ -60,6 +60,8 @@ describe("cardbox store", () => {
     });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "migrate_cardbox_slip_notes")
+        return { migrated: 0, failed: 0, skipped: 0, changed_pages: [], failures: [] };
       if (cmd === "read_cardbox_layout")
         return { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: ["u1"] };
       if (cmd === "write_cardbox_layout") return null;
@@ -957,6 +959,71 @@ describe("cardbox store", () => {
     });
   });
 
+  describe("loadLayout slip-note migration", () => {
+    const MIGRATE_OK = {
+      migrated: 3,
+      failed: 0,
+      skipped: 0,
+      changed_pages: [],
+      failures: [],
+    };
+    const LAYOUT = { version: 3, order: ["u1"], links: [], groups: {}, pinned: [] };
+
+    beforeEach(() => {
+      useStatusMessageStore.setState({ message: null, variant: "success", action: null });
+    });
+
+    it("awaits migrate_cardbox_slip_notes before read_cardbox_layout", async () => {
+      const callLog: string[] = [];
+      mockInvoke((cmd) => {
+        callLog.push(cmd);
+        if (cmd === "migrate_cardbox_slip_notes") return MIGRATE_OK;
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(callLog).toEqual(["migrate_cardbox_slip_notes", "read_cardbox_layout"]);
+    });
+
+    it("surfaces a notice with the count when migration reports failures", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes")
+          return { ...MIGRATE_OK, failed: 2, failures: [{ uuid: "u8", reason: "x" }, { uuid: "u9", reason: "y" }] };
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useStatusMessageStore.getState().message).toBe(
+        "2 notes could not be written to source; will retry next open",
+      );
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+
+    it("shows no notice when migration reports zero failures", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") return MIGRATE_OK;
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useStatusMessageStore.getState().message).toBeNull();
+    });
+
+    it("a rejected migration shows an error toast and still reads the layout", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "migrate_cardbox_slip_notes") throw new Error("cardbox.json unreadable");
+        if (cmd === "read_cardbox_layout") return LAYOUT;
+        return null;
+      });
+      await useCardboxStore.getState().loadLayout();
+      expect(useStatusMessageStore.getState().message).toBe(
+        "Slip-note migration failed; will retry next open",
+      );
+      expect(useStatusMessageStore.getState().variant).toBe("error");
+      expect(useCardboxStore.getState().order).toEqual(["u1"]);
+    });
+  });
+
   describe("setNote / clearNote source sync", () => {
     const SYNC_OK = {
       parent_uuid: "u1",
@@ -993,6 +1060,67 @@ describe("cardbox store", () => {
       expect(useCardboxStore.getState().notes["u1"]?.body).toBe("typed note");
       expect(useStatusMessageStore.getState().message).toBe("Failed to save note");
       expect(useStatusMessageStore.getState().variant).toBe("error");
+    });
+
+    it("setNote applies the optimistic note immediately, then aligns updated_at to the SyncResult", async () => {
+      let resolveSync: (value: unknown) => void = () => {};
+      mockInvoke((cmd) => {
+        if (cmd === "sync_slip_note_to_source") {
+          return new Promise((resolve) => { resolveSync = resolve; });
+        }
+        return null;
+      });
+      const setPromise = useCardboxStore.getState().setNote("u1", "body");
+      const optimistic = useCardboxStore.getState().notes["u1"];
+      expect(optimistic?.body).toBe("body");
+      expect(optimistic?.updated_at).not.toBe(SYNC_OK.updated_at);
+      resolveSync(SYNC_OK);
+      await setPromise;
+      expect(useCardboxStore.getState().notes["u1"]?.updated_at).toBe(SYNC_OK.updated_at);
+    });
+
+    it("a stale sync resolve does not overwrite a newer optimistic note", async () => {
+      let resolveFirst: (value: unknown) => void = () => {};
+      let firstCall = true;
+      mockInvoke((cmd) => {
+        if (cmd === "sync_slip_note_to_source") {
+          if (firstCall) {
+            firstCall = false;
+            return new Promise((resolve) => { resolveFirst = resolve; });
+          }
+          return { ...SYNC_OK, body: "newer", updated_at: "2026-07-29T00:00:02Z" };
+        }
+        return null;
+      });
+      const first = useCardboxStore.getState().setNote("u1", "body");
+      await useCardboxStore.getState().setNote("u1", "newer");
+      resolveFirst(SYNC_OK);
+      await first;
+      const note = useCardboxStore.getState().notes["u1"];
+      expect(note?.body).toBe("newer");
+      expect(note?.updated_at).not.toBe(SYNC_OK.updated_at);
+    });
+
+    it("a failed sync does not latch: the next setNote retries normally", async () => {
+      const syncCalls: unknown[] = [];
+      let failNext = true;
+      mockInvoke((cmd, args) => {
+        if (cmd === "sync_slip_note_to_source") {
+          syncCalls.push(args?.body);
+          if (failNext) throw new Error("page IO failed");
+          return { ...SYNC_OK, body: "ab" };
+        }
+        return null;
+      });
+      await useCardboxStore.getState().setNote("u1", "a");
+      expect(useStatusMessageStore.getState().message).toBe("Failed to save note");
+
+      failNext = false;
+      await useCardboxStore.getState().setNote("u1", "ab");
+      expect(syncCalls).toEqual(["a", "ab"]);
+      const note = useCardboxStore.getState().notes["u1"];
+      expect(note?.body).toBe("ab");
+      expect(note?.updated_at).toBe(SYNC_OK.updated_at);
     });
 
     it("saveLayout never transmits client notes (backend derives them from sn)", async () => {

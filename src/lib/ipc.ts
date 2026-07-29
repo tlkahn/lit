@@ -1459,6 +1459,26 @@ export async function syncSlipNoteToSource(
   return invoke<SyncResult>("sync_slip_note_to_source", { parentUuid, body });
 }
 
+export interface MigrateFailure {
+  uuid: string;
+  reason: string;
+}
+
+export interface MigrateResult {
+  /** Count of source-backed entries, including ones that already were. */
+  migrated: number;
+  failed: number;
+  skipped: number;
+  changed_pages: string[];
+  failures: MigrateFailure[];
+}
+
+/** Ensure every layout.notes entry is backed by an `sn` annotation in its
+ *  parent's source page. Idempotent; the sole writer of layout.notes. */
+export async function migrateCardboxSlipNotes(): Promise<MigrateResult> {
+  return invoke<MigrateResult>("migrate_cardbox_slip_notes", {});
+}
+
 export async function exportCardNote(uuid: string): Promise<string> {
   return invoke<string>("export_card_note", { uuid });
 }

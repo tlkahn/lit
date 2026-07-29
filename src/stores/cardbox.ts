@@ -20,6 +20,7 @@ import {
   pinCardboxCard,
   unpinCardboxCard,
   syncSlipNoteToSource,
+  migrateCardboxSlipNotes,
   exportCardNote,
   setCardColor as setCardColorIpc,
   clearCardColor as clearCardColorIpc,
@@ -242,6 +243,24 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     })),
   setOrder: (order) => set({ order }),
   loadLayout: async () => {
+    // Migrate legacy layout.notes into sn annotations before reading, so the
+    // layout's notes map reflects source-backed bodies. Failures never block
+    // the read; migration retries on next open.
+    try {
+      const result = await migrateCardboxSlipNotes();
+      const failed = result?.failed ?? 0;
+      if (failed > 0) {
+        useStatusMessageStore.getState().show(
+          `${failed} note${failed === 1 ? "" : "s"} could not be written to source; will retry next open`,
+          "error",
+        );
+      }
+    } catch {
+      useStatusMessageStore.getState().show(
+        "Slip-note migration failed; will retry next open",
+        "error",
+      );
+    }
     try {
       const layout = await readCardboxLayout();
       const groups = layout.groups ?? {};
@@ -581,9 +600,18 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       };
     });
     try {
-      await syncSlipNoteToSource(uuid, trimmed);
+      const result = await syncSlipNoteToSource(uuid, trimmed);
+      // Align to the source-of-truth timestamp, unless a newer setNote
+      // already replaced the body while this sync was in flight.
+      set((s) => {
+        const current = s.notes[uuid];
+        if (!current || current.body !== result.body) return s;
+        return {
+          notes: { ...s.notes, [uuid]: { ...current, updated_at: result.updated_at } },
+        };
+      });
     } catch {
-      // Note stays in memory for this session; full retry UX is #948.
+      // Note stays in memory for this session; migration retries on next open.
       useStatusMessageStore.getState().show("Failed to save note", "error");
     }
   },
