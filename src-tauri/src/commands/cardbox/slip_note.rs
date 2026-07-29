@@ -2036,7 +2036,7 @@ mod tests {
     }
 
     #[test]
-    fn f5_migrate_failure_does_not_abort_others() {
+    fn migrate_dead_parent_does_not_abort_others() {
         let dir = create_workspace();
         write_md(
             dir.path(),
@@ -2078,6 +2078,61 @@ mod tests {
         let on_disk = cardbox_layout::load_layout(dir.path());
         assert!(!on_disk.notes.contains_key("missing-parent"),
             "dead-parent entry pruned: {:?}", on_disk.notes);
+    }
+
+    #[test]
+    fn migrate_resolve_failure_does_not_abort_siblings_on_same_page() {
+        let dir = create_workspace();
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Good parent ---> mid <!---[p2] n: \\s | Doomed parent ---> end.\n",
+        );
+        let gi =
+            GraphIndex::build(dir.path().to_path_buf(), &AnnotationIndexOpts::default()).unwrap();
+        let reg = WriteHashRegistry::new();
+
+        // Stale index: p2 still indexed, but the page no longer contains it.
+        // p1's prefix is byte-identical, so its indexed position stays valid.
+        write_md(
+            dir.path(),
+            "a.md",
+            "Text <!---[p1] n: \\s | Good parent ---> mid end.\n",
+        );
+
+        let mut layout = CardboxLayout::default();
+        layout.notes.insert(
+            "p1".to_string(),
+            CardNote { body: "Good note".to_string(), updated_at: None },
+        );
+        layout.notes.insert(
+            "p2".to_string(),
+            CardNote { body: "Doomed note".to_string(), updated_at: None },
+        );
+        write_layout(dir.path(), &layout);
+
+        let result = do_migrate_cardbox_slip_notes(
+            dir.path(), &gi, &reg, &AnnotationIndexOpts::default(), &make_file_lock(),
+        ).unwrap().result;
+
+        assert_eq!(result.migrated, 1, "sibling on the same page must migrate");
+        assert_eq!(result.failed, 1);
+        assert_eq!(result.skipped, 0);
+        assert_eq!(result.failed, result.failures.len(),
+            "failed must equal failures detail: {:?}", result.failures);
+        assert_eq!(result.failures[0].uuid, "p2");
+        assert!(result.failures[0].reason.contains("missing from page body"),
+            "reason should be actionable: {}", result.failures[0].reason);
+
+        let file_content = read_md(dir.path(), "a.md");
+        assert!(file_content.contains("Good note"),
+            "sibling's note must land in the page: {}", file_content);
+
+        let on_disk = cardbox_layout::load_layout(dir.path());
+        assert!(!on_disk.notes.contains_key("p1"),
+            "migrated entry drained: {:?}", on_disk.notes);
+        assert!(on_disk.notes.contains_key("p2"),
+            "failed entry retained for retry: {:?}", on_disk.notes);
     }
 
     // -----------------------------------------------------------------------
