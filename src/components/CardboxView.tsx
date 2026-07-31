@@ -450,9 +450,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onToggleScope: () => { if (!connectionsForUuid) handleScopeChange(scope === "document" ? "workspace" : "document"); },
     onQuoteSelection: () => {
       const target = resolveQuoteTarget(window.getSelection(), gridRef.current);
-      if (!target) return;
+      if (!target) return false;
       expand(target.uuid);
       setPendingNotePrefill(target);
+      return true;
     },
     onUndo: async () => { await undo(); debouncedSave(); },
     onRedo: async () => { await redo(); debouncedSave(); },

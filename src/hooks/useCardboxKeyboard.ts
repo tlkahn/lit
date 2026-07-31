@@ -8,7 +8,8 @@ interface UseCardboxKeyboardOptions {
   onTogglePin?: (index: number) => void;
   onToggleNote?: () => void;
   onToggleScope?: () => void;
-  onQuoteSelection?: () => void;
+  // Returns true when it consumed the key (a quotable selection existed).
+  onQuoteSelection?: () => boolean;
   onShowConnections?: () => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
@@ -77,10 +78,9 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
     // Global layer, not grid layer: after a drag-selection focus usually sits
     // on the body, never inside the grid.
     if ((e.key === "q" || e.key === "Q") && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      if (onQuoteSelection) {
+      if (onQuoteSelection?.()) {
         e.preventDefault();
         e.stopPropagation();
-        onQuoteSelection();
       }
       return;
     }

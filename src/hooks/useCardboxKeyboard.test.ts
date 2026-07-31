@@ -129,4 +129,30 @@ describe("useCardboxKeyboard", () => {
     gridKey(result, { key: "ArrowRight" });
     expect(document.activeElement).toBe(cards[0]);
   });
+
+  describe("Q quote shortcut (#968)", () => {
+    it("prevents default when the callback reports it consumed the key", () => {
+      const onQuoteSelection = vi.fn(() => true);
+      setup({ onQuoteSelection });
+      const event = dispatchGlobalKey({ key: "q" });
+      expect(onQuoteSelection).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBe(true);
+    });
+
+    it("leaves the default alone when nothing was quotable", () => {
+      const onQuoteSelection = vi.fn(() => false);
+      setup({ onQuoteSelection });
+      const event = dispatchGlobalKey({ key: "q" });
+      expect(onQuoteSelection).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("ignores Q with a modifier held", () => {
+      const onQuoteSelection = vi.fn(() => true);
+      setup({ onQuoteSelection });
+      const event = dispatchGlobalKey({ key: "q", metaKey: true });
+      expect(onQuoteSelection).not.toHaveBeenCalled();
+      expect(event.defaultPrevented).toBe(false);
+    });
+  });
 });
