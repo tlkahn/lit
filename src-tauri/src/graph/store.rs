@@ -1687,12 +1687,16 @@ impl Store {
     }
 
     fn refresh_annotation_fts(&self, rowid: i64) -> Result<(), GraphError> {
-        self.conn.execute("DELETE FROM annotations_fts WHERE rowid = ?1", [rowid])?;
-        self.conn.execute(
-            "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
-             SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
-            [rowid],
-        )?;
+        // prepare_cached: called per changed row on the reindex hot path.
+        self.conn
+            .prepare_cached("DELETE FROM annotations_fts WHERE rowid = ?1")?
+            .execute([rowid])?;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                 SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
+            )?
+            .execute([rowid])?;
         Ok(())
     }
 
