@@ -234,7 +234,7 @@ describe("pending focus expands collapsed group (#972)", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(screen.queryByTestId(`probe-card-${A}`)).toBeNull();
-    expect(useCardboxStore.getState().groups["g1"].collapsed).toBe(true);
+    expect(useCardboxStore.getState().groups["g1"]?.collapsed).toBe(true);
 
     act(() => {
       useCardboxStore.getState().setPendingFocusUuid(A);
@@ -244,7 +244,7 @@ describe("pending focus expands collapsed group (#972)", () => {
       await new Promise((r) => setTimeout(r, 300));
     });
 
-    expect(useCardboxStore.getState().groups["g1"].collapsed).toBe(false);
+    expect(useCardboxStore.getState().groups["g1"]?.collapsed).toBe(false);
     expect(screen.getByTestId(`probe-card-${A}`)).toBeInTheDocument();
     expect(useCardboxStore.getState().expandedUuid).toBe(A);
     expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
