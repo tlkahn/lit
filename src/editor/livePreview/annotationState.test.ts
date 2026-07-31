@@ -880,9 +880,9 @@ describe("annotationDecorationPlugin", () => {
     view.destroy();
   });
 
-  it("fold state → block-field CalloutWidget receives isCollapsed=true", () => {
-    // The fold/isCollapsed state now lives on the block field's callout, since
-    // the plugin no longer builds the multiline callout.
+  it("fold state → block-field ThreadWidget receives isCollapsed=true", () => {
+    // The fold/isCollapsed state now lives on the block field's widget, since
+    // the plugin no longer builds the multiline widget. Folding is thread-only.
     const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const state = EditorState.create({
       doc,
@@ -900,6 +900,7 @@ describe("annotationDecorationPlugin", () => {
 
     const ann = makeAnnotation({
       form: "block",
+      annotation_type: "thread",
       char_start: 12,
       char_end: 27,
       original: "<!---\nbody\n--->",
@@ -912,8 +913,8 @@ describe("annotationDecorationPlugin", () => {
       (d) => d.from === 12 && d.to === 27,
     );
     expect(found).toBeTruthy();
-    expect(found!.widget).toBeInstanceOf(CalloutWidget);
-    expect((found!.widget as CalloutWidget).isCollapsed).toBe(true);
+    expect(found!.widget).toBeInstanceOf(ThreadWidget);
+    expect((found!.widget as ThreadWidget).isCollapsed).toBe(true);
 
     view.destroy();
   });
@@ -1120,25 +1121,25 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
     view.destroy();
   });
 
-  it("rebuilds on toggleAnnotationFoldEffect (block-field Callout isCollapsed flips)", () => {
-    // The multiline callout is delivered by annotationBlockDecorationField; the
+  it("rebuilds on toggleAnnotationFoldEffect (block-field thread isCollapsed flips)", () => {
+    // The multiline widget is delivered by annotationBlockDecorationField; the
     // plugin no longer builds it. The fold toggle flips isCollapsed on the
-    // field's callout.
+    // field's thread widget.
     const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const view = makeView(doc, 28);
-    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    const ann = makeAnnotation({ form: "block", annotation_type: "thread", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
-    // Plugin set must not contain the line-spanning callout.
+    // Plugin set must not contain the line-spanning widget.
     expect(widgetAt(getSet(view), 12, 27)).toBeUndefined();
 
     const w1 = widgetAt(getBlockFieldSet(view), 12, 27);
-    expect(w1).toBeInstanceOf(CalloutWidget);
-    expect((w1 as CalloutWidget).isCollapsed).toBe(false);
+    expect(w1).toBeInstanceOf(ThreadWidget);
+    expect((w1 as ThreadWidget).isCollapsed).toBe(false);
 
     view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 12 }) });
     const w2 = widgetAt(getBlockFieldSet(view), 12, 27);
-    expect((w2 as CalloutWidget).isCollapsed).toBe(true);
+    expect((w2 as ThreadWidget).isCollapsed).toBe(true);
 
     view.destroy();
   });
@@ -1665,14 +1666,14 @@ describe("buildAnnotationDecorations", () => {
     view.destroy();
   });
 
-  it("fold state → block-field CalloutWidget isCollapsed=true", () => {
+  it("fold state → block-field ThreadWidget isCollapsed=true", () => {
     const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const view = makeView(doc, 28);
-    const ann = makeAnnotation({ form: "block", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
+    const ann = makeAnnotation({ form: "block", annotation_type: "thread", char_start: 12, char_end: 27, original: "<!---\nbody\n--->" });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
     view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: 12 }) });
 
-    // Fold/isCollapsed now lives on the block field's callout.
+    // Fold/isCollapsed now lives on the block field's thread widget.
     const { decorations } = buildAnnotationDecorations(view);
     expect(iterateSet(decorations).find((d) => d.from === 12 && d.to === 27)).toBeUndefined();
 
@@ -1680,8 +1681,8 @@ describe("buildAnnotationDecorations", () => {
       (d) => d.from === 12 && d.to === 27,
     );
     expect(found).toBeTruthy();
-    expect(found!.widget).toBeInstanceOf(CalloutWidget);
-    expect((found!.widget as CalloutWidget).isCollapsed).toBe(true);
+    expect(found!.widget).toBeInstanceOf(ThreadWidget);
+    expect((found!.widget as ThreadWidget).isCollapsed).toBe(true);
     view.destroy();
   });
 
@@ -2115,7 +2116,7 @@ describe("surgical path eligibility guards", () => {
     });
     expect(blocks.length).toBe(1);
     const b = blocks[0]!;
-    const ann = makeAnnotation({ form: "block", char_start: b.from, char_end: b.to, original: doc.slice(b.from, b.to) });
+    const ann = makeAnnotation({ form: "block", annotation_type: "thread", char_start: b.from, char_end: b.to, original: doc.slice(b.from, b.to) });
     view.dispatch({ effects: setAnnotationData.of([ann]) });
 
     view.dispatch({ selection: { anchor: b.from + 2 } });
@@ -2129,7 +2130,7 @@ describe("surgical path eligibility guards", () => {
     const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
     while (iter.value) {
       if (iter.from === b.from) {
-        expect((iter.value.spec?.widget as CalloutWidget).isCollapsed).toBe(true);
+        expect((iter.value.spec?.widget as ThreadWidget).isCollapsed).toBe(true);
       }
       iter.next();
     }
@@ -2168,6 +2169,7 @@ describe("fold/turn + selection in one transaction", () => {
     const annotations = blocks.map((b) =>
       makeAnnotation({
         form: "block",
+        annotation_type: "thread",
         char_start: b.from,
         char_end: b.to,
         original: DOC.slice(b.from, b.to),
@@ -2191,7 +2193,7 @@ describe("fold/turn + selection in one transaction", () => {
     while (iter.value) {
       if (iter.from === from) {
         const w = iter.value.spec?.widget;
-        return w instanceof CalloutWidget && w.isCollapsed;
+        return w instanceof ThreadWidget && w.isCollapsed;
       }
       iter.next();
     }
@@ -2280,6 +2282,7 @@ describe("setAllAnnotationFoldsEffect surgical path", () => {
     const annotations = blocks.map((b) =>
       makeAnnotation({
         form: "block",
+        annotation_type: "thread",
         char_start: b.from,
         char_end: b.to,
         original: DOC.slice(b.from, b.to),
@@ -2294,7 +2297,7 @@ describe("setAllAnnotationFoldsEffect surgical path", () => {
     while (iter.value) {
       if (iter.from === from) {
         const w = iter.value.spec?.widget;
-        if (w instanceof CalloutWidget) return w.isCollapsed;
+        if (w instanceof ThreadWidget) return w.isCollapsed;
       }
       iter.next();
     }
@@ -2687,15 +2690,15 @@ describe("exact-span correctness (Phase 1)", () => {
     expect(blocks.length).toBe(1);
     const b = blocks[0]!;
 
-    const annA = makeAnnotation({ form: "block", char_start: b.from, char_end: b.to, body: "first", original: doc.slice(b.from, b.to) });
-    const annB = makeAnnotation({ form: "block", char_start: b.from, char_end: b.to, body: "second", original: doc.slice(b.from, b.to) });
+    const annA = makeAnnotation({ form: "block", annotation_type: "thread", char_start: b.from, char_end: b.to, body: "first", original: doc.slice(b.from, b.to) });
+    const annB = makeAnnotation({ form: "block", annotation_type: "thread", char_start: b.from, char_end: b.to, body: "second", original: doc.slice(b.from, b.to) });
     view.dispatch({ effects: setAnnotationData.of([annA, annB]) });
 
     const decos = view.state.field(annotationBlockDecorationField).decorations;
     expect(decos.size).toBe(1);
     const iter = decos.iter();
     expect(iter.value).toBeTruthy();
-    const widget = iter.value!.spec.widget as CalloutWidget;
+    const widget = iter.value!.spec.widget as ThreadWidget;
     expect(widget.annotation.body).toBe("first");
 
     view.destroy();
@@ -2713,8 +2716,8 @@ describe("exact-span correctness (Phase 1)", () => {
     expect(blocks.length).toBe(1);
     const b = blocks[0]!;
 
-    const annA = makeAnnotation({ form: "block", char_start: b.from, char_end: b.to, body: "correct", original: doc.slice(b.from, b.to) });
-    const annB = makeAnnotation({ form: "block", char_start: b.from, char_end: b.to - 1, body: "wrong", original: "shorter" });
+    const annA = makeAnnotation({ form: "block", annotation_type: "thread", char_start: b.from, char_end: b.to, body: "correct", original: doc.slice(b.from, b.to) });
+    const annB = makeAnnotation({ form: "block", annotation_type: "thread", char_start: b.from, char_end: b.to - 1, body: "wrong", original: "shorter" });
     view.dispatch({ effects: setAnnotationData.of([annA, annB]) });
 
     const decoBefore = view.state.field(annotationBlockDecorationField).decorations;
@@ -2730,7 +2733,7 @@ describe("exact-span correctness (Phase 1)", () => {
     const iterAfter = decoAfter.iter();
     expect(iterAfter.from).toBe(b.from);
     expect(iterAfter.to).toBe(b.to);
-    const widget = iterAfter.value!.spec.widget as CalloutWidget;
+    const widget = iterAfter.value!.spec.widget as ThreadWidget;
     expect(widget.isCollapsed).toBe(true);
     expect(widget.annotation.body).toBe("correct");
 

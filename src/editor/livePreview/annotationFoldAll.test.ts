@@ -82,55 +82,12 @@ function makeViewWithBlocks(anchor = 0) {
   const annotations = blocks.map((b) =>
     makeAnnotation({
       form: "block",
+      annotation_type: "thread",
       char_start: b.from,
       char_end: b.to,
       original: TWO_BLOCK_DOC.slice(b.from, b.to),
     }),
   );
-  view.dispatch({ effects: setAnnotationData.of(annotations) });
-  return { view, A: blocks[0]!, B: blocks[1]! };
-}
-
-function makeViewWithThread(anchor = 0) {
-  const doc = "first line\n\n<!---\nbody A\n--->\nmiddle\n\n<!---\nbody B\n--->\ntail";
-  const state = EditorState.create({
-    doc,
-    selection: { anchor },
-    extensions: [
-      markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
-      annotationDataField,
-      displayModeField,
-      annotationFoldField,
-      threadTurnField,
-      firingAnnotationsField,
-      llmLockedField,
-      annotationBlockDecorationField,
-    ],
-  });
-  const view = new EditorView({ state, parent: document.createElement("div") });
-  ensureSyntaxTree(view.state, view.state.doc.length);
-  const blocks: Array<{ from: number; to: number }> = [];
-  syntaxTree(view.state).iterate({
-    enter: (node) => {
-      if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
-    },
-  });
-  expect(blocks.length).toBe(2);
-  const annotations = [
-    makeAnnotation({
-      form: "block",
-      char_start: blocks[0]!.from,
-      char_end: blocks[0]!.to,
-      original: doc.slice(blocks[0]!.from, blocks[0]!.to),
-    }),
-    makeAnnotation({
-      form: "block",
-      annotation_type: "thread",
-      char_start: blocks[1]!.from,
-      char_end: blocks[1]!.to,
-      original: doc.slice(blocks[1]!.from, blocks[1]!.to),
-    }),
-  ];
   view.dispatch({ effects: setAnnotationData.of(annotations) });
   return { view, A: blocks[0]!, B: blocks[1]! };
 }
@@ -149,8 +106,8 @@ function isCollapsedAt(view: EditorView, from: number): boolean | undefined {
 }
 
 describe("toggleAllBlockAnnotationFolds", () => {
-  it("D1: collapses all expanded multiline block annotations (callout + thread)", () => {
-    const { view, A, B } = makeViewWithThread();
+  it("D1: collapses all expanded multiline thread annotations", () => {
+    const { view, A, B } = makeViewWithBlocks();
     try {
       expect(isCollapsedAt(view, A.from)).toBe(false);
       expect(isCollapsedAt(view, B.from)).toBe(false);
@@ -205,7 +162,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
       const widgets: Array<{ from: number; collapsed: boolean }> = [];
       while (iter.value) {
         const w = iter.value.spec?.widget;
-        if (w instanceof CalloutWidget) {
+        if (w instanceof ThreadWidget) {
           widgets.push({ from: iter.from, collapsed: w.isCollapsed });
         }
         iter.next();
@@ -295,6 +252,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
     const ann = makeAnnotation({
+      annotation_type: "thread",
       char_start: 11,
       char_end: 31,
       original: "<!---single-line--->",
@@ -330,6 +288,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     ensureSyntaxTree(view.state, view.state.doc.length);
     // char_start:12 char_end:17 are both on line 3 ("<!---"), so this is single-line
     const ann = makeAnnotation({
+      annotation_type: "thread",
       char_start: 12,
       char_end: 17,
       original: "<!---single--->",
@@ -374,12 +333,14 @@ describe("toggleAllBlockAnnotationFolds", () => {
     const annotations = [
       makeAnnotation({
         form: "block",
+        annotation_type: "thread",
         char_start: 17,
         char_end: 40,
         original: doc.slice(17, 40),
       }),
       makeAnnotation({
         form: "block",
+        annotation_type: "thread",
         char_start: realBlock!.from,
         char_end: realBlock!.to,
         original: doc.slice(realBlock!.from, realBlock!.to),
@@ -415,6 +376,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     const view = new EditorView({ state, parent: document.createElement("div") });
     const ann = makeAnnotation({
       form: "block",
+      annotation_type: "thread",
       char_start: 0,
       char_end: 999,
       original: "<!---\nstale\n--->",
@@ -489,6 +451,7 @@ describe("toggleAllBlockAnnotationFolds - parse frontier", () => {
       effects: setAnnotationData.of([
         makeAnnotation({
           form: "block",
+          annotation_type: "thread",
           char_start: BLOCK_FROM,
           char_end: BLOCK_TO,
           original: BLOCK,

@@ -234,7 +234,7 @@ function generateBlockAnnotationHeavy(blockCount: number): string {
   return blocks.join("\n\n") + "\n\nplain tail line";
 }
 
-function blockAnnotationsFromTree(view: EditorView): Annotation[] {
+function blockAnnotationsFromTree(view: EditorView, opts: { asThread?: boolean } = {}): Annotation[] {
   const { state } = view;
   const annotations: Annotation[] = [];
   syntaxTree(state).iterate({
@@ -242,9 +242,11 @@ function blockAnnotationsFromTree(view: EditorView): Annotation[] {
       if (node.name !== "BlockAnnotation") return;
       const original = state.doc.sliceString(node.from, node.to);
       // Stress fixture heads: "n" (note) or "th" (thread). Detect from source so
-      // CalloutWidget vs ThreadWidget mix matches generateBlockAnnotationStress.
+      // the pill vs ThreadWidget mix matches generateBlockAnnotationStress.
+      // `asThread` overrides: fold-behavior suites need all-thread fixtures
+      // since folding is thread-only.
       const headMatch = original.match(/^<!---\r?\n(th|n)\b/);
-      const annotation_type = headMatch?.[1] === "th" ? "thread" : "note";
+      const annotation_type = opts.asThread ? "thread" : headMatch?.[1] === "th" ? "thread" : "note";
       annotations.push(
         makeAnnotation({
           form: "block",
@@ -263,7 +265,7 @@ function blockAnnotationsFromTree(view: EditorView): Annotation[] {
 describe("annotationBlockDecorationField — block-heavy doc", () => {
   const BLOCK_COUNT = 200;
 
-  function makeBlockPerfView(doc: string): EditorView {
+  function makeBlockPerfView(doc: string, opts: { asThread?: boolean } = {}): EditorView {
     const state = EditorState.create({
       doc,
       selection: { anchor: doc.length - 2 },
@@ -281,7 +283,7 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
     });
     const view = new EditorView({ state, parent: document.createElement("div") });
     forceParsing(view, view.state.doc.length, 10_000);
-    view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view)) });
+    view.dispatch({ effects: setAnnotationData.of(blockAnnotationsFromTree(view, opts)) });
     return view;
   }
 
@@ -310,7 +312,7 @@ describe("annotationBlockDecorationField — block-heavy doc", () => {
 
   it(`single toggleAnnotationFoldEffect (${BLOCK_COUNT} block annotations)`, () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
-    const view = makeBlockPerfView(doc);
+    const view = makeBlockPerfView(doc, { asThread: true });
     const firstBlockPos = view.state.field(annotationDataField)[0]?.char_start ?? 0;
 
     const start = performance.now();
@@ -554,7 +556,7 @@ describe("targeted iteration (step 1)", () => {
 describe("surgical DecorationSet update (step 2)", () => {
   const BLOCK_COUNT = 10;
 
-  function makeBlockView(doc: string): EditorView {
+  function makeBlockView(doc: string, opts: { asThread?: boolean } = {}): EditorView {
     const state = EditorState.create({
       doc,
       selection: { anchor: doc.length - 2 },
@@ -572,7 +574,7 @@ describe("surgical DecorationSet update (step 2)", () => {
     });
     const view = new EditorView({ state, parent: document.createElement("div") });
     forceParsing(view, view.state.doc.length, 10_000);
-    const annotations = blockAnnotationsFromTree(view);
+    const annotations = blockAnnotationsFromTree(view, opts);
     view.dispatch({ effects: setAnnotationData.of(annotations) });
     return view;
   }
@@ -594,7 +596,7 @@ describe("surgical DecorationSet update (step 2)", () => {
 
   it("fold-only dispatch preserves Decoration identity for unaffected positions", () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
-    const view = makeBlockView(doc);
+    const view = makeBlockView(doc, { asThread: true });
     const annotations = view.state.field(annotationDataField);
     expect(annotations.length).toBe(BLOCK_COUNT);
 
@@ -619,7 +621,7 @@ describe("surgical DecorationSet update (step 2)", () => {
 
   it("surgical fold produces correct fold state", () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
-    const view = makeBlockView(doc);
+    const view = makeBlockView(doc, { asThread: true });
     const annotations = view.state.field(annotationDataField);
     const targetPos = annotations[2]!.char_start;
 
@@ -628,19 +630,19 @@ describe("surgical DecorationSet update (step 2)", () => {
     const afterDecos = collectDecos(view);
     const toggled = afterDecos.find((d) => d.from === targetPos);
     expect(toggled).toBeDefined();
-    expect((toggled!.widget as CalloutWidget).isCollapsed).toBe(true);
+    expect((toggled!.widget as ThreadWidget).isCollapsed).toBe(true);
 
     // Others remain expanded
     for (const d of afterDecos) {
       if (d.from === targetPos) continue;
-      expect((d.widget as CalloutWidget).isCollapsed).toBe(false);
+      expect((d.widget as ThreadWidget).isCollapsed).toBe(false);
     }
     view.destroy();
   });
 
   it("surgical update respects cursor-sensitivity", () => {
     const doc = generateBlockAnnotationHeavy(BLOCK_COUNT);
-    const view = makeBlockView(doc);
+    const view = makeBlockView(doc, { asThread: true });
     const annotations = view.state.field(annotationDataField);
     const target = annotations[0]!;
 
@@ -732,7 +734,7 @@ describe("surgical DecorationSet update (step 2)", () => {
 
 const STRESS_HARD_LIMIT_MS = HARD_LIMIT_MS;
 
-function makeStressBlockView(): EditorView {
+function makeStressBlockView(opts: { asThread?: boolean } = {}): EditorView {
   const doc = generateBlockAnnotationStress();
   const state = EditorState.create({
     doc,
@@ -753,7 +755,7 @@ function makeStressBlockView(): EditorView {
   // the Language state field; syntaxTree(view.state) stays partial. forceParsing
   // advances the parser and updates editor state so block widgets can build.
   forceParsing(view, view.state.doc.length, 10_000);
-  const annotations = blockAnnotationsFromTree(view);
+  const annotations = blockAnnotationsFromTree(view, opts);
   view.dispatch({ effects: setAnnotationData.of(annotations) });
   return view;
 }
@@ -833,7 +835,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   });
 
   it("fold-all surgical path total time", () => {
-    const view = makeStressBlockView();
+    const view = makeStressBlockView({ asThread: true });
     const annotations = view.state.field(annotationDataField);
     const positions = annotations.map((a) => a.char_start);
     const foldMap = view.state.field(annotationFoldField, false);
@@ -853,7 +855,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   });
 
   it("fold-all via toggleAllBlockAnnotationFolds helper", () => {
-    const view = makeStressBlockView();
+    const view = makeStressBlockView({ asThread: true });
 
     const start = performance.now();
     const result = toggleAllBlockAnnotationFolds(view);
