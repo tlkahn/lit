@@ -183,9 +183,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     clearSelection();
   }, [searchQuery, activeTypes, activeColors, scope, clearSelection]);
 
+  // Mount-only: every cardbox open starts collapsed. User-initiated scope
+  // changes collapse via handleScopeChange; programmatic setScope (e.g.
+  // cross-page pending-focus widen) must NOT collapse (#972).
   useEffect(() => {
     collapseAll();
-  }, [scope, collapseAll]);
+  }, [collapseAll]);
+
+  const handleScopeChange = useCallback(
+    (next: "document" | "workspace") => {
+      collapseAll();
+      setScope(next);
+    },
+    [collapseAll, setScope],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -472,7 +483,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onShowShortcuts: () => setShortcutsOpen(true),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
-    onToggleScope: () => { if (!connectionsForUuid) setScope(scope === "document" ? "workspace" : "document"); },
+    onToggleScope: () => { if (!connectionsForUuid) handleScopeChange(scope === "document" ? "workspace" : "document"); },
     onUndo: async () => { await undo(); debouncedSave(); },
     onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
@@ -952,7 +963,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       <div className="flex h-full flex-col items-center justify-center gap-2 text-text-faint" data-testid="cardbox-empty">
         <span>{scope === "document" ? "No annotations in this document" : "No annotations in this workspace"}</span>
         {scope === "document" && annotations.length > 0 && (
-          <button onClick={() => setScope("workspace")} className="text-xs text-interactive-accent hover:underline" data-testid="cardbox-show-all">
+          <button onClick={() => handleScopeChange("workspace")} className="text-xs text-interactive-accent hover:underline" data-testid="cardbox-show-all">
             Show all workspace cards
           </button>
         )}
@@ -1008,7 +1019,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
                     scope === "document" ? "bg-bg-primary text-text-normal font-medium shadow-sm" : "text-text-faint hover:text-text-normal"
                   }`}
-                  onClick={() => setScope("document")}
+                  onClick={() => handleScopeChange("document")}
                   data-testid="scope-document"
                 >
                   Document
@@ -1018,7 +1029,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
                     scope === "workspace" ? "bg-bg-primary text-text-normal font-medium shadow-sm" : "text-text-faint hover:text-text-normal"
                   }`}
-                  onClick={() => setScope("workspace")}
+                  onClick={() => handleScopeChange("workspace")}
                   data-testid="scope-workspace"
                 >
                   Workspace

@@ -160,6 +160,38 @@ describe("CardboxView memo effectiveness (#850)", () => {
   });
 });
 
+describe("collapse-on-scope-change ownership (#972)", () => {
+  it("toolbar scope toggle collapses the expanded card", async () => {
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().toggleExpand(A);
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+
+    await act(async () => {
+      screen.getByTestId("scope-workspace").click();
+    });
+
+    expect(useCardboxStore.getState().scope).toBe("workspace");
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+  });
+
+  it("programmatic setScope does not collapse the expanded card", async () => {
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().toggleExpand(A);
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+
+    act(() => {
+      useCardboxStore.getState().setScope("workspace");
+    });
+
+    expect(useCardboxStore.getState().scope).toBe("workspace");
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+  });
+});
+
 describe("pending focus never re-collapses the focused card (#972)", () => {
   it("stays expanded after F2 filter-reset when warm scope is workspace", async () => {
     // Warm store: workspace scope + a type filter that hides card A (note).
