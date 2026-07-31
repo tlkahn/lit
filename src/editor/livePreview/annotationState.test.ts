@@ -310,6 +310,50 @@ describe("annotation enrich helpers (#978)", () => {
     carryForwardUuids(live, []);
     expect(live[0]!.uuid).toBeUndefined();
   });
+
+  it("carryForwardUuids skips prev uuids already assigned to live (mixed hit+miss)", () => {
+    // First note body-key matched the stale index (kept u1); second note was
+    // body-edited and missed. The miss must get u2, not re-share u1.
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "hello", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "world", uuid: "u2", char_start: 100 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "hello", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "world!", char_start: 100 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[1]!.uuid).toBe("u2");
+    expect(live.filter((a) => a.uuid === "u1")).toHaveLength(1);
+  });
+
+  it("carryForwardUuids does not hand a neighbor's uuid to a new same-type annotation", () => {
+    // User typed a brand-new note while the existing one still body-matches:
+    // the new note has no prior identity and must stay unset.
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "new note", char_start: 500 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[1]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids pairs nearest char_start on count mismatch (delete+edit mix)", () => {
+    // User deleted the first note and body-edited the second in one debounce
+    // window: the survivor keeps its own uuid, not the deleted note's.
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "B", uuid: "u2", char_start: 100 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B edited", char_start: 100 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("u2");
+  });
 });
 
 describe("annotationPlugin", () => {

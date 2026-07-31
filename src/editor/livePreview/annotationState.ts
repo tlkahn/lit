@@ -98,18 +98,25 @@ export function enrichWithGroups(annotations: Annotation[], groups: Map<string, 
 
 /**
  * Second-pass identity: unmatched live annotations inherit uuid from the
- * previous annotationDataField snapshot when type matches. Pairing is
- * ordinal-by-char_start within each type (mirrors the indexer anti-swap
- * rule). Bridges the stale-index window after a body edit without inventing
- * uuids the index never had (#978).
+ * previous annotationDataField snapshot when type matches. Prev uuids already
+ * present on live are excluded (true consumption), so a body-key hit cannot
+ * be re-handed to a second live ann. Within each type, equal counts pair
+ * ordinal-by-char_start (anti-swap, mirrors the indexer); unequal counts pair
+ * greedy nearest-char_start so a same-window delete does not hand its uuid to
+ * an ordinal neighbor. Bridges the stale-index window after a body edit
+ * without inventing uuids the index never had (#978).
  */
 export function carryForwardUuids(live: Annotation[], prev: Annotation[]): void {
   if (prev.length === 0) return;
 
   type Slot = { ann: Annotation; char_start: number };
+  const usedUuids = new Set<string>();
   const unmatchedLiveByType = new Map<string, Slot[]>();
   for (const ann of live) {
-    if (ann.uuid != null && ann.uuid !== "") continue;
+    if (ann.uuid != null && ann.uuid !== "") {
+      usedUuids.add(ann.uuid);
+      continue;
+    }
     let arr = unmatchedLiveByType.get(ann.annotation_type);
     if (!arr) { arr = []; unmatchedLiveByType.set(ann.annotation_type, arr); }
     arr.push({ ann, char_start: ann.char_start });
@@ -118,7 +125,7 @@ export function carryForwardUuids(live: Annotation[], prev: Annotation[]): void 
 
   const prevByType = new Map<string, Slot[]>();
   for (const ann of prev) {
-    if (ann.uuid == null || ann.uuid === "") continue;
+    if (ann.uuid == null || ann.uuid === "" || usedUuids.has(ann.uuid)) continue;
     let arr = prevByType.get(ann.annotation_type);
     if (!arr) { arr = []; prevByType.set(ann.annotation_type, arr); }
     arr.push({ ann, char_start: ann.char_start });
@@ -129,9 +136,32 @@ export function carryForwardUuids(live: Annotation[], prev: Annotation[]): void 
     if (!prevSlots || prevSlots.length === 0) continue;
     liveSlots.sort((a, b) => a.char_start - b.char_start);
     prevSlots.sort((a, b) => a.char_start - b.char_start);
-    const pairCount = Math.min(liveSlots.length, prevSlots.length);
-    for (let i = 0; i < pairCount; i++) {
-      liveSlots[i]!.ann.uuid = prevSlots[i]!.ann.uuid;
+
+    if (liveSlots.length === prevSlots.length) {
+      for (let i = 0; i < liveSlots.length; i++) {
+        liveSlots[i]!.ann.uuid = prevSlots[i]!.ann.uuid;
+      }
+      continue;
+    }
+
+    // Count mismatch: greedy nearest-char_start with consumption.
+    // Tie-break (prev char_start, live char_start) for determinism.
+    const candidates: Array<[number, number, number, number, number]> = [];
+    for (let pi = 0; pi < prevSlots.length; pi++) {
+      for (let li = 0; li < liveSlots.length; li++) {
+        const p = prevSlots[pi]!.char_start;
+        const l = liveSlots[li]!.char_start;
+        candidates.push([Math.abs(p - l), p, l, pi, li]);
+      }
+    }
+    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    const prevUsed = new Array<boolean>(prevSlots.length).fill(false);
+    const liveUsed = new Array<boolean>(liveSlots.length).fill(false);
+    for (const [, , , pi, li] of candidates) {
+      if (prevUsed[pi] || liveUsed[li]) continue;
+      prevUsed[pi] = true;
+      liveUsed[li] = true;
+      liveSlots[li]!.ann.uuid = prevSlots[pi]!.ann.uuid;
     }
   }
 }
