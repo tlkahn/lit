@@ -154,7 +154,9 @@ describe("CardboxCard", () => {
     expect(screen.queryByTestId("card-certainty")).not.toBeInTheDocument();
   });
 
-  it("calls onToggleExpand when clicked", () => {
+  it("does not call onToggleExpand when the card root is clicked", () => {
+    // Whole-card click-to-expand is gone (#968): body clicks must leave text
+    // selection alone; expansion goes through the chevron or keyboard.
     const onToggle = vi.fn();
     render(
       <CardboxCard
@@ -165,10 +167,10 @@ describe("CardboxCard", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("cardbox-card"));
-    expect(onToggle).toHaveBeenCalledOnce();
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
-  it("clicking back face toggles expand", () => {
+  it("clicking the back face does not toggle expand", () => {
     const onToggle = vi.fn();
     render(
       <CardboxCard
@@ -181,7 +183,7 @@ describe("CardboxCard", () => {
     fireEvent.click(screen.getByTestId("card-flip"));
     expect(onToggle).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId("card-face-back"));
-    expect(onToggle).toHaveBeenCalledOnce();
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
   it("Escape collapses even when flipped", () => {
@@ -562,7 +564,7 @@ describe("CardboxCard", () => {
     expect(card).toHaveAttribute("data-flipped", "false");
   });
 
-  it("flip button sits outside expand hit-path when card clicked elsewhere still expands", () => {
+  it("flip button flips exactly once and root clicks never expand", () => {
     const onToggle = vi.fn();
     render(
       <CardboxCard
@@ -572,8 +574,10 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "true");
     fireEvent.click(screen.getByTestId("cardbox-card"));
-    expect(onToggle).toHaveBeenCalledOnce();
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
   // --- Card linking tests ---
@@ -956,9 +960,9 @@ describe("CardboxCard", () => {
       />,
     );
     const front = screen.getByTestId("card-face-front");
-    expect(front.className).toMatch(/pr-8/);
+    expect(front.className).toMatch(/pr-14/);
     fireEvent.click(screen.getByTestId("card-flip"));
-    expect(screen.getByTestId("card-face-back").className).toMatch(/pr-8/);
+    expect(screen.getByTestId("card-face-back").className).toMatch(/pr-14/);
   });
 
   // --- Back quote clamp tests ---
@@ -1546,6 +1550,141 @@ describe("CardboxCard", () => {
       expect(code).not.toBeNull();
       expect(code!.textContent).toBe("bar()");
       expect(orig.textContent).not.toContain("`");
+    });
+  });
+
+  it("does not stop pointerdown propagation anywhere inside the card", () => {
+    // Text selection starts with a pointerdown; any swallowed pointerdown
+    // breaks drag-selection over that region (#968).
+    const onContainerPointerDown = vi.fn();
+    render(
+      <div onPointerDown={onContainerPointerDown}>
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          linkedCards={[{ ...baseAnnotation, uuid: "linked-1" }]}
+          note="a note"
+          onSetNote={() => {}}
+        />
+      </div>,
+    );
+    fireEvent.pointerDown(screen.getByTestId("card-flip"));
+    expect(onContainerPointerDown).toHaveBeenCalledTimes(1);
+    fireEvent.pointerDown(screen.getByTestId("card-linked-section"));
+    expect(onContainerPointerDown).toHaveBeenCalledTimes(2);
+    fireEvent.pointerDown(screen.getByTestId("card-note-display"));
+    expect(onContainerPointerDown).toHaveBeenCalledTimes(3);
+
+    fireEvent.click(screen.getByTestId("card-note-edit"));
+    fireEvent.pointerDown(screen.getByTestId("card-note-textarea"));
+    expect(onContainerPointerDown).toHaveBeenCalledTimes(4);
+  });
+
+  describe("text selection (#968)", () => {
+    const indexCss = () =>
+      readFileSync(resolve(__dirname, "../index.css"), "utf8");
+
+    /** The `#root ... { user-select: auto }` opt-in selector list. */
+    const optInSelectors = () => {
+      const match = indexCss().match(
+        /((?:#root [^{}]+,\s*)*#root [^{},]+)\s*\{\s*user-select:\s*auto;/,
+      );
+      expect(match).not.toBeNull();
+      return match![1]!;
+    };
+
+    it("index.css opts the back-face quote into user-select auto", () => {
+      expect(optInSelectors()).toContain('[data-testid="card-original"]');
+    });
+
+    it("index.css keeps .prose in the user-select auto list", () => {
+      expect(optInSelectors()).toContain("#root .prose");
+    });
+
+    it("card root does not render a pointer cursor", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("cardbox-card").className).not.toContain("cursor-pointer");
+    });
+  });
+
+  describe("expand toggle button (#968)", () => {
+    it("renders a top-right expand toggle whose click calls onToggleExpand", () => {
+      const onToggle = vi.fn();
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={onToggle}
+          onNavigate={() => {}}
+        />,
+      );
+      const toggle = screen.getByTestId("card-expand-toggle");
+      fireEvent.click(toggle);
+      expect(onToggle).toHaveBeenCalledOnce();
+    });
+
+    it("Enter on the expand toggle does not also reach the grid keyboard handler", () => {
+      const onToggle = vi.fn();
+      const onGridEnter = vi.fn();
+      render(
+        <div
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const t = e.target as HTMLElement;
+              if (t.closest('[data-testid="cardbox-card"]')) onGridEnter();
+            }
+          }}
+        >
+          <CardboxCard
+            annotation={baseAnnotation}
+            expanded={false}
+            onToggleExpand={onToggle}
+            onNavigate={() => {}}
+          />
+        </div>,
+      );
+      const toggle = screen.getByTestId("card-expand-toggle");
+      toggle.focus();
+      fireEvent.keyDown(toggle, { key: "Enter" });
+      expect(onGridEnter).not.toHaveBeenCalled();
+      fireEvent.keyDown(toggle, { key: " " });
+      expect(onGridEnter).not.toHaveBeenCalled();
+    });
+
+    it("flips aria-expanded and label with the expanded prop", () => {
+      const { unmount } = render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      let toggle = screen.getByTestId("card-expand-toggle");
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(toggle).toHaveAttribute("aria-label", "Expand card");
+      unmount();
+
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      toggle = screen.getByTestId("card-expand-toggle");
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(toggle).toHaveAttribute("aria-label", "Collapse card");
     });
   });
 });

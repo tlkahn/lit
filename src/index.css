@@ -135,6 +135,7 @@ html, body, #root {
 #root .cm-editor,
 #root .textLayer,
 #root .prose,
+#root [data-testid="card-original"],
 #root pre,
 #root code {
   user-select: auto;

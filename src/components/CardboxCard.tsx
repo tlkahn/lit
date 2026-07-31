@@ -63,7 +63,8 @@ function CardNoteEditor({
   // Editing state: textarea
   if (editing) {
     return (
-      <div className="pt-2" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+      // Defensive-only click guard; must never swallow pointerdown (#968).
+      <div className="pt-2" onClick={(e) => e.stopPropagation()}>
         <textarea
           ref={textareaRef}
           className="w-full resize-none rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-normal focus:border-interactive-accent focus:outline-none"
@@ -91,7 +92,8 @@ function CardNoteEditor({
 
   // Display state: rendered markdown + edit/export buttons
   return (
-    <div className="pt-2" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+    // Defensive-only click guard; must never swallow pointerdown (#968).
+    <div className="pt-2" onClick={(e) => e.stopPropagation()}>
       <div className="text-[10px] font-semibold uppercase text-text-muted">Note</div>
       <div
         className="prose prose-sm pt-1 cursor-text text-xs"
@@ -222,8 +224,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   return (
     <div
       ref={cardRef}
-      className={`relative cursor-pointer rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
-      onClick={onToggleExpand}
+      className={`relative rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
       onKeyDown={handleKeyDown}
       tabIndex={0}
       data-testid="cardbox-card"
@@ -250,22 +251,43 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             aria-label={showFlipped ? "Show annotation" : "Show original quote"}
             aria-pressed={showFlipped}
             title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
-            onClick={(e) => {
-              e.stopPropagation();
-              flipCard();
-            }}
+            onClick={flipCard}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.stopPropagation();
               }
             }}
-            onPointerDown={(e) => e.stopPropagation()}
           >{'\u{F2F1}'}</button>
         )}
+        <button
+          type="button"
+          className="text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
+          data-testid="card-expand-toggle"
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse card" : "Expand card"}
+          title={expanded ? "Collapse card" : "Expand card"}
+          onClick={onToggleExpand}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.stopPropagation();
+            }
+          }}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
+            aria-hidden="true"
+          >
+            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
       <div className="cardbox-card-stage" ref={stageRef} data-testid="card-flip-stage">
         {!showFlipped ? (
-          <div className="pr-8" data-testid="card-face-front">
+          <div className="pr-14" data-testid="card-face-front">
             <div className="flex items-start gap-2">
               <span
                 className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
@@ -307,7 +329,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                   type="button"
                   className="text-text-muted hover:text-text-normal"
                   data-testid="card-source"
-                  onClick={(e) => { e.stopPropagation(); onNavigate(); }}
+                  onClick={onNavigate}
                 >
                   {annotation.source_page_title}
                 </button>
@@ -332,10 +354,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                   <div className="flex items-center gap-3">
                     <button
                       className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onNavigate();
-                      }}
+                      onClick={onNavigate}
                       data-testid="card-navigate"
                     >
                       <span className="nerd-font" aria-hidden="true">{'\u{F0219}'}</span>
@@ -344,10 +363,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                     {onShowConnections && (
                       <button
                         className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onShowConnections();
-                        }}
+                        onClick={onShowConnections}
                         data-testid="card-show-connections"
                       >
                         <span className="nerd-font" aria-hidden="true">{'\u{F0339}'}</span>
@@ -358,19 +374,16 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                       <button
                         className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
                         data-testid="card-note-add"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setNoteEditing(true);
-                        }}
+                        onClick={() => setNoteEditing(true)}
                       >
                         <span className="nerd-font" aria-hidden="true">{'\u{F0FE}'}</span> Add note
                       </button>
                     )}
                   </div>
                   {linkedCards && linkedCards.length > 0 && (
+                    // Defensive-only click guard; must never swallow pointerdown (#968).
                     <div
                       data-testid="card-linked-section"
-                      onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="mt-2 text-[10px] font-semibold uppercase text-text-muted">Linked</div>
@@ -422,7 +435,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             </div>
           </div>
         ) : (
-          <div className="pr-8" data-testid="card-face-back">
+          <div className="pr-14" data-testid="card-face-back">
             <div
               className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
               data-testid="card-original"
@@ -436,7 +449,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 type="button"
                 className="mt-2 text-xs text-text-muted hover:text-text-normal"
                 data-testid="card-source"
-                onClick={(e) => { e.stopPropagation(); onNavigate(); }}
+                onClick={onNavigate}
               >
                 {annotation.source_page_title}
               </button>
