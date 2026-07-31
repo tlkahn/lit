@@ -710,6 +710,7 @@ describe("quote to slip note (#968)", () => {
     vi.spyOn(window, "getSelection").mockReturnValue({
       isCollapsed: collapsed,
       anchorNode,
+      focusNode: anchorNode,
       toString: () => text,
     } as unknown as Selection);
   }
