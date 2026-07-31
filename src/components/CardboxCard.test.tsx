@@ -1732,6 +1732,34 @@ describe("CardboxCard", () => {
       expect(optInSelectors()).toContain("#root .prose");
     });
 
+    it("selectable text containers show a text cursor", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-body").className).toMatch(/cursor-text/);
+      fireEvent.click(screen.getByTestId("card-flip"));
+      expect(screen.getByTestId("card-original").className).toMatch(/cursor-text/);
+    });
+
+    it("chevron and flip buttons carry a padded 24px hit area", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      // 12px glyph + 2x6px padding = 24px WCAG 2.5.8 minimum target.
+      expect(screen.getByTestId("card-flip").className).toMatch(/p-1\.5/);
+      expect(screen.getByTestId("card-expand-toggle").className).toMatch(/p-1\.5/);
+    });
+
     it("card root does not render a pointer cursor", () => {
       render(
         <CardboxCard

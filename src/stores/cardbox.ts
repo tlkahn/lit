@@ -74,9 +74,9 @@ export interface CardboxStore {
   // editor (#968).
   pendingNotePrefill: { uuid: string; text: string } | null;
   // True once loadLayout has settled (success or failure). Gates pending-focus
-  // consumption: the NOTE highlight needs the layout's notes in the store, and
-  // the saved order must be applied before scroll positions are computed. Stays
-  // true for the session; notes persist in the store across cardbox visits.
+  // consumption: the NOTE highlight needs the layout's notes in the store.
+  // Stays true for the session; notes persist in the store across cardbox
+  // visits.
   layoutLoaded: boolean;
   setPendingFocusUuid: (uuid: string | null, highlightNote?: boolean) => void;
   setPendingNotePrefill: (prefill: { uuid: string; text: string } | null) => void;

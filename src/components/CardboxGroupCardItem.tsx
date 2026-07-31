@@ -6,7 +6,6 @@ import { useCardboxSelectionStore } from "../stores/cardboxSelection";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 interface CardboxGroupCardItemProps {
-  groupId: string;
   annotation: CardboxAnnotation;
   expanded: boolean;
   colorTag?: string;

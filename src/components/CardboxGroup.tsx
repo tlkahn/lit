@@ -118,7 +118,6 @@ export const CardboxGroup = memo(function CardboxGroup({
                     {cards.map((ann) => (
                       <CardboxGroupCardItem
                         key={ann.uuid}
-                        groupId={groupId}
                         annotation={ann}
                         expanded={expandedUuid === ann.uuid}
                         colorTag={colors?.[ann.uuid]}

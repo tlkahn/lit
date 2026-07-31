@@ -274,10 +274,12 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-color-tag={colorTag || undefined}
       data-flipped={showFlipped}
     >
-      <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+      {/* p-1.5 grows the 12px glyphs to a 24px hit target; top/right-0.5
+          compensates so the glyphs stay visually at the old 8px inset. */}
+      <div className="absolute top-0.5 right-0.5 z-10 flex items-center">
         {isPinned && (
           <span
-            className="nerd-font text-sm text-interactive-accent"
+            className="nerd-font p-1.5 text-sm text-interactive-accent"
             data-testid="pin-icon"
             aria-hidden="true"
           >{'\u{F0403}'}</span>
@@ -285,7 +287,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         {canFlip && (
           <button
             type="button"
-            className="nerd-font text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
+            className="nerd-font p-1.5 text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
             data-testid="card-flip"
             aria-label={showFlipped ? "Show annotation" : "Show original quote"}
             aria-pressed={showFlipped}
@@ -300,7 +302,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         )}
         <button
           type="button"
-          className="text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
+          className="p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
           data-testid="card-expand-toggle"
           aria-expanded={expanded}
           aria-label={expanded ? "Collapse card" : "Expand card"}
@@ -336,7 +338,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                 {icon}
               </span>
               <div
-                className={`prose prose-sm min-w-0 flex-1 text-sm${expanded ? "" : " line-clamp-3"}`}
+                className={`prose prose-sm min-w-0 flex-1 cursor-text text-sm${expanded ? "" : " line-clamp-3"}`}
                 data-testid="card-body"
                 dangerouslySetInnerHTML={{ __html: renderedBody }}
                 onClick={(e) => {
@@ -478,7 +480,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         ) : (
           <div className="pr-14" data-testid="card-face-back">
             <div
-              className={`border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
+              className={`cursor-text border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
               data-testid="card-original"
               dangerouslySetInnerHTML={{ __html: renderedOriginal }}
               onClick={(e) => {

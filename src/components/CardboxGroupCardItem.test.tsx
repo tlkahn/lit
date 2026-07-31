@@ -23,7 +23,6 @@ const baseAnnotation: CardboxAnnotation = {
 function renderCard(props: Partial<React.ComponentProps<typeof CardboxGroupCardItem>> = {}) {
   return render(
     <CardboxGroupCardItem
-      groupId="g1"
       annotation={baseAnnotation}
       expanded={false}
       onToggleExpand={() => {}}
