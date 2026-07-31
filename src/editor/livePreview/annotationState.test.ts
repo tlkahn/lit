@@ -22,6 +22,7 @@ import {
   buildAnnotationFingerprint,
   buildIndexedGroups,
   enrichWithGroups,
+  carryForwardUuids,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -239,6 +240,74 @@ describe("annotation enrich helpers (#978)", () => {
     const uuids = live.map((a) => a.uuid);
     expect(uuids.filter((u) => u === "only-one")).toHaveLength(1);
     expect(uuids.filter((u) => u == null || u === "")).toHaveLength(1);
+  });
+
+  it("carryForwardUuids inherits uuid from prev when body changed (same type+pos)", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 }),
+    ];
+    // body-key already ran and missed
+    expect(live[0]!.uuid).toBeUndefined();
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("u1");
+  });
+
+  it("carryForwardUuids does not overwrite an already-set live uuid", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", uuid: "authored", char_start: 10 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("authored");
+  });
+
+  it("carryForwardUuids does not carry when types differ", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "question", body: "B", char_start: 10 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids pairs two same-type body-edits 1:1 by ordinal position", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A1", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "A2", uuid: "u2", char_start: 100 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B1", char_start: 12 }),
+      makeAnnotation({ annotation_type: "note", body: "B2", char_start: 105 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("u1");
+    expect(live[1]!.uuid).toBe("u2");
+  });
+
+  it("carryForwardUuids ignores prev anns without uuid", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids is a no-op when prev is empty", () => {
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 }),
+    ];
+    carryForwardUuids(live, []);
+    expect(live[0]!.uuid).toBeUndefined();
   });
 });
 
@@ -772,6 +841,57 @@ describe("annotationPlugin", () => {
     expect(mockListAnnotations).toHaveBeenCalledTimes(1);
     const data = view.state.field(annotationDataField);
     expect(data[0]!.uuid).toBe("uuid-page2");
+
+    view.destroy();
+  });
+
+  it("keeps uuid after annotation body edit (carry-forward, #978)", async () => {
+    // t0: parse body A, listAnnotations returns A/uuid-1 -> enriched
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+
+    // t1: parse body B, listAnnotations still returns A/uuid-1 (stale index)
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10, char_end: 20 }),
+    ]);
+    // keep stale list response (body A)
+    mockListAnnotations.mockClear();
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // body-key miss on stale index, but carry-forward keeps uuid-1
+    const data = view.state.field(annotationDataField);
+    expect(data).toHaveLength(1);
+    expect(data[0]!.body).toBe("B");
+    expect(data[0]!.uuid).toBe("uuid-1");
 
     view.destroy();
   });

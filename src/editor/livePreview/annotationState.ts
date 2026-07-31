@@ -95,6 +95,46 @@ export function enrichWithGroups(annotations: Annotation[], groups: Map<string, 
   }
 }
 
+/**
+ * Second-pass identity: unmatched live annotations inherit uuid from the
+ * previous annotationDataField snapshot when type matches. Pairing is
+ * ordinal-by-char_start within each type (mirrors the indexer anti-swap
+ * rule). Bridges the stale-index window after a body edit without inventing
+ * uuids the index never had (#978).
+ */
+export function carryForwardUuids(live: Annotation[], prev: Annotation[]): void {
+  if (prev.length === 0) return;
+
+  type Slot = { ann: Annotation; char_start: number };
+  const unmatchedLiveByType = new Map<string, Slot[]>();
+  for (const ann of live) {
+    if (ann.uuid != null && ann.uuid !== "") continue;
+    let arr = unmatchedLiveByType.get(ann.annotation_type);
+    if (!arr) { arr = []; unmatchedLiveByType.set(ann.annotation_type, arr); }
+    arr.push({ ann, char_start: ann.char_start });
+  }
+  if (unmatchedLiveByType.size === 0) return;
+
+  const prevByType = new Map<string, Slot[]>();
+  for (const ann of prev) {
+    if (ann.uuid == null || ann.uuid === "") continue;
+    let arr = prevByType.get(ann.annotation_type);
+    if (!arr) { arr = []; prevByType.set(ann.annotation_type, arr); }
+    arr.push({ ann, char_start: ann.char_start });
+  }
+
+  for (const [type, liveSlots] of unmatchedLiveByType) {
+    const prevSlots = prevByType.get(type);
+    if (!prevSlots || prevSlots.length === 0) continue;
+    liveSlots.sort((a, b) => a.char_start - b.char_start);
+    prevSlots.sort((a, b) => a.char_start - b.char_start);
+    const pairCount = Math.min(liveSlots.length, prevSlots.length);
+    for (let i = 0; i < pairCount; i++) {
+      liveSlots[i]!.ann.uuid = prevSlots[i]!.ann.uuid;
+    }
+  }
+}
+
 export const annotationPlugin = ViewPlugin.fromClass(
   class {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -128,6 +168,10 @@ export const annotationPlugin = ViewPlugin.fromClass(
         const annotations = await parseAnnotations(docStr);
         if (this.view.state.doc.toString() !== this.lastDocStr) return;
 
+        // Snapshot before enrich/dispatch so carry-forward and the empty-empty
+        // guard both see the pre-update field value.
+        const prev = this.view.state.field(annotationDataField);
+
         const nodeId = useWorkspaceStore.getState().currentPagePath;
         if (nodeId && annotations.length > 0) {
           try {
@@ -144,10 +188,13 @@ export const annotationPlugin = ViewPlugin.fromClass(
             }
 
             enrichWithGroups(annotations, this.lastIndexedGroups);
+            // #978: after body-key miss on a stale index, keep the uuid the
+            // live plugin already committed this session (prev snapshot beats
+            // index positional fallback which can steal orphan uuids).
+            carryForwardUuids(annotations, prev);
           } catch { /* best-effort enrichment */ }
         }
 
-        const prev = this.view.state.field(annotationDataField);
         if (annotations.length === 0 && prev.length === 0) return;
         this.view.dispatch({ effects: setAnnotationData.of(annotations) });
         window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
