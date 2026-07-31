@@ -18,7 +18,7 @@ import {
   firingAnnotationsField,
   llmLockedField,
 } from "./annotationWidgets";
-import { toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
+import { isFoldAllTarget, toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
@@ -413,6 +413,123 @@ describe("toggleAllBlockAnnotationFolds", () => {
     expect(() => { result = toggleAllBlockAnnotationFolds(view); }).not.toThrow();
     expect(result).toBe(false);
     view.destroy();
+  });
+
+  it("D13: a non-thread multiline block annotation is not a fold-all target", () => {
+    // Same geometry as a valid target (line-start, multiline, in bounds), but
+    // folding is thread-only — the annotation type disqualifies it.
+    const doc = EditorState.create({ doc: "first line\n\n<!---\nbody\n--->\ntail" }).doc;
+    const note = makeAnnotation({
+      form: "block",
+      annotation_type: "note",
+      char_start: 12,
+      char_end: 27,
+      original: "<!---\nbody\n--->",
+    });
+    expect(isFoldAllTarget(doc, note)).toBe(false);
+
+    const thread = { ...note, annotation_type: "thread" as const };
+    expect(isFoldAllTarget(doc, thread)).toBe(true);
+  });
+
+  it("D14: returns false without dispatching when only non-thread multiline blocks exist", () => {
+    const state = EditorState.create({
+      doc: TWO_BLOCK_DOC,
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(2);
+    view.dispatch({
+      effects: setAnnotationData.of(
+        blocks.map((b) =>
+          makeAnnotation({
+            form: "block",
+            annotation_type: "note",
+            char_start: b.from,
+            char_end: b.to,
+            original: TWO_BLOCK_DOC.slice(b.from, b.to),
+          }),
+        ),
+      ),
+    });
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    try {
+      const result = toggleAllBlockAnnotationFolds(view);
+      expect(result).toBe(false);
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    } finally {
+      dispatchSpy.mockRestore();
+      view.destroy();
+    }
+  });
+
+  it("D15: mixed doc — fold-all records only thread positions in annotationFoldField", () => {
+    const state = EditorState.create({
+      doc: TWO_BLOCK_DOC,
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(2);
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({
+          form: "block",
+          annotation_type: "note",
+          char_start: blocks[0]!.from,
+          char_end: blocks[0]!.to,
+          original: TWO_BLOCK_DOC.slice(blocks[0]!.from, blocks[0]!.to),
+        }),
+        makeAnnotation({
+          form: "block",
+          annotation_type: "thread",
+          char_start: blocks[1]!.from,
+          char_end: blocks[1]!.to,
+          original: TWO_BLOCK_DOC.slice(blocks[1]!.from, blocks[1]!.to),
+        }),
+      ]),
+    });
+    try {
+      const result = toggleAllBlockAnnotationFolds(view);
+      expect(result).toBe(true);
+
+      const foldMap = view.state.field(annotationFoldField);
+      expect(foldMap.has(blocks[0]!.from)).toBe(false);
+      expect(foldMap.get(blocks[1]!.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
   });
 
   it("D11b: implementation never imports syntaxTree or @codemirror/language", async () => {

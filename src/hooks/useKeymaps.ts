@@ -328,8 +328,8 @@ export function ensureCommandsRegistered() {
   });
   registerCommand({
     id: "app.toggleAllBlockAnnotations",
-    label: "Collapse/Expand All Block Annotations",
-    keywords: ["fold", "collapse", "expand", "annotation", "callout", "thread"],
+    label: "Collapse/Expand All Threads",
+    keywords: ["fold", "collapse", "expand", "annotation", "thread"],
     shortcut: "Mod-Shift-m",
     when: () =>
       getCurrentEditorView() != null &&

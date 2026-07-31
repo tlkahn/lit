@@ -1296,7 +1296,7 @@ describe("useKeymaps", () => {
     setFocusedPane("main");
     usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
     usePreferencesStore.setState({ annotationEnabled: false });
-    const visible = getVisibleCommands("block annotations");
+    const visible = getVisibleCommands("all threads");
     const ids = visible.map((c) => c.id);
     expect(ids).not.toContain("app.toggleAllBlockAnnotations");
   });
@@ -1311,7 +1311,7 @@ describe("useKeymaps", () => {
     registerPaneView("main", mockView);
     setFocusedPane("main");
     usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
-    const visible = getVisibleCommands("block annotations");
+    const visible = getVisibleCommands("all threads");
     const ids = visible.map((c) => c.id);
     expect(ids).toContain("app.toggleAllBlockAnnotations");
   });

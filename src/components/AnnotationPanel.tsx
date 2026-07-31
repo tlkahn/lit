@@ -105,8 +105,8 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
         <div data-testid="annotation-panel-toolbar" className="mb-1 flex shrink-0 items-center justify-end">
           <button
             data-testid="annotation-panel-fold-all"
-            aria-label="Collapse/expand all block annotations"
-            title="Collapse/expand all block annotations (⌘⇧M)"
+            aria-label="Collapse/expand all threads"
+            title="Collapse/expand all threads (⌘⇧M)"
             onClick={() => executeCommand("app.toggleAllBlockAnnotations")}
             className="flex items-center px-1 text-xs text-text-muted hover:text-text-normal"
           >

@@ -213,8 +213,8 @@ function ToggleAnnotationsFoldButton() {
   return (
     <button
       data-testid="toggle-annotations-fold-button"
-      aria-label="Collapse/expand all block annotations"
-      title="Collapse/expand all block annotations (⌘⇧M)"
+      aria-label="Collapse/expand all threads"
+      title="Collapse/expand all threads (⌘⇧M)"
       onClick={() => executeCommand("app.toggleAllBlockAnnotations")}
       className="flex items-center px-1 text-text-muted hover:text-text-normal"
     >

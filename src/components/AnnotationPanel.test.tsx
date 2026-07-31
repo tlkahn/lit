@@ -320,6 +320,16 @@ describe("AnnotationPanel", () => {
       expect(screen.getByTestId("annotation-panel-toolbar")).toBeInTheDocument();
     });
 
+    it("does not render when the only multiline block is a note (fold is thread-only)", () => {
+      const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
+      const annotations = [
+        makeAnnotation({ annotation_type: "note", char_start: 6, char_end: 27, body: "body" }),
+      ];
+      editorView = setupEditorView(doc, annotations);
+      render(<AnnotationPanel pageId="test.md" />);
+      expect(screen.queryByTestId("annotation-panel-toolbar")).toBeNull();
+    });
+
     it("does not render when only single-line annotations exist", () => {
       const doc = "a".repeat(50);
       const annotations = [

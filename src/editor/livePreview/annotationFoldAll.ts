@@ -5,8 +5,10 @@ import { isPerfEnabled } from "./perf";
 
 export function isFoldAllTarget(
   doc: { length: number; lineAt(pos: number): { from: number; number: number } },
-  ann: { char_start: number; char_end: number },
+  ann: { annotation_type: string; char_start: number; char_end: number },
 ): boolean {
+  // Folding is thread-only: non-thread blocks render as unfoldable pills.
+  if (ann.annotation_type !== "thread") return false;
   const from = ann.char_start;
   const to = ann.char_end;
   if (from < 0 || to > doc.length || from >= to) return false;
