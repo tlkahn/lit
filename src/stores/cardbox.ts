@@ -116,7 +116,7 @@ export interface CardboxStore {
   batchPin: (uuids: string[]) => Promise<void>;
   batchUnpin: (uuids: string[]) => Promise<void>;
   batchLink: (uuids: string[]) => Promise<void>;
-  batchMoveCards: (uuids: string[], target: BatchMoveTarget) => void;
+  batchMoveCards: (uuids: string[], target: BatchMoveTarget) => Promise<void>;
   batchCreateGroup: (cardUuids: string[], name: string) => Promise<void>;
 }
 
@@ -819,7 +819,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }
   },
 
-  batchMoveCards: (uuids, target) => {
+  batchMoveCards: async (uuids, target) => {
     const uuidSet = new Set(uuids);
     const prevGroups: Record<string, GroupInfo> = {};
     for (const [gid, info] of Object.entries(get().groups)) {
@@ -856,13 +856,16 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       description: `Move ${uuids.length} cards`,
       undo: async () => {
         set({ groups: prevGroups });
+        await get().saveLayout();
       },
       redo: async () => {
         applyMove();
+        await get().saveLayout();
       },
     });
 
     applyMove();
+    await get().saveLayout();
   },
 
   batchCreateGroup: async (cardUuids, name) => {

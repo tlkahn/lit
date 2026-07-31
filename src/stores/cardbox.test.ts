@@ -830,6 +830,63 @@ describe("cardbox store", () => {
       const stack = useCardboxUndoStore.getState().undoStack;
       expect(stack.length).toBeGreaterThan(0);
     });
+
+    it("persists the moved layout immediately via write_cardbox_layout", async () => {
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      await useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "write_cardbox_layout",
+        expect.objectContaining({
+          layout: expect.objectContaining({
+            groups: { g1: { name: "G", order: ["u4", "u1"], collapsed: false } },
+          }),
+        }),
+      );
+    });
+
+    it("undo and redo persist their layouts via write_cardbox_layout", async () => {
+      useCardboxUndoStore.getState().clear();
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      await useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
+      invokeSpy.mockClear();
+
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u4"]);
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "write_cardbox_layout",
+        expect.objectContaining({
+          layout: expect.objectContaining({
+            groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+          }),
+        }),
+      );
+      invokeSpy.mockClear();
+
+      await useCardboxUndoStore.getState().redo();
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u4", "u1"]);
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "write_cardbox_layout",
+        expect.objectContaining({
+          layout: expect.objectContaining({
+            groups: { g1: { name: "G", order: ["u4", "u1"], collapsed: false } },
+          }),
+        }),
+      );
+    });
   });
 
   describe("pendingFocusUuid", () => {

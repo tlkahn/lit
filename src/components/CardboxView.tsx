@@ -602,11 +602,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     (uuids: string[], groupId: string) => {
       if (uuids.length === 1) {
         moveCardToGroup(uuids[0]!, groupId);
+        debouncedSave();
       } else {
+        // batchMoveCards persists the layout itself — no debounced save needed.
         batchMoveCards(uuids, { type: "toGroup", groupId });
         clearSelection();
       }
-      debouncedSave();
     },
     [moveCardToGroup, batchMoveCards, clearSelection, debouncedSave],
   );
