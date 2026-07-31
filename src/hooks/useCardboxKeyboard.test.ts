@@ -93,6 +93,31 @@ describe("useCardboxKeyboard", () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
+  it("C on a focused collapsed card calls onShowConnections with the card index", () => {
+    const { result, options, cards } = setup({ expandedUuid: null });
+    cards[1]!.focus();
+    const event = gridKey(result, { key: "c" });
+    expect(options.onShowConnections).toHaveBeenCalledWith(1);
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+
+  it("N on a focused collapsed card calls onToggleNote with the card index", () => {
+    const { result, options, cards } = setup({ expandedUuid: null });
+    cards[2]!.focus();
+    const event = gridKey(result, { key: "n" });
+    expect(options.onToggleNote).toHaveBeenCalledWith(2);
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+
+  it("C and N still work when a card is expanded, passing the focused index", () => {
+    const { result, options, cards } = setup({ expandedUuid: "u1" });
+    cards[0]!.focus();
+    gridKey(result, { key: "c" });
+    expect(options.onShowConnections).toHaveBeenCalledWith(0);
+    gridKey(result, { key: "n" });
+    expect(options.onToggleNote).toHaveBeenCalledWith(0);
+  });
+
   it("⌘A selects all and prevents the browser default", () => {
     // No onExpandTextSelection callback wired: old behavior is unchanged.
     const { options } = setup();

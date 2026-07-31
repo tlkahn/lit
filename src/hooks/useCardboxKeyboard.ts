@@ -6,11 +6,11 @@ interface UseCardboxKeyboardOptions {
   onNavigate: (index: number) => void;
   onOpenLinkPicker?: () => void;
   onTogglePin?: (index: number) => void;
-  onToggleNote?: () => void;
+  onToggleNote?: (index: number) => void;
   onToggleScope?: () => void;
   // Returns true when it consumed the key (a quotable selection existed).
   onQuoteSelection?: () => boolean;
-  onShowConnections?: () => void;
+  onShowConnections?: (index: number) => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
   // Returns true when it consumed ⌘A by expanding a text selection to the
@@ -175,16 +175,16 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         return;
       case "n":
       case "N":
-        if (expandedUuid && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
           e.preventDefault();
-          onToggleNote?.();
+          onToggleNote?.(currentIndex);
         }
         return;
       case "c":
       case "C":
-        if (expandedUuid && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
           e.preventDefault();
-          onShowConnections?.();
+          onShowConnections?.(currentIndex);
         }
         return;
       case "?":

@@ -23,26 +23,54 @@ const probe = vi.hoisted(() => ({
   // Separate map for the in-group dual-render path so a pinned group member's
   // hoisted and group copies do not overwrite each other.
   latestGroupProps: new Map<string, ProbeProps>(),
+  noteAddClicks: new Map<string, number>(),
+  noteEditClicks: new Map<string, number>(),
 }));
 
 // Memoized probe: its render count only increases when CardboxView passes a
 // changed prop — exactly what the callback-stability guarantees are about.
 // Emits just enough DOM for the focus-highlight path (the data-uuid wrapper
-// handleFocusCard queries, the note display element when a note exists) and
-// for grid keyboard navigation (a focusable cardbox-card node).
+// handleFocusCard queries, the note display element when a note exists),
+// grid keyboard navigation (a focusable cardbox-card node), and strip note
+// controls for C/N keyboard parity (#982).
 vi.mock("./CardboxCardItem", async () => {
   const React = await import("react");
   const CardboxCardItem = React.memo(function CardboxCardItemProbe(props: ProbeProps) {
     const uuid = props.annotation.uuid;
     probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
     probe.latestProps.set(uuid, props);
+    const noteControls =
+      props.note != null
+        ? [
+            React.createElement("div", { key: "display", "data-testid": "card-note-display" }),
+            React.createElement("button", {
+              key: "edit",
+              type: "button",
+              "data-testid": "card-note-edit",
+              onClick: () => {
+                probe.noteEditClicks.set(uuid, (probe.noteEditClicks.get(uuid) ?? 0) + 1);
+              },
+            }),
+          ]
+        : [
+            React.createElement("button", {
+              key: "add",
+              type: "button",
+              "data-testid": "card-note-add",
+              onClick: () => {
+                probe.noteAddClicks.set(uuid, (probe.noteAddClicks.get(uuid) ?? 0) + 1);
+                if (!props.expanded) props.onToggleExpand(uuid);
+              },
+            }),
+          ];
     return React.createElement(
       "div",
       { "data-testid": `probe-card-${uuid}`, "data-uuid": uuid },
-      React.createElement("div", { "data-testid": "cardbox-card", "data-uuid": uuid, tabIndex: 0 }),
-      props.note != null
-        ? React.createElement("div", { "data-testid": "card-note-display" })
-        : null,
+      React.createElement(
+        "div",
+        { "data-testid": "cardbox-card", "data-uuid": uuid, tabIndex: 0 },
+        ...noteControls,
+      ),
     );
   });
   return { CardboxCardItem };
@@ -56,13 +84,38 @@ vi.mock("./CardboxGroupCardItem", async () => {
     const uuid = props.annotation.uuid;
     probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
     probe.latestGroupProps.set(uuid, props);
+    const noteControls =
+      props.note != null
+        ? [
+            React.createElement("div", { key: "display", "data-testid": "card-note-display" }),
+            React.createElement("button", {
+              key: "edit",
+              type: "button",
+              "data-testid": "card-note-edit",
+              onClick: () => {
+                probe.noteEditClicks.set(uuid, (probe.noteEditClicks.get(uuid) ?? 0) + 1);
+              },
+            }),
+          ]
+        : [
+            React.createElement("button", {
+              key: "add",
+              type: "button",
+              "data-testid": "card-note-add",
+              onClick: () => {
+                probe.noteAddClicks.set(uuid, (probe.noteAddClicks.get(uuid) ?? 0) + 1);
+                if (!props.expanded) props.onToggleExpand(uuid);
+              },
+            }),
+          ];
     return React.createElement(
       "div",
       { "data-testid": `probe-card-${uuid}`, "data-uuid": uuid },
-      React.createElement("div", { "data-testid": "cardbox-card", "data-uuid": uuid, tabIndex: 0 }),
-      props.note != null
-        ? React.createElement("div", { "data-testid": "card-note-display" })
-        : null,
+      React.createElement(
+        "div",
+        { "data-testid": "cardbox-card", "data-uuid": uuid, tabIndex: 0 },
+        ...noteControls,
+      ),
     );
   });
   return { CardboxGroupCardItem };
@@ -116,6 +169,8 @@ beforeEach(() => {
   probe.renderCounts.clear();
   probe.latestProps.clear();
   probe.latestGroupProps.clear();
+  probe.noteAddClicks.clear();
+  probe.noteEditClicks.clear();
   mockInvoke((cmd) => {
     if (cmd === "list_all_annotations") return fixtures;
     if (cmd === "read_cardbox_layout") return emptyLayout;
@@ -620,6 +675,50 @@ describe("document ordering (#968)", () => {
     fireEvent.keyDown(cards[1]!, { key: "p" });
     expect(useCardboxStore.getState().pinned).toContain(C);
     expect(useCardboxStore.getState().pinned).not.toContain(B);
+  });
+});
+
+describe("C/N keyboard parity on collapsed cards (#982)", () => {
+  it("C on a focused collapsed card enters connections for that card", async () => {
+    await renderView();
+    const cards = screen.getAllByTestId("cardbox-card");
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+    (cards[1] as HTMLElement).focus();
+    fireEvent.keyDown(cards[1]!, { key: "c" });
+    expect(useCardboxStore.getState().connectionsForUuid).toBe(B);
+  });
+
+  it("N on a focused collapsed card without a note clicks add-note (auto-expands)", async () => {
+    await renderView();
+    const cards = screen.getAllByTestId("cardbox-card");
+    (cards[0] as HTMLElement).focus();
+    fireEvent.keyDown(cards[0]!, { key: "n" });
+    expect(probe.noteAddClicks.get(A)).toBe(1);
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+  });
+
+  it("N on a focused collapsed card with a note expands and clicks edit", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout")
+        return {
+          ...emptyLayout,
+          notes: { [B]: { body: "existing", updated_at: "2026-01-01T00:00:00Z" } },
+        };
+      return undefined;
+    });
+    await renderView();
+    const cards = screen.getAllByTestId("cardbox-card");
+    // Document order A, B, C — B has the note.
+    const cardB = cards.find((el) => el.getAttribute("data-uuid") === B)!;
+    cardB.focus();
+    fireEvent.keyDown(cardB, { key: "n" });
+    expect(useCardboxStore.getState().expandedUuid).toBe(B);
+    // edit click is deferred to rAF after expand.
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    expect(probe.noteEditClicks.get(B)).toBe(1);
   });
 });
 

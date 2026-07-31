@@ -423,24 +423,38 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         }
       }
     },
-    onToggleNote: () => {
-      if (!expandedUuid) return;
-      const card = gridRef.current?.querySelector(`[data-uuid="${expandedUuid}"]`);
+    onToggleNote: (index) => {
+      const uuid = orderedUuids[index];
+      if (!uuid) return;
+      const card = gridRef.current?.querySelector(`[data-uuid="${uuid}"]`);
       if (!card) return;
       const textarea = card.querySelector<HTMLTextAreaElement>('[data-testid="card-note-textarea"]');
       if (textarea) {
         textarea.focus();
         return;
       }
-      const trigger =
-        card.querySelector<HTMLButtonElement>('[data-testid="card-note-add"]') ??
-        card.querySelector<HTMLButtonElement>('[data-testid="card-note-edit"]');
-      if (trigger) {
-        trigger.click();
+      // No-note path: strip always renders card-note-add, which auto-expands.
+      const addBtn = card.querySelector<HTMLButtonElement>('[data-testid="card-note-add"]');
+      if (addBtn) {
+        addBtn.click();
+        return;
       }
+      // Has note: ensure expanded, then click card-note-edit (may need a frame
+      // after expand for the editor chrome to mount).
+      const editBtn = card.querySelector<HTMLButtonElement>('[data-testid="card-note-edit"]');
+      if (!editBtn) return;
+      if (expandedUuid !== uuid) {
+        expand(uuid);
+        requestAnimationFrame(() => {
+          card.querySelector<HTMLButtonElement>('[data-testid="card-note-edit"]')?.click();
+        });
+        return;
+      }
+      editBtn.click();
     },
-    onShowConnections: () => {
-      if (expandedUuid) enterConnections(expandedUuid);
+    onShowConnections: (index) => {
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
+      if (ann) enterConnections(ann.uuid);
     },
     onExitConnections: () => exitConnections(),
     onShowShortcuts: () => setShortcutsOpen(true),
