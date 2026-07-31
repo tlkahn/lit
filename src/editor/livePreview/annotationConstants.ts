@@ -79,5 +79,10 @@ export function certaintyClass(certainty: string): string {
 
 export function truncateBody(body: string | null, max = 60): string {
   if (!body) return "";
-  return body.length > max ? body.slice(0, max) + "…" : body;
+  if (body.length <= max) return body;
+  let cut = body.slice(0, max);
+  // Don't strand the high half of a surrogate pair at the cut point.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return cut + "…";
 }

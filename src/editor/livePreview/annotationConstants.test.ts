@@ -77,6 +77,15 @@ describe("annotationConstants", () => {
   it("truncateBody returns empty for null", () => {
     expect(truncateBody(null)).toBe("");
   });
+
+  it("truncateBody never splits a surrogate pair at the cut point", () => {
+    // "𝄞" is U+1D11E, a surrogate pair; code units 60/61 straddle the cut.
+    const body = "a".repeat(59) + "𝄞" + "tail";
+    const result = truncateBody(body, 60);
+    expect(result.endsWith("…")).toBe(true);
+    expect(/[\uD800-\uDFFF]/.test(result.replace("…", ""))).toBe(false);
+    expect(result.startsWith("a".repeat(59))).toBe(true);
+  });
 });
 
 describe("CLS constants", () => {
