@@ -23,9 +23,9 @@ const probe = vi.hoisted(() => ({
 // changed prop — exactly what the callback-stability guarantees are about.
 // Emits just enough DOM for the focus-highlight path: the data-uuid wrapper
 // handleFocusCard queries, and the note display element when a note exists.
-vi.mock("./SortableCard", async () => {
+vi.mock("./CardboxCardItem", async () => {
   const React = await import("react");
-  const SortableCard = React.memo(function SortableCardProbe(props: ProbeProps) {
+  const CardboxCardItem = React.memo(function CardboxCardItemProbe(props: ProbeProps) {
     const uuid = props.annotation.uuid;
     probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
     probe.latestProps.set(uuid, props);
@@ -37,7 +37,7 @@ vi.mock("./SortableCard", async () => {
         : null,
     );
   });
-  return { SortableCard };
+  return { CardboxCardItem };
 });
 
 // Same probe surface for cards rendered inside a SortableGroup (group path
@@ -548,5 +548,17 @@ describe("collapse scroll correction (#939)", () => {
       vi.advanceTimersByTime(300);
     });
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("dnd removal (#968)", () => {
+  it("renders the grid without a dnd context wrapper or drag overlay", async () => {
+    await renderView();
+    expect(screen.getByTestId("cardbox-grid")).toBeInTheDocument();
+    // dnd-kit's DndContext mounts an accessibility live region and hidden
+    // instructions node; sortable wrappers carry aria-roledescription.
+    expect(document.querySelector('[id^="DndLiveRegion"]')).toBeNull();
+    expect(document.querySelector('[id^="DndDescribedBy"]')).toBeNull();
+    expect(document.querySelector('[aria-roledescription="sortable"]')).toBeNull();
   });
 });

@@ -31,15 +31,15 @@ const probe = vi.hoisted(() => ({
 
 // Memoized probe: its render count only increases when CardboxView passes a
 // changed prop — exactly what the callback-stability guarantees are about.
-vi.mock("./SortableCard", async () => {
+vi.mock("./CardboxCardItem", async () => {
   const React = await import("react");
-  const SortableCard = React.memo(function SortableCardProbe(props: ProbeProps) {
+  const CardboxCardItem = React.memo(function CardboxCardItemProbe(props: ProbeProps) {
     const uuid = props.annotation.uuid;
     probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
     probe.latestProps.set(uuid, props);
     return React.createElement("div", { "data-testid": `probe-card-${uuid}` });
   });
-  return { SortableCard };
+  return { CardboxCardItem };
 });
 
 const fixtures = generateCardboxAnnotationsCJK(N);
@@ -118,7 +118,7 @@ describe(`CardboxView perf guards at N=${N} CJK annotations`, () => {
       onSelect!(target, { shiftKey: false, metaKey: true, ctrlKey: false } as unknown as React.MouseEvent);
     });
 
-    // Selection state is subscribed inside the real SortableCard, not passed
+    // Selection state is subscribed inside the real CardboxCardItem, not passed
     // down from CardboxView — so with stable callbacks the CardboxView
     // re-render triggered by the selection change must not re-render any
     // memoized card. An unstable handleSelect would re-render all N.

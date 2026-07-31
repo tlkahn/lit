@@ -1,11 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { DndContext } from "@dnd-kit/core";
-import { SortableContext } from "@dnd-kit/sortable";
-import { SortableGroup } from "./SortableGroup";
+import { CardboxGroup } from "./CardboxGroup";
 import { useCardboxSelectionStore } from "../stores/cardboxSelection";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
-import type { ReactNode } from "react";
 
 function makeAnnotation(uuid: string): CardboxAnnotation {
   return {
@@ -30,34 +27,23 @@ const cardB = makeAnnotation("card-b");
 
 const baseInfo: GroupInfo = { name: "My Group", order: ["card-a", "card-b"], collapsed: false };
 
-// Temporary dnd wrapper: deleted along with the dnd wiring in Phase B (#968).
-function Wrapper({ children }: { children: ReactNode }) {
-  return (
-    <DndContext>
-      <SortableContext items={["group:g1"]}>{children}</SortableContext>
-    </DndContext>
-  );
-}
-
-function renderGroup(props: Partial<React.ComponentProps<typeof SortableGroup>> = {}) {
+function renderGroup(props: Partial<React.ComponentProps<typeof CardboxGroup>> = {}) {
   return render(
-    <Wrapper>
-      <SortableGroup
-        groupId="g1"
-        info={baseInfo}
-        cards={[cardA, cardB]}
-        allFilteredCount={2}
-        expandedUuid={null}
-        linkedCardsMap={new Map()}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-        onFocusCard={() => {}}
-        onRemoveLink={() => {}}
-        onToggleCollapse={() => {}}
-        onRename={() => {}}
-        {...props}
-      />
-    </Wrapper>,
+    <CardboxGroup
+      groupId="g1"
+      info={baseInfo}
+      cards={[cardA, cardB]}
+      allFilteredCount={2}
+      expandedUuid={null}
+      linkedCardsMap={new Map()}
+      onToggleExpand={() => {}}
+      onNavigate={() => {}}
+      onFocusCard={() => {}}
+      onRemoveLink={() => {}}
+      onToggleCollapse={() => {}}
+      onRename={() => {}}
+      {...props}
+    />,
   );
 }
 
@@ -65,7 +51,7 @@ beforeEach(() => {
   useCardboxSelectionStore.setState({ selectedUuids: new Set(), lastSelectedUuid: null });
 });
 
-describe("SortableGroup", () => {
+describe("CardboxGroup", () => {
   it("renders the group container with its group id", () => {
     renderGroup();
     const group = screen.getByTestId("cardbox-group");
@@ -117,5 +103,26 @@ describe("SortableGroup", () => {
     fireEvent.contextMenu(cards[1]!);
     expect(onCardContextMenu).toHaveBeenCalledTimes(1);
     expect(onCardContextMenu).toHaveBeenCalledWith("g1", "card-b", expect.anything());
+  });
+
+  it("never renders data-drag-over", () => {
+    const { container } = renderGroup();
+    expect(container.querySelector("[data-drag-over]")).toBeNull();
+  });
+
+  it("renders no drag transform and no dnd attributes on the group wrapper", () => {
+    renderGroup();
+    const group = screen.getByTestId("cardbox-group");
+    expect(group).not.toHaveAttribute("role");
+    expect(group).not.toHaveAttribute("aria-roledescription");
+    expect(group).not.toHaveAttribute("aria-describedby");
+    expect(group.style.transform).toBe("");
+  });
+
+  it("keeps the collapse animation wrapper around the member grid", () => {
+    renderGroup();
+    const grid = screen.getAllByTestId("cardbox-card")[0]!.closest(".grid")!;
+    // framer-motion's height-collapse wrapper must survive the dnd removal
+    expect((grid.parentElement as HTMLElement).style.overflow).toBe("hidden");
   });
 });

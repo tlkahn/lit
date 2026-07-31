@@ -8,7 +8,7 @@ import { generateCardboxAnnotationsCJK } from "../test/fixtures/cardboxCjk";
 import type { CardboxAnnotation, CardboxLayout } from "../lib/ipc";
 
 // Full-tree companion to CardboxView.bench.tsx: renders the real
-// SortableCard→CardboxCard cards (dnd-kit wiring, shared masonry observer,
+// CardboxCardItem→CardboxCard cards (shared masonry observer,
 // inline-markdown original rendering) with no probe mock. The jsdom
 // ResizeObserver stub in src/test/setup.ts only fires once on observe and
 // clientHeight is a flat default, so this measures render + observer wiring,

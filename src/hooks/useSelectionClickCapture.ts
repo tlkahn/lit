@@ -3,9 +3,9 @@ import { useCallback } from "react";
 /**
  * Returns a click-capture handler that intercepts modifier-key clicks
  * (Cmd/Ctrl/Shift) and forwards them to `onSelect`, preventing the event
- * from reaching the underlying sortable drag listener.
+ * from reaching the card's inner click handlers.
  *
- * Shared between SortableCard and SortableGroupCard to avoid duplication.
+ * Shared between CardboxCardItem and CardboxGroupCardItem to avoid duplication.
  */
 export function useSelectionClickCapture(
   uuid: string,

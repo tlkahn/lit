@@ -290,10 +290,6 @@ select:disabled {
   padding-bottom: 4px;
 }
 
-.cardbox-group-container[data-drag-over="true"] {
-  box-shadow: 0 0 0 2px var(--interactive-accent);
-}
-
 .cardbox-group-header {
   display: flex;
   align-items: center;

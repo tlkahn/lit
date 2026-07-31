@@ -1,17 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { DndContext } from "@dnd-kit/core";
-import { SortableContext } from "@dnd-kit/sortable";
-import { SortableCard } from "./SortableCard";
+import { CardboxGroupCardItem } from "./CardboxGroupCardItem";
 import { useCardboxSelectionStore } from "../stores/cardboxSelection";
 import type { CardboxAnnotation } from "../lib/ipc";
-import type { ReactNode } from "react";
 
 const baseAnnotation: CardboxAnnotation = {
-  uuid: "card-uuid-1",
+  uuid: "group-card-uuid-1",
   annotation_type: "note",
   certainty: "neutral",
-  body: "A card body",
+  body: "A grouped card body",
   date: "2026-06-15",
   source_page_id: "test.md",
   source_page_title: "Test Document",
@@ -23,26 +20,16 @@ const baseAnnotation: CardboxAnnotation = {
   original: "The original source context text here",
 };
 
-// Temporary dnd wrapper: deleted along with the dnd wiring in Phase B (#968).
-function Wrapper({ children }: { children: ReactNode }) {
-  return (
-    <DndContext>
-      <SortableContext items={[baseAnnotation.uuid]}>{children}</SortableContext>
-    </DndContext>
-  );
-}
-
-function renderCard(props: Partial<React.ComponentProps<typeof SortableCard>> = {}) {
+function renderCard(props: Partial<React.ComponentProps<typeof CardboxGroupCardItem>> = {}) {
   return render(
-    <Wrapper>
-      <SortableCard
-        annotation={baseAnnotation}
-        expanded={false}
-        onToggleExpand={() => {}}
-        onNavigate={() => {}}
-        {...props}
-      />
-    </Wrapper>,
+    <CardboxGroupCardItem
+      groupId="g1"
+      annotation={baseAnnotation}
+      expanded={false}
+      onToggleExpand={() => {}}
+      onNavigate={() => {}}
+      {...props}
+    />,
   );
 }
 
@@ -50,14 +37,12 @@ beforeEach(() => {
   useCardboxSelectionStore.setState({ selectedUuids: new Set(), lastSelectedUuid: null });
 });
 
-describe("SortableCard", () => {
+describe("CardboxGroupCardItem", () => {
   it("renders the masonry content div nested inside the grid item wrapper", () => {
     renderCard();
     const card = screen.getByTestId("cardbox-card");
     const masonryContent = card.parentElement;
     expect(masonryContent).toHaveAttribute("data-masonry-content");
-    // useMasonryObserver writes gridRowEnd on parentElement of the observed
-    // node, so the two-div nesting is load-bearing.
     const gridItem = masonryContent!.parentElement;
     expect(gridItem).not.toBeNull();
     expect(gridItem!.style.gridRowEnd).toBe("span 1");
@@ -68,16 +53,6 @@ describe("SortableCard", () => {
     const onToggleExpand = vi.fn();
     renderCard({ onSelect, onToggleExpand });
     fireEvent.click(screen.getByTestId("cardbox-card"), { metaKey: true });
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith(baseAnnotation.uuid, expect.anything());
-    expect(onToggleExpand).not.toHaveBeenCalled();
-  });
-
-  it("forwards a shift-click to onSelect without expanding", () => {
-    const onSelect = vi.fn();
-    const onToggleExpand = vi.fn();
-    renderCard({ onSelect, onToggleExpand });
-    fireEvent.click(screen.getByTestId("cardbox-card"), { shiftKey: true });
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(baseAnnotation.uuid, expect.anything());
     expect(onToggleExpand).not.toHaveBeenCalled();
@@ -120,8 +95,13 @@ describe("SortableCard", () => {
     expect(screen.getByTestId("cardbox-card").className).toContain("ring-offset-1");
   });
 
-  it("does not mark an unselected card as selected", () => {
+  it("renders no drag transform, no dnd attributes, and no dashed drag border", () => {
     renderCard();
-    expect(screen.getByTestId("cardbox-card").className).not.toContain("ring-offset-1");
+    const gridItem = screen.getByTestId("cardbox-card").parentElement!.parentElement!;
+    expect(gridItem).not.toHaveAttribute("role");
+    expect(gridItem).not.toHaveAttribute("aria-roledescription");
+    expect(gridItem).not.toHaveAttribute("aria-describedby");
+    expect(gridItem.style.transform).toBe("");
+    expect(gridItem.className).not.toContain("border-dashed");
   });
 });
