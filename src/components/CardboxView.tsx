@@ -15,7 +15,7 @@ import { LinkPicker } from "./LinkPicker";
 import { GroupPicker } from "./GroupPicker";
 import { CardboxShortcutsOverlay } from "./CardboxShortcutsOverlay";
 import { BatchToolbar } from "./BatchToolbar";
-import type { CardboxAnnotation } from "../lib/ipc";
+import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
 import { resolveQuoteTarget } from "../lib/cardboxQuote";
@@ -278,6 +278,25 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     () => buildRenderEntries(effectiveAnnotations, groups, pinned),
     [effectiveAnnotations, groups, pinned],
   );
+
+  // Groups the current filter actually renders (same predicate as
+  // buildRenderEntries): "Add to Group" must never target an invisible group.
+  // Identity-stable across filter keystrokes that don't change the outcome,
+  // so the context-menu callbacks (and thus every card) don't re-render.
+  const visibleGroupsRef = useRef<Record<string, GroupInfo>>({});
+  const visibleGroups = useMemo(() => {
+    const visible: Record<string, GroupInfo> = {};
+    for (const [gid, info] of Object.entries(groups)) {
+      if (info.order.some((uuid) => filteredUuidSet.has(uuid))) visible[gid] = info;
+    }
+    const prev = visibleGroupsRef.current;
+    const keys = Object.keys(visible);
+    if (keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === visible[k])) {
+      return prev;
+    }
+    visibleGroupsRef.current = visible;
+    return visible;
+  }, [groups, filteredUuidSet]);
 
   const orderedUuids = useMemo(
     () => renderEntries.flatMap((e) =>
@@ -560,10 +579,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isPinned: pinnedSet.has(uuid),
         isGrouped: false,
         isGroupHeader: false,
-        hasGroups: Object.keys(groups).length > 0,
+        hasGroups: Object.keys(visibleGroups).length > 0,
       });
     },
-    [groups, pinnedSet, colors],
+    [visibleGroups, pinnedSet, colors],
   );
 
   const handleGroupCardContextMenu = useCallback(
@@ -576,10 +595,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isPinned: pinnedSet.has(cardUuid),
         isGrouped: true,
         isGroupHeader: false,
-        hasGroups: Object.keys(groups).length > 0,
+        hasGroups: Object.keys(visibleGroups).length > 0,
       });
     },
-    [groups, pinnedSet, colors],
+    [visibleGroups, pinnedSet, colors],
   );
 
   const handleGroupHeaderContextMenu = useCallback(
@@ -590,10 +609,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isPinned: false,
         isGroupHeader: true,
         isGrouped: false,
-        hasGroups: Object.keys(groups).length > 0,
+        hasGroups: Object.keys(visibleGroups).length > 0,
       });
     },
-    [groups],
+    [visibleGroups],
   );
 
   // ---------- Add to group without drag (#968) ----------
@@ -614,7 +633,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const openAddToGroup = useCallback(
     (uuids: string[]) => {
-      const groupIds = Object.keys(groups);
+      const groupIds = Object.keys(visibleGroups);
       if (groupIds.length === 0 || uuids.length === 0) return;
       if (groupIds.length === 1) {
         applyAddToGroup(uuids, groupIds[0]!);
@@ -622,7 +641,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       }
       setGroupPickerUuids(uuids);
     },
-    [groups, applyAddToGroup],
+    [visibleGroups, applyAddToGroup],
   );
 
   useCardboxContextMenu({
@@ -908,7 +927,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
       <GroupPicker
         open={groupPickerUuids !== null}
-        groups={groups}
+        groups={visibleGroups}
         onSelect={handleGroupPickerSelect}
         onClose={() => setGroupPickerUuids(null)}
       />
@@ -921,7 +940,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       <BatchToolbar
         selectedCount={selectedCount}
         mergingToDraft={mergingToDraft}
-        hasGroups={Object.keys(groups).length > 0}
+        hasGroups={Object.keys(visibleGroups).length > 0}
         onAddToGroup={() => openAddToGroup([...selectedUuids])}
         onMergeToDraft={async () => {
           const uuids = [...selectedUuids];

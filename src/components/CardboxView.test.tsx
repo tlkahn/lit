@@ -14,6 +14,7 @@ interface ProbeProps {
   notePrefill?: string;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
   onToggleExpand: (uuid: string) => void;
+  onContextMenu?: (uuid: string, e: React.MouseEvent) => void;
 }
 
 const probe = vi.hoisted(() => ({
@@ -681,6 +682,60 @@ describe("add to group without drag (#968)", () => {
       fireEvent.click(items[1]!);
     });
     expect(useCardboxStore.getState().groups.g2!.order).toEqual([B, C]);
+  });
+
+  it("hides Add to Group when every group is filtered out of view", async () => {
+    mockWithGroups({ g1: { name: "G1", order: [A], collapsed: false } });
+    await renderView();
+    // "t card" matches "split card" and "tart card" but not "apple pie card",
+    // so g1's only member is invisible and the group does not render.
+    act(() => {
+      useCardboxStore.getState().setSearchQuery("t card");
+    });
+    selectCards([B, C]);
+    expect(screen.queryByTestId("batch-add-to-group")).not.toBeInTheDocument();
+  });
+
+  it("auto-applies into the only visible group, ignoring filtered-out groups", async () => {
+    mockWithGroups({
+      g1: { name: "G1", order: [A], collapsed: false },
+      g2: { name: "G2", order: [B], collapsed: false },
+    });
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().setSearchQuery("t card");
+    });
+    selectCards([B, C]);
+    act(() => {
+      fireEvent.click(screen.getByTestId("batch-add-to-group"));
+    });
+    // g1 is invisible, so g2 is the single candidate: no picker, direct move.
+    expect(screen.queryByTestId("group-picker-panel")).not.toBeInTheDocument();
+    expect(useCardboxStore.getState().groups.g2!.order).toEqual([B, C]);
+  });
+
+  it("card context menu reports hasGroups false when all groups are invisible", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(undefined);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout")
+        return { ...emptyLayout, groups: { g1: { name: "G1", order: [A], collapsed: false } } };
+      return undefined;
+    });
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().setSearchQuery("t card");
+    });
+    const onContextMenu = probe.latestProps.get(B)?.onContextMenu;
+    expect(onContextMenu).toBeDefined();
+    act(() => {
+      onContextMenu!(B, { preventDefault: () => {} } as unknown as React.MouseEvent);
+    });
+    expect(invokeSpy).toHaveBeenCalledWith(
+      "show_cardbox_context_menu",
+      expect.objectContaining({ cardUuid: B, hasGroups: false }),
+    );
   });
 
   it("a batch add-to-group is a single undo step", async () => {
