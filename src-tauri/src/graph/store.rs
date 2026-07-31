@@ -1701,12 +1701,15 @@ impl Store {
         let diff = match_annotations(&existing, annotations);
 
         let mut update_stmt = self.conn.prepare(
-            "UPDATE annotations SET body=?1, certainty=?2, date=?3, source_line=?4, char_start=?5, char_end=?6, scope_kind=?7, scope_value=?8, uuid=COALESCE(?9, uuid), original=?10 WHERE id=?11",
+            "UPDATE annotations SET body=?1, certainty=?2, date=?3, source_line=?4, char_start=?5, char_end=?6, scope_kind=?7, scope_value=?8, uuid=COALESCE(?9, uuid), original=?10, annotation_type=?11 WHERE id=?12",
         )?;
-        let mut body_changed_rowids = Vec::new();
+        let mut fts_stale_rowids = Vec::new();
         for &(new_idx, old_idx) in &diff.updates {
             let ann = &annotations[new_idx];
-            let body_changed = existing[old_idx].body != ann.body;
+            // Pass 0 can pair across a type change (authored uuid wins), so the
+            // FTS row goes stale on either a body or a type edit.
+            let fts_stale = existing[old_idx].body != ann.body
+                || existing[old_idx].annotation_type != ann.annotation_type;
             update_stmt.execute(rusqlite::params![
                 ann.body,
                 ann.certainty,
@@ -1718,13 +1721,14 @@ impl Store {
                 ann.scope_value,
                 ann.uuid,
                 ann.original,
+                ann.annotation_type,
                 existing[old_idx].id,
             ])?;
-            if body_changed {
-                body_changed_rowids.push(existing[old_idx].id);
+            if fts_stale {
+                fts_stale_rowids.push(existing[old_idx].id);
             }
         }
-        for rowid in body_changed_rowids {
+        for rowid in fts_stale_rowids {
             self.refresh_annotation_fts(rowid)?;
         }
 
@@ -4813,8 +4817,9 @@ mod tests {
         };
         store.upsert_annotations("a.md", &[ann]).unwrap();
 
-        let uuid1: String = store.conn.query_row(
-            "SELECT uuid FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
+        let (uuid1, id1): (String, i64) = store.conn.query_row(
+            "SELECT uuid, id FROM annotations WHERE node_id = 'a.md'", [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
         ).unwrap();
         assert_eq!(uuid1, authored_uuid);
 
@@ -4826,17 +4831,53 @@ mod tests {
         };
         store.upsert_annotations("a.md", &[ann2]).unwrap();
 
-        let (uuid2, body2): (String, Option<String>) = store.conn.query_row(
-            "SELECT uuid, body FROM annotations WHERE node_id = 'a.md'", [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+        let (uuid2, body2, id2): (String, Option<String>, i64) = store.conn.query_row(
+            "SELECT uuid, body, id FROM annotations WHERE node_id = 'a.md'", [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).unwrap();
         assert_eq!(uuid2, authored_uuid, "authored uuid must be preserved");
         assert_eq!(body2.as_deref(), Some("body B"), "body must be updated");
+        assert_eq!(id2, id1, "pass 0 must UPDATE the same row, not delete+insert");
 
         let count: i64 = store.conn.query_row(
             "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
         ).unwrap();
         assert_eq!(count, 1, "should be exactly one row");
+    }
+
+    #[test]
+    fn upsert_annotations_stamped_type_change_updates_type_and_fts() {
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+
+        let authored_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        store.upsert_annotations("a.md", &[super::IndexableAnnotation {
+            uuid: Some(authored_uuid.to_string()),
+            char_start: 10,
+            ..make_annotation("note", Some("body A"))
+        }]).unwrap();
+
+        // Same authored uuid, same body, different type: pass 0 pairs by uuid
+        // so the row must follow the type change in both the table and FTS.
+        let deleted = store.upsert_annotations("a.md", &[super::IndexableAnnotation {
+            uuid: Some(authored_uuid.to_string()),
+            char_start: 10,
+            ..make_annotation("question", Some("body A"))
+        }]).unwrap();
+        assert!(deleted.is_empty(), "type change on a stamped row is not a delete");
+
+        let (uuid, ann_type, id): (String, String, i64) = store.conn.query_row(
+            "SELECT uuid, annotation_type, id FROM annotations WHERE node_id = 'a.md'", [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).unwrap();
+        assert_eq!(uuid, authored_uuid, "authored uuid must be preserved");
+        assert_eq!(ann_type, "question", "annotation_type must follow the stamped type edit");
+
+        let fts_type: String = store.conn.query_row(
+            "SELECT annotation_type FROM annotations_fts WHERE rowid = ?1", [id],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(fts_type, "question", "FTS annotation_type must follow the type edit");
     }
 
     // --- #978: body-edit identity second pass ---
