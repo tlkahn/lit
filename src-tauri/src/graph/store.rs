@@ -51,24 +51,57 @@ struct AnnotationDiff {
     deletes: Vec<usize>,
 }
 
+/// Match incoming annotations against existing rows.
+///
+/// Pass 0 (authored uuid): if incoming carries `Some(uuid)` equal to an
+/// existing row's uuid, pair as update first.
+/// Pass 1: ordinal pairing within each `(type, body)` group (position-shift
+/// stable identity when body is unchanged).
+/// Pass 2 (#978): among still-unmatched rows, ordinal pairing by `type` only
+/// sorted by `char_start`. Turns unstamped body edits into in-place UPDATEs
+/// so generated uuids (and cardbox colors/groups) survive.
+/// Leftovers become inserts/deletes.
 fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnotation]) -> AnnotationDiff {
-    // Group existing annotations by (type, body) key.
+    let mut updates = Vec::new();
+    let mut matched_old: HashSet<usize> = HashSet::new();
+    let mut matched_new: HashSet<usize> = HashSet::new();
+
+    // Pass 0: authored-uuid exact match (in-place update, not delete+insert).
+    let mut existing_by_uuid: HashMap<&str, usize> = HashMap::new();
+    for (i, ex) in existing.iter().enumerate() {
+        existing_by_uuid.insert(ex.uuid.as_str(), i);
+    }
+    for (new_idx, ann) in incoming.iter().enumerate() {
+        if let Some(ref u) = ann.uuid {
+            if let Some(&old_idx) = existing_by_uuid.get(u.as_str()) {
+                if matched_old.insert(old_idx) {
+                    matched_new.insert(new_idx);
+                    updates.push((new_idx, old_idx));
+                }
+            }
+        }
+    }
+
+    // Pass 1: group by (type, body), pair by ordinal char_start rank.
     let mut existing_groups: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
     for (i, ex) in existing.iter().enumerate() {
+        if matched_old.contains(&i) {
+            continue;
+        }
         existing_groups
             .entry((ex.annotation_type.clone(), ex.body.clone()))
             .or_default()
             .push(i);
     }
-
-    // Sort each group of existing candidates by char_start.
     for indices in existing_groups.values_mut() {
         indices.sort_by_key(|&i| existing[i].char_start);
     }
 
-    // Group incoming annotations by the same key, sorted by char_start.
     let mut incoming_groups: HashMap<(String, Option<String>), Vec<usize>> = HashMap::new();
     for (i, ann) in incoming.iter().enumerate() {
+        if matched_new.contains(&i) {
+            continue;
+        }
         incoming_groups
             .entry((ann.annotation_type.clone(), ann.body.clone()))
             .or_default()
@@ -78,34 +111,64 @@ fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnot
         indices.sort_by_key(|&i| incoming[i].char_start);
     }
 
-    // Pair by ordinal rank within each (type, body) group: first existing
-    // (by position) pairs with first incoming (by position), etc. This
-    // prevents UUID swaps when positions shift dramatically — e.g. an
-    // annotation moving from pos 10 to 190 won't steal the UUID of
-    // a neighbor at pos 200.
-    let mut updates = Vec::new();
-    let mut inserts = Vec::new();
-    let mut matched_old: HashSet<usize> = HashSet::new();
-
     for (key, inc_indices) in &incoming_groups {
         if let Some(ex_indices) = existing_groups.get(key) {
             let pair_count = inc_indices.len().min(ex_indices.len());
             for rank in 0..pair_count {
-                updates.push((inc_indices[rank], ex_indices[rank]));
-                matched_old.insert(ex_indices[rank]);
-            }
-            // Extra incoming annotations beyond existing count are inserts.
-            for &new_idx in &inc_indices[pair_count..] {
-                inserts.push(new_idx);
-            }
-        } else {
-            // No existing annotations for this key — all are inserts.
-            for &new_idx in inc_indices {
-                inserts.push(new_idx);
+                let new_idx = inc_indices[rank];
+                let old_idx = ex_indices[rank];
+                updates.push((new_idx, old_idx));
+                matched_old.insert(old_idx);
+                matched_new.insert(new_idx);
             }
         }
     }
 
+    // Pass 2 (#978): among unmatched, group by type only, ordinal by char_start.
+    let mut existing_by_type: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, ex) in existing.iter().enumerate() {
+        if matched_old.contains(&i) {
+            continue;
+        }
+        existing_by_type
+            .entry(ex.annotation_type.clone())
+            .or_default()
+            .push(i);
+    }
+    for indices in existing_by_type.values_mut() {
+        indices.sort_by_key(|&i| existing[i].char_start);
+    }
+
+    let mut incoming_by_type: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, ann) in incoming.iter().enumerate() {
+        if matched_new.contains(&i) {
+            continue;
+        }
+        incoming_by_type
+            .entry(ann.annotation_type.clone())
+            .or_default()
+            .push(i);
+    }
+    for indices in incoming_by_type.values_mut() {
+        indices.sort_by_key(|&i| incoming[i].char_start);
+    }
+
+    for (ann_type, inc_indices) in &incoming_by_type {
+        if let Some(ex_indices) = existing_by_type.get(ann_type) {
+            let pair_count = inc_indices.len().min(ex_indices.len());
+            for rank in 0..pair_count {
+                let new_idx = inc_indices[rank];
+                let old_idx = ex_indices[rank];
+                updates.push((new_idx, old_idx));
+                matched_old.insert(old_idx);
+                matched_new.insert(new_idx);
+            }
+        }
+    }
+
+    let inserts: Vec<usize> = (0..incoming.len())
+        .filter(|i| !matched_new.contains(i))
+        .collect();
     let deletes: Vec<usize> = (0..existing.len())
         .filter(|i| !matched_old.contains(i))
         .collect();
@@ -1584,16 +1647,29 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    fn refresh_annotation_fts(&self, rowid: i64) -> Result<(), GraphError> {
+        self.conn.execute("DELETE FROM annotations_fts WHERE rowid = ?1", [rowid])?;
+        self.conn.execute(
+            "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+             SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
+            [rowid],
+        )?;
+        Ok(())
+    }
+
     pub fn upsert_annotations(&self, node_id: &str, annotations: &[IndexableAnnotation]) -> Result<Vec<String>, GraphError> {
         let existing = self.fetch_existing_annotations(node_id)?;
         let diff = match_annotations(&existing, annotations);
 
         let mut update_stmt = self.conn.prepare(
-            "UPDATE annotations SET certainty=?1, date=?2, source_line=?3, char_start=?4, char_end=?5, scope_kind=?6, scope_value=?7, uuid=COALESCE(?8, uuid), original=?9 WHERE id=?10",
+            "UPDATE annotations SET body=?1, certainty=?2, date=?3, source_line=?4, char_start=?5, char_end=?6, scope_kind=?7, scope_value=?8, uuid=COALESCE(?9, uuid), original=?10 WHERE id=?11",
         )?;
+        let mut body_changed_rowids = Vec::new();
         for &(new_idx, old_idx) in &diff.updates {
             let ann = &annotations[new_idx];
+            let body_changed = existing[old_idx].body != ann.body;
             update_stmt.execute(rusqlite::params![
+                ann.body,
                 ann.certainty,
                 ann.date,
                 ann.source_line,
@@ -1605,6 +1681,12 @@ impl Store {
                 ann.original,
                 existing[old_idx].id,
             ])?;
+            if body_changed {
+                body_changed_rowids.push(existing[old_idx].id);
+            }
+        }
+        for rowid in body_changed_rowids {
+            self.refresh_annotation_fts(rowid)?;
         }
 
         let deleted_uuids: Vec<String> = diff.deletes.iter()
@@ -1644,14 +1726,8 @@ impl Store {
             inserted_rowids.push(self.conn.last_insert_rowid());
         }
 
-        if !diff.inserts.is_empty() {
-            let mut fts_insert = self.conn.prepare(
-                "INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
-                 SELECT id, body, node_id, annotation_type FROM annotations WHERE id = ?1 AND body IS NOT NULL",
-            )?;
-            for rowid in &inserted_rowids {
-                fts_insert.execute([rowid])?;
-            }
+        for rowid in inserted_rowids {
+            self.refresh_annotation_fts(rowid)?;
         }
 
         Ok(deleted_uuids)
@@ -4722,6 +4798,174 @@ mod tests {
             "SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md'", [], |r| r.get(0),
         ).unwrap();
         assert_eq!(count, 1, "should be exactly one row");
+    }
+
+    // --- #978: body-edit identity second pass ---
+
+    #[test]
+    fn match_annotations_body_edit_same_type_preserves_pairing() {
+        let existing = vec![super::ExistingAnnotation {
+            id: 1,
+            annotation_type: "note".into(),
+            body: Some("A".into()),
+            char_start: 10,
+            uuid: "u1".into(),
+        }];
+        let incoming = vec![super::IndexableAnnotation {
+            char_start: 10,
+            ..make_annotation("note", Some("B"))
+        }];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        assert_eq!(diff.updates, vec![(0, 0)], "body edit same type must UPDATE in place");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn match_annotations_body_edit_two_notes_ordinal_by_position() {
+        let existing = vec![
+            super::ExistingAnnotation {
+                id: 1,
+                annotation_type: "note".into(),
+                body: Some("A1".into()),
+                char_start: 10,
+                uuid: "u1".into(),
+            },
+            super::ExistingAnnotation {
+                id: 2,
+                annotation_type: "note".into(),
+                body: Some("A2".into()),
+                char_start: 100,
+                uuid: "u2".into(),
+            },
+        ];
+        let incoming = vec![
+            super::IndexableAnnotation { char_start: 12, ..make_annotation("note", Some("B1")) },
+            super::IndexableAnnotation { char_start: 105, ..make_annotation("note", Some("B2")) },
+        ];
+
+        let diff = super::match_annotations(&existing, &incoming);
+        let map: std::collections::HashMap<usize, usize> =
+            diff.updates.iter().copied().collect();
+
+        assert_eq!(map[&0], 0, "first incoming pairs with first existing");
+        assert_eq!(map[&1], 1, "second incoming pairs with second existing");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn match_annotations_type_change_is_delete_insert() {
+        let existing = vec![super::ExistingAnnotation {
+            id: 1,
+            annotation_type: "note".into(),
+            body: Some("A".into()),
+            char_start: 10,
+            uuid: "u1".into(),
+        }];
+        let incoming = vec![super::IndexableAnnotation {
+            char_start: 10,
+            ..make_annotation("question", Some("A"))
+        }];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        assert!(diff.updates.is_empty(), "type change must not pair");
+        assert_eq!(diff.inserts, vec![0]);
+        assert_eq!(diff.deletes, vec![0]);
+    }
+
+    #[test]
+    fn upsert_annotations_body_change_preserves_generated_uuid() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        // Unstamped note body A
+        store
+            .upsert_annotations(
+                "a.md",
+                &[super::IndexableAnnotation {
+                    char_start: 10,
+                    ..make_annotation("note", Some("A"))
+                }],
+            )
+            .unwrap();
+
+        let (uuid1, id1): (String, i64) = store
+            .conn
+            .query_row(
+                "SELECT uuid, id FROM annotations WHERE node_id = 'a.md'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+
+        // Re-upsert body B at similar char_start (unstamped)
+        store
+            .upsert_annotations(
+                "a.md",
+                &[super::IndexableAnnotation {
+                    char_start: 12,
+                    ..make_annotation("note", Some("B"))
+                }],
+            )
+            .unwrap();
+
+        let (uuid2, body2, id2, count): (String, Option<String>, i64, i64) = store
+            .conn
+            .query_row(
+                "SELECT uuid, body, id,
+                        (SELECT COUNT(*) FROM annotations WHERE node_id = 'a.md')
+                 FROM annotations WHERE node_id = 'a.md'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(count, 1, "should be exactly one row");
+        assert_eq!(uuid2, uuid1, "generated uuid must be preserved across body edit");
+        assert_eq!(body2.as_deref(), Some("B"));
+        assert_eq!(id2, id1, "row id must be stable (UPDATE not delete+insert)");
+    }
+
+    #[test]
+    fn upsert_annotations_body_change_refreshes_fts() {
+        let store = Store::open_memory().unwrap();
+        let node = make_node("a.md", "A", &[], json!({}));
+        store.upsert_node(&node, 1).unwrap();
+
+        store
+            .upsert_annotations(
+                "a.md",
+                &[super::IndexableAnnotation {
+                    char_start: 10,
+                    ..make_annotation("note", Some("alpha-unique-body"))
+                }],
+            )
+            .unwrap();
+
+        let hits_a = store.search_annotations("alpha-unique-body", None, 10).unwrap();
+        assert_eq!(hits_a.len(), 1);
+
+        store
+            .upsert_annotations(
+                "a.md",
+                &[super::IndexableAnnotation {
+                    char_start: 10,
+                    ..make_annotation("note", Some("beta-unique-body"))
+                }],
+            )
+            .unwrap();
+
+        let hits_b = store.search_annotations("beta-unique-body", None, 10).unwrap();
+        assert_eq!(hits_b.len(), 1, "FTS must find new body");
+        assert_eq!(hits_b[0].body.as_deref(), Some("beta-unique-body"));
+
+        let hits_old = store.search_annotations("alpha-unique-body", None, 10).unwrap();
+        assert!(hits_old.is_empty(), "FTS must not find old body after update");
     }
 
     // --- match_annotations: greedy position-sorted pairing ---
