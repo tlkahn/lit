@@ -966,6 +966,87 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("body edit -> stale index -> graph-updated reindex keeps same uuid (#978)", async () => {
+    // 1. open: parse A, list -> A/uuid-1, field uuid-1
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve(); // listen resolves
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+
+    // 2. edit: parse B, list still A/uuid-1, field uuid-1 via carry-forward
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10, char_end: 20 }),
+    ]);
+    mockListAnnotations.mockClear();
+    // list still returns stale A (mock not updated yet)
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(view.state.field(annotationDataField)[0]!.body).toBe("B");
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+
+    // 3. simulate reindex: list mock -> B/uuid-1; emit lit:graph-updated
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "B",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 4. field uuid still uuid-1 (re-list body-key hit)
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.body).toBe("B");
+    expect(data[0]!.uuid).toBe("uuid-1");
+
+    // 5. PillWidget from field ann renders the cardbox link glyph
+    const pill = new PillWidget(data[0]!);
+    const dom = pill.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).not.toBeNull();
+
+    view.destroy();
+  });
+
   it("destroy unsubscribes lit:graph-updated (#978)", async () => {
     vi.mocked(parseAnnotations).mockImplementation(async () => [
       makeAnnotation({ annotation_type: "note", body: "A", char_start: 0, char_end: 10 }),
