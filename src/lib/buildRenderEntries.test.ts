@@ -3,156 +3,126 @@ import { buildRenderEntries } from "./buildRenderEntries";
 import type { RenderEntry } from "./buildRenderEntries";
 import type { CardboxAnnotation, GroupInfo } from "./ipc";
 
-function makeAnn(uuid: string, type = "note"): CardboxAnnotation {
+function makeAnnotation(
+  uuid: string,
+  char_start: number,
+  source_page_id = "a.md",
+): CardboxAnnotation {
   return {
     uuid,
-    annotation_type: type,
+    annotation_type: "note",
     certainty: "neutral",
-    body: `body-${uuid}`,
+    body: `Body of ${uuid}`,
     date: null,
-    source_page_id: "p.md",
-    source_page_title: "Page",
+    source_page_id,
+    source_page_title: "Doc",
     source_line: 1,
-    char_start: 0,
-    char_end: 10,
+    char_start,
+    char_end: char_start + 10,
     scope_kind: "words",
     scope_value: "1",
     original: null,
   };
 }
 
-function uuids(entries: RenderEntry[]): string[] {
+function makeGroup(order: string[], collapsed = false): GroupInfo {
+  return { name: "G", order, collapsed };
+}
+
+/** Flatten entries to a readable shape: card uuid or [groupId, memberUuids]. */
+function shape(entries: RenderEntry[]): unknown[] {
   return entries.map((e) =>
-    e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
+    e.kind === "card"
+      ? e.annotation.uuid
+      : [e.groupId, e.cards.map((c) => c.uuid)],
   );
 }
 
-function setup(
-  annIds: string[],
-  order: string[],
-  groups: Record<string, GroupInfo> = {},
-  pinned: string[] = [],
-) {
-  const annotations = annIds.map((id) => makeAnn(id));
-  const annotationMap = new Map(annotations.map((a) => [a.uuid, a]));
-  const filteredUuidSet = new Set(annIds);
-  return buildRenderEntries(
-    order,
-    groups,
-    annotationMap,
-    filteredUuidSet,
-    annotations,
-    pinned,
-  );
-}
-
-describe("buildRenderEntries", () => {
-  describe("pinned cards float to top", () => {
-    it("pinned card appears before unpinned cards", () => {
-      const result = setup(
-        ["a", "b", "c"],
-        ["a", "b", "c"],
-        {},
-        ["c"],
-      );
-      expect(uuids(result)).toEqual(["c", "a", "b"]);
-    });
-
-    it("multiple pinned cards appear in pinned-array order", () => {
-      const result = setup(
-        ["a", "b", "c", "d"],
-        ["a", "b", "c", "d"],
-        {},
-        ["d", "b"],
-      );
-      expect(uuids(result)).toEqual(["d", "b", "a", "c"]);
-    });
-
-    it("pinned cards appear before groups", () => {
-      const result = setup(
-        ["a", "b", "c"],
-        ["a", "group:g1", "c"],
-        { g1: { name: "G1", order: ["b"], collapsed: false } },
-        ["c"],
-      );
-      expect(uuids(result)).toEqual(["c", "a", "group:g1"]);
-    });
-
-    it("no pinned cards preserves original order", () => {
-      const result = setup(
-        ["a", "b", "c"],
-        ["a", "b", "c"],
-        {},
-        [],
-      );
-      expect(uuids(result)).toEqual(["a", "b", "c"]);
-    });
-
-    it("pinned card that is filtered out does not appear", () => {
-      const annotations = [makeAnn("a"), makeAnn("b"), makeAnn("c")];
-      const annotationMap = new Map(annotations.map((a) => [a.uuid, a]));
-      const filteredUuidSet = new Set(["a", "b"]);
-      const filteredAnnotations = annotations.filter((a) => filteredUuidSet.has(a.uuid));
-      const result = buildRenderEntries(
-        ["a", "b", "c"],
-        {},
-        annotationMap,
-        filteredUuidSet,
-        filteredAnnotations,
-        ["c", "a"],
-      );
-      expect(uuids(result)).toEqual(["a", "b"]);
-    });
-
-    it("pinned card inside a group still floats to top as individual card", () => {
-      const result = setup(
-        ["a", "b", "c"],
-        ["group:g1", "c"],
-        { g1: { name: "G1", order: ["a", "b"], collapsed: false } },
-        ["b"],
-      );
-      // b is pinned and should appear at top as a card, ahead of the group
-      const ids = uuids(result);
-      expect(ids[0]).toBe("b");
-      expect(ids).toContain("group:g1");
-    });
-
-    it("pinned order is respected, not insertion order", () => {
-      const result = setup(
-        ["x", "y", "z"],
-        ["z", "y", "x"],
-        {},
-        ["y", "z"],
-      );
-      // pinned array says y first, then z
-      expect(uuids(result)).toEqual(["y", "z", "x"]);
-    });
+describe("buildRenderEntries (#968 document ordering)", () => {
+  it("orders top-level cards by document position regardless of input order", () => {
+    const a = makeAnnotation("a", 300);
+    const b = makeAnnotation("b", 100);
+    const c = makeAnnotation("c", 200);
+    expect(shape(buildRenderEntries([a, b, c], {}, []))).toEqual(["b", "c", "a"]);
   });
 
-  describe("groups and cards interleave correctly", () => {
-    it("groups appear at their order position", () => {
-      const result = setup(
-        ["a", "b", "c"],
-        ["a", "group:g1", "c"],
-        { g1: { name: "G1", order: ["b"], collapsed: false } },
-        [],
-      );
-      expect(uuids(result)).toEqual(["a", "group:g1", "c"]);
-      const groupEntry = result.find((e) => e.kind === "group");
-      expect(groupEntry!.kind).toBe("group");
-      if (groupEntry!.kind === "group") {
-        expect(groupEntry!.cards.map((c) => c.uuid)).toEqual(["b"]);
-      }
-    });
+  it("orders across pages by page id before char_start", () => {
+    const a = makeAnnotation("a", 900, "a.md");
+    const b = makeAnnotation("b", 5, "b.md");
+    expect(shape(buildRenderEntries([b, a], {}, []))).toEqual(["a", "b"]);
+  });
 
-    it("annotations not in order are appended at end", () => {
-      const result = setup(
-        ["a", "b", "c"],
-        ["a"],
-        {},
-        [],
-      );
-      expect(uuids(result)).toEqual(["a", "b", "c"]);
-    });
+  it("ranks a group at its earliest member and interleaves with cards", () => {
+    const top1 = makeAnnotation("top1", 10);
+    const member1 = makeAnnotation("member1", 20);
+    const top2 = makeAnnotation("top2", 30);
+    const member2 = makeAnnotation("member2", 5);
+    const groups = { g1: makeGroup(["member1", "member2"]) };
+    expect(shape(buildRenderEntries([top1, member1, top2, member2], groups, []))).toEqual([
+      ["g1", ["member2", "member1"]],
+      "top1",
+      "top2",
+    ]);
+  });
+
+  it("orders within a group by document position, not GroupInfo.order", () => {
+    const late = makeAnnotation("late", 500);
+    const early = makeAnnotation("early", 10);
+    const groups = { g1: makeGroup(["late", "early"]) };
+    expect(shape(buildRenderEntries([late, early], groups, []))).toEqual([
+      ["g1", ["early", "late"]],
+    ]);
+  });
+
+  it("does not mutate GroupInfo.order", () => {
+    const late = makeAnnotation("late", 500);
+    const early = makeAnnotation("early", 10);
+    const info = makeGroup(["late", "early"]);
+    buildRenderEntries([late, early], { g1: info }, []);
+    expect(info.order).toEqual(["late", "early"]);
+  });
+
+  it("drops filtered-out members and skips a fully filtered group", () => {
+    const visible = makeAnnotation("visible", 10);
+    const groups = {
+      g1: makeGroup(["visible", "hidden"]),
+      g2: makeGroup(["gone"]),
+    };
+    expect(shape(buildRenderEntries([visible], groups, []))).toEqual([
+      ["g1", ["visible"]],
+    ]);
+  });
+
+  it("hoists pinned cards to the top in document order, not pin order", () => {
+    const a = makeAnnotation("a", 100);
+    const b = makeAnnotation("b", 200);
+    const c = makeAnnotation("c", 300);
+    // Pinned late-first: document position must win over pin recency.
+    expect(shape(buildRenderEntries([a, b, c], {}, ["c", "a"]))).toEqual([
+      "a",
+      "c",
+      "b",
+    ]);
+  });
+
+  it("keeps a pinned group member both hoisted and inside its group", () => {
+    const member = makeAnnotation("member", 100);
+    const top = makeAnnotation("top", 50);
+    const groups = { g1: makeGroup(["member"]) };
+    expect(shape(buildRenderEntries([member, top], groups, ["member"]))).toEqual([
+      "member",
+      "top",
+      ["g1", ["member"]],
+    ]);
+  });
+
+  it("ignores pinned uuids that are filtered out or unknown", () => {
+    const a = makeAnnotation("a", 100);
+    expect(shape(buildRenderEntries([a], {}, ["ghost", "a"]))).toEqual(["a"]);
+  });
+
+  it("returns an empty list for empty input", () => {
+    expect(buildRenderEntries([], {}, [])).toEqual([]);
+    expect(buildRenderEntries([], { g1: makeGroup(["x"]) }, ["x"])).toEqual([]);
   });
 });

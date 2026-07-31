@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import CardboxView from "./CardboxView";
 import { useCardboxStore } from "../stores/cardbox";
 import { useCardboxSelectionStore } from "../stores/cardboxSelection";
@@ -21,8 +21,9 @@ const probe = vi.hoisted(() => ({
 
 // Memoized probe: its render count only increases when CardboxView passes a
 // changed prop — exactly what the callback-stability guarantees are about.
-// Emits just enough DOM for the focus-highlight path: the data-uuid wrapper
-// handleFocusCard queries, and the note display element when a note exists.
+// Emits just enough DOM for the focus-highlight path (the data-uuid wrapper
+// handleFocusCard queries, the note display element when a note exists) and
+// for grid keyboard navigation (a focusable cardbox-card node).
 vi.mock("./CardboxCardItem", async () => {
   const React = await import("react");
   const CardboxCardItem = React.memo(function CardboxCardItemProbe(props: ProbeProps) {
@@ -32,6 +33,7 @@ vi.mock("./CardboxCardItem", async () => {
     return React.createElement(
       "div",
       { "data-testid": `probe-card-${uuid}`, "data-uuid": uuid },
+      React.createElement("div", { "data-testid": "cardbox-card", "data-uuid": uuid, tabIndex: 0 }),
       props.note != null
         ? React.createElement("div", { "data-testid": "card-note-display" })
         : null,
@@ -63,7 +65,7 @@ const A = "uuid-a";
 const B = "uuid-b";
 const C = "uuid-c";
 
-function makeAnnotation(uuid: string, body: string): CardboxAnnotation {
+function makeAnnotation(uuid: string, body: string, charStart = 10): CardboxAnnotation {
   return {
     uuid,
     annotation_type: "note",
@@ -73,18 +75,19 @@ function makeAnnotation(uuid: string, body: string): CardboxAnnotation {
     source_page_id: "test.md",
     source_page_title: "Test Document",
     source_line: 5,
-    char_start: 10,
-    char_end: 50,
+    char_start: charStart,
+    char_end: charStart + 40,
     scope_kind: "words",
     scope_value: "1",
     original: "source excerpt",
   };
 }
 
+// Document order is A (10) < B (20) < C (30).
 const fixtures = [
-  makeAnnotation(A, "apple pie card"),
-  makeAnnotation(B, "banana split card"),
-  makeAnnotation(C, "cherry tart card"),
+  makeAnnotation(A, "apple pie card", 10),
+  makeAnnotation(B, "banana split card", 20),
+  makeAnnotation(C, "cherry tart card", 30),
 ];
 
 const emptyLayout: CardboxLayout = {
@@ -560,5 +563,54 @@ describe("dnd removal (#968)", () => {
     expect(document.querySelector('[id^="DndLiveRegion"]')).toBeNull();
     expect(document.querySelector('[id^="DndDescribedBy"]')).toBeNull();
     expect(document.querySelector('[aria-roledescription="sortable"]')).toBeNull();
+  });
+});
+
+describe("document ordering (#968)", () => {
+  it("renders cards in document order even when the layout supplies a stale manual order", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout") return { ...emptyLayout, order: [C, B, A] };
+      return undefined;
+    });
+    await renderView();
+    const grid = screen.getByTestId("cardbox-grid");
+    const rendered = Array.from(
+      grid.querySelectorAll('[data-testid^="probe-card-"]'),
+    ).map((el) => el.getAttribute("data-uuid"));
+    expect(rendered).toEqual([A, B, C]);
+  });
+
+  it("arrow navigation indexes match the rendered card order when a group is collapsed", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout")
+        return { ...emptyLayout, groups: { g1: { name: "G", order: [B], collapsed: true } } };
+      return undefined;
+    });
+    await renderView();
+    // Rendered focusable cards are A then C; B is hidden in the collapsed group.
+    const cards = screen.getAllByTestId("cardbox-card");
+    expect(cards.map((el) => el.getAttribute("data-uuid"))).toEqual([A, C]);
+    (cards[0] as HTMLElement).focus();
+    fireEvent.keyDown(cards[0]!, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(cards[1]);
+    fireEvent.keyDown(cards[1]!, { key: "Enter" });
+    expect(useCardboxStore.getState().expandedUuid).toBe(C);
+  });
+
+  it("P on a focused card pins the card under the cursor, not a shifted one", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout")
+        return { ...emptyLayout, groups: { g1: { name: "G", order: [B], collapsed: true } } };
+      return undefined;
+    });
+    await renderView();
+    const cards = screen.getAllByTestId("cardbox-card");
+    (cards[1] as HTMLElement).focus();
+    fireEvent.keyDown(cards[1]!, { key: "p" });
+    expect(useCardboxStore.getState().pinned).toContain(C);
+    expect(useCardboxStore.getState().pinned).not.toContain(B);
   });
 });

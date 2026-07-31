@@ -66,7 +66,6 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
   const resetFilters = useCardboxStore((s) => s.resetFilters);
   const toggleType = useCardboxStore((s) => s.toggleType);
-  const order = useCardboxStore((s) => s.order);
   const loadLayout = useCardboxStore((s) => s.loadLayout);
   const saveLayout = useCardboxStore((s) => s.saveLayout);
   const links = useCardboxStore((s) => s.links);
@@ -259,30 +258,6 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [filteredAnnotations, connectionsUuidSet],
   );
 
-  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
-  const visiblePinnedUuids = useMemo(() => {
-    const filteredSet = new Set(effectiveAnnotations.map((a) => a.uuid));
-    return pinned.filter((uuid) => filteredSet.has(uuid));
-  }, [effectiveAnnotations, pinned]);
-
-  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
-  const sortedAnnotations = useMemo(() => {
-    const annMap = new Map(effectiveAnnotations.map((a) => [a.uuid, a]));
-    const pinnedSection = visiblePinnedUuids
-      .map((uuid) => annMap.get(uuid)!)
-      .filter(Boolean);
-    const pinnedUuids = new Set(visiblePinnedUuids);
-    const unpinnedFiltered = effectiveAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
-    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
-    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
-    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
-      const ai = orderMap.get(a.uuid) ?? Infinity;
-      const bi = orderMap.get(b.uuid) ?? Infinity;
-      return ai - bi;
-    });
-    return [...pinnedSection, ...unpinnedSorted];
-  }, [effectiveAnnotations, order, visiblePinnedUuids]);
-
   // Build filtered UUID set for quick membership tests
   const filteredUuidSet = useMemo(
     () => new Set(effectiveAnnotations.map((a) => a.uuid)),
@@ -296,8 +271,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   }, [annotations]);
 
   const renderEntries = useMemo(
-    () => buildRenderEntries(order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned),
-    [order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned],
+    () => buildRenderEntries(effectiveAnnotations, groups, pinned),
+    [effectiveAnnotations, groups, pinned],
   );
 
   const orderedUuids = useMemo(
@@ -403,16 +378,16 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const { gridRef, handleKeyDown: handleGridKeyDown } = useCardboxKeyboard({
     onExpand: (index) => {
-      const ann = sortedAnnotations[index];
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
       if (ann) handleToggleExpand(ann.uuid);
     },
     onNavigate: (index) => {
-      const ann = sortedAnnotations[index];
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
       if (ann) handleNavigate(ann);
     },
     onOpenLinkPicker: () => setLinkPickerOpen(true),
     onTogglePin: (index) => {
-      const ann = sortedAnnotations[index];
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
       if (ann) {
         if (pinnedSet.has(ann.uuid)) {
           unpinCard(ann.uuid);
@@ -449,7 +424,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
     connectionsActive: !!connectionsForUuid,
-    itemCount: sortedAnnotations.length,
+    itemCount: orderedUuids.length,
   });
 
   // Pending scroll/highlight delay from handleFocusCard; cleared on repeat
