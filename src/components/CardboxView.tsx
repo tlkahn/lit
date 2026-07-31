@@ -576,13 +576,23 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     const highlightNote = useCardboxStore.getState().pendingHighlightNote;
     setPendingFocusUuid(null);
     if (action.kind === "focus") {
+      // Cross-page target under document scope: the page filter hides the card
+      // forever. Widen with raw setScope so we do NOT collapse (Cycle 2) (#972).
+      const target = annotationMap.get(action.uuid);
+      if (
+        target &&
+        target.source_page_id !== pagePath &&
+        useCardboxStore.getState().scope === "document"
+      ) {
+        setScope("workspace");
+      }
       // F2: the card is present but hidden by an active filter; reset filters so
       // it re-renders into the DOM before handleFocusCard's scroll/highlight.
       if (action.clearFilters) resetFilters();
       handleFocusCard(action.uuid, highlightNote);
     }
     // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
-  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
+  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard, pagePath, setScope]);
 
   // ---------- Context menu handlers ----------
 
