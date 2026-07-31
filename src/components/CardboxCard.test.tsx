@@ -1676,6 +1676,25 @@ describe("CardboxCard", () => {
       expect(onConsumed).toHaveBeenCalledTimes(1);
     });
 
+    it("unflips a back-facing card so the prefilled editor is visible", () => {
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        onSetNote: () => {},
+        onNotePrefillConsumed: () => {},
+      };
+      const { rerender } = render(<CardboxCard {...props} />);
+      fireEvent.click(screen.getByTestId("card-flip"));
+      expect(screen.getByTestId("card-face-back")).toBeInTheDocument();
+
+      rerender(<CardboxCard {...props} notePrefill={"> X\n"} />);
+      expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
+      const ta = screen.getByTestId("card-note-textarea") as HTMLTextAreaElement;
+      expect(ta.value).toContain("> X");
+    });
+
     it("does not expand the card itself (expansion is CardboxView's job)", () => {
       render(
         <CardboxCard

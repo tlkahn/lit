@@ -191,10 +191,14 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   }
   const showFlipped = showCardFlipped(flipped, canFlip);
 
-  // A staged quote prefill auto-opens the note editor; expanding the card is
+  // A staged quote prefill auto-opens the note editor, unflipping first —
+  // the editor only mounts on the front face. Expanding the card is
   // CardboxView's job (#968).
   useEffect(() => {
-    if (notePrefill != null) setNoteEditing(true);
+    if (notePrefill != null) {
+      setFlipped(false);
+      setNoteEditing(true);
+    }
   }, [notePrefill]);
 
   useEffect(() => {
