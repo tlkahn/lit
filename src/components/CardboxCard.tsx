@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo, Fragment } from "react";
 import { flushSync } from "react-dom";
 import { canAnimateFlip, runFlipAnimation } from "./cardFlipAnimation";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
@@ -158,6 +158,76 @@ export function showCardFlipped(flipped: boolean, canFlip: boolean): boolean {
   return flipped && canFlip;
 }
 
+/** Shared chrome for vertical action-strip icon buttons (#981). */
+const STRIP_BTN_CLASS =
+  "nerd-font p-1.5 text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent";
+
+/** Keep Enter/Space from bubbling to grid keyboard handlers. */
+function stopStripKeyDown(e: React.KeyboardEvent) {
+  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+}
+
+function StripButton({
+  testId,
+  label,
+  glyph,
+  onClick,
+  title,
+  pressed,
+  expanded,
+  tabIndex,
+  onFocus,
+  buttonRef,
+  children,
+  className,
+}: {
+  testId: string;
+  label: string;
+  glyph?: string;
+  onClick: () => void;
+  title?: string;
+  pressed?: boolean;
+  expanded?: boolean;
+  tabIndex?: number;
+  onFocus?: () => void;
+  buttonRef?: (el: HTMLButtonElement | null) => void;
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={className ?? STRIP_BTN_CLASS}
+      data-testid={testId}
+      aria-label={label}
+      title={title ?? label}
+      aria-pressed={pressed}
+      aria-expanded={expanded}
+      tabIndex={tabIndex}
+      ref={buttonRef}
+      onClick={onClick}
+      onFocus={onFocus}
+      onKeyDown={stopStripKeyDown}
+    >
+      {children ?? glyph}
+    </button>
+  );
+}
+
+interface StripAction {
+  testId: string;
+  label: string;
+  title?: string;
+  onClick: () => void;
+  pressed?: boolean;
+  expanded?: boolean;
+  glyph?: string;
+  children?: React.ReactNode;
+  /** Insert separator before this action when rendering. */
+  separatorBefore?: boolean;
+  className?: string;
+}
+
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
@@ -175,12 +245,18 @@ interface CardboxCardProps {
   onShowConnections?: () => void;
   notePrefill?: string;
   onNotePrefillConsumed?: () => void;
+  /** Monotonic seq targeting this card for a note-edit open; undefined when not targeted. */
+  noteEditRequest?: number;
+  onNoteEditRequestConsumed?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections, notePrefill, onNotePrefillConsumed }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections, notePrefill, onNotePrefillConsumed, noteEditRequest, onNoteEditRequestConsumed }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const animatingRef = useRef(false);
+  // Monotonic run id: midpoint only applies if this flip is still current.
+  // Invalidated by ensureFrontFace so add-note/prefill win over in-flight flips.
+  const flipRunRef = useRef(0);
   const prevPinnedRef = useRef(isPinned);
   const [justPinned, setJustPinned] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -191,15 +267,53 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   }
   const showFlipped = showCardFlipped(flipped, canFlip);
 
+  // Force front face and invalidate any in-flight flip so its midpoint cannot
+  // re-invert us. Best-effort WAAPI cancel is a prod-only extra (jsdom has none).
+  // Clear animatingRef synchronously so a fresh flip can start immediately —
+  // waiting for the stale run's finally would leave a dead window (#982).
+  const ensureFrontFace = useCallback(() => {
+    flipRunRef.current++;
+    animatingRef.current = false;
+    stageRef.current?.getAnimations?.().forEach((a) => a.cancel());
+    setFlipped(false);
+  }, []);
+
+  // Open the note editor on the front face. Shared by prefill, note-edit
+  // request, and the strip Add-note action. Expanding the card is
+  // CardboxView's job (#968 / #982).
+  const openNoteEditor = useCallback(() => {
+    ensureFrontFace();
+    setNoteEditing(true);
+  }, [ensureFrontFace]);
+
   // A staged quote prefill auto-opens the note editor, unflipping first —
-  // the editor only mounts on the front face. Expanding the card is
-  // CardboxView's job (#968).
+  // the editor only mounts on the front face.
   useEffect(() => {
     if (notePrefill != null) {
-      setFlipped(false);
-      setNoteEditing(true);
+      openNoteEditor();
     }
-  }, [notePrefill]);
+  }, [notePrefill, openNoteEditor]);
+
+  // N-shortcut note-edit request channel (#982). Dedupe on seq so a stable
+  // prop does not re-fire; clear the ref when the prop drops so a later
+  // identical seq is still honored. The rAF focus covers the already-editing
+  // case where CardNoteEditor's init-focus effect will not re-run.
+  const appliedNoteEditReqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (noteEditRequest == null) {
+      appliedNoteEditReqRef.current = null;
+      return;
+    }
+    if (appliedNoteEditReqRef.current === noteEditRequest) return;
+    appliedNoteEditReqRef.current = noteEditRequest;
+    openNoteEditor();
+    requestAnimationFrame(() => {
+      cardRef.current
+        ?.querySelector<HTMLTextAreaElement>('[data-testid="card-note-textarea"]')
+        ?.focus();
+    });
+    onNoteEditRequestConsumed?.();
+  }, [noteEditRequest, openNoteEditor, onNoteEditRequestConsumed]);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -229,11 +343,22 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       return;
     }
     animatingRef.current = true;
+    const run = ++flipRunRef.current;
     // flushSync so the face swap commits between the two animation phases.
-    void runFlipAnimation(stage, () => flushSync(() => setFlipped((v) => !v)))
+    // Guarded by flipRunRef so ensureFrontFace can invalidate mid-flight.
+    void runFlipAnimation(stage, () => {
+      if (flipRunRef.current === run) {
+        flushSync(() => setFlipped((v) => !v));
+      }
+    })
       .finally(() => {
-        animatingRef.current = false;
-        refocus();
+        // Only the owning run may reset animatingRef / steal focus. A stale
+        // run invalidated by ensureFrontFace must not clobber a fresh flip
+        // or yank focus off the note editor (#982).
+        if (flipRunRef.current === run) {
+          animatingRef.current = false;
+          refocus();
+        }
       });
   }, [canFlip]);
 
@@ -255,6 +380,103 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     [expanded, onToggleExpand, canFlip, flipCard],
   );
 
+  const stripActions = useMemo((): StripAction[] => {
+    const actions: StripAction[] = [];
+    if (canFlip) {
+      actions.push({
+        testId: "card-flip",
+        label: showFlipped ? "Show annotation" : "Show original quote",
+        title: showFlipped ? "Show annotation (F)" : "Show original quote (F)",
+        glyph: "\u{F2F1}",
+        onClick: flipCard,
+        pressed: showFlipped,
+      });
+    }
+    actions.push({
+      testId: "card-expand-toggle",
+      label: expanded ? "Collapse card" : "Expand card",
+      onClick: onToggleExpand,
+      expanded,
+      // Match prior expand chrome (no nerd-font / text-sm); SVG is the glyph.
+      className:
+        "p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent",
+      children: (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
+          aria-hidden="true"
+        >
+          <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ),
+    });
+    actions.push({
+      testId: "card-navigate",
+      label: "Open in document",
+      glyph: "\u{F0219}",
+      onClick: onNavigate,
+      separatorBefore: true,
+    });
+    if (onShowConnections) {
+      actions.push({
+        testId: "card-show-connections",
+        label: "Show connections",
+        glyph: "\u{F0339}",
+        onClick: onShowConnections,
+      });
+    }
+    if (onSetNote && !note && !noteEditing) {
+      actions.push({
+        testId: "card-note-add",
+        label: "Add note",
+        glyph: "\u{F0FE}",
+        onClick: () => {
+          openNoteEditor();
+          if (!expanded) onToggleExpand();
+        },
+      });
+    }
+    return actions;
+  }, [
+    canFlip,
+    showFlipped,
+    flipCard,
+    expanded,
+    onToggleExpand,
+    onNavigate,
+    onShowConnections,
+    onSetNote,
+    note,
+    noteEditing,
+    openNoteEditor,
+  ]);
+
+  const [stripActiveIdx, setStripActiveIdx] = useState(0);
+  const stripBtnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const stripClampedIdx =
+    stripActions.length === 0 ? 0 : Math.min(stripActiveIdx, stripActions.length - 1);
+
+  const handleStripKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (stripActions.length === 0) return;
+      const last = stripActions.length - 1;
+      let next: number | null = null;
+      if (e.key === "ArrowDown") next = Math.min(stripClampedIdx + 1, last);
+      else if (e.key === "ArrowUp") next = Math.max(stripClampedIdx - 1, 0);
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = last;
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+      setStripActiveIdx(next);
+      stripBtnRefs.current[next]?.focus();
+    },
+    [stripActions.length, stripClampedIdx],
+  );
+
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
   const certainty = certaintyMark(annotation.certainty);
   const renderedBody = useMemo(() => renderMarkdown(annotation.body ?? ""), [annotation.body]);
@@ -263,7 +485,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   return (
     <div
       ref={cardRef}
-      className={`relative rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
+      className={`relative flex rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
       onKeyDown={handleKeyDown}
       tabIndex={0}
       data-testid="cardbox-card"
@@ -274,61 +496,59 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-color-tag={colorTag || undefined}
       data-flipped={showFlipped}
     >
-      {/* p-1.5 grows the 12px glyphs to a 24px hit target; top/right-0.5
-          compensates so the glyphs stay visually at the old 8px inset. */}
-      <div className="absolute top-0.5 right-0.5 z-10 flex items-center">
+      {/* Vertical action strip on the right edge (#981). Negative margins
+          (-mt-3.5 -mr-3.5 = 14px) cancel the root's p-4 (16px) so the strip
+          sits ~2px from the card edge, matching the old top/right-0.5 inset.
+          DOM-first + order-last: tab order matches visual top-right priority
+          while flex keeps the strip on the right. */}
+      <div
+        role="toolbar"
+        aria-label="Card actions"
+        aria-orientation="vertical"
+        data-testid="card-action-strip"
+        className="order-last z-10 -mt-3.5 -mr-3.5 ml-1 flex shrink-0 flex-col items-center"
+        onKeyDown={handleStripKeyDown}
+      >
         {isPinned && (
           <span
             className="nerd-font p-1.5 text-sm text-interactive-accent"
             data-testid="pin-icon"
-            aria-hidden="true"
+            role="img"
+            aria-label="Pinned"
           >{'\u{F0403}'}</span>
         )}
-        {canFlip && (
-          <button
-            type="button"
-            className="nerd-font p-1.5 text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
-            data-testid="card-flip"
-            aria-label={showFlipped ? "Show annotation" : "Show original quote"}
-            aria-pressed={showFlipped}
-            title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
-            onClick={flipCard}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-              }
-            }}
-          >{'\u{F2F1}'}</button>
-        )}
-        <button
-          type="button"
-          className="p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
-          data-testid="card-expand-toggle"
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse card" : "Expand card"}
-          title={expanded ? "Collapse card" : "Expand card"}
-          onClick={onToggleExpand}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.stopPropagation();
-            }
-          }}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
-            aria-hidden="true"
-          >
-            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {stripActions.map((action, i) => (
+          <Fragment key={action.testId}>
+            {action.separatorBefore && (
+              <div
+                aria-hidden="true"
+                data-testid="card-strip-separator"
+                className="my-0.5 h-px w-4 bg-border"
+              />
+            )}
+            <StripButton
+              testId={action.testId}
+              label={action.label}
+              title={action.title}
+              glyph={action.glyph}
+              onClick={action.onClick}
+              pressed={action.pressed}
+              expanded={action.expanded}
+              className={action.className}
+              tabIndex={i === stripClampedIdx ? 0 : -1}
+              onFocus={() => setStripActiveIdx(i)}
+              buttonRef={(el) => {
+                stripBtnRefs.current[i] = el;
+              }}
+            >
+              {action.children}
+            </StripButton>
+          </Fragment>
+        ))}
       </div>
-      <div className="cardbox-card-stage" ref={stageRef} data-testid="card-flip-stage">
+      <div className="cardbox-card-stage min-w-0 flex-1" ref={stageRef} data-testid="card-flip-stage">
         {!showFlipped ? (
-          <div className="pr-14" data-testid="card-face-front">
+          <div data-testid="card-face-front">
             <div className="flex items-start gap-2">
               <span
                 className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
@@ -392,35 +612,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                       {annotation.date}
                     </div>
                   )}
-                  <div className="flex items-center gap-3">
-                    <button
-                      className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                      onClick={onNavigate}
-                      data-testid="card-navigate"
-                    >
-                      <span className="nerd-font" aria-hidden="true">{'\u{F0219}'}</span>
-                      Open in document
-                    </button>
-                    {onShowConnections && (
-                      <button
-                        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                        onClick={onShowConnections}
-                        data-testid="card-show-connections"
-                      >
-                        <span className="nerd-font" aria-hidden="true">{'\u{F0339}'}</span>
-                        Show connections
-                      </button>
-                    )}
-                    {onSetNote && !note && !noteEditing && (
-                      <button
-                        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                        data-testid="card-note-add"
-                        onClick={() => setNoteEditing(true)}
-                      >
-                        <span className="nerd-font" aria-hidden="true">{'\u{F0FE}'}</span> Add note
-                      </button>
-                    )}
-                  </div>
                   {linkedCards && linkedCards.length > 0 && (
                     // Defensive-only click guard; must never swallow pointerdown (#968).
                     <div
@@ -478,7 +669,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             </div>
           </div>
         ) : (
-          <div className="pr-14" data-testid="card-face-back">
+          <div data-testid="card-face-back">
             <div
               className={`cursor-text border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
               data-testid="card-original"

@@ -18,6 +18,8 @@ interface CardboxGroupProps {
   notesMap?: Record<string, CardNote>;
   notePrefill?: { uuid: string; text: string } | null;
   onNotePrefillConsumed?: () => void;
+  noteEditRequest?: { uuid: string; seq: number } | null;
+  onNoteEditRequestConsumed?: () => void;
   onToggleExpand: (uuid: string) => void;
   onNavigate: (ann: CardboxAnnotation) => void;
   onFocusCard: (uuid: string, highlightNote?: boolean) => void;
@@ -43,6 +45,8 @@ export const CardboxGroup = memo(function CardboxGroup({
   notesMap,
   notePrefill,
   onNotePrefillConsumed,
+  noteEditRequest,
+  onNoteEditRequestConsumed,
   onToggleExpand,
   onNavigate,
   onFocusCard,
@@ -129,6 +133,8 @@ export const CardboxGroup = memo(function CardboxGroup({
                         note={notesMap?.[ann.uuid]?.body}
                         notePrefill={notePrefill?.uuid === ann.uuid ? notePrefill.text : undefined}
                         onNotePrefillConsumed={onNotePrefillConsumed}
+                        noteEditRequest={noteEditRequest?.uuid === ann.uuid ? noteEditRequest.seq : undefined}
+                        onNoteEditRequestConsumed={onNoteEditRequestConsumed}
                         onSetNote={onSetNote}
                         onExportNote={onExportNote}
                         onShowConnections={onShowConnections}

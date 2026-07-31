@@ -93,6 +93,9 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
   const pendingNotePrefill = useCardboxStore((s) => s.pendingNotePrefill);
   const setPendingNotePrefill = useCardboxStore((s) => s.setPendingNotePrefill);
+  const pendingNoteEdit = useCardboxStore((s) => s.pendingNoteEdit);
+  const requestNoteEdit = useCardboxStore((s) => s.requestNoteEdit);
+  const clearNoteEdit = useCardboxStore((s) => s.clearNoteEdit);
   const layoutLoaded = useCardboxStore((s) => s.layoutLoaded);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
@@ -367,6 +370,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [setPendingNotePrefill],
   );
 
+  const handleNoteEditConsumed = useCallback(
+    () => clearNoteEdit(),
+    [clearNoteEdit],
+  );
+
   const handleExportNote = useCallback(
     async (uuid: string) => {
       try {
@@ -423,24 +431,18 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         }
       }
     },
-    onToggleNote: () => {
-      if (!expandedUuid) return;
-      const card = gridRef.current?.querySelector(`[data-uuid="${expandedUuid}"]`);
-      if (!card) return;
-      const textarea = card.querySelector<HTMLTextAreaElement>('[data-testid="card-note-textarea"]');
-      if (textarea) {
-        textarea.focus();
-        return;
-      }
-      const trigger =
-        card.querySelector<HTMLButtonElement>('[data-testid="card-note-add"]') ??
-        card.querySelector<HTMLButtonElement>('[data-testid="card-note-edit"]');
-      if (trigger) {
-        trigger.click();
-      }
+    onToggleNote: (index) => {
+      const uuid = orderedUuids[index];
+      if (!uuid) return;
+      // Expand + request channel: the card opens its note editor when it
+      // receives noteEditRequest. Covers no-note / has-note / flipped without
+      // DOM queries or rAF orchestration (#982).
+      expand(uuid);
+      requestNoteEdit(uuid);
     },
-    onShowConnections: () => {
-      if (expandedUuid) enterConnections(expandedUuid);
+    onShowConnections: (index) => {
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
+      if (ann) enterConnections(ann.uuid);
     },
     onExitConnections: () => exitConnections(),
     onShowShortcuts: () => setShortcutsOpen(true),
@@ -907,6 +909,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                         : undefined
                     }
                     onNotePrefillConsumed={handleNotePrefillConsumed}
+                    noteEditRequest={
+                      pendingNoteEdit?.uuid === entry.annotation.uuid
+                        ? pendingNoteEdit.seq
+                        : undefined
+                    }
+                    onNoteEditRequestConsumed={handleNoteEditConsumed}
                     onSetNote={handleSetNote}
                     onExportNote={handleExportNote}
                     onShowConnections={enterConnections}
@@ -928,14 +936,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                     onRemoveLink={handleRemoveLink}
                     notesMap={notes}
                     // A pinned group member dual-renders (hoisted + in-group);
-                    // the hoisted copy wins the prefill so only one note
-                    // editor opens (#968).
+                    // the hoisted copy wins the prefill / note-edit request so
+                    // only one note editor opens (#968 / #982).
                     notePrefill={
                       pendingNotePrefill && pinnedSet.has(pendingNotePrefill.uuid)
                         ? null
                         : pendingNotePrefill
                     }
                     onNotePrefillConsumed={handleNotePrefillConsumed}
+                    noteEditRequest={
+                      pendingNoteEdit && pinnedSet.has(pendingNoteEdit.uuid)
+                        ? null
+                        : pendingNoteEdit
+                    }
+                    onNoteEditRequestConsumed={handleNoteEditConsumed}
                     onSetNote={handleSetNote}
                     onExportNote={handleExportNote}
                     onShowConnections={enterConnections}

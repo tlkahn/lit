@@ -55,6 +55,14 @@ describe("CardboxShortcutsOverlay", () => {
     expect(entry.querySelector("kbd")).toHaveTextContent("Q");
   });
 
+  it("describes N and C as working on the focused card (#982)", () => {
+    render(<CardboxShortcutsOverlay open={true} onClose={() => {}} />);
+    expect(screen.getByText("Toggle note (focused card)")).toBeInTheDocument();
+    expect(screen.getByText("Show connections (focused card)")).toBeInTheDocument();
+    expect(screen.queryByText("Toggle note (expanded card)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Show connections (expanded card)")).not.toBeInTheDocument();
+  });
+
   it("calls onClose when ? is pressed (toggle off)", () => {
     const onClose = vi.fn();
     render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);
