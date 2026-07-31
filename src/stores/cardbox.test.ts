@@ -193,10 +193,10 @@ describe("cardbox store", () => {
     expect(useCardboxStore.getState().scope).toBe("workspace");
   });
 
-  it("resetFilters resets scope to document", () => {
+  it("resetFilters preserves scope", () => {
     useCardboxStore.getState().setScope("workspace");
     useCardboxStore.getState().resetFilters();
-    expect(useCardboxStore.getState().scope).toBe("document");
+    expect(useCardboxStore.getState().scope).toBe("workspace");
   });
 
   it("resetFilters clears searchQuery and sets activeTypes to all", async () => {

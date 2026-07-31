@@ -232,12 +232,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       return { activeTypes: next };
     }),
   setScope: (scope) => set({ scope }),
+  // Deliberately preserves scope: the only consumer is pending-focus F2
+  // (CardboxView), and flipping scope there would fire scope side effects
+  // (collapseAll) that undo the expand the focus path just applied (#972).
   resetFilters: () =>
     set((s) => ({
       searchQuery: "",
       activeTypes: new Set(s.annotations.map((a) => a.annotation_type)),
       activeColors: null,
-      scope: "document",
       connectionsForUuid: null,
       connectionsSavedFilters: null,
     })),

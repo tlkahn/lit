@@ -160,6 +160,38 @@ describe("CardboxView memo effectiveness (#850)", () => {
   });
 });
 
+describe("pending focus never re-collapses the focused card (#972)", () => {
+  it("stays expanded after F2 filter-reset when warm scope is workspace", async () => {
+    // Warm store: workspace scope + a type filter that hides card A (note).
+    // F2 resetFilters used to flip scope -> document, which fired the [scope]
+    // effect's collapseAll and undid the expand. Card must end expanded.
+    const mixedFixtures = [
+      { ...makeAnnotation(A, "apple pie card"), annotation_type: "note" },
+      { ...makeAnnotation(B, "banana llm card"), annotation_type: "llm" },
+    ];
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return mixedFixtures;
+      if (cmd === "read_cardbox_layout") return emptyLayout;
+      return undefined;
+    });
+    useCardboxStore.setState({
+      scope: "workspace",
+      activeTypes: new Set(["llm"]),
+      layoutLoaded: true,
+    });
+    useCardboxStore.getState().setPendingFocusUuid(A);
+
+    render(<CardboxView pagePath="test.md" />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+    expect(screen.getByTestId(`probe-card-${A}`)).toBeInTheDocument();
+  });
+});
+
 describe("CardboxView pending focus force-expand (#957)", () => {
   it("pending focus on an already-expanded card keeps it expanded", async () => {
     await renderView();
