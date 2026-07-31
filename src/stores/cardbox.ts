@@ -48,6 +48,20 @@ function pushUndo(entry: UndoEntry & { coalesceKey?: string }) {
 
 export type BatchMoveTarget = { type: "toGroup"; groupId: string; index?: number };
 
+// Single-flight write queue for saveLayout: write_cardbox_layout is a
+// wholesale merge on the Rust side, and sync Tauri commands run on a thread
+// pool that can acquire the CardboxLock out of invocation order — two
+// overlapping writes could land last-call-first and persist stale state.
+// Serializing on the client pins completion order to call order. Each queued
+// task snapshots the store when its write STARTS (not when saveLayout was
+// called), so the last write always carries the newest state.
+//
+// Residual window (#976): this only orders THIS webview's wholesale writes.
+// Granular RMW commands (move_card_to_group etc.) and other windows still
+// interleave with wholesale writes on the backend; the full fix is a
+// server-side batch_move_cards_to_group transaction — see the issue.
+let saveChain: Promise<void> = Promise.resolve();
+
 export interface CardboxStore {
   annotations: CardboxAnnotation[];
   expandedUuid: string | null;
@@ -299,23 +313,27 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     // waiting for a layout that will never arrive.
     set({ layoutLoaded: true });
   },
-  saveLayout: async () => {
-    const { links, groups, pinned, layoutVersion, colors } = get();
-    try {
-      await writeCardboxLayout({
-        version: Math.max(layoutVersion, 3),
-        order: [],
-        links,
-        groups,
-        pinned,
-        // Notes are derived from sn annotations on the backend and client
-        // notes never merge into cardbox.json; send an empty map.
-        notes: {},
-        colors,
-      });
-    } catch {
-      // Ignore write failures silently
-    }
+  saveLayout: () => {
+    const task = saveChain.then(async () => {
+      const { links, groups, pinned, layoutVersion, colors } = get();
+      try {
+        await writeCardboxLayout({
+          version: Math.max(layoutVersion, 3),
+          order: [],
+          links,
+          groups,
+          pinned,
+          // Notes are derived from sn annotations on the backend and client
+          // notes never merge into cardbox.json; send an empty map.
+          notes: {},
+          colors,
+        });
+      } catch {
+        // Ignore write failures silently — and never wedge the chain.
+      }
+    });
+    saveChain = task;
+    return task;
   },
   addLink: async (a, b) => {
     if (a === b) return;

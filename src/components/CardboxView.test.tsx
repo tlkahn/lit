@@ -871,6 +871,42 @@ describe("add to group without drag (#968)", () => {
   });
 });
 
+describe("undo/redo persistence (#968)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("⌘Z does not schedule a redundant debounced layout save", async () => {
+    const invokeSpy = vi.fn();
+    mockInvoke((cmd) => {
+      invokeSpy(cmd);
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout") return emptyLayout;
+      if (cmd === "migrate_cardbox_slip_notes")
+        return { migrated: 0, failed: 0, skipped: 0, changed_pages: [], failures: [] };
+      return null;
+    });
+    await renderView();
+    // An undoable action that persists through its own IPC command — undoing
+    // it must not additionally rewrite the whole layout.
+    await act(async () => {
+      await useCardboxStore.getState().pinCard(A);
+    });
+    invokeSpy.mockClear();
+
+    vi.useFakeTimers();
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    expect(useCardboxStore.getState().pinned).not.toContain(A);
+    expect(invokeSpy.mock.calls.map(([cmd]) => cmd)).not.toContain("write_cardbox_layout");
+  });
+});
+
 describe("quote to slip note (#968)", () => {
   afterEach(() => {
     vi.restoreAllMocks();

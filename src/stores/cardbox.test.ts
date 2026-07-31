@@ -43,6 +43,10 @@ const initialCardboxState = useCardboxStore.getState();
 describe("cardbox store", () => {
   beforeEach(() => {
     useCardboxStore.setState(initialCardboxState, true);
+    // Full reset including replayDepth: a test that fails mid-undo would
+    // otherwise leak replayDepth > 0 and silently disable pushUndo for every
+    // later test.
+    useCardboxUndoStore.setState({ undoStack: [], redoStack: [], replayDepth: 0 });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
       if (cmd === "migrate_cardbox_slip_notes")
@@ -379,6 +383,132 @@ describe("cardbox store", () => {
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
       layout: { version: 3, order: [], links: [], groups: {}, pinned: [], notes: {}, colors: {} },
+    });
+  });
+
+  describe("saveLayout single-flight write queue", () => {
+    interface CapturedWrite {
+      payload: { groups: Record<string, GroupInfo> };
+      resolve: () => void;
+      reject: (e: Error) => void;
+    }
+
+    // Every write_cardbox_layout is captured as a manually-settled deferred so
+    // tests control backend completion order.
+    function captureWrites(): CapturedWrite[] {
+      const writes: CapturedWrite[] = [];
+      mockInvoke((cmd, args) => {
+        if (cmd === "write_cardbox_layout") {
+          return new Promise<void>((resolve, reject) => {
+            writes.push({
+              payload: structuredClone((args as { layout: CapturedWrite["payload"] }).layout),
+              resolve,
+              reject: reject as (e: Error) => void,
+            });
+          });
+        }
+        return null;
+      });
+      return writes;
+    }
+
+    const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+    it("snapshots state at write time, not call time", async () => {
+      const writes = captureWrites();
+      const before: Record<string, GroupInfo> = { g1: { name: "G", order: ["u1"], collapsed: false } };
+      const after: Record<string, GroupInfo> = { g1: { name: "G", order: ["u1", "u2"], collapsed: false } };
+      useCardboxStore.setState({ groups: before });
+
+      const first = useCardboxStore.getState().saveLayout();
+      await flush();
+      expect(writes).toHaveLength(1);
+      expect(writes[0]!.payload.groups).toEqual(before);
+
+      useCardboxStore.setState({ groups: after });
+      const second = useCardboxStore.getState().saveLayout();
+      await flush();
+      // The second write must not start while the first is still pending.
+      expect(writes).toHaveLength(1);
+
+      writes[0]!.resolve();
+      await first;
+      await flush();
+      expect(writes).toHaveLength(2);
+      // Snapshot read at write time: the mutation landed before this write.
+      expect(writes[1]!.payload.groups).toEqual(after);
+      writes[1]!.resolve();
+      await second;
+    });
+
+    it("overlapping saveLayout calls write strictly one at a time, in call order", async () => {
+      const writes = captureWrites();
+      useCardboxStore.setState({ groups: { g1: { name: "G", order: ["u1"], collapsed: false } } });
+
+      const p1 = useCardboxStore.getState().saveLayout();
+      const p2 = useCardboxStore.getState().saveLayout();
+      const p3 = useCardboxStore.getState().saveLayout();
+      await flush();
+      expect(writes).toHaveLength(1);
+
+      writes[0]!.resolve();
+      await p1;
+      await flush();
+      expect(writes).toHaveLength(2);
+
+      writes[1]!.resolve();
+      await p2;
+      await flush();
+      expect(writes).toHaveLength(3);
+      writes[2]!.resolve();
+      await p3;
+    });
+
+    it("a rejected write does not wedge the queue", async () => {
+      const writes = captureWrites();
+      useCardboxStore.setState({ groups: { g1: { name: "G", order: ["u1"], collapsed: false } } });
+
+      const first = useCardboxStore.getState().saveLayout();
+      const second = useCardboxStore.getState().saveLayout();
+      await flush();
+      expect(writes).toHaveLength(1);
+
+      writes[0]!.reject(new Error("disk full"));
+      await first;
+      await flush();
+      expect(writes).toHaveLength(2);
+      writes[1]!.resolve();
+      await second;
+    });
+
+    it("batchMoveCards then immediate undo persists the pre-move groups last", async () => {
+      useCardboxUndoStore.getState().clear();
+      const writes = captureWrites();
+      const preMove: Record<string, GroupInfo> = {
+        g1: { name: "G1", order: ["u1"], collapsed: false },
+        g2: { name: "G2", order: ["u2"], collapsed: false },
+      };
+      useCardboxStore.setState({ groups: preMove });
+
+      const movePromise = useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g2" });
+      const undoPromise = useCardboxUndoStore.getState().undo();
+      await flush();
+      // Only one write may be in flight even though two saves were requested.
+      expect(writes).toHaveLength(1);
+
+      // Drain the queue: resolve writes as they arrive (resolving an already
+      // settled deferred is a no-op) until both operations settle.
+      let settled = false;
+      void Promise.all([movePromise, undoPromise]).then(() => { settled = true; });
+      while (!settled) {
+        for (const w of writes) w.resolve();
+        await flush();
+      }
+
+      // Whatever the interleaving, the final persisted layout is the pre-move
+      // snapshot the undo restored.
+      expect(writes[writes.length - 1]!.payload.groups).toEqual(preMove);
+      expect(useCardboxStore.getState().groups).toEqual(preMove);
     });
   });
 

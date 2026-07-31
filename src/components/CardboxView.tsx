@@ -455,8 +455,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       setPendingNotePrefill(target);
       return true;
     },
-    onUndo: async () => { await undo(); debouncedSave(); },
-    onRedo: async () => { await redo(); debouncedSave(); },
+    // Every undoable store action self-persists through its own IPC call, so
+    // undo/redo replay needs no extra layout save.
+    onUndo: () => undo(),
+    onRedo: () => redo(),
     expandedUuid,
     connectionsActive: !!connectionsForUuid,
     itemCount: orderedUuids.length,
