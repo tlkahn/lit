@@ -18,7 +18,7 @@ describe("annotationConstants", () => {
     }
   });
 
-  it("annotation.css defines pill/marker/callout colors for slipnote", () => {
+  it("annotation.css defines pill/marker colors for slipnote", () => {
     const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
     expect(css).toMatch(
       /\.cm-annotation-pill\[data-annotation-type="slipnote"\]/,
@@ -26,9 +26,13 @@ describe("annotationConstants", () => {
     expect(css).toMatch(
       /\.cm-annotation-marker\[data-annotation-type="slipnote"\]/,
     );
-    expect(css).toMatch(
-      /\.cm-annotation-callout\[data-annotation-type="slipnote"\]/,
-    );
+  });
+
+  it("annotation.css keeps thread as the only per-type callout rule (callouts are thread-only)", () => {
+    const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
+    const perTypeCallout = [...css.matchAll(/\.cm-annotation-callout\[data-annotation-type="([^"]+)"\]/g)]
+      .map((m) => m[1]);
+    expect(perTypeCallout).toEqual(["thread"]);
   });
 
   it("index.css defines cardbox --ann-color for slipnote", () => {

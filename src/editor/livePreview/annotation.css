@@ -111,7 +111,8 @@
   color: rgb(158, 158, 158);
 }
 
-/* Callout (block annotation) */
+/* Callout container — thread-only: expanded ThreadWidget is the sole consumer
+   (non-thread block annotations render as pills). */
 .cm-annotation-callout {
   padding: 8px 12px;
   border-radius: 4px;
@@ -228,36 +229,6 @@
   height: 16px;
 }
 
-/* Type-specific callout borders */
-.cm-annotation-callout[data-annotation-type="note"] {
-  border-inline-start-color: rgba(68, 138, 255, 0.6);
-  background: rgba(68, 138, 255, 0.05);
-}
-.cm-annotation-callout[data-annotation-type="question"] {
-  border-inline-start-color: rgba(255, 145, 0, 0.6);
-  background: rgba(255, 145, 0, 0.05);
-}
-.cm-annotation-callout[data-annotation-type="todo"] {
-  border-inline-start-color: rgba(0, 200, 83, 0.6);
-  background: rgba(0, 200, 83, 0.05);
-}
-.cm-annotation-callout[data-annotation-type="crossref"] {
-  border-inline-start-color: rgba(156, 39, 176, 0.6);
-  background: rgba(156, 39, 176, 0.05);
-}
-.cm-annotation-callout[data-annotation-type="apparatus"] {
-  border-inline-start-color: rgba(233, 30, 99, 0.6);
-  background: rgba(233, 30, 99, 0.05);
-}
-.cm-annotation-callout[data-annotation-type="translation"] {
-  border-inline-start-color: rgba(0, 188, 212, 0.6);
-  background: rgba(0, 188, 212, 0.05);
-}
-.cm-annotation-callout[data-annotation-type="bare"] {
-  border-inline-start-color: rgba(158, 158, 158, 0.6);
-  background: rgba(158, 158, 158, 0.05);
-}
-
 /* Fire button */
 .cm-annotation-fire-btn {
   display: inline-flex;
@@ -305,15 +276,13 @@
 }
 
 .cm-annotation-pill:hover .cm-annotation-fire-proximity,
-.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity,
-.cm-annotation-callout-header:hover .cm-annotation-fire-proximity {
+.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity {
   opacity: 0.6;
   pointer-events: auto;
 }
 
 .cm-annotation-pill:hover .cm-annotation-fire-proximity:hover,
-.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity:hover,
-.cm-annotation-callout-header:hover .cm-annotation-fire-proximity:hover {
+.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity:hover {
   opacity: 1;
 }
 
@@ -365,11 +334,6 @@
   color: rgb(255, 193, 7);
 }
 
-.cm-annotation-callout[data-annotation-type="llm"] {
-  border-inline-start-color: rgba(255, 193, 7, 0.6);
-  background: rgba(255, 193, 7, 0.05);
-}
-
 /* Slipnote type colors */
 .cm-annotation-pill[data-annotation-type="slipnote"] {
   background: rgba(38, 166, 154, 0.15);
@@ -377,10 +341,6 @@
 }
 .cm-annotation-marker[data-annotation-type="slipnote"] {
   color: rgb(38, 166, 154);
-}
-.cm-annotation-callout[data-annotation-type="slipnote"] {
-  border-inline-start-color: rgba(38, 166, 154, 0.6);
-  background: rgba(38, 166, 154, 0.05);
 }
 
 /* Thread type colors */

@@ -12,7 +12,6 @@ import {
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
-  CalloutWidget,
   ThreadWidget,
   threadTurnField,
   firingAnnotationsField,
@@ -97,7 +96,6 @@ function isCollapsedAt(view: EditorView, from: number): boolean | undefined {
   while (iter.value) {
     if (iter.from === from) {
       const w = iter.value.spec?.widget;
-      if (w instanceof CalloutWidget) return w.isCollapsed;
       if (w instanceof ThreadWidget) return w.isCollapsed;
     }
     iter.next();
