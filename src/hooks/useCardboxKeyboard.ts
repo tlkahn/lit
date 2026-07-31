@@ -13,6 +13,9 @@ interface UseCardboxKeyboardOptions {
   onShowConnections?: () => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
+  // Returns true when it consumed ⌘A by expanding a text selection to the
+  // card's selectable text; false falls through to onSelectAll.
+  onExpandTextSelection?: () => boolean;
   onSelectAll?: () => void;
   onClearSelection?: () => void;
   onUndo?: () => void;
@@ -22,7 +25,7 @@ interface UseCardboxKeyboardOptions {
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onQuoteSelection, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onQuoteSelection, onShowConnections, onExitConnections, onShowShortcuts, onExpandTextSelection, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -59,10 +62,12 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
-    // Cmd/Ctrl+A: select all
+    // Cmd/Ctrl+A: expand an in-card text selection to the card's text, or
+    // fall back to select-all-cards (#968).
     if ((e.metaKey || e.ctrlKey) && e.key === "a") {
       e.preventDefault();
       e.stopPropagation();
+      if (onExpandTextSelection?.()) return;
       onSelectAll?.();
       return;
     }
@@ -95,7 +100,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         return;
       }
     }
-  }, [onUndo, onRedo, onSelectAll, onClearSelection, onToggleScope, onQuoteSelection, connectionsActive]);
+  }, [onUndo, onRedo, onExpandTextSelection, onSelectAll, onClearSelection, onToggleScope, onQuoteSelection, connectionsActive]);
 
   useEffect(() => {
     window.addEventListener("keydown", globalHandler, true);

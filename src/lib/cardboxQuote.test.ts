@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { resolveQuoteTarget } from "./cardboxQuote";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { resolveQuoteTarget, expandSelectionToCardText } from "./cardboxQuote";
 
 // resolveQuoteTarget never depends on jsdom's Selection implementation: the
 // tests hand it a Selection-shaped object over real DOM nodes.
@@ -139,5 +139,131 @@ describe("resolveQuoteTarget", () => {
     expect(resolveQuoteTarget(null, grid)).toBeNull();
     const sel = makeSelection({ anchorNode: cardText, text: "quoted" });
     expect(resolveQuoteTarget(sel, null)).toBeNull();
+  });
+});
+
+describe("expandSelectionToCardText", () => {
+  // A grid with one card exposing the three selectable text containers ⌘A
+  // must expand into (mirroring the #root user-select opt-ins), plus bare
+  // text outside any of them.
+  function makeSelectableGrid() {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    const card = document.createElement("div");
+    card.setAttribute("data-uuid", "card-1");
+    const prose = document.createElement("div");
+    prose.className = "prose";
+    const proseText = document.createTextNode("prose body text");
+    prose.appendChild(proseText);
+    card.appendChild(prose);
+    const original = document.createElement("div");
+    original.setAttribute("data-testid", "card-original");
+    const originalText = document.createTextNode("source excerpt text");
+    original.appendChild(originalText);
+    card.appendChild(original);
+    root.appendChild(card);
+    const groupName = document.createElement("span");
+    groupName.className = "group-name";
+    const groupNameText = document.createTextNode("Group title");
+    groupName.appendChild(groupNameText);
+    root.appendChild(groupName);
+    const bare = document.createElement("div");
+    const bareText = document.createTextNode("bare grid text");
+    bare.appendChild(bareText);
+    root.appendChild(bare);
+    return { grid: root, prose, proseText, original, originalText, groupName, groupNameText, bareText };
+  }
+
+  function makeExpandable(overrides: { anchorNode: Node | null; collapsed?: boolean }) {
+    const removeAllRanges = vi.fn();
+    const addRange = vi.fn();
+    const sel = {
+      isCollapsed: overrides.collapsed ?? false,
+      anchorNode: overrides.anchorNode,
+      removeAllRanges,
+      addRange,
+    } as unknown as Selection;
+    return { sel, removeAllRanges, addRange };
+  }
+
+  function expectExpandedTo(addRange: ReturnType<typeof vi.fn>, container: Node, text: string) {
+    expect(addRange).toHaveBeenCalledTimes(1);
+    const range = addRange.mock.calls[0]![0] as Range;
+    expect(range.startContainer).toBe(container);
+    expect(range.endContainer).toBe(container);
+    expect(range.toString()).toBe(text);
+  }
+
+  it("expands a selection anchored in the note prose to the whole .prose container", () => {
+    const { grid, prose, proseText } = makeSelectableGrid();
+    const { sel, removeAllRanges, addRange } = makeExpandable({ anchorNode: proseText });
+    expect(expandSelectionToCardText(sel, grid)).toBe(true);
+    expect(removeAllRanges).toHaveBeenCalledTimes(1);
+    expectExpandedTo(addRange, prose, "prose body text");
+    expect(removeAllRanges.mock.invocationCallOrder[0]!).toBeLessThan(
+      addRange.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("expands a selection anchored in the source excerpt to the card-original container", () => {
+    const { grid, original, originalText } = makeSelectableGrid();
+    const { sel, addRange } = makeExpandable({ anchorNode: originalText });
+    expect(expandSelectionToCardText(sel, grid)).toBe(true);
+    expectExpandedTo(addRange, original, "source excerpt text");
+  });
+
+  it("expands a selection anchored in a group name to the .group-name container", () => {
+    const { grid, groupName, groupNameText } = makeSelectableGrid();
+    const { sel, addRange } = makeExpandable({ anchorNode: groupNameText });
+    expect(expandSelectionToCardText(sel, grid)).toBe(true);
+    expectExpandedTo(addRange, groupName, "Group title");
+  });
+
+  it("returns false for a null selection", () => {
+    const { grid } = makeSelectableGrid();
+    expect(expandSelectionToCardText(null, grid)).toBe(false);
+  });
+
+  it("returns false and leaves a collapsed selection untouched", () => {
+    const { grid, proseText } = makeSelectableGrid();
+    const { sel, removeAllRanges, addRange } = makeExpandable({ anchorNode: proseText, collapsed: true });
+    expect(expandSelectionToCardText(sel, grid)).toBe(false);
+    expect(removeAllRanges).not.toHaveBeenCalled();
+    expect(addRange).not.toHaveBeenCalled();
+  });
+
+  it("returns false when the anchor is outside the root", () => {
+    const { grid } = makeSelectableGrid();
+    const outside = document.createElement("div");
+    outside.className = "prose";
+    const outsideText = document.createTextNode("elsewhere");
+    outside.appendChild(outsideText);
+    document.body.appendChild(outside);
+    try {
+      const { sel, removeAllRanges, addRange } = makeExpandable({ anchorNode: outsideText });
+      expect(expandSelectionToCardText(sel, grid)).toBe(false);
+      expect(removeAllRanges).not.toHaveBeenCalled();
+      expect(addRange).not.toHaveBeenCalled();
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it("returns false when the anchor is in the root but outside any selectable container", () => {
+    const { grid, bareText } = makeSelectableGrid();
+    const { sel, removeAllRanges, addRange } = makeExpandable({ anchorNode: bareText });
+    expect(expandSelectionToCardText(sel, grid)).toBe(false);
+    expect(removeAllRanges).not.toHaveBeenCalled();
+    expect(addRange).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent: a selection already spanning the container expands again", () => {
+    // After a first ⌘A the anchor sits on the container element itself; a
+    // repeat press must still report true so it never falls through to
+    // card multi-select.
+    const { grid, prose } = makeSelectableGrid();
+    const { sel, addRange } = makeExpandable({ anchorNode: prose });
+    expect(expandSelectionToCardText(sel, grid)).toBe(true);
+    expectExpandedTo(addRange, prose, "prose body text");
   });
 });

@@ -18,7 +18,7 @@ import { BatchToolbar } from "./BatchToolbar";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
-import { resolveQuoteTarget } from "../lib/cardboxQuote";
+import { resolveQuoteTarget, expandSelectionToCardText } from "../lib/cardboxQuote";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
 import { resolvePendingFocus, computeCenteredScrollTop, computeCollapseScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
@@ -445,6 +445,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     },
     onExitConnections: () => exitConnections(),
     onShowShortcuts: () => setShortcutsOpen(true),
+    onExpandTextSelection: () => expandSelectionToCardText(window.getSelection(), gridRef.current),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
     onToggleScope: () => { if (!connectionsForUuid) handleScopeChange(scope === "document" ? "workspace" : "document"); },

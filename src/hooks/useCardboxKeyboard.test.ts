@@ -94,8 +94,27 @@ describe("useCardboxKeyboard", () => {
   });
 
   it("⌘A selects all and prevents the browser default", () => {
+    // No onExpandTextSelection callback wired: old behavior is unchanged.
     const { options } = setup();
     const event = dispatchGlobalKey({ key: "a", metaKey: true });
+    expect(options.onSelectAll).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("⌘A defers to text-selection expansion when the callback consumes it", () => {
+    const onExpandTextSelection = vi.fn(() => true);
+    const { options } = setup({ onExpandTextSelection });
+    const event = dispatchGlobalKey({ key: "a", metaKey: true });
+    expect(onExpandTextSelection).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+    expect(options.onSelectAll).not.toHaveBeenCalled();
+  });
+
+  it("⌘A falls back to select-all-cards when no quotable selection exists", () => {
+    const onExpandTextSelection = vi.fn(() => false);
+    const { options } = setup({ onExpandTextSelection });
+    const event = dispatchGlobalKey({ key: "a", metaKey: true });
+    expect(onExpandTextSelection).toHaveBeenCalledTimes(1);
     expect(options.onSelectAll).toHaveBeenCalledTimes(1);
     expect(event.defaultPrevented).toBe(true);
   });

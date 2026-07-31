@@ -838,6 +838,42 @@ describe("quote to slip note (#968)", () => {
     }
   });
 
+  it("⌘A with a selection inside a card's text expands it instead of selecting all cards", async () => {
+    await renderView();
+    // Give card B a selectable text container (the probe renders none) and
+    // anchor a non-collapsed selection inside it.
+    const original = document.createElement("div");
+    original.setAttribute("data-testid", "card-original");
+    const text = document.createTextNode("source excerpt");
+    original.appendChild(text);
+    screen.getByTestId(`probe-card-${B}`).appendChild(original);
+    const removeAllRanges = vi.fn();
+    const addRange = vi.fn();
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      isCollapsed: false,
+      anchorNode: text,
+      focusNode: text,
+      toString: () => "excerpt",
+      removeAllRanges,
+      addRange,
+    } as unknown as Selection);
+
+    const event = new KeyboardEvent("keydown", {
+      key: "a",
+      metaKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(addRange).toHaveBeenCalledTimes(1);
+    // The text selection consumed the shortcut: no card multi-select.
+    expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
+  });
+
   it("passes notePrefill only to the target card", async () => {
     await renderView();
     stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
