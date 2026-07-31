@@ -51,15 +51,57 @@ struct AnnotationDiff {
     deletes: Vec<usize>,
 }
 
+/// Pair unmatched same-type rows by position. Equal counts: ordinal rank
+/// (anti-swap, robust to uniform position shifts). Unequal counts: greedy
+/// nearest-`char_start` with consumption so a same-save delete cannot hand
+/// its uuid to an ordinal neighbor; ties break on (existing char_start,
+/// incoming char_start) for determinism. Both index slices must already be
+/// sorted by `char_start`. Returns `(new_idx, old_idx)` pairs.
+fn pair_by_position(
+    existing: &[ExistingAnnotation],
+    incoming: &[IndexableAnnotation],
+    ex_indices: &[usize],
+    inc_indices: &[usize],
+) -> Vec<(usize, usize)> {
+    if ex_indices.len() == inc_indices.len() {
+        return inc_indices.iter().zip(ex_indices).map(|(&n, &o)| (n, o)).collect();
+    }
+
+    let mut candidates: Vec<(i64, i64, i64, usize, usize)> = Vec::new();
+    for (ei, &old_idx) in ex_indices.iter().enumerate() {
+        for (ii, &new_idx) in inc_indices.iter().enumerate() {
+            let ex_pos = existing[old_idx].char_start;
+            let inc_pos = incoming[new_idx].char_start as i64;
+            candidates.push(((ex_pos - inc_pos).abs(), ex_pos, inc_pos, ei, ii));
+        }
+    }
+    candidates.sort();
+
+    let mut ex_used = vec![false; ex_indices.len()];
+    let mut inc_used = vec![false; inc_indices.len()];
+    let mut pairs = Vec::new();
+    for (_, _, _, ei, ii) in candidates {
+        if ex_used[ei] || inc_used[ii] {
+            continue;
+        }
+        ex_used[ei] = true;
+        inc_used[ii] = true;
+        pairs.push((inc_indices[ii], ex_indices[ei]));
+    }
+    pairs
+}
+
 /// Match incoming annotations against existing rows.
 ///
 /// Pass 0 (authored uuid): if incoming carries `Some(uuid)` equal to an
 /// existing row's uuid, pair as update first.
 /// Pass 1: ordinal pairing within each `(type, body)` group (position-shift
 /// stable identity when body is unchanged).
-/// Pass 2 (#978): among still-unmatched rows, ordinal pairing by `type` only
-/// sorted by `char_start`. Turns unstamped body edits into in-place UPDATEs
-/// so generated uuids (and cardbox colors/groups) survive.
+/// Pass 2 (#978): among still-unmatched rows, pairing by `type` only via
+/// `pair_by_position`. Turns unstamped body edits into in-place UPDATEs so
+/// generated uuids (and cardbox colors/groups) survive. A same-save 1:1
+/// delete+add of the same type is indistinguishable from a body edit here
+/// and transfers identity by design (see doc/plans/issue-978.md).
 /// Leftovers become inserts/deletes.
 fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnotation]) -> AnnotationDiff {
     let mut updates = Vec::new();
@@ -155,10 +197,7 @@ fn match_annotations(existing: &[ExistingAnnotation], incoming: &[IndexableAnnot
 
     for (ann_type, inc_indices) in &incoming_by_type {
         if let Some(ex_indices) = existing_by_type.get(ann_type) {
-            let pair_count = inc_indices.len().min(ex_indices.len());
-            for rank in 0..pair_count {
-                let new_idx = inc_indices[rank];
-                let old_idx = ex_indices[rank];
+            for (new_idx, old_idx) in pair_by_position(existing, incoming, ex_indices, inc_indices) {
                 updates.push((new_idx, old_idx));
                 matched_old.insert(old_idx);
                 matched_new.insert(new_idx);
@@ -4875,6 +4914,86 @@ mod tests {
         assert!(diff.updates.is_empty(), "type change must not pair");
         assert_eq!(diff.inserts, vec![0]);
         assert_eq!(diff.deletes, vec![0]);
+    }
+
+    #[test]
+    fn match_annotations_delete_plus_body_edit_pairs_nearest() {
+        // Delete the first note and body-edit the second in one save: the
+        // survivor must keep its own uuid (nearest char_start), not inherit
+        // the deleted note's uuid by ordinal rank.
+        let existing = vec![
+            super::ExistingAnnotation {
+                id: 1,
+                annotation_type: "note".into(),
+                body: Some("A".into()),
+                char_start: 10,
+                uuid: "u1".into(),
+            },
+            super::ExistingAnnotation {
+                id: 2,
+                annotation_type: "note".into(),
+                body: Some("B".into()),
+                char_start: 100,
+                uuid: "u2".into(),
+            },
+        ];
+        let incoming = vec![super::IndexableAnnotation {
+            char_start: 100,
+            ..make_annotation("note", Some("B edited"))
+        }];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        assert_eq!(diff.updates, vec![(0, 1)], "survivor pairs with its own (nearest) row");
+        assert!(diff.inserts.is_empty());
+        assert_eq!(diff.deletes, vec![0], "the deleted note's row is the one removed");
+    }
+
+    #[test]
+    fn match_annotations_unequal_add_pairs_nearest() {
+        // Body-edit the existing note and add a new far-away note in one save:
+        // the edited note keeps u1, the new note is an insert.
+        let existing = vec![super::ExistingAnnotation {
+            id: 1,
+            annotation_type: "note".into(),
+            body: Some("A".into()),
+            char_start: 10,
+            uuid: "u1".into(),
+        }];
+        let incoming = vec![
+            super::IndexableAnnotation { char_start: 10, ..make_annotation("note", Some("A edited")) },
+            super::IndexableAnnotation { char_start: 500, ..make_annotation("note", Some("new note")) },
+        ];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        assert_eq!(diff.updates, vec![(0, 0)], "edited note pairs with the nearest existing row");
+        assert_eq!(diff.inserts, vec![1], "the new note is inserted");
+        assert!(diff.deletes.is_empty());
+    }
+
+    #[test]
+    fn match_annotations_same_save_delete_add_equal_count_transfers_identity() {
+        // Accepted ambiguity pin: a same-save 1:1 delete+add of the same type
+        // is indistinguishable from a body edit at this layer, so identity
+        // transfers to the new annotation. Documented in doc/plans/issue-978.md.
+        let existing = vec![super::ExistingAnnotation {
+            id: 1,
+            annotation_type: "note".into(),
+            body: Some("A".into()),
+            char_start: 10,
+            uuid: "u1".into(),
+        }];
+        let incoming = vec![super::IndexableAnnotation {
+            char_start: 500,
+            ..make_annotation("note", Some("unrelated"))
+        }];
+
+        let diff = super::match_annotations(&existing, &incoming);
+
+        assert_eq!(diff.updates, vec![(0, 0)], "1:1 same-type pairing is treated as a body edit");
+        assert!(diff.inserts.is_empty());
+        assert!(diff.deletes.is_empty());
     }
 
     #[test]
