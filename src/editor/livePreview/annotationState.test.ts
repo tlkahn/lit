@@ -663,6 +663,40 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("still carries forward the uuid when listAnnotations rejects transiently (#978 review)", async () => {
+    // Carry-forward only needs the prev field snapshot, not a fresh index:
+    // a transient list failure during a same-page body edit must not drop
+    // the uuid (and with it the go-to-cardbox glyph) for the whole window.
+    const p1Ann = makeAnnotation({ annotation_type: "note", body: "hello", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([p1Ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "hello", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "u1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("u1");
+
+    // Same page, body edit; the re-list for the changed fingerprint fails.
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "hello edited", char_start: 0, char_end: 10 }),
+    ]);
+    mockListAnnotations.mockRejectedValue(new Error("transient ipc failure"));
+    view.dispatch({ changes: { from: 11, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBe("u1");
+  });
+
   it("does not carry uuids across a page switch (#978 review)", async () => {
     // The EditorView survives navigation (useCodeMirror replaces the doc in
     // place), so the annotationDataField still holds page 1's enriched anns

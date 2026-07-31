@@ -226,26 +226,34 @@ export const annotationPlugin = ViewPlugin.fromClass(
 
         const nodeId = useWorkspaceStore.getState().currentPagePath;
         if (nodeId && annotations.length > 0) {
-          try {
-            const fingerprint = buildAnnotationFingerprint(annotations);
-            const nodeChanged = nodeId !== this.lastNodeId;
-            const fpChanged = fingerprint !== this.lastAnnotationFingerprint;
+          const fingerprint = buildAnnotationFingerprint(annotations);
+          const nodeChanged = nodeId !== this.lastNodeId;
 
-            if (nodeChanged || fpChanged) {
+          if (nodeChanged || fingerprint !== this.lastAnnotationFingerprint) {
+            try {
               const indexed = await listAnnotations(nodeId);
               if (this.view.state.doc.toString() !== this.lastDocStr) return;
               this.lastIndexedGroups = buildIndexedGroups(indexed);
               this.lastAnnotationFingerprint = fingerprint;
               this.lastNodeId = nodeId;
+            } catch {
+              // Transient list failure: enrich/carry-forward below still run
+              // off the cached groups and prev snapshot. Except on a page
+              // switch, where the cache belongs to the old page - drop it so
+              // nothing body-key matches across pages (retry on next fire).
+              if (nodeChanged) {
+                this.lastIndexedGroups = new Map();
+                this.lastAnnotationFingerprint = "";
+              }
             }
+          }
 
-            enrichWithGroups(annotations, this.lastIndexedGroups);
-            // #978: after body-key miss on a stale index, keep the uuid the
-            // live plugin already committed this session (prev snapshot beats
-            // index positional fallback which can steal orphan uuids). On a
-            // page switch prev belongs to the old page - never carry across.
-            if (!nodeChanged) carryForwardUuids(annotations, prev);
-          } catch { /* best-effort enrichment */ }
+          enrichWithGroups(annotations, this.lastIndexedGroups);
+          // #978: after body-key miss on a stale index, keep the uuid the
+          // live plugin already committed this session (prev snapshot beats
+          // index positional fallback which can steal orphan uuids). On a
+          // page switch prev belongs to the old page - never carry across.
+          if (!nodeChanged) carryForwardUuids(annotations, prev);
         }
 
         if (annotations.length === 0 && prev.length === 0) return;
