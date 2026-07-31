@@ -266,8 +266,11 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
 
   // Force front face and invalidate any in-flight flip so its midpoint cannot
   // re-invert us. Best-effort WAAPI cancel is a prod-only extra (jsdom has none).
+  // Clear animatingRef synchronously so a fresh flip can start immediately —
+  // waiting for the stale run's finally would leave a dead window (#982).
   const ensureFrontFace = useCallback(() => {
     flipRunRef.current++;
+    animatingRef.current = false;
     stageRef.current?.getAnimations?.().forEach((a) => a.cancel());
     setFlipped(false);
   }, []);
@@ -319,8 +322,13 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       }
     })
       .finally(() => {
-        animatingRef.current = false;
-        refocus();
+        // Only the owning run may reset animatingRef / steal focus. A stale
+        // run invalidated by ensureFrontFace must not clobber a fresh flip
+        // or yank focus off the note editor (#982).
+        if (flipRunRef.current === run) {
+          animatingRef.current = false;
+          refocus();
+        }
       });
   }, [canFlip]);
 

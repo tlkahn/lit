@@ -1503,6 +1503,95 @@ describe("CardboxCard", () => {
     expect(document.activeElement).toBe(root);
   });
 
+  it("invalidated flip does not steal focus from the note editor", async () => {
+    const props = {
+      annotation: baseAnnotation,
+      expanded: true,
+      onToggleExpand: () => {},
+      onNavigate: () => {},
+      note: "x",
+      onSetNote: () => {},
+      onNotePrefillConsumed: () => {},
+    };
+    const { rerender } = render(<CardboxCard {...props} />);
+    const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+
+    // Focus an in-face control so flip captures insideFace=true, then start flip.
+    const noteEdit = screen.getByTestId("card-note-edit");
+    noteEdit.focus();
+    fireEvent.keyDown(noteEdit, { key: "f" });
+
+    // Mid-flight prefill invalidates the flip and mounts the note editor.
+    rerender(<CardboxCard {...props} notePrefill="> quoted" />);
+    const textarea = screen.getByTestId("card-note-textarea");
+    expect(textarea).toBeInTheDocument();
+
+    // Resolve the stale flip's deferreds; its finally must not steal focus.
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+    await act(async () => {
+      deferreds[1]?.resolve();
+    });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    expect(document.activeElement).toBe(textarea);
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("flip can restart immediately after ensureFrontFace invalidates an in-flight flip", async () => {
+    const props = {
+      annotation: baseAnnotation,
+      expanded: true,
+      onToggleExpand: () => {},
+      onNavigate: () => {},
+      note: "x",
+      onSetNote: () => {},
+      onNotePrefillConsumed: () => {},
+    };
+    const { rerender } = render(<CardboxCard {...props} />);
+    const { animate, deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+
+    // Start flip #1 (out phase pending).
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(animate).toHaveBeenCalledTimes(1);
+
+    // Mid-flight prefill must clear animatingRef so a fresh flip can start.
+    rerender(<CardboxCard {...props} notePrefill="> quoted" />);
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(animate).toHaveBeenCalledTimes(2);
+
+    // Resolve the stale run's deferreds. Its finally must not clear the new
+    // run's animatingRef — otherwise a third flip would start while #2 is live.
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+    if (deferreds[1]) {
+      await act(async () => {
+        deferreds[1]!.resolve();
+      });
+    }
+
+    // Flip #2 is still in flight: a third click must be ignored (animatingRef held).
+    const callsAfterStale = animate.mock.calls.length;
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(animate).toHaveBeenCalledTimes(callsAfterStale);
+
+    // Settle flip #2 fully, then a fresh flip must start.
+    for (let i = 0; i < deferreds.length; i++) {
+      await act(async () => {
+        deferreds[i]!.resolve();
+      });
+    }
+    fireEvent.click(screen.getByTestId("card-flip"));
+    expect(animate.mock.calls.length).toBeGreaterThan(callsAfterStale);
+  });
+
   it("unmounting mid-animation is safe (canceled out phase)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { unmount } = render(
