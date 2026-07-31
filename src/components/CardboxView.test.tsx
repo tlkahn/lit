@@ -970,6 +970,32 @@ describe("quote to slip note (#968)", () => {
     }
   });
 
+  it("Q on a pinned group member prefills only the hoisted copy, not the group copy", async () => {
+    // A pinned card that is also a group member dual-renders: hoisted at the
+    // top (CardboxCardItem probe) and inside its group (real CardboxCard).
+    // Only the hoisted copy may receive the prefill — otherwise two note
+    // editors open for the same uuid.
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout")
+        return {
+          ...emptyLayout,
+          pinned: [A],
+          groups: { g1: { name: "G1", order: [A, B], collapsed: false } },
+        };
+      return undefined;
+    });
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${A}`), "quoted");
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "q" });
+    });
+    // The hoisted copy receives the prefill…
+    expect(probe.latestProps.get(A)?.notePrefill).toBe("> quoted");
+    // …and the group copy must not open a second note editor.
+    expect(screen.queryByTestId("card-note-textarea")).toBeNull();
+  });
+
   it("⌘A with a selection inside a card's text expands it instead of selecting all cards", async () => {
     await renderView();
     // Give card B a selectable text container (the probe renders none) and

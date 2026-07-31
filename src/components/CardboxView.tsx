@@ -901,7 +901,14 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                     onFocusCard={handleFocusCard}
                     onRemoveLink={handleRemoveLink}
                     notesMap={notes}
-                    notePrefill={pendingNotePrefill}
+                    // A pinned group member dual-renders (hoisted + in-group);
+                    // the hoisted copy wins the prefill so only one note
+                    // editor opens (#968).
+                    notePrefill={
+                      pendingNotePrefill && pinnedSet.has(pendingNotePrefill.uuid)
+                        ? null
+                        : pendingNotePrefill
+                    }
                     onNotePrefillConsumed={handleNotePrefillConsumed}
                     onSetNote={handleSetNote}
                     onExportNote={handleExportNote}
