@@ -1032,6 +1032,97 @@ describe("quote to slip note (#968)", () => {
     expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
   });
 
+  function mockInvokeWithSpy() {
+    const invokeSpy = vi.fn().mockResolvedValue(undefined);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout") return emptyLayout;
+      return undefined;
+    });
+    return invokeSpy;
+  }
+
+  function rightClick(uuid: string) {
+    const onContextMenu = probe.latestProps.get(uuid)?.onContextMenu;
+    expect(onContextMenu).toBeDefined();
+    act(() => {
+      onContextMenu!(uuid, { preventDefault: () => {} } as unknown as React.MouseEvent);
+    });
+  }
+
+  it("right-click with a selection in the clicked card advertises hasQuoteSelection", async () => {
+    const invokeSpy = mockInvokeWithSpy();
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
+    rightClick(B);
+    expect(invokeSpy).toHaveBeenCalledWith(
+      "show_cardbox_context_menu",
+      expect.objectContaining({ cardUuid: B, hasQuoteSelection: true }),
+    );
+  });
+
+  it("right-click with no selection does not advertise hasQuoteSelection", async () => {
+    const invokeSpy = mockInvokeWithSpy();
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "", true);
+    rightClick(B);
+    expect(invokeSpy).toHaveBeenCalledWith(
+      "show_cardbox_context_menu",
+      expect.objectContaining({ cardUuid: B, hasQuoteSelection: false }),
+    );
+  });
+
+  it("right-click on a different card than the selection does not advertise hasQuoteSelection", async () => {
+    const invokeSpy = mockInvokeWithSpy();
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${A}`), "quoted");
+    rightClick(B);
+    expect(invokeSpy).toHaveBeenCalledWith(
+      "show_cardbox_context_menu",
+      expect.objectContaining({ cardUuid: B, hasQuoteSelection: false }),
+    );
+  });
+
+  it("quote-reply menu event expands the card and stages the stashed quote", async () => {
+    mockListen();
+    mockInvokeWithSpy();
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
+    rightClick(B);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/quote-reply", { card_uuid: B, group_id: null });
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(B);
+    expect(useCardboxStore.getState().pendingNotePrefill).toEqual({
+      uuid: B,
+      text: "> quoted",
+    });
+  });
+
+  it("quote-reply event without a prior stash is a no-op", async () => {
+    mockListen();
+    await renderView();
+    act(() => {
+      emitMockEvent("context-menu://cardbox/quote-reply", { card_uuid: B, group_id: null });
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+    expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+  });
+
+  it("quote-reply event with a mismatched card_uuid is a no-op", async () => {
+    mockListen();
+    mockInvokeWithSpy();
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
+    rightClick(B);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/quote-reply", { card_uuid: A, group_id: null });
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+    expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+  });
+
   it("passes notePrefill only to the target card", async () => {
     await renderView();
     stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");

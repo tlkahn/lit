@@ -18,7 +18,7 @@ import { BatchToolbar } from "./BatchToolbar";
 import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
-import { resolveQuoteTarget, expandSelectionToCardText } from "../lib/cardboxQuote";
+import { resolveQuoteTarget, expandSelectionToCardText, type QuoteTarget } from "../lib/cardboxQuote";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
 import { resolvePendingFocus, computeCenteredScrollTop, computeCollapseScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
@@ -573,6 +573,22 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   // ---------- Context menu handlers ----------
 
+  // Quote target resolved at menu-open time, so the advertised "Quote Reply"
+  // item and the text it quotes always agree regardless of what the native
+  // menu does to the DOM selection. Overwritten on every menu open, so a
+  // stale stash can never outlive the menu that advertised it.
+  const quoteReplyTargetRef = useRef<QuoteTarget | null>(null);
+
+  const stashQuoteReplyTarget = useCallback(
+    (uuid: string) => {
+      const target = resolveQuoteTarget(window.getSelection(), gridRef.current);
+      const matched = target?.uuid === uuid ? target : null;
+      quoteReplyTargetRef.current = matched;
+      return matched !== null;
+    },
+    [gridRef],
+  );
+
   const handleCardContextMenu = useCallback(
     (uuid: string, e: React.MouseEvent) => {
       e.preventDefault();
@@ -583,9 +599,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isGrouped: false,
         isGroupHeader: false,
         hasGroups: Object.keys(visibleGroups).length > 0,
+        hasQuoteSelection: stashQuoteReplyTarget(uuid),
       });
     },
-    [visibleGroups, pinnedSet, colors],
+    [visibleGroups, pinnedSet, colors, stashQuoteReplyTarget],
   );
 
   const handleGroupCardContextMenu = useCallback(
@@ -599,20 +616,23 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isGrouped: true,
         isGroupHeader: false,
         hasGroups: Object.keys(visibleGroups).length > 0,
+        hasQuoteSelection: stashQuoteReplyTarget(cardUuid),
       });
     },
-    [visibleGroups, pinnedSet, colors],
+    [visibleGroups, pinnedSet, colors, stashQuoteReplyTarget],
   );
 
   const handleGroupHeaderContextMenu = useCallback(
     (groupId: string, e: React.MouseEvent) => {
       e.preventDefault();
+      quoteReplyTargetRef.current = null;
       showCardboxContextMenu({
         groupId,
         isPinned: false,
         isGroupHeader: true,
         isGrouped: false,
         hasGroups: Object.keys(visibleGroups).length > 0,
+        hasQuoteSelection: false,
       });
     },
     [visibleGroups],
@@ -686,6 +706,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       if (el) {
         el.dispatchEvent(new CustomEvent("lit:start-rename", { bubbles: false }));
       }
+    },
+    onQuoteReply: (cardUuid) => {
+      const target = quoteReplyTargetRef.current;
+      if (!target || target.uuid !== cardUuid) return;
+      expand(target.uuid);
+      setPendingNotePrefill(target);
     },
     onSetColor: (cardUuid, color) => {
       if (selectedUuids.has(cardUuid) && selectedCount > 1) {
