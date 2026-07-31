@@ -684,6 +684,25 @@ describe("add to group without drag (#968)", () => {
     expect(useCardboxStore.getState().groups.g2!.order).toEqual([B, C]);
   });
 
+  it("clears the selection after a single-card add-to-group", async () => {
+    mockListen();
+    mockWithGroups({
+      g1: { name: "G1", order: [A], collapsed: false },
+      g2: { name: "G2", order: [B], collapsed: false },
+    });
+    await renderView();
+    selectCards([C]);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/add-to-group", { card_uuid: C });
+    });
+    const items = screen.getAllByTestId("group-picker-item");
+    act(() => {
+      fireEvent.click(items[1]!);
+    });
+    expect(useCardboxStore.getState().groups.g2!.order).toEqual([B, C]);
+    expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
+  });
+
   it("hides Add to Group when every group is filtered out of view", async () => {
     mockWithGroups({ g1: { name: "G1", order: [A], collapsed: false } });
     await renderView();

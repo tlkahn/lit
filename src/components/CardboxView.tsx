@@ -625,8 +625,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       } else {
         // batchMoveCards persists the layout itself — no debounced save needed.
         batchMoveCards(uuids, { type: "toGroup", groupId });
-        clearSelection();
       }
+      clearSelection();
     },
     [moveCardToGroup, batchMoveCards, clearSelection, debouncedSave],
   );
