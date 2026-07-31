@@ -46,6 +46,7 @@ import { parseAnnotations, listAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { mockListen, emitMockEvent, resetListenMock } from "../../test/tauri-mock";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -314,10 +315,12 @@ describe("annotation enrich helpers (#978)", () => {
 describe("annotationPlugin", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    mockListen();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    resetListenMock();
   });
 
   it("calls parseAnnotations on creation", async () => {
@@ -894,6 +897,112 @@ describe("annotationPlugin", () => {
     expect(data[0]!.uuid).toBe("uuid-1");
 
     view.destroy();
+  });
+
+  it("re-lists annotations when lit:graph-updated fires (#978)", async () => {
+    // Initial enrich with body A / uuid-1
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    // Let listen() promise resolve and assign unlisten
+    await Promise.resolve();
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    // Simulate identity-preserving reindex: index now has body B / same uuid-1.
+    // Parse still returns B (doc was edited) with a fresh object.
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10, char_end: 20 }),
+    ]);
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "B",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.body).toBe("B");
+    expect(data[0]!.uuid).toBe("uuid-1");
+
+    view.destroy();
+  });
+
+  it("destroy unsubscribes lit:graph-updated (#978)", async () => {
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 0, char_end: 10 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 0,
+        char_end: 10,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve(); // listen resolves
+
+    view.destroy();
+    mockListAnnotations.mockClear();
+
+    // Emitting after destroy must not call listAnnotations and must not throw
+    expect(() => emitMockEvent("lit:graph-updated", null)).not.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).not.toHaveBeenCalled();
   });
 });
 

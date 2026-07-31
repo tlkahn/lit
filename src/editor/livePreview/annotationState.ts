@@ -1,6 +1,7 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, type PluginValue, keymap } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { listen } from "@tauri-apps/api/event";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
@@ -142,10 +143,31 @@ export const annotationPlugin = ViewPlugin.fromClass(
     private lastAnnotationFingerprint = "";
     private lastNodeId: string | null = null;
     private lastIndexedGroups: Map<string, IndexedGroup> = new Map();
+    private unlistenGraphUpdated: (() => void) | null = null;
+    private destroyed = false;
 
     constructor(private view: EditorView) {
       this.lastDocStr = view.state.doc.toString();
+      this.bindGraphUpdated();
       this.fireIPC();
+    }
+
+    private bindGraphUpdated() {
+      // #978 H2: save/reindex does not change the live fingerprint, so wipe
+      // the cache and re-list immediately when the graph emits.
+      listen("lit:graph-updated", () => {
+        if (this.destroyed) return;
+        this.lastAnnotationFingerprint = "";
+        this.fireIPC();
+      })
+        .then((unlisten) => {
+          if (this.destroyed) {
+            unlisten();
+            return;
+          }
+          this.unlistenGraphUpdated = unlisten;
+        })
+        .catch(() => { /* non-tauri / test envs */ });
     }
 
     update(update: ViewUpdate) {
@@ -202,6 +224,9 @@ export const annotationPlugin = ViewPlugin.fromClass(
     }
 
     destroy() {
+      this.destroyed = true;
+      this.unlistenGraphUpdated?.();
+      this.unlistenGraphUpdated = null;
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
     }
   },
