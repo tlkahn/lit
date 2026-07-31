@@ -310,14 +310,24 @@ describe("AnnotationPanel", () => {
   });
 
   describe("fold-all toolbar", () => {
-    it("renders when a multiline block annotation is present", () => {
-      const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
+    it("renders when a multiline thread annotation is present", () => {
+      const doc = "text\n\n<!---\nth\n---\nbody\n--->\nafter";
       const annotations = [
-        makeAnnotation({ char_start: 6, char_end: 27, body: "body" }),
+        makeAnnotation({ annotation_type: "thread", char_start: 6, char_end: 28, body: "body" }),
       ];
       editorView = setupEditorView(doc, annotations);
       render(<AnnotationPanel pageId="test.md" />);
       expect(screen.getByTestId("annotation-panel-toolbar")).toBeInTheDocument();
+    });
+
+    it("does not render when the only multiline block is a note (fold is thread-only)", () => {
+      const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
+      const annotations = [
+        makeAnnotation({ annotation_type: "note", char_start: 6, char_end: 27, body: "body" }),
+      ];
+      editorView = setupEditorView(doc, annotations);
+      render(<AnnotationPanel pageId="test.md" />);
+      expect(screen.queryByTestId("annotation-panel-toolbar")).toBeNull();
     });
 
     it("does not render when only single-line annotations exist", () => {
@@ -338,9 +348,9 @@ describe("AnnotationPanel", () => {
     });
 
     it("clicking the fold-all button executes app.toggleAllBlockAnnotations", async () => {
-      const doc = "text\n\n<!---\nn\n---\nbody\n--->\nafter";
+      const doc = "text\n\n<!---\nth\n---\nbody\n--->\nafter";
       const annotations = [
-        makeAnnotation({ char_start: 6, char_end: 27, body: "body" }),
+        makeAnnotation({ annotation_type: "thread", char_start: 6, char_end: 28, body: "body" }),
       ];
       editorView = setupEditorView(doc, annotations);
       const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);

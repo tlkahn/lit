@@ -12,13 +12,12 @@ import {
 import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
-  CalloutWidget,
   ThreadWidget,
   threadTurnField,
   firingAnnotationsField,
   llmLockedField,
 } from "./annotationWidgets";
-import { toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
+import { hasAnyFoldAllTarget, isFoldAllTarget, toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
@@ -82,6 +81,7 @@ function makeViewWithBlocks(anchor = 0) {
   const annotations = blocks.map((b) =>
     makeAnnotation({
       form: "block",
+      annotation_type: "thread",
       char_start: b.from,
       char_end: b.to,
       original: TWO_BLOCK_DOC.slice(b.from, b.to),
@@ -91,56 +91,11 @@ function makeViewWithBlocks(anchor = 0) {
   return { view, A: blocks[0]!, B: blocks[1]! };
 }
 
-function makeViewWithThread(anchor = 0) {
-  const doc = "first line\n\n<!---\nbody A\n--->\nmiddle\n\n<!---\nbody B\n--->\ntail";
-  const state = EditorState.create({
-    doc,
-    selection: { anchor },
-    extensions: [
-      markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
-      annotationDataField,
-      displayModeField,
-      annotationFoldField,
-      threadTurnField,
-      firingAnnotationsField,
-      llmLockedField,
-      annotationBlockDecorationField,
-    ],
-  });
-  const view = new EditorView({ state, parent: document.createElement("div") });
-  ensureSyntaxTree(view.state, view.state.doc.length);
-  const blocks: Array<{ from: number; to: number }> = [];
-  syntaxTree(view.state).iterate({
-    enter: (node) => {
-      if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
-    },
-  });
-  expect(blocks.length).toBe(2);
-  const annotations = [
-    makeAnnotation({
-      form: "block",
-      char_start: blocks[0]!.from,
-      char_end: blocks[0]!.to,
-      original: doc.slice(blocks[0]!.from, blocks[0]!.to),
-    }),
-    makeAnnotation({
-      form: "block",
-      annotation_type: "thread",
-      char_start: blocks[1]!.from,
-      char_end: blocks[1]!.to,
-      original: doc.slice(blocks[1]!.from, blocks[1]!.to),
-    }),
-  ];
-  view.dispatch({ effects: setAnnotationData.of(annotations) });
-  return { view, A: blocks[0]!, B: blocks[1]! };
-}
-
 function isCollapsedAt(view: EditorView, from: number): boolean | undefined {
   const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
   while (iter.value) {
     if (iter.from === from) {
       const w = iter.value.spec?.widget;
-      if (w instanceof CalloutWidget) return w.isCollapsed;
       if (w instanceof ThreadWidget) return w.isCollapsed;
     }
     iter.next();
@@ -149,8 +104,8 @@ function isCollapsedAt(view: EditorView, from: number): boolean | undefined {
 }
 
 describe("toggleAllBlockAnnotationFolds", () => {
-  it("D1: collapses all expanded multiline block annotations (callout + thread)", () => {
-    const { view, A, B } = makeViewWithThread();
+  it("D1: collapses all expanded multiline thread annotations", () => {
+    const { view, A, B } = makeViewWithBlocks();
     try {
       expect(isCollapsedAt(view, A.from)).toBe(false);
       expect(isCollapsedAt(view, B.from)).toBe(false);
@@ -165,7 +120,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D2: expands all when every block annotation is collapsed", () => {
+  it("D2: expands all when every thread annotation is collapsed", () => {
     const { view, A, B } = makeViewWithBlocks();
     try {
       toggleAllBlockAnnotationFolds(view);
@@ -205,7 +160,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
       const widgets: Array<{ from: number; collapsed: boolean }> = [];
       while (iter.value) {
         const w = iter.value.spec?.widget;
-        if (w instanceof CalloutWidget) {
+        if (w instanceof ThreadWidget) {
           widgets.push({ from: iter.from, collapsed: w.isCollapsed });
         }
         iter.next();
@@ -217,7 +172,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D5: records fold state for a block the cursor sits inside", () => {
+  it("D5: records fold state for a thread the cursor sits inside", () => {
     const { view, A, B } = makeViewWithBlocks();
     try {
       view.dispatch({ selection: { anchor: A.from + 2 } });
@@ -232,7 +187,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D5b: cursor-suppressed block reveals collapsed widget after cursor exits", () => {
+  it("D5b: cursor-suppressed thread reveals collapsed widget after cursor exits", () => {
     const { view, A, B } = makeViewWithBlocks();
     try {
       view.dispatch({ selection: { anchor: A.from + 2 } });
@@ -295,6 +250,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     const view = new EditorView({ state, parent: document.createElement("div") });
     ensureSyntaxTree(view.state, view.state.doc.length);
     const ann = makeAnnotation({
+      annotation_type: "thread",
       char_start: 11,
       char_end: 31,
       original: "<!---single-line--->",
@@ -330,6 +286,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     ensureSyntaxTree(view.state, view.state.doc.length);
     // char_start:12 char_end:17 are both on line 3 ("<!---"), so this is single-line
     const ann = makeAnnotation({
+      annotation_type: "thread",
       char_start: 12,
       char_end: 17,
       original: "<!---single--->",
@@ -346,7 +303,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D9: skips mid-line multiline annotations that render no callout", () => {
+  it("D9: skips mid-line multiline annotations that render no block widget", () => {
     const doc = "first line\n\ntext <!---\nmultiline\n---> more\n\n<!---\nreal block\n--->\ntail";
     const state = EditorState.create({
       doc,
@@ -374,12 +331,14 @@ describe("toggleAllBlockAnnotationFolds", () => {
     const annotations = [
       makeAnnotation({
         form: "block",
+        annotation_type: "thread",
         char_start: 17,
         char_end: 40,
         original: doc.slice(17, 40),
       }),
       makeAnnotation({
         form: "block",
+        annotation_type: "thread",
         char_start: realBlock!.from,
         char_end: realBlock!.to,
         original: doc.slice(realBlock!.from, realBlock!.to),
@@ -415,6 +374,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     const view = new EditorView({ state, parent: document.createElement("div") });
     const ann = makeAnnotation({
       form: "block",
+      annotation_type: "thread",
       char_start: 0,
       char_end: 999,
       original: "<!---\nstale\n--->",
@@ -453,6 +413,123 @@ describe("toggleAllBlockAnnotationFolds", () => {
     view.destroy();
   });
 
+  it("D13: a non-thread multiline block annotation is not a fold-all target", () => {
+    // Same geometry as a valid target (line-start, multiline, in bounds), but
+    // folding is thread-only — the annotation type disqualifies it.
+    const doc = EditorState.create({ doc: "first line\n\n<!---\nbody\n--->\ntail" }).doc;
+    const note = makeAnnotation({
+      form: "block",
+      annotation_type: "note",
+      char_start: 12,
+      char_end: 27,
+      original: "<!---\nbody\n--->",
+    });
+    expect(isFoldAllTarget(doc, note)).toBe(false);
+
+    const thread = { ...note, annotation_type: "thread" as const };
+    expect(isFoldAllTarget(doc, thread)).toBe(true);
+  });
+
+  it("D14: returns false without dispatching when only non-thread multiline blocks exist", () => {
+    const state = EditorState.create({
+      doc: TWO_BLOCK_DOC,
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(2);
+    view.dispatch({
+      effects: setAnnotationData.of(
+        blocks.map((b) =>
+          makeAnnotation({
+            form: "block",
+            annotation_type: "note",
+            char_start: b.from,
+            char_end: b.to,
+            original: TWO_BLOCK_DOC.slice(b.from, b.to),
+          }),
+        ),
+      ),
+    });
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    try {
+      const result = toggleAllBlockAnnotationFolds(view);
+      expect(result).toBe(false);
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    } finally {
+      dispatchSpy.mockRestore();
+      view.destroy();
+    }
+  });
+
+  it("D15: mixed doc — fold-all records only thread positions in annotationFoldField", () => {
+    const state = EditorState.create({
+      doc: TWO_BLOCK_DOC,
+      extensions: [
+        markdown({ extensions: [CommentGrammar, AnnotationGrammar] }),
+        annotationDataField,
+        displayModeField,
+        annotationFoldField,
+        threadTurnField,
+        firingAnnotationsField,
+        llmLockedField,
+        annotationBlockDecorationField,
+      ],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    ensureSyntaxTree(view.state, view.state.doc.length);
+    const blocks: Array<{ from: number; to: number }> = [];
+    syntaxTree(view.state).iterate({
+      enter: (node) => {
+        if (node.name === "BlockAnnotation") blocks.push({ from: node.from, to: node.to });
+      },
+    });
+    expect(blocks.length).toBe(2);
+    view.dispatch({
+      effects: setAnnotationData.of([
+        makeAnnotation({
+          form: "block",
+          annotation_type: "note",
+          char_start: blocks[0]!.from,
+          char_end: blocks[0]!.to,
+          original: TWO_BLOCK_DOC.slice(blocks[0]!.from, blocks[0]!.to),
+        }),
+        makeAnnotation({
+          form: "block",
+          annotation_type: "thread",
+          char_start: blocks[1]!.from,
+          char_end: blocks[1]!.to,
+          original: TWO_BLOCK_DOC.slice(blocks[1]!.from, blocks[1]!.to),
+        }),
+      ]),
+    });
+    try {
+      const result = toggleAllBlockAnnotationFolds(view);
+      expect(result).toBe(true);
+
+      const foldMap = view.state.field(annotationFoldField);
+      expect(foldMap.has(blocks[0]!.from)).toBe(false);
+      expect(foldMap.get(blocks[1]!.from)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
   it("D11b: implementation never imports syntaxTree or @codemirror/language", async () => {
     const src = await import("./annotationFoldAll?raw");
     const raw = typeof src === "string" ? src : (src as { default: string }).default;
@@ -489,6 +566,7 @@ describe("toggleAllBlockAnnotationFolds - parse frontier", () => {
       effects: setAnnotationData.of([
         makeAnnotation({
           form: "block",
+          annotation_type: "thread",
           char_start: BLOCK_FROM,
           char_end: BLOCK_TO,
           original: BLOCK,
@@ -525,5 +603,44 @@ describe("toggleAllBlockAnnotationFolds - parse frontier", () => {
     } finally {
       view.destroy();
     }
+  });
+});
+
+describe("hasAnyFoldAllTarget", () => {
+  it("returns true when a fold-all-target thread is present", () => {
+    const { view } = makeViewWithBlocks();
+    try {
+      expect(hasAnyFoldAllTarget(view.state)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("returns false when only non-thread multiline annotations exist", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\ntail";
+    const state = EditorState.create({
+      doc,
+      extensions: [annotationDataField],
+    });
+    // char_start 12 is the line-start of the block; multiline note is not a target.
+    const note = makeAnnotation({
+      form: "block",
+      annotation_type: "note",
+      char_start: 12,
+      char_end: 27,
+      original: "<!---\nbody\n--->",
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    try {
+      view.dispatch({ effects: setAnnotationData.of([note]) });
+      expect(hasAnyFoldAllTarget(view.state)).toBe(false);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("returns false when the annotationDataField is absent", () => {
+    const state = EditorState.create({ doc: "hello" });
+    expect(hasAnyFoldAllTarget(state)).toBe(false);
   });
 });

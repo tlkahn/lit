@@ -222,13 +222,6 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
     pill.appendChild(bodyEl);
   }
 
-  if (ann.date) {
-    const date = document.createElement("span");
-    date.className = CLS.DATE;
-    date.textContent = ann.date;
-    pill.appendChild(date);
-  }
-
   return pill;
 }
 
@@ -450,7 +443,7 @@ export const threadTurnField = StateField.define<Map<number, number>>({
   },
 });
 
-// --- Callout Widget ---
+// --- Fold chevron (thread-only) ---
 
 function createFoldSvg(): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -467,143 +460,6 @@ function createFoldSvg(): SVGSVGElement {
   path.setAttribute("d", "m6 9 6 6 6-6");
   svg.appendChild(path);
   return svg;
-}
-
-export class CalloutWidget extends WidgetType {
-  constructor(
-    readonly annotation: Annotation,
-    readonly isCollapsed: boolean,
-    readonly pos: number,
-    readonly isFiring: boolean = false,
-    readonly llmLocked: boolean = false,
-  ) {
-    super();
-  }
-
-  toDOM(view: EditorView): HTMLElement {
-    const ann = this.annotation;
-    const container = document.createElement("div");
-    container.className = CLS.CALLOUT;
-
-    const cert = certaintyClass(ann.certainty);
-    if (cert) container.classList.add(cert);
-    container.dataset.annotationType = ann.annotation_type;
-
-    container.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
-    container.onmouseleave = () => handleAnnotationLeave(view);
-
-    const header = document.createElement("div");
-    header.className = CLS.CALLOUT_HEADER;
-    header.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`)) return;
-      e.preventDefault();
-      dispatchEditEvent(ann);
-    };
-
-    const icon = document.createElement("span");
-    icon.className = CLS.PILL_ICON;
-    icon.textContent =
-      ann.annotation_type === "mark"
-        ? getMarkIcon(ann.mark ?? "")
-        : (TYPE_ICON[ann.annotation_type] ?? "…");
-    header.appendChild(icon);
-
-    const label = document.createElement("span");
-    label.className = CLS.CALLOUT_LABEL;
-    label.textContent = ann.annotation_type;
-    header.appendChild(label);
-
-    if (ann.date) {
-      const date = document.createElement("span");
-      date.className = CLS.DATE;
-      date.textContent = ann.date;
-      header.appendChild(date);
-    }
-
-    const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
-    if (fireBtn) header.appendChild(fireBtn);
-
-    const cardboxLink = createCardboxLinkButton(ann);
-    if (cardboxLink) header.appendChild(cardboxLink);
-
-    const arrow = document.createElement("span");
-    arrow.className = CLS.FOLD_ICON;
-    if (this.isCollapsed) arrow.classList.add(CLS.IS_COLLAPSED);
-    arrow.appendChild(createFoldSvg());
-    arrow.onmousedown = (e) => {
-      e.preventDefault();
-      view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: this.pos }) });
-    };
-    header.appendChild(arrow);
-
-    container.appendChild(header);
-
-    if (!this.isCollapsed && ann.body) {
-      const body = document.createElement("div");
-      body.className = CLS.CALLOUT_BODY;
-      body.innerHTML = renderMarkdown(ann.body);
-      interceptFootnoteClicks(body);
-      container.appendChild(body);
-    }
-
-    return container;
-  }
-
-  eq(other: CalloutWidget): boolean {
-    return (
-      this.annotation.original === other.annotation.original &&
-      this.annotation.char_start === other.annotation.char_start &&
-      this.annotation.char_end === other.annotation.char_end &&
-      this.annotation.mark === other.annotation.mark &&
-      this.annotation.uuid === other.annotation.uuid &&
-      this.isCollapsed === other.isCollapsed &&
-      this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked
-    );
-  }
-
-  updateDOM(dom: HTMLElement, _view: EditorView, from: CalloutWidget): boolean {
-    if (
-      this.annotation.original !== from.annotation.original ||
-      this.annotation.char_start !== from.annotation.char_start ||
-      this.annotation.char_end !== from.annotation.char_end ||
-      this.annotation.mark !== from.annotation.mark ||
-      this.annotation.uuid !== from.annotation.uuid ||
-      this.isFiring !== from.isFiring ||
-      this.llmLocked !== from.llmLocked
-    ) {
-      return false;
-    }
-    if (this.isCollapsed === from.isCollapsed) return true;
-
-    const chevron = dom.querySelector(`.${CLS.FOLD_ICON}`);
-    if (!chevron) return false;
-
-    if (this.isCollapsed) {
-      const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
-      if (!header) return false;
-      chevron.classList.add(CLS.IS_COLLAPSED);
-      while (dom.lastChild && dom.lastChild !== header) dom.removeChild(dom.lastChild);
-    } else {
-      chevron.classList.remove(CLS.IS_COLLAPSED);
-      if (this.annotation.body) {
-        const body = document.createElement("div");
-        body.className = CLS.CALLOUT_BODY;
-        body.innerHTML = renderMarkdown(this.annotation.body);
-        interceptFootnoteClicks(body);
-        dom.appendChild(body);
-      }
-    }
-    return true;
-  }
-
-  ignoreEvent(event: Event): boolean {
-    return event.type === "mousedown";
-  }
-
-  get estimatedHeight(): number {
-    return this.isCollapsed ? 30 : 80;
-  }
 }
 
 // --- Thread Widget ---
@@ -650,6 +506,61 @@ export class ThreadWidget extends WidgetType {
     const turns = parseThreadBody(ann.body ?? "");
     const idx = Math.min(Math.max(this.turn, 0), Math.max(turns.length - 1, 0));
 
+    // Collapsed threads render as a pill: icon + truncated active-turn question
+    // + cardbox link + expand chevron. The full thread chrome (turn nav,
+    // overflow menu, follow-up composer, callout body) is expanded-only.
+    if (this.isCollapsed) {
+      const pill = document.createElement("span");
+      pill.className = `${CLS.PILL} ${CLS.THREAD}`;
+      const cert = certaintyClass(ann.certainty);
+      if (cert) pill.classList.add(cert);
+      pill.dataset.annotationType = "thread";
+
+      const icon = document.createElement("span");
+      icon.className = CLS.PILL_ICON;
+      icon.textContent = TYPE_ICON.thread ?? "◇";
+      pill.appendChild(icon);
+
+      const activeTurn = turns[idx];
+      const summary = truncateBody(activeTurn?.question || activeTurn?.response || null);
+      if (summary) {
+        const bodyEl = document.createElement("span");
+        bodyEl.className = CLS.PILL_BODY;
+        // Plain text - never render attacker-controlled markup in the summary.
+        bodyEl.textContent = summary;
+        pill.appendChild(bodyEl);
+      }
+
+      const cardboxLink = createCardboxLinkButton(ann);
+      if (cardboxLink) pill.appendChild(cardboxLink);
+
+      if (this.isFiring) {
+        const spinner = document.createElement("span");
+        spinner.className = CLS.SPINNER;
+        spinner.classList.add(CLS.SPINNER_PASSIVE);
+        pill.appendChild(spinner);
+      }
+
+      const arrow = document.createElement("span");
+      arrow.className = CLS.FOLD_ICON;
+      arrow.classList.add(CLS.IS_COLLAPSED);
+      arrow.appendChild(createFoldSvg());
+      arrow.onmousedown = (e) => {
+        e.preventDefault();
+        view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: this.pos }) });
+      };
+      pill.appendChild(arrow);
+
+      pill.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
+      pill.onmouseleave = () => handleAnnotationLeave(view);
+      pill.onclick = (e) => {
+        if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}, .${CLS.SPINNER}`)) return;
+        e.preventDefault();
+        dispatchEditEvent(ann);
+      };
+      return pill;
+    }
+
     const container = document.createElement("div");
     container.className = `${CLS.CALLOUT} ${CLS.THREAD}`;
     const cert = certaintyClass(ann.certainty);
@@ -683,7 +594,7 @@ export class ThreadWidget extends WidgetType {
     header.onclick = (e) => {
       if (
         (e.target as HTMLElement).closest(
-          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`,
+          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}, .${CLS.SPINNER}`,
         )
       )
         return;
@@ -740,6 +651,7 @@ export class ThreadWidget extends WidgetType {
     if (this.isFiring) {
       const spinner = document.createElement("span");
       spinner.className = CLS.SPINNER;
+      spinner.classList.add(CLS.SPINNER_PASSIVE);
       header.appendChild(spinner);
     }
 
@@ -820,7 +732,6 @@ export class ThreadWidget extends WidgetType {
     // Fold chevron.
     const arrow = document.createElement("span");
     arrow.className = CLS.FOLD_ICON;
-    if (this.isCollapsed) arrow.classList.add(CLS.IS_COLLAPSED);
     arrow.appendChild(createFoldSvg());
     arrow.onmousedown = (e) => {
       e.preventDefault();
@@ -830,9 +741,7 @@ export class ThreadWidget extends WidgetType {
 
     container.appendChild(header);
 
-    if (!this.isCollapsed) {
-      this.appendBody(container);
-    }
+    this.appendBody(container);
 
     return container;
   }
@@ -911,39 +820,12 @@ export class ThreadWidget extends WidgetType {
     );
   }
 
+  // No updateDOM: collapsed (pill) and expanded (callout) DOM shapes differ
+  // structurally, so fold flips go through destroy + toDOM. CM6 destroys
+  // non-reused tiles, which closes any open overflow menu via destroy().
   destroy(dom: HTMLElement): void {
     const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`) as OverflowEl | null;
     overflow?._litCloseMenu?.();
-  }
-
-  updateDOM(dom: HTMLElement, _view: EditorView, from: ThreadWidget): boolean {
-    if (
-      this.annotation.original !== from.annotation.original ||
-      this.annotation.char_start !== from.annotation.char_start ||
-      this.annotation.char_end !== from.annotation.char_end ||
-      this.annotation.uuid !== from.annotation.uuid ||
-      this.turn !== from.turn ||
-      this.isFiring !== from.isFiring
-    ) {
-      return false;
-    }
-    if (this.isCollapsed === from.isCollapsed) return true;
-
-    const chevron = dom.querySelector(`.${CLS.FOLD_ICON}`);
-    if (!chevron) return false;
-
-    if (this.isCollapsed) {
-      const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
-      if (!header) return false;
-      const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`) as OverflowEl | null;
-      overflow?._litCloseMenu?.();
-      chevron.classList.add(CLS.IS_COLLAPSED);
-      while (dom.lastChild && dom.lastChild !== header) dom.removeChild(dom.lastChild);
-    } else {
-      chevron.classList.remove(CLS.IS_COLLAPSED);
-      this.appendBody(dom);
-    }
-    return true;
   }
 
   ignoreEvent(event: Event): boolean {
@@ -956,6 +838,6 @@ export class ThreadWidget extends WidgetType {
   }
 
   get estimatedHeight(): number {
-    return this.isCollapsed ? 30 : 120;
+    return this.isCollapsed ? 20 : 120;
   }
 }

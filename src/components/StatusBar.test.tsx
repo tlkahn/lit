@@ -1109,16 +1109,18 @@ describe("StatusBar", () => {
     beforeEach(() => {
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true });
       usePreferencesStore.setState({ annotationEnabled: true });
+      useBottomPanelStore.setState({ hasFoldAllThread: false });
     });
 
-    it("renders when annotations are enabled and the page has annotations", () => {
+    it("renders when annotations are enabled and the page has a fold-all thread", () => {
       setAnnotationCount(2);
+      useBottomPanelStore.setState({ hasFoldAllThread: true });
       render(<StatusBar />);
       expect(screen.getByTestId("toggle-annotations-fold-button")).toBeInTheDocument();
     });
 
-    it("does not render when the page has no annotations", () => {
-      setAnnotationCount(0);
+    it("does not render when annotations exist but none is a fold-all thread", () => {
+      setAnnotationCount(2);
       render(<StatusBar />);
       expect(screen.queryByTestId("toggle-annotations-fold-button")).toBeNull();
     });
@@ -1126,12 +1128,14 @@ describe("StatusBar", () => {
     it("does not render when annotations are disabled", () => {
       usePreferencesStore.setState({ annotationEnabled: false });
       setAnnotationCount(2);
+      useBottomPanelStore.setState({ hasFoldAllThread: true });
       render(<StatusBar />);
       expect(screen.queryByTestId("toggle-annotations-fold-button")).toBeNull();
     });
 
     it("clicking executes app.toggleAllBlockAnnotations", async () => {
       setAnnotationCount(2);
+      useBottomPanelStore.setState({ hasFoldAllThread: true });
       const spy = vi.spyOn(commandRegistryModule, "executeCommand").mockReturnValue(true);
       render(<StatusBar />);
       await userEvent.click(screen.getByTestId("toggle-annotations-fold-button"));

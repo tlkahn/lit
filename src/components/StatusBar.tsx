@@ -204,17 +204,15 @@ function SwapPanesButton() {
   );
 }
 
-// Deliberately approximate: shows for any annotation count, including single-line-only
-// pages where the helper no-ops. Panel toolbar is the precise surface (isFoldAllTarget).
 function ToggleAnnotationsFoldButton() {
   const annotationEnabled = usePreferencesStore((s) => s.annotationEnabled);
-  const annotationCount = useBottomPanelStore((s) => s.tabMeta.annotations.count);
-  if (!annotationEnabled || (annotationCount ?? 0) === 0) return null;
+  const hasFoldAllThread = useBottomPanelStore((s) => s.hasFoldAllThread);
+  if (!annotationEnabled || !hasFoldAllThread) return null;
   return (
     <button
       data-testid="toggle-annotations-fold-button"
-      aria-label="Collapse/expand all block annotations"
-      title="Collapse/expand all block annotations (⌘⇧M)"
+      aria-label="Collapse/expand all threads"
+      title="Collapse/expand all threads (⌘⇧M)"
       onClick={() => executeCommand("app.toggleAllBlockAnnotations")}
       className="flex items-center px-1 text-text-muted hover:text-text-normal"
     >

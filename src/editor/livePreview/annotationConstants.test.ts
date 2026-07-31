@@ -18,7 +18,7 @@ describe("annotationConstants", () => {
     }
   });
 
-  it("annotation.css defines pill/marker/callout colors for slipnote", () => {
+  it("annotation.css defines pill/marker colors for slipnote", () => {
     const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
     expect(css).toMatch(
       /\.cm-annotation-pill\[data-annotation-type="slipnote"\]/,
@@ -26,9 +26,22 @@ describe("annotationConstants", () => {
     expect(css).toMatch(
       /\.cm-annotation-marker\[data-annotation-type="slipnote"\]/,
     );
-    expect(css).toMatch(
-      /\.cm-annotation-callout\[data-annotation-type="slipnote"\]/,
-    );
+  });
+
+  it("annotation.css has no per-type callout rules (thread colors live in the base rule)", () => {
+    const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
+    const perTypeCallout = [...css.matchAll(/\.cm-annotation-callout\[data-annotation-type="([^"]+)"\]/g)]
+      .map((m) => m[1]);
+    expect(perTypeCallout).toEqual([]);
+    const baseRule = css.match(/\.cm-annotation-callout\s*\{[^}]*\}/)![0];
+    expect(baseRule).toContain("rgba(171, 71, 188");
+  });
+
+  it("annotation.css defines .cm-annotation-spinner-passive with cursor: default", () => {
+    const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
+    const rule = css.match(/\.cm-annotation-spinner-passive\s*\{[^}]*\}/)?.[0];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/cursor:\s*default/);
   });
 
   it("index.css defines cardbox --ann-color for slipnote", () => {
@@ -70,6 +83,15 @@ describe("annotationConstants", () => {
 
   it("truncateBody returns empty for null", () => {
     expect(truncateBody(null)).toBe("");
+  });
+
+  it("truncateBody never splits a surrogate pair at the cut point", () => {
+    // "𝄞" is U+1D11E, a surrogate pair; code units 60/61 straddle the cut.
+    const body = "a".repeat(59) + "𝄞" + "tail";
+    const result = truncateBody(body, 60);
+    expect(result.endsWith("…")).toBe(true);
+    expect(/[\uD800-\uDFFF]/.test(result.replace("…", ""))).toBe(false);
+    expect(result.startsWith("a".repeat(59))).toBe(true);
   });
 });
 
@@ -114,8 +136,8 @@ describe("CLS constants", () => {
   });
 
   it("has correct values for shared classes", () => {
-    expect(CLS.DATE).toBe("cm-annotation-date");
     expect(CLS.SPINNER).toBe("cm-annotation-spinner");
+    expect(CLS.SPINNER_PASSIVE).toBe("cm-annotation-spinner-passive");
     expect(CLS.STOP_ICON).toBe("cm-annotation-stop-icon");
     expect(CLS.FOLD_ICON).toBe("cm-annotation-fold-icon");
     expect(CLS.TENTATIVE).toBe("cm-annotation-tentative");

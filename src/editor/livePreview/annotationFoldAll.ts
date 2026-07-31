@@ -1,3 +1,4 @@
+import type { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField } from "./annotationState";
 import { annotationFoldField, setAllAnnotationFoldsEffect } from "./annotationWidgets";
@@ -5,14 +6,22 @@ import { isPerfEnabled } from "./perf";
 
 export function isFoldAllTarget(
   doc: { length: number; lineAt(pos: number): { from: number; number: number } },
-  ann: { char_start: number; char_end: number },
+  ann: { annotation_type: string; char_start: number; char_end: number },
 ): boolean {
+  // Folding is thread-only: non-thread blocks render as unfoldable pills.
+  if (ann.annotation_type !== "thread") return false;
   const from = ann.char_start;
   const to = ann.char_end;
   if (from < 0 || to > doc.length || from >= to) return false;
   const startLine = doc.lineAt(from);
   if (startLine.from !== from) return false;
   return startLine.number !== doc.lineAt(to).number;
+}
+
+/** True when the editor state has at least one fold-all-target thread. */
+export function hasAnyFoldAllTarget(state: EditorState): boolean {
+  const data = state.field(annotationDataField, false) ?? [];
+  return data.some((ann) => isFoldAllTarget(state.doc, ann));
 }
 
 export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {

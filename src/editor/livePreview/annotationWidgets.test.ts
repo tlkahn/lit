@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState, ChangeSet } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, CalloutWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
 import { CLS } from "./annotationConstants";
 import type { Annotation } from "../../lib/ipc";
 import { useModalLockStore } from "../../stores/modalLock";
@@ -57,7 +57,7 @@ describe("PillWidget", () => {
     view.destroy();
   });
 
-  it("renders type icon, body, and date", () => {
+  it("renders type icon and body but never a date", () => {
     const view = makeEditorView();
     const ann = makeAnnotation({
       annotation_type: "note",
@@ -72,7 +72,7 @@ describe("PillWidget", () => {
     const dom = w.toDOM(view);
     expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("N");
     expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("hello");
-    expect(dom.querySelector(".cm-annotation-date")!.textContent).toBe("2026-04");
+    expect(dom.querySelector(".cm-annotation-date")).toBeNull();
     expect(dom.classList.contains("cm-annotation-firm")).toBe(true);
     view.destroy();
   });
@@ -335,71 +335,6 @@ describe("annotationFoldField", () => {
   });
 });
 
-describe("CalloutWidget", () => {
-  it("toDOM returns div.cm-annotation-callout", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      body: "body",
-      char_start: 0,
-      char_end: 18,
-      original: "<!---\nn!\n---\nbody\n--->",
-    });
-    const w = new CalloutWidget(ann, false, 0);
-    const dom = w.toDOM(null as unknown as import("@codemirror/view").EditorView);
-    expect(dom.tagName).toBe("DIV");
-    expect(dom.classList.contains("cm-annotation-callout")).toBe(true);
-  });
-
-  it("renders header with type label and fold toggle", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      annotation_type: "question",
-      certainty: "firm",
-      body: "some question",
-      date: "2026-05",
-      char_start: 0,
-      char_end: 5,
-      original: "block",
-    });
-    const w = new CalloutWidget(ann, false, 0);
-    const dom = w.toDOM(null as unknown as import("@codemirror/view").EditorView);
-    const header = dom.querySelector(".cm-annotation-callout-header")!;
-    expect(header.querySelector(".cm-annotation-callout-label")!.textContent).toBe("question");
-    expect(header.querySelector(".cm-annotation-date")!.textContent).toBe("2026-05");
-    expect(header.querySelector(".cm-annotation-fold-icon")).toBeTruthy();
-  });
-
-  it("hides body when collapsed", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      body: "hidden body",
-      char_start: 0,
-      char_end: 4,
-      original: "coll",
-    });
-    const w = new CalloutWidget(ann, true, 0);
-    const dom = w.toDOM(null as unknown as import("@codemirror/view").EditorView);
-    expect(dom.querySelector(".cm-annotation-callout-body")).toBeNull();
-  });
-
-  it("estimatedHeight differs by collapse state", () => {
-    const ann = makeAnnotation();
-    const expanded = new CalloutWidget(ann, false, 0);
-    const collapsed = new CalloutWidget(ann, true, 0);
-    expect(expanded.estimatedHeight).toBeGreaterThan(collapsed.estimatedHeight);
-  });
-
-  it("ignoreEvent returns true for mousedown", () => {
-    const w = new CalloutWidget(makeAnnotation(), false, 0);
-    expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
-  });
-
-  it("ignoreEvent returns false for click", () => {
-    const w = new CalloutWidget(makeAnnotation(), false, 0);
-    expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
-  });
-});
-
 describe("PillWidget click → edit event", () => {
   it("pill click dispatches lit:open-annotation-builder with edit detail", () => {
     const view = makeEditorView("hello <!---n | test---> world");
@@ -415,43 +350,6 @@ describe("PillWidget click → edit event", () => {
     expect(event.detail.mode).toBe("edit");
     expect(event.detail.annotation).toBe(ann);
     expect(event.detail.originalRange).toEqual({ from: 6, to: 23 });
-    window.removeEventListener("lit:open-annotation-builder", spy);
-    view.destroy();
-  });
-});
-
-describe("CalloutWidget click → edit event", () => {
-  it("header click dispatches lit:open-annotation-builder with edit detail", () => {
-    const view = makeEditorView("hello <!---n\n---\nbody\n---> world");
-    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 26 });
-    const w = new CalloutWidget(ann, false, 6);
-    const dom = w.toDOM(view);
-
-    const spy = vi.fn();
-    window.addEventListener("lit:open-annotation-builder", spy);
-    const header = dom.querySelector(".cm-annotation-callout-header")! as HTMLElement;
-    const label = header.querySelector(".cm-annotation-callout-label")! as HTMLElement;
-    label.click();
-    expect(spy).toHaveBeenCalledTimes(1);
-    const event = spy.mock.calls[0]![0] as CustomEvent;
-    expect(event.detail.mode).toBe("edit");
-    expect(event.detail.annotation).toBe(ann);
-    expect(event.detail.originalRange).toEqual({ from: 6, to: 26 });
-    window.removeEventListener("lit:open-annotation-builder", spy);
-    view.destroy();
-  });
-
-  it("fold arrow click does NOT dispatch edit event", () => {
-    const view = makeEditorView("hello <!---n\n---\nbody\n---> world");
-    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 26 });
-    const w = new CalloutWidget(ann, false, 6);
-    const dom = w.toDOM(view);
-
-    const spy = vi.fn();
-    window.addEventListener("lit:open-annotation-builder", spy);
-    const arrow = dom.querySelector(".cm-annotation-fold-icon")! as HTMLElement;
-    arrow.click();
-    expect(spy).not.toHaveBeenCalled();
     window.removeEventListener("lit:open-annotation-builder", spy);
     view.destroy();
   });
@@ -705,45 +603,6 @@ describe("MarkerWidget mark type", () => {
   });
 });
 
-describe("CalloutWidget mark type", () => {
-  beforeEach(() => {
-    useMarkConfigStore.setState({ config: { nb: { label: "nota bene", icon: "B" } }, loaded: true });
-  });
-
-  afterEach(() => {
-    useMarkConfigStore.setState({ config: {}, loaded: false });
-  });
-
-  it("renders mark icon from getMarkIcon in the icon span (not the generic diamond)", () => {
-    const ann = makeAnnotation({ annotation_type: "mark", mark: "nb", form: "block", body: "body" });
-    const w = new CalloutWidget(ann, false, 0);
-    const dom = w.toDOM(null as unknown as EditorView);
-    const icon = dom.querySelector(".cm-annotation-pill-icon")!;
-    expect(icon.textContent).toBe("B");
-  });
-
-  it("mark callout icon falls back to code when no config icon", () => {
-    useMarkConfigStore.setState({ config: {}, loaded: true });
-    const ann = makeAnnotation({ annotation_type: "mark", mark: "sic", form: "block", body: "body" });
-    const w = new CalloutWidget(ann, false, 0);
-    const dom = w.toDOM(null as unknown as EditorView);
-    const icon = dom.querySelector(".cm-annotation-pill-icon")!;
-    expect(icon.textContent).toBe("sic");
-  });
-
-  it("eq returns false when mark differs", () => {
-    const a = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }), false, 0);
-    const b = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "sic" }), false, 0);
-    expect(a.eq(b)).toBe(false);
-  });
-
-  it("eq returns true when mark matches", () => {
-    const a = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }), false, 0);
-    const b = new CalloutWidget(makeAnnotation({ annotation_type: "mark", original: "<!---*nb--->", char_start: 0, char_end: 10, mark: "nb" }), false, 0);
-    expect(a.eq(b)).toBe(true);
-  });
-});
-
 describe("fire button", () => {
   describe("PillWidget", () => {
     it("renders .cm-annotation-fire-btn with ▶ for question type", () => {
@@ -877,31 +736,6 @@ describe("fire button", () => {
     });
   });
 
-  describe("CalloutWidget", () => {
-    it("renders .cm-annotation-fire-btn in header for question type", () => {
-      const ann = makeAnnotation({ form: "block", annotation_type: "question", body: "why?" });
-      const w = new CalloutWidget(ann, false, 0);
-      const dom = w.toDOM(null as unknown as EditorView);
-      const btn = dom.querySelector(".cm-annotation-callout-header .cm-annotation-fire-btn");
-      expect(btn).toBeTruthy();
-      expect(btn!.textContent).toBe("▶");
-    });
-
-    it("does NOT render fire button for bare type", () => {
-      const ann = makeAnnotation({ form: "block", annotation_type: "bare" });
-      const w = new CalloutWidget(ann, false, 0);
-      const dom = w.toDOM(null as unknown as EditorView);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-    });
-
-    it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      const ann = makeAnnotation({ form: "block", annotation_type: "llm", body: "explain" });
-      const w = new CalloutWidget(ann, false, 0, false, true);
-      const dom = w.toDOM(null as unknown as EditorView);
-      const btn = dom.querySelector(".cm-annotation-fire-btn");
-      expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
-    });
-  });
 });
 
 describe("firingAnnotationsField", () => {
@@ -995,21 +829,6 @@ describe("spinner rendering", () => {
     view.destroy();
   });
 
-  it("CalloutWidget with isFiring=true renders spinner button", () => {
-    const ann = makeAnnotation({ form: "block", annotation_type: "question", body: "why?" });
-    const w = new CalloutWidget(ann, false, 0, true);
-    const dom = w.toDOM(null as unknown as EditorView);
-    const btn = dom.querySelector(".cm-annotation-fire-btn");
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
-  });
-
-  it("CalloutWidget eq returns false when isFiring differs", () => {
-    const ann = makeAnnotation();
-    const a = new CalloutWidget(ann, false, 0, false);
-    const b = new CalloutWidget(ann, false, 0, true);
-    expect(a.eq(b)).toBe(false);
-  });
 });
 
 describe("llmLockedField", () => {
@@ -1072,10 +891,6 @@ describe("widget eq with llmLocked", () => {
     expect(new MarkerWidget(ann, false, false).eq(new MarkerWidget(ann, false, true))).toBe(false);
   });
 
-  it("CalloutWidget eq returns false when llmLocked differs", () => {
-    const ann = makeAnnotation();
-    expect(new CalloutWidget(ann, false, 0, false, false).eq(new CalloutWidget(ann, false, 0, false, true))).toBe(false);
-  });
 });
 
 describe("fire button proximity reveal", () => {
@@ -1200,50 +1015,6 @@ describe("createCardboxLinkButton", () => {
   });
 });
 
-describe("CalloutWidget cardbox link", () => {
-  it("renders the cardbox link in the header when uuid is set", () => {
-    const ann = makeAnnotation({ form: "block", body: "body", uuid: "abc" });
-    const w = new CalloutWidget(ann, false, 0);
-    const dom = w.toDOM(null as unknown as EditorView);
-    const btn = dom.querySelector(".cm-annotation-callout-header .cm-annotation-cardbox-link");
-    expect(btn).toBeTruthy();
-  });
-
-  it("does NOT render the cardbox link when uuid is missing", () => {
-    const ann = makeAnnotation({ form: "block", body: "body", uuid: null });
-    const w = new CalloutWidget(ann, false, 0);
-    const dom = w.toDOM(null as unknown as EditorView);
-    expect(dom.querySelector(".cm-annotation-cardbox-link")).toBeNull();
-  });
-
-  it("header click on cardbox link does NOT dispatch edit event", () => {
-    const view = makeEditorView("hello <!---n\n---\nbody\n---> world");
-    const ann = makeAnnotation({ form: "block", char_start: 6, char_end: 26, uuid: "abc" });
-    const w = new CalloutWidget(ann, false, 6);
-    const dom = w.toDOM(view);
-
-    const spy = vi.fn();
-    window.addEventListener("lit:open-annotation-builder", spy);
-    const btn = dom.querySelector(".cm-annotation-cardbox-link")! as HTMLElement;
-    btn.click();
-    expect(spy).not.toHaveBeenCalled();
-    window.removeEventListener("lit:open-annotation-builder", spy);
-    view.destroy();
-  });
-
-  it("eq returns false when uuid differs", () => {
-    const a = new CalloutWidget(makeAnnotation({ uuid: "abc" }), false, 0);
-    const b = new CalloutWidget(makeAnnotation({ uuid: "xyz" }), false, 0);
-    expect(a.eq(b)).toBe(false);
-  });
-
-  it("eq returns true when uuid matches", () => {
-    const a = new CalloutWidget(makeAnnotation({ uuid: "abc" }), false, 0);
-    const b = new CalloutWidget(makeAnnotation({ uuid: "abc" }), false, 0);
-    expect(a.eq(b)).toBe(true);
-  });
-});
-
 describe("PillWidget cardbox link", () => {
   it("renders the cardbox link in the pill when uuid is set", () => {
     const view = makeEditorView();
@@ -1353,61 +1124,51 @@ describe("MarkerWidget cardbox link", () => {
   });
 });
 
-describe("CalloutWidget body markdown rendering", () => {
-  it("renders body as HTML via renderMarkdown when expanded", () => {
-    const ann = makeAnnotation({
+describe("rendered body markdown (expanded thread + pills)", () => {
+  // The expanded ThreadWidget body is the only remaining renderMarkdown consumer
+  // in the editor (CalloutWidget is gone); this coverage anchors there.
+  function makeThreadWithResponse(response: string): Annotation {
+    return makeAnnotation({
       form: "block",
-      body: "**bold** text",
+      annotation_type: "thread",
+      body: `[q]: The question?\n\n${response}`,
       char_start: 0,
       char_end: 5,
-      original: "block",
+      original: "block-thread",
     });
-    const w = new CalloutWidget(ann, false, 0);
+  }
+
+  it("renders response as HTML via renderMarkdown when expanded", () => {
+    const w = new ThreadWidget(makeThreadWithResponse("**bold** text"), 0, false, 0);
     const dom = w.toDOM(null as unknown as EditorView);
     const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
     expect(bodyEl.innerHTML).toContain("<strong>bold</strong>");
     expect(bodyEl.innerHTML).toContain("text");
   });
 
-  it("sanitizes HTML in body to prevent XSS", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      body: '<script>alert("xss")</script>Safe text',
-      char_start: 0,
-      char_end: 5,
-      original: "block",
-    });
-    const w = new CalloutWidget(ann, false, 0);
+  it("sanitizes HTML in response to prevent XSS", () => {
+    const w = new ThreadWidget(
+      makeThreadWithResponse('<script>alert("xss")</script>Safe text'),
+      0,
+      false,
+      0,
+    );
     const dom = w.toDOM(null as unknown as EditorView);
     const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
     expect(bodyEl.innerHTML).not.toContain("<script>");
     expect(bodyEl.innerHTML).toContain("Safe text");
   });
 
-  it("renders markdown headings in body", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      body: "# Heading\n\nParagraph text",
-      char_start: 0,
-      char_end: 5,
-      original: "block",
-    });
-    const w = new CalloutWidget(ann, false, 0);
+  it("renders markdown headings in response", () => {
+    const w = new ThreadWidget(makeThreadWithResponse("# Heading\n\nParagraph text"), 0, false, 0);
     const dom = w.toDOM(null as unknown as EditorView);
     const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
     expect(bodyEl.querySelector("h1")).toBeTruthy();
     expect(bodyEl.querySelector("h1")!.textContent).toBe("Heading");
   });
 
-  it("renders markdown lists in body", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      body: "- item one\n- item two",
-      char_start: 0,
-      char_end: 5,
-      original: "block",
-    });
-    const w = new CalloutWidget(ann, false, 0);
+  it("renders markdown lists in response", () => {
+    const w = new ThreadWidget(makeThreadWithResponse("- item one\n- item two"), 0, false, 0);
     const dom = w.toDOM(null as unknown as EditorView);
     const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
     expect(bodyEl.innerHTML).toContain("<li>");
@@ -1425,15 +1186,13 @@ describe("CalloutWidget body markdown rendering", () => {
     view.destroy();
   });
 
-  it("renders footnotes in callout body", () => {
-    const ann = makeAnnotation({
-      form: "block",
-      body: "text[^1] here\n\n[^1]: the footnote",
-      char_start: 0,
-      char_end: 5,
-      original: "block",
-    });
-    const w = new CalloutWidget(ann, false, 0);
+  it("renders footnotes in the thread response body", () => {
+    const w = new ThreadWidget(
+      makeThreadWithResponse("text[^1] here\n\n[^1]: the footnote"),
+      0,
+      false,
+      0,
+    );
     const dom = w.toDOM(null as unknown as EditorView);
     const bodyEl = dom.querySelector(".cm-annotation-callout-body")!;
     expect(bodyEl.querySelector("sup a[data-footnote-ref]")).toBeTruthy();
@@ -1456,17 +1215,15 @@ describe("CalloutWidget body markdown rendering", () => {
     view.destroy();
   });
 
-  it("clicking a footnote ref in callout body prevents default navigation", () => {
+  it("clicking a footnote ref in the thread response body prevents default navigation", () => {
     const scrollSpy = vi.fn();
     Element.prototype.scrollIntoView = scrollSpy;
-    const ann = makeAnnotation({
-      form: "block",
-      body: "text[^1] here\n\n[^1]: the footnote",
-      char_start: 0,
-      char_end: 5,
-      original: "block",
-    });
-    const w = new CalloutWidget(ann, false, 0);
+    const w = new ThreadWidget(
+      makeThreadWithResponse("text[^1] here\n\n[^1]: the footnote"),
+      0,
+      false,
+      0,
+    );
     const dom = w.toDOM(null as unknown as EditorView);
     const ref = dom.querySelector("sup a[data-footnote-ref]")!;
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
@@ -1658,19 +1415,234 @@ describe("ThreadWidget", () => {
     expect(w.estimatedHeight).toBeGreaterThan(0);
   });
 
-  it("omits the body entirely when collapsed", () => {
+  it("collapsed thread renders a pill, not a callout", () => {
     const w = new ThreadWidget(makeThread(), 0, true, 0);
-    const dom = w.toDOM(null as unknown as EditorView);
+    const dom = w.toDOM(null as unknown as EditorView) as HTMLElement;
+    expect(dom.tagName).toBe("SPAN");
+    expect(dom.classList.contains("cm-annotation-pill")).toBe(true);
+    expect(dom.classList.contains("cm-thread")).toBe(true);
+    expect(dom.classList.contains("cm-annotation-callout")).toBe(false);
+    expect(dom.dataset.annotationType).toBe("thread");
+    // No callout chrome, no thread chrome.
+    expect(dom.querySelector(".cm-annotation-callout-header")).toBeNull();
+    expect(dom.querySelector(".cm-annotation-callout-label")).toBeNull();
     expect(dom.querySelector(".cm-annotation-callout-body")).toBeNull();
     expect(dom.querySelector(".cm-thread-question")).toBeNull();
-    expect(dom.querySelector(".cm-annotation-callout-header")).toBeTruthy();
+    expect(dom.querySelector(".cm-thread-turn-counter")).toBeNull();
+    expect(dom.querySelector(".cm-thread-nav")).toBeNull();
+    expect(dom.querySelector(".cm-thread-nav-arrow")).toBeNull();
+    expect(dom.querySelector(".cm-thread-overflow")).toBeNull();
+    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+    expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+    expect(dom.querySelector(".cm-annotation-spinner")).toBeNull();
+    // Pill contents: icon + truncated question + expand chevron.
+    expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("◇");
+    expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("First question?");
+    const chevron = dom.querySelector(".cm-annotation-fold-icon")!;
+    expect(chevron.classList.contains("is-collapsed")).toBe(true);
+    expect(chevron.querySelector("svg")).toBeTruthy();
   });
 
-  it("estimatedHeight is 30 collapsed and greater than 30 expanded", () => {
+  it("collapsed pill renders the firing spinner before the fold chevron", () => {
+    const w = new ThreadWidget(makeThread(), 0, true, 0, true);
+    const dom = w.toDOM(null as unknown as EditorView) as HTMLElement;
+    const spinner = dom.querySelector(".cm-annotation-spinner")!;
+    expect(spinner).toBeTruthy();
+    // Plain span, no fire-button chrome — threads have no manual fire handler.
+    expect(spinner.tagName).toBe("SPAN");
+    expect(spinner.classList.contains("cm-annotation-fire-btn")).toBe(false);
+    expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+    const chevron = dom.querySelector(".cm-annotation-fold-icon")!;
+    expect(spinner.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Existing collapsed chrome is unchanged.
+    expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("◇");
+    expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("First question?");
+    expect(chevron.classList.contains("is-collapsed")).toBe(true);
+  });
+
+  it("clicking the collapsed pill spinner does not open the annotation builder", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, true, 0, true);
+    const dom = w.toDOM(view) as HTMLElement;
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+
+    (dom.querySelector(".cm-annotation-spinner")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).not.toHaveBeenCalled();
+
+    // Edit path still works via the pill body.
+    (dom.querySelector(".cm-annotation-pill-body")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
+  });
+
+  it("bare spinners carry cm-annotation-spinner-passive; fire-button spinner does not", () => {
+    const collapsed = new ThreadWidget(makeThread(), 0, true, 0, true)
+      .toDOM(null as unknown as EditorView) as HTMLElement;
+    const collapsedSpinner = collapsed.querySelector(".cm-annotation-spinner")!;
+    expect(collapsedSpinner.classList.contains("cm-annotation-spinner-passive")).toBe(true);
+
+    const expanded = new ThreadWidget(makeThread(), 0, false, 0, true)
+      .toDOM(null as unknown as EditorView) as HTMLElement;
+    const expandedSpinner = expanded.querySelector(
+      ".cm-annotation-callout-header .cm-annotation-spinner",
+    )!;
+    expect(expandedSpinner.classList.contains("cm-annotation-spinner-passive")).toBe(true);
+
+    // Fire-button spinner keeps cancel affordance / pointer cursor - no passive class.
+    const fireBtn = createFireButton(makeAnnotation({ annotation_type: "llm" }), true)!;
+    expect(fireBtn.classList.contains("cm-annotation-spinner")).toBe(true);
+    expect(fireBtn.classList.contains("cm-annotation-spinner-passive")).toBe(false);
+  });
+
+  it("collapsed pill adds the certainty class", () => {
+    const w = new ThreadWidget(makeThread({ certainty: "tentative" }), 0, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.classList.contains("cm-annotation-tentative")).toBe(true);
+  });
+
+  it("collapsed pill shows the active-turn question per turn index", () => {
+    const w = new ThreadWidget(makeThread(), 1, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("Second question?");
+  });
+
+  it("collapsed pill falls back to the response when the question is empty", () => {
+    const w = new ThreadWidget(makeThread({ body: "Just a response, no [q] marker." }), 0, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe(
+      "Just a response, no [q] marker.",
+    );
+  });
+
+  it("collapsed pill omits the body element when the thread is empty", () => {
+    const w = new ThreadWidget(makeThread({ body: "   \n  \n" }), 0, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-annotation-pill-body")).toBeNull();
+    expect(dom.querySelector(".cm-annotation-pill-icon")).toBeTruthy();
+    expect(dom.querySelector(".cm-annotation-fold-icon")).toBeTruthy();
+  });
+
+  it("collapsed pill truncates the question at 60 chars", () => {
+    const longQ = "q".repeat(80);
+    const w = new ThreadWidget(makeThread({ body: `[q]: ${longQ}\n\nresp` }), 0, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    const text = dom.querySelector(".cm-annotation-pill-body")!.textContent!;
+    expect(text.length).toBe(61);
+    expect(text.endsWith("…")).toBe(true);
+  });
+
+  it("collapsed pill renders the question as textContent, never markup", () => {
+    const w = new ThreadWidget(
+      makeThread({ body: '[q]: <img src=x onerror="alert(1)">\n\nresp' }),
+      0,
+      true,
+      0,
+    );
+    const dom = w.toDOM(null as unknown as EditorView);
+    const bodyEl = dom.querySelector(".cm-annotation-pill-body")!;
+    expect(bodyEl.querySelector("img")).toBeNull();
+    expect(bodyEl.textContent).toContain("<img");
+  });
+
+  it("collapsed pill shows the cardbox link iff uuid is set", () => {
+    const withUuid = new ThreadWidget(makeThread({ uuid: "abc" }), 0, true, 0);
+    expect(
+      withUuid.toDOM(null as unknown as EditorView).querySelector(".cm-annotation-cardbox-link"),
+    ).toBeTruthy();
+    const withoutUuid = new ThreadWidget(makeThread(), 0, true, 0);
+    expect(
+      withoutUuid.toDOM(null as unknown as EditorView).querySelector(".cm-annotation-cardbox-link"),
+    ).toBeNull();
+  });
+
+  it("collapsed pill chevron mousedown dispatches toggleAnnotationFoldEffect at pos", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, true, 7);
+    const dom = w.toDOM(view);
+    const spy = vi.spyOn(view, "dispatch");
+    const chevron = dom.querySelector(".cm-annotation-fold-icon")! as HTMLElement;
+    chevron.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(spy).toHaveBeenCalled();
+    const effects = (spy.mock.calls[0]![0] as { effects: ReturnType<typeof toggleAnnotationFoldEffect.of> }).effects;
+    expect(effects.is(toggleAnnotationFoldEffect)).toBe(true);
+    expect(effects.value).toEqual({ pos: 7 });
+    view.destroy();
+  });
+
+  it("collapsed pill click dispatches edit event, but chevron/cardbox clicks do not", () => {
+    const view = makeEditorView("x".repeat(50));
+    const ann = makeThread({ uuid: "abc" });
+    const w = new ThreadWidget(ann, 0, true, 0);
+    const dom = w.toDOM(view);
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+
+    (dom.querySelector(".cm-annotation-pill-body")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect((spy.mock.calls[0]![0] as CustomEvent).detail.annotation).toBe(ann);
+
+    spy.mockClear();
+    (dom.querySelector(".cm-annotation-fold-icon")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    (dom.querySelector(".cm-annotation-cardbox-link")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
+  });
+
+  it("collapsed pill wires hover and leave handlers", () => {
+    const view = makeEditorView("x".repeat(50));
+    const ann = makeThread();
+    const w = new ThreadWidget(ann, 0, true, 0);
+    const dom = w.toDOM(view);
+    dom.dispatchEvent(new Event("mouseenter"));
+    expect(mockHandleHover).toHaveBeenCalledWith(view, ann, { altKey: undefined });
+    dom.dispatchEvent(new Event("mouseleave"));
+    expect(mockHandleLeave).toHaveBeenCalledWith(view);
+    view.destroy();
+  });
+
+  it("estimatedHeight is 20 collapsed and greater than 20 expanded", () => {
     const collapsed = new ThreadWidget(makeThread(), 0, true, 0);
     const expanded = new ThreadWidget(makeThread(), 0, false, 0);
-    expect(collapsed.estimatedHeight).toBe(30);
-    expect(expanded.estimatedHeight).toBeGreaterThan(30);
+    expect(collapsed.estimatedHeight).toBe(20);
+    expect(expanded.estimatedHeight).toBeGreaterThan(20);
+  });
+
+  it("collapsed pill contains no follow-up textarea", () => {
+    const w = new ThreadWidget(makeThread(), 0, true, 0);
+    const dom = w.toDOM(null as unknown as EditorView);
+    expect(dom.querySelector(".cm-thread-followup-input")).toBeNull();
+    expect(dom.querySelector("textarea")).toBeNull();
+  });
+
+  it("expanded toDOM after a collapse round-trip yields exactly one callout body", () => {
+    // Fold flips go through destroy + toDOM (updateDOM is gone); a fresh
+    // expanded toDOM must always produce a single clean body.
+    const ann = makeThread();
+    const collapsedDom = new ThreadWidget(ann, 0, true, 0).toDOM(null as unknown as EditorView);
+    expect(collapsedDom.querySelector(".cm-annotation-callout-body")).toBeNull();
+    const expandedDom = new ThreadWidget(ann, 0, false, 0).toDOM(null as unknown as EditorView);
+    expect(expandedDom.querySelectorAll(".cm-annotation-callout-body").length).toBe(1);
+    expect(expandedDom.querySelectorAll(".cm-thread-followup-trigger").length).toBe(1);
+    expect(expandedDom.querySelectorAll(".cm-thread-followup-input").length).toBe(0);
+  });
+
+  it("no updateDOM: collapsed/expanded DOM shapes differ structurally, fold flips go through toDOM", () => {
+    expect(Object.prototype.hasOwnProperty.call(ThreadWidget.prototype, "updateDOM")).toBe(false);
   });
 
   it("clamps an out-of-range turn index without throwing", () => {
@@ -1712,6 +1684,22 @@ describe("ThreadWidget", () => {
     const dom = w.toDOM(null as unknown as EditorView);
     expect(dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")).toBeTruthy();
     expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+  });
+
+  it("clicking the expanded header spinner does not open the annotation builder", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0, true);
+    const dom = w.toDOM(view);
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+
+    (dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
   });
 
   it("does NOT render a fire button (threads are not fireable)", () => {
@@ -2087,8 +2075,10 @@ describe("ThreadWidget", () => {
   });
 });
 
-describe("programmatic-collapse menu cleanup (Phase 6)", () => {
-  it("programmatic collapse closes the overflow menu and removes document listeners", () => {
+describe("fold-driven menu cleanup (Phase 6)", () => {
+  it("destroy on a fold flip closes the overflow menu and removes document listeners", () => {
+    // Fold flips go through destroy + toDOM (no updateDOM): CM6 destroys the
+    // non-reused expanded tile, which must close an open overflow menu.
     const view = makeEditorView();
     const ann = makeAnnotation({
       annotation_type: "thread",
@@ -2106,15 +2096,16 @@ describe("programmatic-collapse menu cleanup (Phase 6)", () => {
     document.dispatchEvent(keyBefore);
     expect(keyBefore.defaultPrevented).toBe(true);
 
-    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
-    collapsed.updateDOM(dom, view, expanded);
+    expanded.destroy(dom);
 
     expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(false);
 
-    // After collapse, the THIS widget's keydown listener must be gone.
-    // Use a fresh MouseEvent to verify the outside-click handler is also gone:
-    // dispatching a mousedown outside the overflow should NOT re-trigger closeMenu
-    // (which would throw or crash if already torn down).
+    // The keydown trap must be released after destroy.
+    const keyAfter = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+    document.dispatchEvent(keyAfter);
+    expect(keyAfter.defaultPrevented).toBe(false);
+
+    // The outside-click handler must also be gone (no throw, menu stays closed).
     const outsideClick = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     document.body.dispatchEvent(outsideClick);
     expect(overflow.classList.contains(CLS.IS_OPEN)).toBe(false);
@@ -2125,209 +2116,4 @@ describe("programmatic-collapse menu cleanup (Phase 6)", () => {
   // The chevron path needs no fix: the capture-phase outside-click handler on
   // `document` fires before the fold effect is dispatched by the chevron's
   // mousedown, so `closeMenu()` runs first and the menu is already gone.
-});
-
-describe("ThreadWidget.updateDOM expand does not call toDOM (Phase 4)", () => {
-  it("updateDOM expand does not call toDOM", () => {
-    const view = makeEditorView();
-    const ann = makeAnnotation({
-      annotation_type: "thread",
-      body: "[q]: Question?\n\nAnswer text.",
-    });
-    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
-    const dom = collapsed.toDOM(view);
-
-    const spy = vi.spyOn(ThreadWidget.prototype, "toDOM");
-    try {
-      const expanded = new ThreadWidget(ann, 0, false, 0, false);
-      const result = expanded.updateDOM(dom, view, collapsed);
-
-      expect(result).toBe(true);
-      expect(spy).not.toHaveBeenCalled();
-      expect(dom.querySelector(`.${CLS.THREAD_QUESTION}`)).not.toBeNull();
-      expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
-      expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)).not.toBeNull();
-    } finally {
-      spy.mockRestore();
-    }
-    view.destroy();
-  });
-});
-
-describe("CalloutWidget.updateDOM", () => {
-  const view = makeEditorView();
-
-  it("collapses: returns true, removes body, adds IS_COLLAPSED class", () => {
-    const ann = makeAnnotation({ body: "some body text" });
-    const oldWidget = new CalloutWidget(ann, false, 0, false, false);
-    const dom = oldWidget.toDOM(view);
-
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
-    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
-
-    const newWidget = new CalloutWidget(ann, true, 0, false, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-
-    expect(result).toBe(true);
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
-    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(true);
-  });
-
-  it("expands: returns true, adds body with rendered markdown", () => {
-    const ann = makeAnnotation({ body: "expanded body" });
-    const oldWidget = new CalloutWidget(ann, true, 0, false, false);
-    const dom = oldWidget.toDOM(view);
-
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
-
-    const newWidget = new CalloutWidget(ann, false, 0, false, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-
-    expect(result).toBe(true);
-    const body = dom.querySelector(`.${CLS.CALLOUT_BODY}`);
-    expect(body).not.toBeNull();
-    expect(body!.innerHTML).toBeTruthy();
-    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
-  });
-
-  it("returns false for content change", () => {
-    const ann1 = makeAnnotation({ original: "<!---n | body1--->" });
-    const ann2 = makeAnnotation({ original: "<!---n | body2--->" });
-    const oldWidget = new CalloutWidget(ann1, false, 0, false, false);
-    const dom = oldWidget.toDOM(view);
-
-    const newWidget = new CalloutWidget(ann2, false, 0, false, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-    expect(result).toBe(false);
-  });
-
-  it("returns false for firing state change", () => {
-    const ann = makeAnnotation();
-    const oldWidget = new CalloutWidget(ann, false, 0, false, false);
-    const dom = oldWidget.toDOM(view);
-
-    const newWidget = new CalloutWidget(ann, false, 0, true, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-    expect(result).toBe(false);
-  });
-});
-
-describe("ThreadWidget.updateDOM", () => {
-  const view = makeEditorView();
-
-  it("collapses: returns true, removes body elements", () => {
-    const ann = makeAnnotation({
-      annotation_type: "thread",
-      body: "Q: first?\nA: reply one.",
-    });
-    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
-    const dom = oldWidget.toDOM(view);
-
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
-
-    const newWidget = new ThreadWidget(ann, 0, true, 0, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-
-    expect(result).toBe(true);
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
-    expect(dom.querySelector(`.${CLS.THREAD_QUESTION}`)).toBeNull();
-    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)).toBeNull();
-    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(true);
-  });
-
-  it("expands: returns true, adds body elements", () => {
-    const ann = makeAnnotation({
-      annotation_type: "thread",
-      body: "Q: first?\nA: reply one.",
-    });
-    const oldWidget = new ThreadWidget(ann, 0, true, 0, false);
-    const dom = oldWidget.toDOM(view);
-
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).toBeNull();
-
-    const newWidget = new ThreadWidget(ann, 0, false, 0, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-
-    expect(result).toBe(true);
-    expect(dom.querySelector(`.${CLS.CALLOUT_BODY}`)).not.toBeNull();
-    expect(dom.querySelector(`.${CLS.FOLD_ICON}`)!.classList.contains(CLS.IS_COLLAPSED)).toBe(false);
-  });
-
-  it("returns false for turn change", () => {
-    const ann = makeAnnotation({
-      annotation_type: "thread",
-      body: "Q: first?\nA: reply one.\nQ: second?\nA: reply two.",
-    });
-    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
-    const dom = oldWidget.toDOM(view);
-
-    const newWidget = new ThreadWidget(ann, 1, false, 0, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-    expect(result).toBe(false);
-  });
-
-  it("returns false for content change", () => {
-    const ann1 = makeAnnotation({
-      annotation_type: "thread",
-      original: "<!---thread-1--->",
-      body: "Q: first?\nA: reply.",
-    });
-    const ann2 = makeAnnotation({
-      annotation_type: "thread",
-      original: "<!---thread-2--->",
-      body: "Q: different?\nA: different reply.",
-    });
-    const oldWidget = new ThreadWidget(ann1, 0, false, 0, false);
-    const dom = oldWidget.toDOM(view);
-
-    const newWidget = new ThreadWidget(ann2, 0, false, 0, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-    expect(result).toBe(false);
-  });
-
-  it("collapse removes an open follow-up textarea", () => {
-    const ann = makeAnnotation({
-      annotation_type: "thread",
-      body: "[q]: Question?\n\nAnswer text.",
-    });
-    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
-    const dom = oldWidget.toDOM(view);
-
-    const trigger = dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)! as HTMLElement;
-    expect(trigger).not.toBeNull();
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).not.toBeNull();
-
-    const newWidget = new ThreadWidget(ann, 0, true, 0, false);
-    const result = newWidget.updateDOM(dom, view, oldWidget);
-
-    expect(result).toBe(true);
-    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).toBeNull();
-    const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
-    expect(header).not.toBeNull();
-    expect(dom.children.length).toBe(1);
-  });
-
-  it("collapse+expand round-trip after open input yields clean state", () => {
-    const ann = makeAnnotation({
-      annotation_type: "thread",
-      body: "[q]: Question?\n\nAnswer text.",
-    });
-    const oldWidget = new ThreadWidget(ann, 0, false, 0, false);
-    const dom = oldWidget.toDOM(view);
-
-    const trigger = dom.querySelector(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`)! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(dom.querySelector(`.${CLS.THREAD_FOLLOWUP_INPUT}`)).not.toBeNull();
-
-    const collapsed = new ThreadWidget(ann, 0, true, 0, false);
-    collapsed.updateDOM(dom, view, oldWidget);
-
-    const expanded = new ThreadWidget(ann, 0, false, 0, false);
-    expanded.updateDOM(dom, view, collapsed);
-
-    expect(dom.querySelectorAll(`.${CLS.CALLOUT_BODY}`).length).toBe(1);
-    expect(dom.querySelectorAll(`.${CLS.THREAD_FOLLOWUP_TRIGGER}`).length).toBe(1);
-    expect(dom.querySelectorAll(`.${CLS.THREAD_FOLLOWUP_INPUT}`).length).toBe(0);
-  });
 });

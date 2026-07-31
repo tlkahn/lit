@@ -77,6 +77,7 @@ async function measureDispatchToPaint(fn: () => void): Promise<TimingResult> {
 function foldAllEffects(view: EditorView) {
   return view.state
     .field(annotationDataField)
+    .filter((a) => a.annotation_type === "thread")
     .map((a) => toggleAnnotationFoldEffect.of({ pos: a.char_start }));
 }
 
@@ -110,7 +111,7 @@ const view = new EditorView({
 forceParsing(view, view.state.doc.length, 30_000);
 const annotations = blockAnnotationsFromTree(view);
 
-// Park cursor after the first block so callouts are not cursor-suppressed.
+// Park cursor after the first block so thread callouts / pills are not cursor-suppressed.
 const cursorPos = Math.min((annotations[0]?.char_end ?? 0) + 1, doc.length);
 view.dispatch({
   effects: setAnnotationData.of(annotations),
@@ -169,8 +170,10 @@ window.__PERF__ = {
     return timing;
   },
   async foldSingle() {
-    const target =
-      view.state.field(annotationDataField)[1] ?? view.state.field(annotationDataField)[0];
+    // Folding is thread-only; the stress generator interleaves notes, so pick by type.
+    const target = view.state
+      .field(annotationDataField)
+      .find((a) => a.annotation_type === "thread");
     if (!target) return { syncMs: -1, paintMs: -1 };
     return measureDispatchToPaint(() => {
       view.dispatch({

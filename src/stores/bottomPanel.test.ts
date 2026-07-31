@@ -198,6 +198,34 @@ describe("bottomPanel handleTabClick annotations", () => {
 });
 
 
+describe("bottomPanel hasFoldAllThread", () => {
+  beforeEach(() => {
+    useBottomPanelStore.setState({
+      activeTab: "linked",
+      unfolded: false,
+      tabMeta: defaultTabMeta(),
+      hasFoldAllThread: false,
+    });
+  });
+
+  it("defaults to false", () => {
+    expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(false);
+  });
+
+  it("setHasFoldAllThread updates state", () => {
+    useBottomPanelStore.getState().setHasFoldAllThread(true);
+    expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(true);
+    useBottomPanelStore.getState().setHasFoldAllThread(false);
+    expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(false);
+  });
+
+  it("resetForPage clears it to false", () => {
+    useBottomPanelStore.getState().setHasFoldAllThread(true);
+    useBottomPanelStore.getState().resetForPage();
+    expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(false);
+  });
+});
+
 describe("bottomPanel panelHeight clamping", () => {
   beforeEach(() => {
     localStorage.removeItem(STORAGE_KEY);
