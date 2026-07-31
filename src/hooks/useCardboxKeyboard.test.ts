@@ -130,6 +130,29 @@ describe("useCardboxKeyboard", () => {
     expect(document.activeElement).toBe(cards[0]);
   });
 
+  describe("collapsing-group exit animation (#968)", () => {
+    it("skips cards inside a data-collapsed container for nav and index resolution", () => {
+      // A collapsing group's cards linger in the DOM during the 150ms exit
+      // animation while orderedUuids (itemCount) already excludes them.
+      const { result, options, grid, cards } = setup({}, 2);
+      const collapsing = document.createElement("div");
+      collapsing.setAttribute("data-collapsed", "true");
+      const ghost = document.createElement("div");
+      ghost.setAttribute("data-testid", "cardbox-card");
+      ghost.tabIndex = 0;
+      collapsing.appendChild(ghost);
+      // Insert the collapsing group between the two live cards.
+      grid.insertBefore(collapsing, cards[1]!);
+
+      cards[0]!.focus();
+      gridKey(result, { key: "ArrowRight" });
+      expect(document.activeElement).toBe(cards[1]);
+
+      gridKey(result, { key: "Enter" });
+      expect(options.onExpand).toHaveBeenCalledWith(1);
+    });
+  });
+
   describe("Q quote shortcut (#968)", () => {
     it("prevents default when the callback reports it consumed the key", () => {
       const onQuoteSelection = vi.fn(() => true);

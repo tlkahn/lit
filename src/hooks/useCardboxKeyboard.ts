@@ -120,7 +120,11 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
-    const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='cardbox-card']"));
+    // Cards inside a collapsing group linger in the DOM for the exit
+    // animation while itemCount already excludes them — skip them so nav
+    // indices stay aligned (#968).
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='cardbox-card']"))
+      .filter((card) => !card.closest("[data-collapsed='true']"));
     const focused = document.activeElement as HTMLElement;
     const currentIndex = cards.indexOf(focused?.closest("[data-testid='cardbox-card']") as HTMLElement);
     if (currentIndex === -1) return;

@@ -80,6 +80,7 @@ export const CardboxGroup = memo(function CardboxGroup({
       style={style}
       data-testid="cardbox-group"
       data-group-id={groupId}
+      data-collapsed={info.collapsed}
     >
       <div ref={masonryRef} data-masonry-content="">
         <div className="cardbox-group-container">

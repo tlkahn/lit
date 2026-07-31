@@ -58,6 +58,14 @@ describe("CardboxGroup", () => {
     expect(group).toHaveAttribute("data-group-id", "g1");
   });
 
+  it("stamps data-collapsed so keyboard nav can skip exit-animating cards", () => {
+    renderGroup();
+    expect(screen.getByTestId("cardbox-group")).toHaveAttribute("data-collapsed", "false");
+    renderGroup({ info: { ...baseInfo, collapsed: true } });
+    const groups = screen.getAllByTestId("cardbox-group");
+    expect(groups[groups.length - 1]).toHaveAttribute("data-collapsed", "true");
+  });
+
   it("renders the masonry content div nested inside a full-width grid item", () => {
     renderGroup();
     const group = screen.getByTestId("cardbox-group");
