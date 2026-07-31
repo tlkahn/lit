@@ -158,6 +158,46 @@ export function showCardFlipped(flipped: boolean, canFlip: boolean): boolean {
   return flipped && canFlip;
 }
 
+/** Shared chrome for vertical action-strip icon buttons (#981). */
+const STRIP_BTN_CLASS =
+  "nerd-font p-1.5 text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent";
+
+/** Keep Enter/Space from bubbling to grid keyboard handlers. */
+function stopStripKeyDown(e: React.KeyboardEvent) {
+  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+}
+
+function StripButton({
+  testId,
+  label,
+  glyph,
+  onClick,
+  title,
+  pressed,
+}: {
+  testId: string;
+  label: string;
+  glyph: string;
+  onClick: () => void;
+  title?: string;
+  pressed?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={STRIP_BTN_CLASS}
+      data-testid={testId}
+      aria-label={label}
+      title={title ?? label}
+      aria-pressed={pressed}
+      onClick={onClick}
+      onKeyDown={stopStripKeyDown}
+    >
+      {glyph}
+    </button>
+  );
+}
+
 interface CardboxCardProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
@@ -263,7 +303,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   return (
     <div
       ref={cardRef}
-      className={`relative rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
+      className={`relative flex rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
       onKeyDown={handleKeyDown}
       tabIndex={0}
       data-testid="cardbox-card"
@@ -274,61 +314,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-color-tag={colorTag || undefined}
       data-flipped={showFlipped}
     >
-      {/* p-1.5 grows the 12px glyphs to a 24px hit target; top/right-0.5
-          compensates so the glyphs stay visually at the old 8px inset. */}
-      <div className="absolute top-0.5 right-0.5 z-10 flex items-center">
-        {isPinned && (
-          <span
-            className="nerd-font p-1.5 text-sm text-interactive-accent"
-            data-testid="pin-icon"
-            aria-hidden="true"
-          >{'\u{F0403}'}</span>
-        )}
-        {canFlip && (
-          <button
-            type="button"
-            className="nerd-font p-1.5 text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
-            data-testid="card-flip"
-            aria-label={showFlipped ? "Show annotation" : "Show original quote"}
-            aria-pressed={showFlipped}
-            title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
-            onClick={flipCard}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-              }
-            }}
-          >{'\u{F2F1}'}</button>
-        )}
-        <button
-          type="button"
-          className="p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
-          data-testid="card-expand-toggle"
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse card" : "Expand card"}
-          title={expanded ? "Collapse card" : "Expand card"}
-          onClick={onToggleExpand}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.stopPropagation();
-            }
-          }}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
-            aria-hidden="true"
-          >
-            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-      </div>
-      <div className="cardbox-card-stage" ref={stageRef} data-testid="card-flip-stage">
+      <div className="cardbox-card-stage min-w-0 flex-1" ref={stageRef} data-testid="card-flip-stage">
         {!showFlipped ? (
-          <div className="pr-14" data-testid="card-face-front">
+          <div data-testid="card-face-front">
             <div className="flex items-start gap-2">
               <span
                 className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[10px] font-semibold uppercase"
@@ -392,35 +380,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                       {annotation.date}
                     </div>
                   )}
-                  <div className="flex items-center gap-3">
-                    <button
-                      className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                      onClick={onNavigate}
-                      data-testid="card-navigate"
-                    >
-                      <span className="nerd-font" aria-hidden="true">{'\u{F0219}'}</span>
-                      Open in document
-                    </button>
-                    {onShowConnections && (
-                      <button
-                        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                        onClick={onShowConnections}
-                        data-testid="card-show-connections"
-                      >
-                        <span className="nerd-font" aria-hidden="true">{'\u{F0339}'}</span>
-                        Show connections
-                      </button>
-                    )}
-                    {onSetNote && !note && !noteEditing && (
-                      <button
-                        className="flex items-center gap-1 text-xs text-text-muted hover:text-text-normal"
-                        data-testid="card-note-add"
-                        onClick={() => setNoteEditing(true)}
-                      >
-                        <span className="nerd-font" aria-hidden="true">{'\u{F0FE}'}</span> Add note
-                      </button>
-                    )}
-                  </div>
                   {linkedCards && linkedCards.length > 0 && (
                     // Defensive-only click guard; must never swallow pointerdown (#968).
                     <div
@@ -478,7 +437,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             </div>
           </div>
         ) : (
-          <div className="pr-14" data-testid="card-face-back">
+          <div data-testid="card-face-back">
             <div
               className={`cursor-text border-l-2 bg-bg-secondary px-3 py-1 text-xs text-text-muted${expanded ? "" : " line-clamp-2"}`}
               data-testid="card-original"
@@ -498,6 +457,80 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               </button>
             )}
           </div>
+        )}
+      </div>
+      {/* Vertical action strip on the right edge (#981). Negative margins pull
+          it to ~2px from the card edge, matching the old top/right-0.5 inset. */}
+      <div
+        role="toolbar"
+        aria-orientation="vertical"
+        data-testid="card-action-strip"
+        className="z-10 -mt-3.5 -mr-3.5 ml-1 flex shrink-0 flex-col items-center"
+      >
+        {isPinned && (
+          <span
+            className="nerd-font p-1.5 text-sm text-interactive-accent"
+            data-testid="pin-icon"
+            aria-hidden="true"
+          >{'\u{F0403}'}</span>
+        )}
+        {canFlip && (
+          <StripButton
+            testId="card-flip"
+            label={showFlipped ? "Show annotation" : "Show original quote"}
+            title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
+            glyph={'\u{F2F1}'}
+            onClick={flipCard}
+            pressed={showFlipped}
+          />
+        )}
+        <button
+          type="button"
+          className="p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
+          data-testid="card-expand-toggle"
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse card" : "Expand card"}
+          title={expanded ? "Collapse card" : "Expand card"}
+          onClick={onToggleExpand}
+          onKeyDown={stopStripKeyDown}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
+            aria-hidden="true"
+          >
+            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <div aria-hidden="true" data-testid="card-strip-separator" className="my-0.5 h-px w-4 bg-border" />
+        <StripButton
+          testId="card-navigate"
+          label="Open in document"
+          glyph={'\u{F0219}'}
+          onClick={onNavigate}
+        />
+        {onShowConnections && (
+          <StripButton
+            testId="card-show-connections"
+            label="Show connections"
+            glyph={'\u{F0339}'}
+            onClick={onShowConnections}
+          />
+        )}
+        {onSetNote && !note && !noteEditing && (
+          <StripButton
+            testId="card-note-add"
+            label="Add note"
+            glyph={'\u{F0FE}'}
+            onClick={() => {
+              setFlipped(false);
+              setNoteEditing(true);
+              if (!expanded) onToggleExpand();
+            }}
+          />
         )}
       </div>
     </div>

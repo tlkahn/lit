@@ -70,8 +70,8 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-body")).toBeInTheDocument();
     const front = screen.getByTestId("card-face-front");
     expect(front.querySelector('[data-testid="card-source"]')).toBeNull();
-    // Navigate link should not be visible in collapsed state (parent has opacity: 0)
-    expect(screen.getByTestId("card-navigate")).not.toBeVisible();
+    // Navigate lives in the always-visible action strip (#981).
+    expect(screen.getByTestId("card-navigate")).toBeVisible();
   });
 
   it("renders expanded state with body, date, and navigate but no original or source on front", () => {
@@ -339,8 +339,9 @@ describe("CardboxCard", () => {
         onShowConnections={() => {}}
       />,
     );
-    const navigateBtn = screen.getByTestId("card-navigate");
-    const expandedContainer = navigateBtn.closest(".overflow-hidden")!;
+    // Anchor via card-date: action buttons no longer live in expanded content (#981).
+    const date = screen.getByTestId("card-date");
+    const expandedContainer = date.closest(".overflow-hidden")!;
     expect(expandedContainer).toHaveAttribute("inert");
   });
 
@@ -354,8 +355,8 @@ describe("CardboxCard", () => {
         onShowConnections={() => {}}
       />,
     );
-    const navigateBtn = screen.getByTestId("card-navigate");
-    const expandedContainer = navigateBtn.closest(".overflow-hidden")!;
+    const date = screen.getByTestId("card-date");
+    const expandedContainer = date.closest(".overflow-hidden")!;
     expect(expandedContainer).not.toHaveAttribute("inert");
   });
 
@@ -469,12 +470,20 @@ describe("CardboxCard", () => {
         expanded={true}
         onToggleExpand={() => {}}
         onNavigate={() => {}}
+        note="a note"
+        onSetNote={() => {}}
       />,
     );
+    // Expanded-only chrome (date/linked/note) unmounts with the front face.
+    // Strip action buttons persist across flip (#981).
     const front = screen.getByTestId("card-face-front");
-    expect(front.querySelector('[data-testid="card-navigate"]')).toBeInTheDocument();
+    expect(front.querySelector('[data-testid="card-date"]')).toBeInTheDocument();
+    expect(front.querySelector('[data-testid="card-note-display"]')).toBeInTheDocument();
+    expect(screen.getByTestId("card-navigate")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("card-flip"));
-    expect(screen.queryByTestId("card-navigate")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-date")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-note-display")).not.toBeInTheDocument();
+    expect(screen.getByTestId("card-navigate")).toBeInTheDocument();
     expect(screen.getByTestId("card-face-back").querySelector('[data-testid="card-navigate"]')).toBeNull();
   });
 
@@ -699,7 +708,7 @@ describe("CardboxCard", () => {
 
   // --- Slip note tests ---
 
-  it("renders Add note trigger in the same action row as navigate", () => {
+  it("renders Add note trigger in the same action strip as navigate", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -711,9 +720,11 @@ describe("CardboxCard", () => {
     );
     const addButton = screen.getByTestId("card-note-add");
     expect(addButton).toBeInTheDocument();
-    // Add note trigger and navigate button share the same flex row parent.
+    // Add note and navigate are both children of the action strip (#981).
+    const strip = screen.getByTestId("card-action-strip");
     const navigate = screen.getByTestId("card-navigate");
-    expect(addButton.parentElement).toBe(navigate.parentElement);
+    expect(strip.contains(addButton)).toBe(true);
+    expect(strip.contains(navigate)).toBe(true);
     // The note editor body is not mounted yet (no note, not editing).
     expect(screen.queryByTestId("card-note-textarea")).not.toBeInTheDocument();
     expect(screen.queryByTestId("card-note-display")).not.toBeInTheDocument();
@@ -949,7 +960,7 @@ describe("CardboxCard", () => {
 
   // --- Content gutter tests ---
 
-  it("reserves right gutter so body does not sit under pin/flip chrome", () => {
+  it("uses in-flow flex layout instead of a pr-14 gutter (#981)", () => {
     render(
       <CardboxCard
         annotation={baseAnnotation}
@@ -959,10 +970,16 @@ describe("CardboxCard", () => {
         onNavigate={() => {}}
       />,
     );
+    const root = screen.getByTestId("cardbox-card");
+    expect(root.className).toMatch(/\bflex\b/);
+    const stage = screen.getByTestId("card-flip-stage");
+    expect(stage.className).toMatch(/flex-1/);
+    expect(stage.className).toMatch(/min-w-0/);
+    expect(screen.getByTestId("card-action-strip").className).toMatch(/shrink-0/);
     const front = screen.getByTestId("card-face-front");
-    expect(front.className).toMatch(/pr-14/);
+    expect(front.className).not.toMatch(/pr-14/);
     fireEvent.click(screen.getByTestId("card-flip"));
-    expect(screen.getByTestId("card-face-back").className).toMatch(/pr-14/);
+    expect(screen.getByTestId("card-face-back").className).not.toMatch(/pr-14/);
   });
 
   // --- Back quote clamp tests ---
@@ -1189,6 +1206,34 @@ describe("CardboxCard", () => {
     expect(onGridEnter).not.toHaveBeenCalled();
   });
 
+  it("Enter and Space on strip action buttons do not bubble to card expand handlers", () => {
+    const onGridEnter = vi.fn();
+    render(
+      <div
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            const t = e.target as HTMLElement;
+            if (t.closest('[data-testid="cardbox-card"]')) onGridEnter();
+          }
+        }}
+      >
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />
+      </div>,
+    );
+    // card-navigate is representative of the new strip action buttons (#981).
+    const navigate = screen.getByTestId("card-navigate");
+    navigate.focus();
+    fireEvent.keyDown(navigate, { key: "Enter" });
+    expect(onGridEnter).not.toHaveBeenCalled();
+    fireEvent.keyDown(navigate, { key: " " });
+    expect(onGridEnter).not.toHaveBeenCalled();
+  });
+
   // --- Focus handoff tests ---
 
   it("moves focus to the card root when F flips while focus is inside a face", async () => {
@@ -1196,6 +1241,32 @@ describe("CardboxCard", () => {
       <CardboxCard
         annotation={baseAnnotation}
         expanded={true}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        note="x"
+        onSetNote={() => {}}
+      />,
+    );
+    const root = screen.getByTestId("cardbox-card");
+    // card-navigate is in the strip (outside the stage); use an in-face control (#981).
+    const noteEdit = screen.getByTestId("card-note-edit");
+    noteEdit.focus();
+    expect(document.activeElement).toBe(noteEdit);
+
+    fireEvent.keyDown(noteEdit, { key: "f" });
+
+    expect(root).toHaveAttribute("data-flipped", "true");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(document.activeElement).toBe(root);
+    fireEvent.keyDown(root, { key: "f" });
+    expect(root).toHaveAttribute("data-flipped", "false");
+  });
+
+  it("does not steal focus to the root when F flips while focus is on a strip button", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
         onToggleExpand={() => {}}
         onNavigate={() => {}}
       />,
@@ -1209,9 +1280,8 @@ describe("CardboxCard", () => {
 
     expect(root).toHaveAttribute("data-flipped", "true");
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    expect(document.activeElement).toBe(root);
-    fireEvent.keyDown(root, { key: "f" });
-    expect(root).toHaveAttribute("data-flipped", "false");
+    // Strip is outside the stage, so focus stays on the strip button.
+    expect(document.activeElement).toBe(navigate);
   });
 
   // --- Hidden face tests ---
@@ -1270,8 +1340,8 @@ describe("CardboxCard", () => {
         onSetNote={() => {}}
       />,
     );
-    const icon = screen.getByTestId("card-note-add").querySelector(".nerd-font");
-    expect(icon?.textContent?.codePointAt(0)).toBe(0xf0fe);
+    // Icon-only strip button: glyph is the button's own text content (#981).
+    expect(screen.getByTestId("card-note-add").textContent?.codePointAt(0)).toBe(0xf0fe);
   });
 
   it("flip icon is fa-rotate (U+F2F1)", () => {
@@ -1407,15 +1477,18 @@ describe("CardboxCard", () => {
         expanded={true}
         onToggleExpand={() => {}}
         onNavigate={() => {}}
+        note="x"
+        onSetNote={() => {}}
       />,
     );
     const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
     const root = screen.getByTestId("cardbox-card");
-    const navigate = screen.getByTestId("card-navigate");
-    navigate.focus();
-    expect(document.activeElement).toBe(navigate);
+    // card-navigate is in the strip (outside the stage); use an in-face control (#981).
+    const noteEdit = screen.getByTestId("card-note-edit");
+    noteEdit.focus();
+    expect(document.activeElement).toBe(noteEdit);
 
-    fireEvent.keyDown(navigate, { key: "f" });
+    fireEvent.keyDown(noteEdit, { key: "f" });
     await act(async () => {
       deferreds[0]!.resolve();
     });
@@ -1572,14 +1645,16 @@ describe("CardboxCard", () => {
     );
     fireEvent.pointerDown(screen.getByTestId("card-flip"));
     expect(onContainerPointerDown).toHaveBeenCalledTimes(1);
-    fireEvent.pointerDown(screen.getByTestId("card-linked-section"));
+    fireEvent.pointerDown(screen.getByTestId("card-navigate"));
     expect(onContainerPointerDown).toHaveBeenCalledTimes(2);
-    fireEvent.pointerDown(screen.getByTestId("card-note-display"));
+    fireEvent.pointerDown(screen.getByTestId("card-linked-section"));
     expect(onContainerPointerDown).toHaveBeenCalledTimes(3);
+    fireEvent.pointerDown(screen.getByTestId("card-note-display"));
+    expect(onContainerPointerDown).toHaveBeenCalledTimes(4);
 
     fireEvent.click(screen.getByTestId("card-note-edit"));
     fireEvent.pointerDown(screen.getByTestId("card-note-textarea"));
-    expect(onContainerPointerDown).toHaveBeenCalledTimes(4);
+    expect(onContainerPointerDown).toHaveBeenCalledTimes(5);
   });
 
   describe("quote prefill (#968)", () => {
@@ -1770,6 +1845,223 @@ describe("CardboxCard", () => {
         />,
       );
       expect(screen.getByTestId("cardbox-card").className).not.toContain("cursor-pointer");
+    });
+  });
+
+  describe("action strip (#981)", () => {
+    it("renders card-action-strip as a vertical toolbar", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      expect(strip).toHaveAttribute("role", "toolbar");
+      expect(strip).toHaveAttribute("aria-orientation", "vertical");
+      expect(strip.className).toMatch(/flex-col/);
+    });
+
+    it("absorbs pin, flip, and expand controls; old absolute corner is gone", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          isPinned
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      expect(strip.querySelector('[data-testid="pin-icon"]')).toBeInTheDocument();
+      expect(strip.querySelector('[data-testid="card-flip"]')).toBeInTheDocument();
+      expect(strip.querySelector('[data-testid="card-expand-toggle"]')).toBeInTheDocument();
+      const root = screen.getByTestId("cardbox-card");
+      expect(root.querySelector(".absolute")).toBeNull();
+    });
+
+    it("renders the strip when collapsed and when expanded", () => {
+      const { unmount } = render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-action-strip")).toBeInTheDocument();
+      unmount();
+
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-action-strip")).toBeInTheDocument();
+    });
+
+    it("hosts navigate, connections, and add-note as icon-only strip children", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const navigate = screen.getByTestId("card-navigate");
+      const connections = screen.getByTestId("card-show-connections");
+      const addNote = screen.getByTestId("card-note-add");
+      expect(strip.contains(navigate)).toBe(true);
+      expect(strip.contains(connections)).toBe(true);
+      expect(strip.contains(addNote)).toBe(true);
+
+      expect(navigate).toHaveAttribute("aria-label", "Open in document");
+      expect(navigate).toHaveAttribute("title", "Open in document");
+      expect(connections).toHaveAttribute("aria-label", "Show connections");
+      expect(connections).toHaveAttribute("title", "Show connections");
+      expect(addNote).toHaveAttribute("aria-label", "Add note");
+      expect(addNote).toHaveAttribute("title", "Add note");
+
+      expect(navigate.textContent?.codePointAt(0)).toBe(0xf0219);
+      expect(connections.textContent?.codePointAt(0)).toBe(0xf0339);
+      expect(addNote.textContent?.codePointAt(0)).toBe(0xf0fe);
+
+      // Icon-only: no visible text labels in the buttons.
+      expect(navigate.textContent).not.toContain("Open in document");
+      expect(connections.textContent).not.toContain("Show connections");
+      expect(addNote.textContent).not.toContain("Add note");
+    });
+
+    it("makes navigate visible when the card is collapsed", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-navigate")).toBeVisible();
+    });
+
+    it("keeps action buttons out of the expanded-content container", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      const date = screen.getByTestId("card-date");
+      const expandedContainer = date.closest(".overflow-hidden")!;
+      expect(expandedContainer.querySelector('[data-testid="card-navigate"]')).toBeNull();
+      expect(expandedContainer.querySelector('[data-testid="card-show-connections"]')).toBeNull();
+      expect(expandedContainer.querySelector('[data-testid="card-note-add"]')).toBeNull();
+    });
+
+    it("renders a separator between expand and navigate", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const children = Array.from(strip.children);
+      const expandIdx = children.findIndex(
+        (el) => (el as HTMLElement).dataset.testid === "card-expand-toggle",
+      );
+      const sepIdx = children.findIndex(
+        (el) => (el as HTMLElement).dataset.testid === "card-strip-separator",
+      );
+      const navIdx = children.findIndex(
+        (el) => (el as HTMLElement).dataset.testid === "card-navigate",
+      );
+      expect(sepIdx).toBeGreaterThan(expandIdx);
+      expect(navIdx).toBeGreaterThan(sepIdx);
+    });
+
+    it("auto-expands and opens the note editor when Add note is clicked while collapsed", () => {
+      const onToggle = vi.fn();
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={onToggle}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-note-add"));
+      expect(onToggle).toHaveBeenCalledOnce();
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+    });
+
+    it("opens the note editor without toggling expand when already expanded", () => {
+      const onToggle = vi.fn();
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={onToggle}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-note-add"));
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+      expect(onToggle).not.toHaveBeenCalled();
+    });
+
+    it("unflips a flipped card when Add note is clicked", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-flip"));
+      expect(screen.getByTestId("card-face-back")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("card-note-add"));
+      expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+    });
+
+    it("keeps the full strip visible on the back face", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-flip"));
+      expect(screen.getByTestId("card-face-back")).toBeInTheDocument();
+      expect(screen.getByTestId("card-flip")).toBeVisible();
+      expect(screen.getByTestId("card-expand-toggle")).toBeVisible();
+      expect(screen.getByTestId("card-navigate")).toBeVisible();
+      expect(screen.getByTestId("card-show-connections")).toBeVisible();
+      expect(screen.getByTestId("card-note-add")).toBeVisible();
     });
   });
 
