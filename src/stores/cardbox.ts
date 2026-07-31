@@ -828,11 +828,14 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
 
     const applyMove = () => {
       set((s) => {
-        // Phase 1: Remove all moved UUIDs from every group
+        // Phase 1: Remove all moved UUIDs from every group. Emptied groups
+        // auto-dissolve — except the target, which must survive to receive
+        // the cards in Phase 2 (moving a group's full membership onto that
+        // same group must not destroy it).
         const groups: Record<string, GroupInfo> = {};
         for (const [gid, info] of Object.entries(s.groups)) {
           const filtered = info.order.filter((id) => !uuidSet.has(id));
-          if (filtered.length === 0) continue; // auto-dissolve emptied group
+          if (filtered.length === 0 && gid !== target.groupId) continue;
           groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
         }
 

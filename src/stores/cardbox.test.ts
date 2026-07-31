@@ -790,6 +790,36 @@ describe("cardbox store", () => {
       expect(s.groups.g2!.order).toEqual(["u4", "u2"]);
     });
 
+    it("preserves the target group when its full membership is moved onto itself", () => {
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g1" });
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1).toBeDefined();
+      expect(s.groups.g1!.order).toEqual(["u1", "u2"]);
+    });
+
+    it("appends outside cards when the target group's own members are part of the move", () => {
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2", "u3"], { type: "toGroup", groupId: "g1" });
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u1", "u2", "u3"]);
+    });
+
+    it("undo restores membership after moving a group's cards onto the same group", async () => {
+      useCardboxUndoStore.getState().clear();
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u2", "u1"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u2", "u1"], { type: "toGroup", groupId: "g1" });
+      await useCardboxUndoStore.getState().undo();
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u2", "u1"]);
+    });
+
     it("pushes an undo entry that restores previous state", () => {
       useCardboxStore.setState({
         groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
