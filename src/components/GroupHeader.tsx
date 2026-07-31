@@ -74,7 +74,6 @@ export const GroupHeader = memo(function GroupHeader({
     <div
       className="cardbox-group-header"
       data-testid="group-header"
-      onPointerDown={(e) => e.stopPropagation()}
       onContextMenu={onContextMenu}
     >
       <button
