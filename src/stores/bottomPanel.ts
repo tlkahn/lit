@@ -44,11 +44,13 @@ export interface BottomPanelState {
   panelHeight: number;
   panelWidth: number;
   tabMeta: TabMetaMap;
+  hasFoldAllThread: boolean;
   handleTabClick: (tab: TabId) => void;
   setUnfolded: (v: boolean) => void;
   setPanelHeight: (h: number) => void;
   setPanelWidth: (w: number) => void;
   setTabCount: (tab: TabId, count: number | null) => void;
+  setHasFoldAllThread: (v: boolean) => void;
   markOpened: (tab: TabId) => void;
   resetForPage: () => void;
 }
@@ -59,6 +61,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   panelHeight: loadPanelHeight(),
   panelWidth: loadPanelWidth(),
   tabMeta: defaultTabMeta(),
+  hasFoldAllThread: false,
 
   handleTabClick: (tab: TabId) => {
     const { unfolded, activeTab, tabMeta: prev } = get();
@@ -97,6 +100,8 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
   setTabCount: (tab: TabId, count: number | null) =>
     set((s) => ({ tabMeta: { ...s.tabMeta, [tab]: { ...s.tabMeta[tab], count } } })),
 
+  setHasFoldAllThread: (v: boolean) => set({ hasFoldAllThread: v }),
+
   markOpened: (tab: TabId) =>
     set((s) => ({ tabMeta: { ...s.tabMeta, [tab]: { ...s.tabMeta[tab], hasOpened: true } } })),
 
@@ -116,7 +121,7 @@ export const useBottomPanelStore = create<BottomPanelState>((set, get) => ({
       annotations: { count: 0, hasOpened: false },
     };
 
-    set({ unfolded: false, tabMeta });
+    set({ unfolded: false, tabMeta, hasFoldAllThread: false });
   },
 }));
 

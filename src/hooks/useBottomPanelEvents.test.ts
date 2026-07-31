@@ -29,9 +29,12 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   };
 }
 
-function setupEditorWithAnnotations(annotations: Annotation[]): EditorView {
+function setupEditorWithAnnotations(
+  annotations: Annotation[],
+  doc: string = "a".repeat(50),
+): EditorView {
   const state = EditorState.create({
-    doc: "a".repeat(50),
+    doc,
     extensions: [annotationDataField],
   });
   const view = new EditorView({
@@ -139,6 +142,52 @@ describe("useBottomPanelEvents", () => {
       });
 
       expect(useBottomPanelStore.getState().tabMeta.annotations.count).toBe(0);
+    });
+
+    it("sets hasFoldAllThread when a multiline thread starts at a line start", () => {
+      testEditorView = setupEditorWithAnnotations(
+        [
+          makeAnnotation({
+            annotation_type: "thread",
+            char_start: 0,
+            char_end: 15,
+          }),
+        ],
+        "line one\nline two\nline three",
+      );
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(true);
+    });
+
+    it("leaves hasFoldAllThread false for notes-only annotations", () => {
+      useBottomPanelStore.setState({ hasFoldAllThread: true });
+      testEditorView = setupEditorWithAnnotations([
+        makeAnnotation(),
+        makeAnnotation({ char_start: 10, char_end: 20 }),
+      ]);
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(false);
+    });
+
+    it("resets hasFoldAllThread when no editor view", () => {
+      useBottomPanelStore.setState({ hasFoldAllThread: true });
+      renderHook(() => useBottomPanelEvents());
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
+      });
+
+      expect(useBottomPanelStore.getState().hasFoldAllThread).toBe(false);
     });
   });
 
