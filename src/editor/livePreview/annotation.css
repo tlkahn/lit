@@ -229,6 +229,12 @@
   height: 16px;
 }
 
+/* Chevron inside a collapsed-thread pill — smaller to match pill scale. */
+.cm-annotation-pill .cm-annotation-fold-icon .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
 /* Fire button */
 .cm-annotation-fire-btn {
   display: inline-flex;

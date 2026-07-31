@@ -982,13 +982,11 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   function installDOMSpies(): {
     pillToDOM: number;
     threadToDOM: number;
-    threadUpdateDOM: number;
     restore: () => void;
   } {
-    const stats = { pillToDOM: 0, threadToDOM: 0, threadUpdateDOM: 0 };
+    const stats = { pillToDOM: 0, threadToDOM: 0 };
     const origPillToDOM = PillWidget.prototype.toDOM;
     const origThreadToDOM = ThreadWidget.prototype.toDOM;
-    const origThreadUpdateDOM = ThreadWidget.prototype.updateDOM;
 
     const pillSpy = vi
       .spyOn(PillWidget.prototype, "toDOM")
@@ -1002,21 +1000,13 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         stats.threadToDOM++;
         return origThreadToDOM.call(this, view);
       });
-    const threadUpdateSpy = vi
-      .spyOn(ThreadWidget.prototype, "updateDOM")
-      .mockImplementation(function (this: ThreadWidget, dom: HTMLElement, view: EditorView, from: ThreadWidget) {
-        stats.threadUpdateDOM++;
-        return origThreadUpdateDOM.call(this, dom, view, from);
-      });
 
     return {
       get pillToDOM() { return stats.pillToDOM; },
       get threadToDOM() { return stats.threadToDOM; },
-      get threadUpdateDOM() { return stats.threadUpdateDOM; },
       restore: () => {
         pillSpy.mockRestore();
         threadSpy.mockRestore();
-        threadUpdateSpy.mockRestore();
       },
     };
   }
@@ -1071,15 +1061,15 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         for (const [from, w] of before) {
           if (w instanceof PillWidget) expect(after.get(from)).toBe(w);
         }
-        // The eq-based blast radius above is viewport-independent; the drawn
-        // range only guarantees at least one thread flip goes through updateDOM.
-        expect(spies.threadUpdateDOM).toBeGreaterThanOrEqual(1);
-        const totalToDOM = spies.pillToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBe(0);
+        // Fold flips go through toDOM (no updateDOM); redraw cost is bounded
+        // by the drawn threads, and untouched pills are never redrawn.
+        expect(spies.threadToDOM).toBeGreaterThanOrEqual(1);
+        expect(spies.threadToDOM).toBeLessThanOrEqual(threads);
+        expect(spies.pillToDOM).toBe(0);
 
         console.warn(
           `[perf] H2 blast-radius fold-all: pill eqFalse=${blast.pillEqFalse}/${notes} toDOM=${spies.pillToDOM}; ` +
-            `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
+            `thread eqFalse=${blast.threadEqFalse}/${threads} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();
@@ -1107,15 +1097,15 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
 
         expect(blast.pillEqFalse).toBe(0);
         expect(blast.threadEqFalse).toBe(threads);
-        // The eq-based blast radius above is viewport-independent; the drawn
-        // range only guarantees at least one thread flip goes through updateDOM.
-        expect(spies.threadUpdateDOM).toBeGreaterThanOrEqual(1);
-        const totalToDOM = spies.pillToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBe(0);
+        // Fold flips go through toDOM (no updateDOM); redraw cost is bounded
+        // by the drawn threads, and untouched pills are never redrawn.
+        expect(spies.threadToDOM).toBeGreaterThanOrEqual(1);
+        expect(spies.threadToDOM).toBeLessThanOrEqual(threads);
+        expect(spies.pillToDOM).toBe(0);
 
         console.warn(
           `[perf] H2 blast-radius expand-all: pill eqFalse=${blast.pillEqFalse}/${notes} toDOM=${spies.pillToDOM}; ` +
-            `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
+            `thread eqFalse=${blast.threadEqFalse}/${threads} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();
@@ -1145,12 +1135,12 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
 
         const totalEqFalse = blast.pillEqFalse + blast.threadEqFalse;
         expect(totalEqFalse).toBe(1);
-        expect(spies.threadUpdateDOM).toBeLessThanOrEqual(1);
-        const totalToDOM = spies.pillToDOM + spies.threadToDOM;
-        expect(totalToDOM).toBe(0);
+        // Single fold: at most the one flipped thread is redrawn via toDOM.
+        expect(spies.threadToDOM).toBeLessThanOrEqual(1);
+        expect(spies.pillToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} updateDOM=${spies.threadUpdateDOM} toDOM=${totalToDOM}`,
+          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} toDOM=${spies.threadToDOM}`,
         );
       } finally {
         spies.restore();

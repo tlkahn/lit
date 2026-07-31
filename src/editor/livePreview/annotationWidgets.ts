@@ -506,6 +506,54 @@ export class ThreadWidget extends WidgetType {
     const turns = parseThreadBody(ann.body ?? "");
     const idx = Math.min(Math.max(this.turn, 0), Math.max(turns.length - 1, 0));
 
+    // Collapsed threads render as a pill: icon + truncated active-turn question
+    // + cardbox link + expand chevron. The full thread chrome (turn nav,
+    // overflow menu, follow-up composer, callout body) is expanded-only.
+    if (this.isCollapsed) {
+      const pill = document.createElement("span");
+      pill.className = `${CLS.PILL} ${CLS.THREAD}`;
+      const cert = certaintyClass(ann.certainty);
+      if (cert) pill.classList.add(cert);
+      pill.dataset.annotationType = "thread";
+
+      const icon = document.createElement("span");
+      icon.className = CLS.PILL_ICON;
+      icon.textContent = TYPE_ICON.thread ?? "◇";
+      pill.appendChild(icon);
+
+      const activeTurn = turns[idx];
+      const summary = truncateBody(activeTurn?.question || activeTurn?.response || null);
+      if (summary) {
+        const bodyEl = document.createElement("span");
+        bodyEl.className = CLS.PILL_BODY;
+        // Plain text - never render attacker-controlled markup in the summary.
+        bodyEl.textContent = summary;
+        pill.appendChild(bodyEl);
+      }
+
+      const cardboxLink = createCardboxLinkButton(ann);
+      if (cardboxLink) pill.appendChild(cardboxLink);
+
+      const arrow = document.createElement("span");
+      arrow.className = CLS.FOLD_ICON;
+      arrow.classList.add(CLS.IS_COLLAPSED);
+      arrow.appendChild(createFoldSvg());
+      arrow.onmousedown = (e) => {
+        e.preventDefault();
+        view.dispatch({ effects: toggleAnnotationFoldEffect.of({ pos: this.pos }) });
+      };
+      pill.appendChild(arrow);
+
+      pill.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
+      pill.onmouseleave = () => handleAnnotationLeave(view);
+      pill.onclick = (e) => {
+        if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}`)) return;
+        e.preventDefault();
+        dispatchEditEvent(ann);
+      };
+      return pill;
+    }
+
     const container = document.createElement("div");
     container.className = `${CLS.CALLOUT} ${CLS.THREAD}`;
     const cert = certaintyClass(ann.certainty);
@@ -676,7 +724,6 @@ export class ThreadWidget extends WidgetType {
     // Fold chevron.
     const arrow = document.createElement("span");
     arrow.className = CLS.FOLD_ICON;
-    if (this.isCollapsed) arrow.classList.add(CLS.IS_COLLAPSED);
     arrow.appendChild(createFoldSvg());
     arrow.onmousedown = (e) => {
       e.preventDefault();
@@ -686,9 +733,7 @@ export class ThreadWidget extends WidgetType {
 
     container.appendChild(header);
 
-    if (!this.isCollapsed) {
-      this.appendBody(container);
-    }
+    this.appendBody(container);
 
     return container;
   }
@@ -767,39 +812,12 @@ export class ThreadWidget extends WidgetType {
     );
   }
 
+  // No updateDOM: collapsed (pill) and expanded (callout) DOM shapes differ
+  // structurally, so fold flips go through destroy + toDOM. CM6 destroys
+  // non-reused tiles, which closes any open overflow menu via destroy().
   destroy(dom: HTMLElement): void {
     const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`) as OverflowEl | null;
     overflow?._litCloseMenu?.();
-  }
-
-  updateDOM(dom: HTMLElement, _view: EditorView, from: ThreadWidget): boolean {
-    if (
-      this.annotation.original !== from.annotation.original ||
-      this.annotation.char_start !== from.annotation.char_start ||
-      this.annotation.char_end !== from.annotation.char_end ||
-      this.annotation.uuid !== from.annotation.uuid ||
-      this.turn !== from.turn ||
-      this.isFiring !== from.isFiring
-    ) {
-      return false;
-    }
-    if (this.isCollapsed === from.isCollapsed) return true;
-
-    const chevron = dom.querySelector(`.${CLS.FOLD_ICON}`);
-    if (!chevron) return false;
-
-    if (this.isCollapsed) {
-      const header = dom.querySelector(`.${CLS.CALLOUT_HEADER}`);
-      if (!header) return false;
-      const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`) as OverflowEl | null;
-      overflow?._litCloseMenu?.();
-      chevron.classList.add(CLS.IS_COLLAPSED);
-      while (dom.lastChild && dom.lastChild !== header) dom.removeChild(dom.lastChild);
-    } else {
-      chevron.classList.remove(CLS.IS_COLLAPSED);
-      this.appendBody(dom);
-    }
-    return true;
   }
 
   ignoreEvent(event: Event): boolean {
@@ -812,6 +830,6 @@ export class ThreadWidget extends WidgetType {
   }
 
   get estimatedHeight(): number {
-    return this.isCollapsed ? 30 : 120;
+    return this.isCollapsed ? 20 : 120;
   }
 }
