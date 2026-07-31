@@ -19,6 +19,9 @@ import {
   shouldRebuildBlocksOnTreeChange,
   buildAnnotationRangeMap,
   findAnnotationForRange,
+  buildAnnotationFingerprint,
+  buildIndexedGroups,
+  enrichWithGroups,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -134,6 +137,108 @@ describe("displayModeField", () => {
     const tr1 = state.update({ effects: setDisplayMode.of("footnote") });
     const tr2 = tr1.state.update({ changes: { from: 5, insert: " world" } });
     expect(tr2.state.field(displayModeField)).toBe("footnote");
+  });
+});
+
+describe("annotation enrich helpers (#978)", () => {
+  it("buildAnnotationFingerprint joins type:body per ann with newline", () => {
+    const anns = [
+      makeAnnotation({ annotation_type: "note", body: "hello" }),
+      makeAnnotation({ annotation_type: "question", body: null }),
+      makeAnnotation({ annotation_type: "todo", body: "x" }),
+    ];
+    expect(buildAnnotationFingerprint(anns)).toBe("note:hello\nquestion:\ntodo:x");
+  });
+
+  it("buildAnnotationFingerprint is position-independent and follows input order", () => {
+    const a = makeAnnotation({ annotation_type: "note", body: "A", char_start: 10 });
+    const b = makeAnnotation({ annotation_type: "note", body: "B", char_start: 99 });
+    expect(buildAnnotationFingerprint([a, b])).toBe("note:A\nnote:B");
+    expect(buildAnnotationFingerprint([b, a])).toBe("note:B\nnote:A");
+    // Same bodies at different positions yield the same fingerprint
+    const aShifted = makeAnnotation({ annotation_type: "note", body: "A", char_start: 50 });
+    const bShifted = makeAnnotation({ annotation_type: "note", body: "B", char_start: 200 });
+    expect(buildAnnotationFingerprint([aShifted, bShifted])).toBe(
+      buildAnnotationFingerprint([a, b]),
+    );
+  });
+
+  it("buildIndexedGroups keys by type:body and collects uuid+char_start", () => {
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "hello", uuid: "u1", char_start: 5 },
+      { annotation_type: "note", body: "hello", uuid: "u2", char_start: 50 },
+      { annotation_type: "todo", body: null, uuid: "u3", char_start: 0 },
+    ]);
+    expect(groups.get("note:hello")).toEqual([
+      { uuid: "u1", char_start: 5 },
+      { uuid: "u2", char_start: 50 },
+    ]);
+    expect(groups.get("todo:")).toEqual([{ uuid: "u3", char_start: 0 }]);
+    expect(groups.has("missing")).toBe(false);
+  });
+
+  it("enrichWithGroups assigns uuid on exact type+body hit", () => {
+    const live = [makeAnnotation({ annotation_type: "note", body: "hello", char_start: 5 })];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "hello", uuid: "enriched-1", char_start: 5 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBe("enriched-1");
+  });
+
+  it("enrichWithGroups uses proximity tiebreak when two indexed share type+body", () => {
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 50 }),
+    ];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "dup", uuid: "near-10", char_start: 12 },
+      { annotation_type: "note", body: "dup", uuid: "near-50", char_start: 48 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBe("near-10");
+    expect(live[1]!.uuid).toBe("near-50");
+  });
+
+  it("enrichWithGroups leaves uuid unset when body diverges (pass-1 negative pin)", () => {
+    const live = [makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 })];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "A", uuid: "uuid-1", char_start: 10 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("enrichWithGroups does not overwrite a pre-set authored uuid", () => {
+    const live = [
+      makeAnnotation({
+        annotation_type: "note",
+        body: "hello",
+        char_start: 5,
+        uuid: "authored-uuid",
+      }),
+    ];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "hello", uuid: "indexed-uuid", char_start: 5 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBe("authored-uuid");
+  });
+
+  it("enrichWithGroups consumes candidates so one uuid is not handed to two live anns", () => {
+    // Two live anns at the same position share type+body; only one indexed candidate.
+    // Without consumption both would get the same uuid via proximity (equal distance).
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10 }),
+    ];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "dup", uuid: "only-one", char_start: 10 },
+    ]);
+    enrichWithGroups(live, groups);
+    const uuids = live.map((a) => a.uuid);
+    expect(uuids.filter((u) => u === "only-one")).toHaveLength(1);
+    expect(uuids.filter((u) => u == null || u === "")).toHaveLength(1);
   });
 });
 
@@ -632,8 +737,11 @@ describe("annotationPlugin", () => {
   });
 
   it("invalidates cache on page change (nodeId differs)", async () => {
-    const ann = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 });
-    vi.mocked(parseAnnotations).mockResolvedValue([ann]);
+    // Fresh objects per call: enrich mutates ann.uuid in place, and a reused
+    // object would look "authored" on the second fireIPC (#978 short-circuit).
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 }),
+    ]);
     useWorkspaceStore.setState({ currentPagePath: "notes/page1.md" });
     mockListAnnotations.mockResolvedValue([
       { annotation_id: 1, node_id: "notes/page1.md", node_title: "page1", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-page1" },

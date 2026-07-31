@@ -41,16 +41,16 @@ export const annotationDataField = StateField.define<Annotation[]>({
 });
 
 /** Build a fingerprint from annotation types+bodies (position-independent). */
-function buildAnnotationFingerprint(annotations: Annotation[]): string {
+export function buildAnnotationFingerprint(annotations: Annotation[]): string {
   return annotations
     .map((a) => `${a.annotation_type}:${a.body ?? ""}`)
     .join("\n");
 }
 
-type IndexedGroup = Array<{ uuid: string; char_start: number }>;
+export type IndexedGroup = Array<{ uuid: string; char_start: number }>;
 
 /** Group indexed annotations by (type, body) for fuzzy matching. */
-function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: string | null; uuid: string; char_start: number }>): Map<string, IndexedGroup> {
+export function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: string | null; uuid: string; char_start: number }>): Map<string, IndexedGroup> {
   const groups = new Map<string, IndexedGroup>();
   for (const ia of indexed) {
     const key = `${ia.annotation_type}:${ia.body ?? ""}`;
@@ -61,19 +61,37 @@ function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: stri
   return groups;
 }
 
-/** Enrich annotations with UUIDs using fuzzy (type+body) matching + proximity tiebreaker. */
-function enrichWithGroups(annotations: Annotation[], groups: Map<string, IndexedGroup>): void {
+/**
+ * Enrich annotations with UUIDs using fuzzy (type+body) matching + proximity
+ * tiebreaker. Authored (already-set) uuids are left alone. Chosen candidates
+ * are consumed so two live anns cannot share one indexed uuid. The input
+ * `groups` map is not mutated (cloned per call) so the plugin cache stays intact.
+ */
+export function enrichWithGroups(annotations: Annotation[], groups: Map<string, IndexedGroup>): void {
+  // Clone group arrays so consumption does not empty the caller's cache.
+  const working = new Map<string, IndexedGroup>();
+  for (const [key, arr] of groups) working.set(key, arr.slice());
+
   for (const ann of annotations) {
     const key = `${ann.annotation_type}:${ann.body ?? ""}`;
-    const candidates = groups.get(key);
+    const candidates = working.get(key);
+    if (ann.uuid != null && ann.uuid !== "") {
+      // Authored uuid wins; still consume matching candidate so it cannot be re-handed.
+      if (candidates) {
+        const idx = candidates.findIndex((c) => c.uuid === ann.uuid);
+        if (idx >= 0) candidates.splice(idx, 1);
+      }
+      continue;
+    }
     if (!candidates || candidates.length === 0) continue;
-    let best = candidates[0]!;
-    let bestDist = Math.abs(best.char_start - ann.char_start);
+    let bestIdx = 0;
+    let bestDist = Math.abs(candidates[0]!.char_start - ann.char_start);
     for (let i = 1; i < candidates.length; i++) {
       const d = Math.abs(candidates[i]!.char_start - ann.char_start);
-      if (d < bestDist) { best = candidates[i]!; bestDist = d; }
+      if (d < bestDist) { bestIdx = i; bestDist = d; }
     }
-    ann.uuid = best.uuid;
+    const [best] = candidates.splice(bestIdx, 1);
+    ann.uuid = best!.uuid;
   }
 }
 
