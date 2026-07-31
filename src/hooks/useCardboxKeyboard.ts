@@ -8,9 +8,14 @@ interface UseCardboxKeyboardOptions {
   onTogglePin?: (index: number) => void;
   onToggleNote?: () => void;
   onToggleScope?: () => void;
+  // Returns true when it consumed the key (a quotable selection existed).
+  onQuoteSelection?: () => boolean;
   onShowConnections?: () => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
+  // Returns true when it consumed ⌘A by expanding a text selection to the
+  // card's selectable text; false falls through to onSelectAll.
+  onExpandTextSelection?: () => boolean;
   onSelectAll?: () => void;
   onClearSelection?: () => void;
   onUndo?: () => void;
@@ -20,7 +25,7 @@ interface UseCardboxKeyboardOptions {
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onQuoteSelection, onShowConnections, onExitConnections, onShowShortcuts, onExpandTextSelection, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -57,10 +62,12 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
-    // Cmd/Ctrl+A: select all
+    // Cmd/Ctrl+A: expand an in-card text selection to the card's text, or
+    // fall back to select-all-cards (#968).
     if ((e.metaKey || e.ctrlKey) && e.key === "a") {
       e.preventDefault();
       e.stopPropagation();
+      if (onExpandTextSelection?.()) return;
       onSelectAll?.();
       return;
     }
@@ -69,6 +76,17 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       e.preventDefault();
       e.stopPropagation();
       onToggleScope?.();
+      return;
+    }
+
+    // Q: quote the current text selection into the card's slip note (#968).
+    // Global layer, not grid layer: after a drag-selection focus usually sits
+    // on the body, never inside the grid.
+    if ((e.key === "q" || e.key === "Q") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (onQuoteSelection?.()) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       return;
     }
 
@@ -82,7 +100,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         return;
       }
     }
-  }, [onUndo, onRedo, onSelectAll, onClearSelection, onToggleScope, connectionsActive]);
+  }, [onUndo, onRedo, onExpandTextSelection, onSelectAll, onClearSelection, onToggleScope, onQuoteSelection, connectionsActive]);
 
   useEffect(() => {
     window.addEventListener("keydown", globalHandler, true);
@@ -107,7 +125,11 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
-    const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='cardbox-card']"));
+    // Cards inside a collapsing group linger in the DOM for the exit
+    // animation while itemCount already excludes them — skip them so nav
+    // indices stay aligned (#968).
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-testid='cardbox-card']"))
+      .filter((card) => !card.closest("[data-collapsed='true']"));
     const focused = document.activeElement as HTMLElement;
     const currentIndex = cards.indexOf(focused?.closest("[data-testid='cardbox-card']") as HTMLElement);
     if (currentIndex === -1) return;

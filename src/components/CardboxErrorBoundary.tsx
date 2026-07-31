@@ -26,7 +26,6 @@ export class CardboxErrorBoundary extends Component<Props, State> {
       searchQuery: "",
       activeTypes: null,
       activeColors: null,
-      order: [],
       links: [],
       pinned: [],
       colors: {},

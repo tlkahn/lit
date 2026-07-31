@@ -3,25 +3,11 @@ import { useCardboxStore } from "./cardbox";
 import { useCardboxUndoStore } from "./cardboxUndo";
 import { mockInvoke } from "../test/tauri-mock";
 
+const initialCardboxState = useCardboxStore.getState();
+
 describe("cardbox undo integration", () => {
   beforeEach(() => {
-    useCardboxStore.setState({
-      annotations: [],
-      expandedUuid: null,
-      loading: false,
-      searchQuery: "",
-      activeTypes: null,
-      activeColors: null,
-      order: [],
-      links: [],
-      groups: {},
-      pinned: [],
-      notes: {},
-      noteSyncs: {},
-      colors: {},
-      connectionsForUuid: null,
-      connectionsSavedFilters: null,
-    });
+    useCardboxStore.setState(initialCardboxState, true);
     useCardboxUndoStore.setState({
       undoStack: [],
       redoStack: [],
@@ -138,20 +124,17 @@ describe("cardbox undo integration", () => {
 
   describe("createGroup / dissolveGroup", () => {
     it("createGroup then undo dissolves the group", async () => {
-      useCardboxStore.setState({ order: ["u1", "u2", "u3"], groups: {} });
+      useCardboxStore.setState({ groups: {} });
       await useCardboxStore.getState().createGroup("g1", "My Group", ["u1", "u3"]);
       expect(useCardboxStore.getState().groups.g1).toBeDefined();
       expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u3"]);
 
       await useCardboxUndoStore.getState().undo();
       expect(useCardboxStore.getState().groups.g1).toBeUndefined();
-      expect(useCardboxStore.getState().order).toContain("u1");
-      expect(useCardboxStore.getState().order).toContain("u3");
     });
 
     it("dissolveGroup then undo re-creates the group with same members", async () => {
       useCardboxStore.setState({
-        order: ["u3", "group:g1", "u4"],
         groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
       });
       await useCardboxStore.getState().dissolveGroup("g1");
@@ -167,7 +150,6 @@ describe("cardbox undo integration", () => {
   describe("renameGroup", () => {
     it("renameGroup then undo restores original name", async () => {
       useCardboxStore.setState({
-        order: ["group:g1"],
         groups: { g1: { name: "Old", order: ["u1"], collapsed: false } },
       });
       await useCardboxStore.getState().renameGroup("g1", "New Name");
@@ -288,51 +270,25 @@ describe("cardbox undo integration", () => {
   });
 
   describe("batchMoveCards", () => {
-    it("batchMoveCards then undo restores original order and groups", async () => {
+    it("batchMoveCards into group then undo restores the groups, redo re-applies", async () => {
       useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
-      });
-      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 1 });
-      expect(useCardboxStore.getState().order).toEqual(["u2", "u1", "u3"]);
-
-      await useCardboxUndoStore.getState().undo();
-      expect(useCardboxStore.getState().order).toEqual(["u1", "u2", "u3"]);
-      expect(useCardboxStore.getState().groups).toEqual({});
-    });
-
-    it("batchMoveCards undo then redo re-applies the move", async () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
-      });
-      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 1 });
-      const afterMove = [...useCardboxStore.getState().order];
-
-      await useCardboxUndoStore.getState().undo();
-      expect(useCardboxStore.getState().order).toEqual(["u1", "u2", "u3"]);
-
-      await useCardboxUndoStore.getState().redo();
-      expect(useCardboxStore.getState().order).toEqual(afterMove);
-    });
-
-    it("batchMoveCards into group then undo restores cards to top level", async () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "group:g1"],
         groups: { g1: { name: "G", order: ["u3"], collapsed: false } },
       });
       useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g1" });
       expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u3", "u1", "u2"]);
-      expect(useCardboxStore.getState().order).toEqual(["group:g1"]);
 
       await useCardboxUndoStore.getState().undo();
-      expect(useCardboxStore.getState().order).toEqual(["u1", "u2", "group:g1"]);
       expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u3"]);
+
+      await useCardboxUndoStore.getState().redo();
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u3", "u1", "u2"]);
     });
 
     it("batchMoveCards undo does not push a new undo entry (replayDepth guard)", async () => {
-      useCardboxStore.setState({ order: ["u1", "u2"], groups: {} });
-      useCardboxStore.getState().batchMoveCards(["u1"], { type: "topLevel", insertAtIndex: 1 });
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u3"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
       expect(useCardboxUndoStore.getState().undoStack).toHaveLength(1);
 
       await useCardboxUndoStore.getState().undo();

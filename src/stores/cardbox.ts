@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { arrayMove } from "@dnd-kit/sortable";
 import type { CardboxAnnotation, GroupInfo, CardNote } from "../lib/ipc";
 import { perfMark, perfMeasure } from "../lib/perf";
 import { useCardboxUndoStore } from "./cardboxUndo";
@@ -47,9 +46,21 @@ function pushUndo(entry: UndoEntry & { coalesceKey?: string }) {
   store.pushUndo(withKey);
 }
 
-export type BatchMoveTarget =
-  | { type: "topLevel"; insertAtIndex: number }
-  | { type: "toGroup"; groupId: string; index?: number };
+export type BatchMoveTarget = { type: "toGroup"; groupId: string; index?: number };
+
+// Single-flight write queue for saveLayout: write_cardbox_layout is a
+// wholesale merge on the Rust side, and sync Tauri commands run on a thread
+// pool that can acquire the CardboxLock out of invocation order — two
+// overlapping writes could land last-call-first and persist stale state.
+// Serializing on the client pins completion order to call order. Each queued
+// task snapshots the store when its write STARTS (not when saveLayout was
+// called), so the last write always carries the newest state.
+//
+// Residual window (#976): this only orders THIS webview's wholesale writes.
+// Granular RMW commands (move_card_to_group etc.) and other windows still
+// interleave with wholesale writes on the backend; the full fix is a
+// server-side batch_move_cards_to_group transaction — see the issue.
+let saveChain: Promise<void> = Promise.resolve();
 
 export interface CardboxStore {
   annotations: CardboxAnnotation[];
@@ -59,7 +70,6 @@ export interface CardboxStore {
   activeTypes: Set<string> | null;
   activeColors: Set<string> | null;
   scope: "document" | "workspace";
-  order: string[];
   links: [string, string][];
   groups: Record<string, GroupInfo>;
   pinned: string[];
@@ -74,12 +84,16 @@ export interface CardboxStore {
   connectionsSavedFilters: { searchQuery: string; activeTypes: Set<string> | null } | null;
   pendingFocusUuid: string | null;
   pendingHighlightNote: boolean;
+  // Quote staged by the Q shortcut, consumed by the target card's note
+  // editor (#968).
+  pendingNotePrefill: { uuid: string; text: string } | null;
   // True once loadLayout has settled (success or failure). Gates pending-focus
-  // consumption: the NOTE highlight needs the layout's notes in the store, and
-  // the saved order must be applied before scroll positions are computed. Stays
-  // true for the session; notes persist in the store across cardbox visits.
+  // consumption: the NOTE highlight needs the layout's notes in the store.
+  // Stays true for the session; notes persist in the store across cardbox
+  // visits.
   layoutLoaded: boolean;
   setPendingFocusUuid: (uuid: string | null, highlightNote?: boolean) => void;
+  setPendingNotePrefill: (prefill: { uuid: string; text: string } | null) => void;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   expand: (uuid: string) => void;
@@ -89,18 +103,16 @@ export interface CardboxStore {
   resetFilters: () => void;
   enterConnections: (uuid: string) => void;
   exitConnections: () => void;
-  setOrder: (order: string[]) => void;
   loadLayout: () => Promise<void>;
   saveLayout: () => Promise<void>;
   addLink: (a: string, b: string) => Promise<void>;
   removeLink: (a: string, b: string) => Promise<void>;
-  createGroup: (groupId: string, name: string, cardUuids: string[], afterEntry?: string) => Promise<void>;
+  createGroup: (groupId: string, name: string, cardUuids: string[]) => Promise<void>;
   renameGroup: (groupId: string, name: string) => Promise<void>;
   dissolveGroup: (groupId: string) => Promise<void>;
   moveCardToGroup: (cardUuid: string, targetGroupId: string, index?: number) => Promise<void>;
-  removeCardFromGroup: (cardUuid: string, groupId: string, topLevelIndex?: number) => Promise<void>;
+  removeCardFromGroup: (cardUuid: string, groupId: string) => Promise<void>;
   toggleGroupCollapse: (groupId: string) => Promise<void>;
-  reorderWithinGroup: (groupId: string, activeUuid: string, overUuid: string) => void;
   moveCardBetweenGroups: (cardUuid: string, sourceGroupId: string, targetGroupId: string, index?: number) => Promise<void>;
   pinCard: (uuid: string) => Promise<void>;
   unpinCard: (uuid: string) => Promise<void>;
@@ -118,7 +130,7 @@ export interface CardboxStore {
   batchPin: (uuids: string[]) => Promise<void>;
   batchUnpin: (uuids: string[]) => Promise<void>;
   batchLink: (uuids: string[]) => Promise<void>;
-  batchMoveCards: (uuids: string[], target: BatchMoveTarget) => void;
+  batchMoveCards: (uuids: string[], target: BatchMoveTarget) => Promise<void>;
   batchCreateGroup: (cardUuids: string[], name: string) => Promise<void>;
 }
 
@@ -130,7 +142,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   activeTypes: null,
   activeColors: null,
   scope: "document",
-  order: [],
   links: [],
   groups: {},
   pinned: [],
@@ -142,9 +153,11 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   connectionsSavedFilters: null,
   pendingFocusUuid: null,
   pendingHighlightNote: false,
+  pendingNotePrefill: null,
   layoutLoaded: false,
   setPendingFocusUuid: (uuid, highlightNote = false) =>
     set({ pendingFocusUuid: uuid, pendingHighlightNote: uuid ? highlightNote : false }),
+  setPendingNotePrefill: (prefill) => set({ pendingNotePrefill: prefill }),
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });
@@ -166,8 +179,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
             prunedGroups[gid] = { ...info, order: kept };
           }
         }
-        // Collect all known group IDs so we can preserve them in order
-        const groupIdSet = new Set(Object.keys(prunedGroups));
         const prunedPinned = s.pinned.filter((id) => newUuids.has(id));
         const prunedNotes: Record<string, CardNote> = {};
         for (const [id, note] of Object.entries(s.notes)) {
@@ -194,20 +205,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           pinned: prunedPinned,
           notes: prunedNotes,
           colors: prunedColors,
-          order: (() => {
-            if (s.order.length === 0) return annotations.map((a) => a.uuid);
-            // Keep entries that are either annotation UUIDs or group: refs
-            const kept = s.order.filter(
-              (id) =>
-                newUuids.has(id) ||
-                (id.startsWith("group:") && groupIdSet.has(id.slice(6))),
-            );
-            const keptSet = new Set(kept);
-            const added = annotations
-              .filter((a) => !keptSet.has(a.uuid))
-              .map((a) => a.uuid);
-            return [...kept, ...added];
-          })(),
         };
       });
     } catch {
@@ -259,7 +256,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       connectionsForUuid: null,
       connectionsSavedFilters: null,
     })),
-  setOrder: (order) => set({ order }),
   loadLayout: async () => {
     // Migrate legacy layout.notes into sn annotations before reading, so the
     // layout's notes map reflects source-backed bodies. Failures never block
@@ -298,8 +294,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           if (current) notes[uuid] = current;
           else delete notes[uuid];
         }
+        // layout.order is deliberately ignored: document position is the only
+        // ordering since #968. saveLayout writes order: [] which migrates the
+        // persisted layout on first save.
         return {
-          ...(layout.order.length > 0 ? { order: layout.order } : {}),
           links: layout.links ?? [],
           groups,
           pinned: layout.pinned ?? [],
@@ -315,23 +313,27 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     // waiting for a layout that will never arrive.
     set({ layoutLoaded: true });
   },
-  saveLayout: async () => {
-    const { order, links, groups, pinned, layoutVersion, colors } = get();
-    try {
-      await writeCardboxLayout({
-        version: Math.max(layoutVersion, 3),
-        order,
-        links,
-        groups,
-        pinned,
-        // Notes are derived from sn annotations on the backend and client
-        // notes never merge into cardbox.json; send an empty map.
-        notes: {},
-        colors,
-      });
-    } catch {
-      // Ignore write failures silently
-    }
+  saveLayout: () => {
+    const task = saveChain.then(async () => {
+      const { links, groups, pinned, layoutVersion, colors } = get();
+      try {
+        await writeCardboxLayout({
+          version: Math.max(layoutVersion, 3),
+          order: [],
+          links,
+          groups,
+          pinned,
+          // Notes are derived from sn annotations on the backend and client
+          // notes never merge into cardbox.json; send an empty map.
+          notes: {},
+          colors,
+        });
+      } catch {
+        // Ignore write failures silently — and never wedge the chain.
+      }
+    });
+    saveChain = task;
+    return task;
   },
   addLink: async (a, b) => {
     if (a === b) return;
@@ -360,29 +362,15 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }));
     await removeCardboxLink(a, b);
   },
-  createGroup: async (groupId, name, cardUuids, afterEntry) => {
+  createGroup: async (groupId, name, cardUuids) => {
     pushUndo({
       description: "Create group",
       undo: async () => { await get().dissolveGroup(groupId); },
-      redo: async () => { await get().createGroup(groupId, name, cardUuids, afterEntry); },
+      redo: async () => { await get().createGroup(groupId, name, cardUuids); },
     });
     set((s) => {
       const cardSet = new Set(cardUuids);
-      // Find afterEntry position BEFORE removal
-      const groupEntry = `group:${groupId}`;
-      let insertIdx: number | null = null;
-      if (afterEntry) {
-        const pos = s.order.indexOf(afterEntry);
-        if (pos >= 0) {
-          const precedingRemovals = cardUuids.filter((uuid) => {
-            const idx = s.order.indexOf(uuid);
-            return idx >= 0 && idx <= pos;
-          }).length;
-          insertIdx = pos + 1 - precedingRemovals;
-        }
-      }
-      // Remove cards from top-level order and all group orders
-      const order = s.order.filter((id) => !cardSet.has(id));
+      // Remove cards from all other group orders
       const groups: Record<string, GroupInfo> = {};
       for (const [gid, info] of Object.entries(s.groups)) {
         const filtered = info.order.filter((id) => !cardSet.has(id));
@@ -390,16 +378,9 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       }
       // Create new group
       groups[groupId] = { name, order: cardUuids, collapsed: false };
-      // Insert group entry into order
-      if (insertIdx !== null) {
-        const clamped = Math.min(insertIdx, order.length);
-        order.splice(clamped, 0, groupEntry);
-      } else {
-        order.push(groupEntry);
-      }
-      return { order, groups };
+      return { groups };
     });
-    await createCardboxGroup(groupId, name, cardUuids, afterEntry);
+    await createCardboxGroup(groupId, name, cardUuids);
   },
   renameGroup: async (groupId, name) => {
     const group = get().groups[groupId];
@@ -423,14 +404,10 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     const capturedName = group.name;
     const capturedOrder = [...group.order];
     const capturedCollapsed = group.collapsed;
-    const groupEntry = `group:${groupId}`;
-    const orderArr = get().order;
-    const groupIdx = orderArr.indexOf(groupEntry);
-    const afterEntry = groupIdx > 0 ? orderArr[groupIdx - 1] : undefined;
     pushUndo({
       description: "Dissolve group",
       undo: async () => {
-        await get().createGroup(groupId, capturedName, capturedOrder, afterEntry);
+        await get().createGroup(groupId, capturedName, capturedOrder);
         if (capturedCollapsed) {
           await get().toggleGroupCollapse(groupId);
         }
@@ -438,21 +415,11 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       redo: async () => { await get().dissolveGroup(groupId); },
     });
     set((s) => {
-      const group = s.groups[groupId];
-      if (!group) return s;
-      const members = group.order;
-      const groupEntry = `group:${groupId}`;
-      const idx = s.order.indexOf(groupEntry);
+      if (!s.groups[groupId]) return s;
       const remaining = Object.fromEntries(
         Object.entries(s.groups).filter(([gid]) => gid !== groupId),
       );
-      let order: string[];
-      if (idx >= 0) {
-        order = [...s.order.slice(0, idx), ...members, ...s.order.slice(idx + 1)];
-      } else {
-        order = [...s.order, ...members];
-      }
-      return { order, groups: remaining };
+      return { groups: remaining };
     });
     await dissolveCardboxGroup(groupId);
   },
@@ -469,22 +436,20 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
         break;
       }
     }
-    const topLevelIdx = sourceGroupId === null ? get().order.indexOf(cardUuid) : -1;
     pushUndo({
       description: "Move card to group",
       undo: async () => {
         if (sourceGroupId) {
           await get().moveCardBetweenGroups(cardUuid, targetGroupId, sourceGroupId, sourceIndex);
         } else {
-          await get().removeCardFromGroup(cardUuid, targetGroupId, topLevelIdx >= 0 ? topLevelIdx : undefined);
+          await get().removeCardFromGroup(cardUuid, targetGroupId);
         }
       },
       redo: async () => { await get().moveCardToGroup(cardUuid, targetGroupId, index); },
     });
     set((s) => {
       if (!s.groups[targetGroupId]) return s;
-      // Remove card from top-level order and all group orders
-      const order = s.order.filter((id) => id !== cardUuid);
+      // Remove card from all group orders
       const groups: Record<string, GroupInfo> = {};
       for (const [gid, info] of Object.entries(s.groups)) {
         const filtered = info.order.filter((id) => id !== cardUuid);
@@ -496,41 +461,35 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       const insertIdx = index != null ? Math.min(index, targetOrder.length) : targetOrder.length;
       targetOrder.splice(insertIdx, 0, cardUuid);
       groups[targetGroupId] = { name: target.name, collapsed: target.collapsed, order: targetOrder };
-      return { order, groups };
+      return { groups };
     });
     await moveCardToGroupIpc(cardUuid, targetGroupId, index);
   },
-  removeCardFromGroup: async (cardUuid, groupId, topLevelIndex) => {
+  removeCardFromGroup: async (cardUuid, groupId) => {
     const group = get().groups[groupId];
     if (!group) return;
     const prevIndex = group.order.indexOf(cardUuid);
     pushUndo({
       description: "Remove card from group",
       undo: async () => { await get().moveCardToGroup(cardUuid, groupId, prevIndex >= 0 ? prevIndex : undefined); },
-      redo: async () => { await get().removeCardFromGroup(cardUuid, groupId, topLevelIndex); },
+      redo: async () => { await get().removeCardFromGroup(cardUuid, groupId); },
     });
     set((s) => {
       const group = s.groups[groupId];
       if (!group) return s;
       const newGroupOrder = group.order.filter((id) => id !== cardUuid);
-      // Insert card into top-level order
-      const order = [...s.order];
-      const insertIdx = topLevelIndex != null ? Math.min(topLevelIndex, order.length) : order.length;
-      order.splice(insertIdx, 0, cardUuid);
       // Auto-dissolve if group becomes empty
       if (newGroupOrder.length === 0) {
         const remaining = Object.fromEntries(
           Object.entries(s.groups).filter(([gid]) => gid !== groupId),
         );
-        const prunedOrder = order.filter((id) => id !== `group:${groupId}`);
-        return { order: prunedOrder, groups: remaining };
+        return { groups: remaining };
       }
       return {
-        order,
         groups: { ...s.groups, [groupId]: { ...group, order: newGroupOrder } },
       };
     });
-    await removeCardFromGroupIpc(cardUuid, groupId, topLevelIndex);
+    await removeCardFromGroupIpc(cardUuid, groupId);
   },
   toggleGroupCollapse: async (groupId) => {
     let newCollapsed = false;
@@ -544,19 +503,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     });
     await toggleGroupCollapsed(groupId, newCollapsed);
   },
-  reorderWithinGroup: (groupId, activeUuid, overUuid) => {
-    set((s) => {
-      const group = s.groups[groupId];
-      if (!group) return s;
-      const oldIdx = group.order.indexOf(activeUuid);
-      const newIdx = group.order.indexOf(overUuid);
-      if (oldIdx === -1 || newIdx === -1) return s;
-      const newOrder = arrayMove(group.order, oldIdx, newIdx);
-      return {
-        groups: { ...s.groups, [groupId]: { ...group, order: newOrder } },
-      };
-    });
-  },
   moveCardBetweenGroups: async (cardUuid, sourceGroupId, targetGroupId, index) => {
     set((s) => {
       const srcGroup = s.groups[sourceGroupId];
@@ -564,7 +510,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       if (!srcGroup || !dstGroup) return s;
 
       const groups: Record<string, GroupInfo> = { ...s.groups };
-      let order = [...s.order];
 
       // Remove card from source group
       const newSrcOrder = srcGroup.order.filter((id) => id !== cardUuid);
@@ -572,7 +517,6 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       // Auto-dissolve source group if it becomes empty
       if (newSrcOrder.length === 0) {
         delete groups[sourceGroupId];
-        order = order.filter((id) => id !== `group:${sourceGroupId}`);
       } else {
         groups[sourceGroupId] = { ...srcGroup, order: newSrcOrder };
       }
@@ -584,10 +528,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
       targetOrder.splice(insertIdx, 0, cardUuid);
       groups[targetGroupId] = { ...target, order: targetOrder };
 
-      // Also remove card from top-level order in case it was there
-      order = order.filter((id) => id !== cardUuid);
-
-      return { order, groups };
+      return { groups };
     });
     // IPC: remove from source, then add to target
     await removeCardFromGroupIpc(cardUuid, sourceGroupId);
@@ -896,76 +837,27 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     }
   },
 
-  batchMoveCards: (uuids, target) => {
+  batchMoveCards: async (uuids, target) => {
     const uuidSet = new Set(uuids);
-    const prevOrder = [...get().order];
     const prevGroups: Record<string, GroupInfo> = {};
     for (const [gid, info] of Object.entries(get().groups)) {
       prevGroups[gid] = { ...info, order: [...info.order] };
     }
 
-    pushUndo({
-      description: `Move ${uuids.length} cards`,
-      undo: async () => {
-        set({ order: prevOrder, groups: prevGroups });
-      },
-      redo: async () => {
-        set((s) => {
-          let order = s.order.filter((id) => !uuidSet.has(id));
-          const groups: Record<string, GroupInfo> = {};
-          const dissolvedGroupIds: string[] = [];
-          for (const [gid, info] of Object.entries(s.groups)) {
-            const filtered = info.order.filter((id) => !uuidSet.has(id));
-            if (filtered.length === 0) dissolvedGroupIds.push(gid);
-            else groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
-          }
-          if (dissolvedGroupIds.length > 0) {
-            const dissolvedSet = new Set(dissolvedGroupIds.map((gid) => `group:${gid}`));
-            order = order.filter((id) => !dissolvedSet.has(id));
-          }
-          if (target.type === "topLevel") {
-            const idx = Math.min(target.insertAtIndex, order.length);
-            order.splice(idx, 0, ...uuids);
-          } else {
-            const group = groups[target.groupId];
-            if (group) {
-              const targetOrder = [...group.order];
-              const insertIdx = target.index != null ? Math.min(target.index, targetOrder.length) : targetOrder.length;
-              targetOrder.splice(insertIdx, 0, ...uuids);
-              groups[target.groupId] = { ...group, order: targetOrder };
-            }
-          }
-          return { order, groups };
-        });
-      },
-    });
-
-    set((s) => {
-      // Phase 1: Remove all dragged UUIDs from order and all groups
-      let order = s.order.filter((id) => !uuidSet.has(id));
-      const groups: Record<string, GroupInfo> = {};
-      const dissolvedGroupIds: string[] = [];
-
-      for (const [gid, info] of Object.entries(s.groups)) {
-        const filtered = info.order.filter((id) => !uuidSet.has(id));
-        if (filtered.length === 0) {
-          dissolvedGroupIds.push(gid);
-        } else {
+    const applyMove = () => {
+      set((s) => {
+        // Phase 1: Remove all moved UUIDs from every group. Emptied groups
+        // auto-dissolve — except the target, which must survive to receive
+        // the cards in Phase 2 (moving a group's full membership onto that
+        // same group must not destroy it).
+        const groups: Record<string, GroupInfo> = {};
+        for (const [gid, info] of Object.entries(s.groups)) {
+          const filtered = info.order.filter((id) => !uuidSet.has(id));
+          if (filtered.length === 0 && gid !== target.groupId) continue;
           groups[gid] = filtered.length !== info.order.length ? { ...info, order: filtered } : info;
         }
-      }
 
-      // Remove dissolved group entries from order
-      if (dissolvedGroupIds.length > 0) {
-        const dissolvedSet = new Set(dissolvedGroupIds.map((gid) => `group:${gid}`));
-        order = order.filter((id) => !dissolvedSet.has(id));
-      }
-
-      // Phase 2: Insert at target
-      if (target.type === "topLevel") {
-        const idx = Math.min(target.insertAtIndex, order.length);
-        order.splice(idx, 0, ...uuids);
-      } else {
+        // Phase 2: Insert into the target group
         const group = groups[target.groupId];
         if (group) {
           const targetOrder = [...group.order];
@@ -973,15 +865,29 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
           targetOrder.splice(insertIdx, 0, ...uuids);
           groups[target.groupId] = { ...group, order: targetOrder };
         }
-      }
 
-      return { order, groups };
+        return { groups };
+      });
+    };
+
+    pushUndo({
+      description: `Move ${uuids.length} card${uuids.length === 1 ? "" : "s"}`,
+      undo: async () => {
+        set({ groups: prevGroups });
+        await get().saveLayout();
+      },
+      redo: async () => {
+        applyMove();
+        await get().saveLayout();
+      },
     });
+
+    applyMove();
+    await get().saveLayout();
   },
 
   batchCreateGroup: async (cardUuids, name) => {
     const groupId = crypto.randomUUID();
-    const afterEntry = cardUuids.length > 0 ? cardUuids[cardUuids.length - 1] : undefined;
-    await get().createGroup(groupId, name, cardUuids, afterEntry);
+    await get().createGroup(groupId, name, cardUuids);
   },
 }));

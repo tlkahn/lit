@@ -214,6 +214,7 @@ interface CardboxContextMenuArgs {
   isGrouped: boolean;
   isGroupHeader: boolean;
   hasGroups: boolean;
+  hasQuoteSelection: boolean;
   currentColor?: string;
 }
 
@@ -236,6 +237,7 @@ interface CardboxContextMenuHandlers {
   onDissolveGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string) => void;
   onSetColor: (cardUuid: string, color: string | null) => void;
+  onQuoteReply: (cardUuid: string) => void;
 }
 
 export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
@@ -292,6 +294,13 @@ export function useCardboxContextMenu(handlers: CardboxContextMenuHandlers) {
       listen<CardboxContextPayload>("context-menu://cardbox/rename-group", (event) => {
         if (!cancelled && event.payload.group_id)
           handlersRef.current.onRenameGroup(event.payload.group_id);
+      }),
+    );
+
+    unlisteners.push(
+      listen<CardboxContextPayload>("context-menu://cardbox/quote-reply", (event) => {
+        if (!cancelled && event.payload.card_uuid)
+          handlersRef.current.onQuoteReply(event.payload.card_uuid);
       }),
     );
 

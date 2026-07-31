@@ -1,19 +1,14 @@
 import { memo, useCallback } from "react";
-import { useSortable } from "@dnd-kit/sortable";
-import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
-import { useDroppable } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
 import { LazyMotion, domAnimation, m, AnimatePresence } from "framer-motion";
 import { GroupHeader } from "./GroupHeader";
-import { SortableGroupCard } from "./SortableGroupCard";
+import { CardboxGroupCardItem } from "./CardboxGroupCardItem";
 import { useMasonryRef } from "../hooks/useMasonryObserver";
-import { makeGroupCardId, makeDroppableGroupId } from "../lib/dndIds";
 import type { CardboxAnnotation } from "../lib/ipc";
 import type { GroupInfo, CardNote } from "../lib/ipc";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
 
-interface SortableGroupProps {
+interface CardboxGroupProps {
   groupId: string;
   info: GroupInfo;
   cards: CardboxAnnotation[];
@@ -21,7 +16,8 @@ interface SortableGroupProps {
   expandedUuid: string | null;
   linkedCardsMap: Map<string, CardboxAnnotation[]>;
   notesMap?: Record<string, CardNote>;
-  isDropTarget?: boolean;
+  notePrefill?: { uuid: string; text: string } | null;
+  onNotePrefillConsumed?: () => void;
   onToggleExpand: (uuid: string) => void;
   onNavigate: (ann: CardboxAnnotation) => void;
   onFocusCard: (uuid: string, highlightNote?: boolean) => void;
@@ -37,7 +33,7 @@ interface SortableGroupProps {
   onCardSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
 
-export const SortableGroup = memo(function SortableGroup({
+export const CardboxGroup = memo(function CardboxGroup({
   groupId,
   info,
   cards,
@@ -45,7 +41,8 @@ export const SortableGroup = memo(function SortableGroup({
   expandedUuid,
   linkedCardsMap,
   notesMap,
-  isDropTarget,
+  notePrefill,
+  onNotePrefillConsumed,
   onToggleExpand,
   onNavigate,
   onFocusCard,
@@ -59,29 +56,7 @@ export const SortableGroup = memo(function SortableGroup({
   onHeaderContextMenu,
   colors,
   onCardSelect,
-}: SortableGroupProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef: setSortableRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: `group:${groupId}` });
-
-  const { setNodeRef: setDroppableRef } = useDroppable({
-    id: makeDroppableGroupId(groupId),
-  });
-
-  // Merge sortable + droppable refs onto the same DOM node
-  const mergedRef = useCallback(
-    (node: HTMLElement | null) => {
-      setSortableRef(node);
-      setDroppableRef(node);
-    },
-    [setSortableRef, setDroppableRef],
-  );
-
+}: CardboxGroupProps) {
   const masonryRef = useMasonryRef();
 
   const handleToggleCollapse = useCallback(() => onToggleCollapse(groupId), [onToggleCollapse, groupId]);
@@ -96,29 +71,19 @@ export const SortableGroup = memo(function SortableGroup({
   );
 
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition: transition ?? undefined,
-    opacity: isDragging ? 0.4 : 1,
     gridColumn: "1 / -1",
     gridRowEnd: "span 1",
   };
 
-  const groupCardIds = cards.map((ann) => makeGroupCardId(groupId, ann.uuid));
-
   return (
     <div
-      ref={mergedRef}
       style={style}
       data-testid="cardbox-group"
       data-group-id={groupId}
-      {...attributes}
-      {...listeners}
+      data-collapsed={info.collapsed}
     >
       <div ref={masonryRef} data-masonry-content="">
-        <div
-          className="cardbox-group-container"
-          data-drag-over={isDropTarget ? "true" : undefined}
-        >
+        <div className="cardbox-group-container">
           <GroupHeader
             name={info.name}
             cardCount={cards.length}
@@ -140,42 +105,38 @@ export const SortableGroup = memo(function SortableGroup({
                   transition={{ duration: 0.15, ease: "easeOut" }}
                   style={{ overflow: "hidden" }}
                 >
-                  <SortableContext
-                    items={groupCardIds}
-                    strategy={rectSortingStrategy}
+                  <div
+                    className="grid"
+                    style={{
+                      gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                      gridAutoRows: "8px",
+                      columnGap: "1rem",
+                      padding: "0 12px 12px 12px",
+                      alignItems: "start",
+                    }}
                   >
-                    <div
-                      className="grid"
-                      style={{
-                        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                        gridAutoRows: "8px",
-                        columnGap: "1rem",
-                        padding: "0 12px 12px 12px",
-                        alignItems: "start",
-                      }}
-                    >
-                      {cards.map((ann) => (
-                        <SortableGroupCard
-                          key={ann.uuid}
-                          groupId={groupId}
-                          annotation={ann}
-                          expanded={expandedUuid === ann.uuid}
-                          colorTag={colors?.[ann.uuid]}
-                          onToggleExpand={onToggleExpand}
-                          onNavigate={onNavigate}
-                          linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
-                          onFocusCard={onFocusCard}
-                          onRemoveLink={onRemoveLink}
-                          note={notesMap?.[ann.uuid]?.body}
-                          onSetNote={onSetNote}
-                          onExportNote={onExportNote}
-                          onShowConnections={onShowConnections}
-                          onContextMenu={handleCardContextMenu}
-                          onSelect={onCardSelect}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
+                    {cards.map((ann) => (
+                      <CardboxGroupCardItem
+                        key={ann.uuid}
+                        annotation={ann}
+                        expanded={expandedUuid === ann.uuid}
+                        colorTag={colors?.[ann.uuid]}
+                        onToggleExpand={onToggleExpand}
+                        onNavigate={onNavigate}
+                        linkedCards={linkedCardsMap.get(ann.uuid) ?? EMPTY_LINKED}
+                        onFocusCard={onFocusCard}
+                        onRemoveLink={onRemoveLink}
+                        note={notesMap?.[ann.uuid]?.body}
+                        notePrefill={notePrefill?.uuid === ann.uuid ? notePrefill.text : undefined}
+                        onNotePrefillConsumed={onNotePrefillConsumed}
+                        onSetNote={onSetNote}
+                        onExportNote={onExportNote}
+                        onShowConnections={onShowConnections}
+                        onContextMenu={handleCardContextMenu}
+                        onSelect={onCardSelect}
+                      />
+                    ))}
+                  </div>
                 </m.div>
               )}
             </AnimatePresence>

@@ -9,7 +9,7 @@ import type { CardboxAnnotation, CardboxLayout } from "../lib/ipc";
 // Observation benches for cardbox load + render (post-PR-#848 baseline).
 // These isolate the CardboxView orchestration pipeline (fetch → filter/sort
 // memos → renderEntries) behind a trivial card probe; the real
-// SortableCard→CardboxCard tree is benched separately in
+// CardboxCardItem→CardboxCard tree is benched separately in
 // CardboxViewFull.bench.tsx (vi.mock is per module graph, so probe and full
 // render cannot share a file). jsdom numbers are not production milliseconds —
 // compare runs against each other, not against the real app (use the lit-perf
@@ -19,12 +19,12 @@ interface ProbeProps {
   annotation: CardboxAnnotation;
 }
 
-vi.mock("./SortableCard", async () => {
+vi.mock("./CardboxCardItem", async () => {
   const React = await import("react");
-  const SortableCard = React.memo(function SortableCardProbe(props: ProbeProps) {
+  const CardboxCardItem = React.memo(function CardboxCardItemProbe(props: ProbeProps) {
     return React.createElement("div", { "data-testid": `probe-card-${props.annotation.uuid}` });
   });
-  return { SortableCard };
+  return { CardboxCardItem };
 });
 
 import CardboxView from "./CardboxView";

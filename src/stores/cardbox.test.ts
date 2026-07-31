@@ -38,28 +38,15 @@ const MOCK_ANNOTATIONS: CardboxAnnotation[] = [
   },
 ];
 
+const initialCardboxState = useCardboxStore.getState();
+
 describe("cardbox store", () => {
   beforeEach(() => {
-    useCardboxStore.setState({
-      annotations: [],
-      expandedUuid: null,
-      loading: false,
-      searchQuery: "",
-      activeTypes: null,
-      activeColors: null,
-      order: [],
-      links: [],
-      groups: {},
-      pinned: [],
-      notes: {},
-      noteSyncs: {},
-      colors: {},
-      connectionsForUuid: null,
-      connectionsSavedFilters: null,
-      pendingFocusUuid: null,
-      layoutLoaded: false,
-      scope: "document",
-    });
+    useCardboxStore.setState(initialCardboxState, true);
+    // Full reset including replayDepth: a test that fails mid-undo would
+    // otherwise leak replayDepth > 0 and silently disable pushUndo for every
+    // later test.
+    useCardboxUndoStore.setState({ undoStack: [], redoStack: [], replayDepth: 0 });
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
       if (cmd === "migrate_cardbox_slip_notes")
@@ -220,24 +207,44 @@ describe("cardbox store", () => {
     );
   });
 
-  it("setOrder updates order array", () => {
-    useCardboxStore.getState().setOrder(["u2", "u1"]);
-    expect(useCardboxStore.getState().order).toEqual(["u2", "u1"]);
+  it("loadLayout ignores a persisted order array", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return MOCK_ANNOTATIONS;
+      if (cmd === "migrate_cardbox_slip_notes")
+        return { migrated: 0, failed: 0, skipped: 0, changed_pages: [], failures: [] };
+      if (cmd === "read_cardbox_layout")
+        return { version: 3, order: ["u2", "u1"], links: [], groups: {}, pinned: [] };
+      return null;
+    });
+    await useCardboxStore.getState().loadLayout();
+    // The manual order is dead (#968): the store no longer carries the field.
+    expect("order" in useCardboxStore.getState()).toBe(false);
   });
 
-  it("fetchAnnotations initializes order from annotation UUIDs on first load", async () => {
-    await useCardboxStore.getState().fetchAnnotations();
-    expect(useCardboxStore.getState().order).toEqual(["u1", "u2"]);
-  });
-
-  it("fetchAnnotations preserves existing order on refresh", async () => {
-    await useCardboxStore.getState().fetchAnnotations();
-    // Simulate user reorder
-    useCardboxStore.getState().setOrder(["u2", "u1"]);
-    // Re-fetch
-    await useCardboxStore.getState().fetchAnnotations();
-    // Order should be preserved, not reset
-    expect(useCardboxStore.getState().order).toEqual(["u2", "u1"]);
+  it("saveLayout writes an empty order array", async () => {
+    const invokeSpy = vi.fn().mockResolvedValue(null);
+    mockInvoke((cmd, args) => {
+      invokeSpy(cmd, args);
+      return null;
+    });
+    useCardboxStore.setState({
+      links: [["u1", "u2"]],
+      groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
+      pinned: ["u2"],
+      colors: { u1: "blue" },
+    });
+    await useCardboxStore.getState().saveLayout();
+    expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
+      layout: {
+        version: 3,
+        order: [],
+        links: [["u1", "u2"]],
+        groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
+        pinned: ["u2"],
+        notes: {},
+        colors: { u1: "blue" },
+      },
+    });
   });
 
   // --- Link tests ---
@@ -301,13 +308,12 @@ describe("cardbox store", () => {
       return null;
     });
     useCardboxStore.setState({
-      order: ["u1", "u2"],
       links: [["u1", "u2"]],
       pinned: [],
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [["u1", "u2"]], groups: {}, pinned: [], notes: {}, colors: {} },
+      layout: { version: 3, order: [], links: [["u1", "u2"]], groups: {}, pinned: [], notes: {}, colors: {} },
     });
   });
 
@@ -343,7 +349,6 @@ describe("cardbox store", () => {
     await useCardboxStore.getState().loadLayout();
     const state = useCardboxStore.getState();
     expect(state.groups).toEqual(groups);
-    expect(state.order).toEqual(["group:g1", "u2"]);
   });
 
   it("saveLayout passes stored groups and uses version 3 when groups exist", async () => {
@@ -356,13 +361,12 @@ describe("cardbox store", () => {
       g1: { name: "My Group", order: ["u1"], collapsed: false },
     };
     useCardboxStore.setState({
-      order: ["group:g1", "u2"],
       links: [],
       groups,
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["group:g1", "u2"], links: [], groups, pinned: [], notes: {}, colors: {} },
+      layout: { version: 3, order: [], links: [], groups, pinned: [], notes: {}, colors: {} },
     });
   });
 
@@ -373,28 +377,139 @@ describe("cardbox store", () => {
       return null;
     });
     useCardboxStore.setState({
-      order: ["u1", "u2"],
       links: [],
       groups: {},
     });
     await useCardboxStore.getState().saveLayout();
     expect(invokeSpy).toHaveBeenCalledWith("write_cardbox_layout", {
-      layout: { version: 3, order: ["u1", "u2"], links: [], groups: {}, pinned: [], notes: {}, colors: {} },
+      layout: { version: 3, order: [], links: [], groups: {}, pinned: [], notes: {}, colors: {} },
     });
   });
 
-  it("fetchAnnotations preserves group:xxx entries in order", async () => {
-    const groups: Record<string, GroupInfo> = {
-      g1: { name: "My Group", order: ["u1"], collapsed: false },
-    };
-    useCardboxStore.setState({
-      order: ["group:g1", "u2"],
-      groups,
+  describe("saveLayout single-flight write queue", () => {
+    interface CapturedWrite {
+      payload: { groups: Record<string, GroupInfo> };
+      resolve: () => void;
+      reject: (e: Error) => void;
+    }
+
+    // Every write_cardbox_layout is captured as a manually-settled deferred so
+    // tests control backend completion order.
+    function captureWrites(): CapturedWrite[] {
+      const writes: CapturedWrite[] = [];
+      mockInvoke((cmd, args) => {
+        if (cmd === "write_cardbox_layout") {
+          return new Promise<void>((resolve, reject) => {
+            writes.push({
+              payload: structuredClone((args as { layout: CapturedWrite["payload"] }).layout),
+              resolve,
+              reject: reject as (e: Error) => void,
+            });
+          });
+        }
+        return null;
+      });
+      return writes;
+    }
+
+    const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+    it("snapshots state at write time, not call time", async () => {
+      const writes = captureWrites();
+      const before: Record<string, GroupInfo> = { g1: { name: "G", order: ["u1"], collapsed: false } };
+      const after: Record<string, GroupInfo> = { g1: { name: "G", order: ["u1", "u2"], collapsed: false } };
+      useCardboxStore.setState({ groups: before });
+
+      const first = useCardboxStore.getState().saveLayout();
+      await flush();
+      expect(writes).toHaveLength(1);
+      expect(writes[0]!.payload.groups).toEqual(before);
+
+      useCardboxStore.setState({ groups: after });
+      const second = useCardboxStore.getState().saveLayout();
+      await flush();
+      // The second write must not start while the first is still pending.
+      expect(writes).toHaveLength(1);
+
+      writes[0]!.resolve();
+      await first;
+      await flush();
+      expect(writes).toHaveLength(2);
+      // Snapshot read at write time: the mutation landed before this write.
+      expect(writes[1]!.payload.groups).toEqual(after);
+      writes[1]!.resolve();
+      await second;
     });
-    await useCardboxStore.getState().fetchAnnotations();
-    const state = useCardboxStore.getState();
-    expect(state.order).toContain("group:g1");
-    expect(state.order).toContain("u2");
+
+    it("overlapping saveLayout calls write strictly one at a time, in call order", async () => {
+      const writes = captureWrites();
+      useCardboxStore.setState({ groups: { g1: { name: "G", order: ["u1"], collapsed: false } } });
+
+      const p1 = useCardboxStore.getState().saveLayout();
+      const p2 = useCardboxStore.getState().saveLayout();
+      const p3 = useCardboxStore.getState().saveLayout();
+      await flush();
+      expect(writes).toHaveLength(1);
+
+      writes[0]!.resolve();
+      await p1;
+      await flush();
+      expect(writes).toHaveLength(2);
+
+      writes[1]!.resolve();
+      await p2;
+      await flush();
+      expect(writes).toHaveLength(3);
+      writes[2]!.resolve();
+      await p3;
+    });
+
+    it("a rejected write does not wedge the queue", async () => {
+      const writes = captureWrites();
+      useCardboxStore.setState({ groups: { g1: { name: "G", order: ["u1"], collapsed: false } } });
+
+      const first = useCardboxStore.getState().saveLayout();
+      const second = useCardboxStore.getState().saveLayout();
+      await flush();
+      expect(writes).toHaveLength(1);
+
+      writes[0]!.reject(new Error("disk full"));
+      await first;
+      await flush();
+      expect(writes).toHaveLength(2);
+      writes[1]!.resolve();
+      await second;
+    });
+
+    it("batchMoveCards then immediate undo persists the pre-move groups last", async () => {
+      useCardboxUndoStore.getState().clear();
+      const writes = captureWrites();
+      const preMove: Record<string, GroupInfo> = {
+        g1: { name: "G1", order: ["u1"], collapsed: false },
+        g2: { name: "G2", order: ["u2"], collapsed: false },
+      };
+      useCardboxStore.setState({ groups: preMove });
+
+      const movePromise = useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g2" });
+      const undoPromise = useCardboxUndoStore.getState().undo();
+      await flush();
+      // Only one write may be in flight even though two saves were requested.
+      expect(writes).toHaveLength(1);
+
+      // Drain the queue: resolve writes as they arrive (resolving an already
+      // settled deferred is a no-op) until both operations settle.
+      let settled = false;
+      void Promise.all([movePromise, undoPromise]).then(() => { settled = true; });
+      while (!settled) {
+        for (const w of writes) w.resolve();
+        await flush();
+      }
+
+      // Whatever the interleaving, the final persisted layout is the pre-move
+      // snapshot the undo restored.
+      expect(writes[writes.length - 1]!.payload.groups).toEqual(preMove);
+      expect(useCardboxStore.getState().groups).toEqual(preMove);
+    });
   });
 
   it("fetchAnnotations prunes stale members from groups", async () => {
@@ -402,7 +517,6 @@ describe("cardbox store", () => {
       g1: { name: "My Group", order: ["u1", "stale-uuid"], collapsed: false },
     };
     useCardboxStore.setState({
-      order: ["group:g1", "u2"],
       groups,
     });
     await useCardboxStore.getState().fetchAnnotations();
@@ -415,13 +529,11 @@ describe("cardbox store", () => {
       g1: { name: "Stale Group", order: ["stale-uuid"], collapsed: false },
     };
     useCardboxStore.setState({
-      order: ["group:g1", "u1", "u2"],
       groups,
     });
     await useCardboxStore.getState().fetchAnnotations();
     const state = useCardboxStore.getState();
     expect(state.groups).toEqual({});
-    expect(state.order).not.toContain("group:g1");
   });
 
   it("loadLayout handles backend response without groups field", async () => {
@@ -439,52 +551,22 @@ describe("cardbox store", () => {
   // --- Group action tests ---
 
   describe("group actions", () => {
-    it("createGroup moves cards into new group and adds group entry to order", async () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
-      });
+    it("createGroup moves cards into the new group without any top-level order bookkeeping", async () => {
+      useCardboxStore.setState({ groups: {} });
       await useCardboxStore.getState().createGroup("g1", "My Group", ["u1", "u3"]);
       const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u2", "group:g1"]);
       expect(s.groups.g1).toEqual({ name: "My Group", order: ["u1", "u3"], collapsed: false });
+      expect("order" in s).toBe(false);
     });
 
-    it("createGroup with afterEntry inserts group after specified entry", async () => {
+    it("createGroup removes its cards from every other group", async () => {
       useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
+        groups: { g0: { name: "Old", order: ["u1", "u2"], collapsed: false } },
       });
-      await useCardboxStore.getState().createGroup("g1", "My Group", ["u3"], "u1");
+      await useCardboxStore.getState().createGroup("g1", "New", ["u1"]);
       const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u1", "group:g1", "u2"]);
-    });
-
-    it("createGroup_afterEntry_is_grouped_card inserts at correct position", async () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
-      });
-      // afterEntry is "u2" which is also one of the cards being grouped
-      await useCardboxStore.getState().createGroup("g1", "My Group", ["u2", "u3"], "u2");
-      const s = useCardboxStore.getState();
-      // u2 was at index 1 in original order; it's being removed so precedingRemovals=1
-      // insertIdx = 1 + 1 - 1 = 1; after removal order is ["u1"], so group inserts at index 1
-      expect(s.order).toEqual(["u1", "group:g1"]);
-      expect(s.groups.g1).toEqual({ name: "My Group", order: ["u2", "u3"], collapsed: false });
-    });
-
-    it("createGroup with afterEntry preceding grouped cards computes correct index", async () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "u3", "u4"],
-        groups: {},
-      });
-      // Group u1 and u3; afterEntry is u2 (not being grouped)
-      // u1 is at index 0 <= u2's index 1, so precedingRemovals=1
-      // insertIdx = 1 + 1 - 1 = 1; after removal order is ["u2", "u4"]
-      await useCardboxStore.getState().createGroup("g1", "G", ["u1", "u3"], "u2");
-      const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u2", "group:g1", "u4"]);
+      expect(s.groups.g0!.order).toEqual(["u2"]);
+      expect(s.groups.g1!.order).toEqual(["u1"]);
     });
 
     it("createGroup calls IPC with correct args", async () => {
@@ -493,19 +575,18 @@ describe("cardbox store", () => {
         invokeSpy(cmd, args);
         return null;
       });
-      useCardboxStore.setState({ order: ["u1", "u2"], groups: {} });
-      await useCardboxStore.getState().createGroup("g1", "Test", ["u1"], "u2");
+      useCardboxStore.setState({ groups: {} });
+      await useCardboxStore.getState().createGroup("g1", "Test", ["u1"]);
       expect(invokeSpy).toHaveBeenCalledWith("create_cardbox_group", {
         groupId: "g1",
         name: "Test",
         cardUuids: ["u1"],
-        afterEntry: "u2",
+        afterEntry: null,
       });
     });
 
     it("renameGroup updates the group name", async () => {
       useCardboxStore.setState({
-        order: ["group:g1", "u2"],
         groups: { g1: { name: "Old", order: ["u1"], collapsed: false } },
       });
       await useCardboxStore.getState().renameGroup("g1", "New Name");
@@ -517,21 +598,18 @@ describe("cardbox store", () => {
 
     it("renameGroup no-ops for nonexistent group", async () => {
       useCardboxStore.setState({
-        order: ["u1"],
         groups: {},
       });
       await useCardboxStore.getState().renameGroup("missing", "X");
       expect(useCardboxStore.getState().groups).toEqual({});
     });
 
-    it("dissolveGroup splices members back into order at group position", async () => {
+    it("dissolveGroup removes the group", async () => {
       useCardboxStore.setState({
-        order: ["u3", "group:g1", "u4"],
         groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
       });
       await useCardboxStore.getState().dissolveGroup("g1");
       const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u3", "u1", "u2", "u4"]);
       expect(s.groups.g1).toBeUndefined();
     });
 
@@ -542,7 +620,6 @@ describe("cardbox store", () => {
         return null;
       });
       useCardboxStore.setState({
-        order: ["group:g1"],
         groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
       });
       await useCardboxStore.getState().dissolveGroup("g1");
@@ -553,18 +630,15 @@ describe("cardbox store", () => {
 
     it("moveCardToGroup moves card from top-level into group", async () => {
       useCardboxStore.setState({
-        order: ["u1", "group:g1", "u2"],
         groups: { g1: { name: "G", order: ["u3"], collapsed: false } },
       });
       await useCardboxStore.getState().moveCardToGroup("u2", "g1");
       const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u1", "group:g1"]);
       expect(s.groups.g1!.order).toEqual(["u3", "u2"]);
     });
 
     it("moveCardToGroup moves card between groups", async () => {
       useCardboxStore.setState({
-        order: ["group:g1", "group:g2"],
         groups: {
           g1: { name: "G1", order: ["u1", "u2"], collapsed: false },
           g2: { name: "G2", order: ["u3"], collapsed: false },
@@ -576,43 +650,26 @@ describe("cardbox store", () => {
       expect(s.groups.g2!.order).toEqual(["u1", "u3"]);
     });
 
-    it("removeCardFromGroup moves card to top-level", async () => {
+    it("removeCardFromGroup removes the card from the group", async () => {
       useCardboxStore.setState({
-        order: ["group:g1", "u3"],
         groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
       });
       await useCardboxStore.getState().removeCardFromGroup("u1", "g1");
       const s = useCardboxStore.getState();
       expect(s.groups.g1!.order).toEqual(["u2"]);
-      expect(s.order).toContain("u1");
     });
 
     it("removeCardFromGroup auto-dissolves group when last card removed", async () => {
       useCardboxStore.setState({
-        order: ["group:g1", "u2"],
         groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
       });
       await useCardboxStore.getState().removeCardFromGroup("u1", "g1");
       const s = useCardboxStore.getState();
       expect(s.groups.g1).toBeUndefined();
-      expect(s.order).not.toContain("group:g1");
-      expect(s.order).toContain("u1");
-    });
-
-    it("removeCardFromGroup inserts at specified topLevelIndex", async () => {
-      useCardboxStore.setState({
-        order: ["u3", "group:g1", "u4"],
-        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
-      });
-      await useCardboxStore.getState().removeCardFromGroup("u1", "g1", 0);
-      const s = useCardboxStore.getState();
-      expect(s.order[0]).toBe("u1");
-      expect(s.groups.g1!.order).toEqual(["u2"]);
     });
 
     it("toggleGroupCollapse toggles collapsed flag", async () => {
       useCardboxStore.setState({
-        order: ["group:g1"],
         groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
       });
       await useCardboxStore.getState().toggleGroupCollapse("g1");
@@ -628,7 +685,6 @@ describe("cardbox store", () => {
         return null;
       });
       useCardboxStore.setState({
-        order: ["group:g1"],
         groups: { g1: { name: "G", order: ["u1"], collapsed: false } },
       });
       await useCardboxStore.getState().toggleGroupCollapse("g1");
@@ -636,45 +692,6 @@ describe("cardbox store", () => {
         groupId: "g1",
         collapsed: true,
       });
-    });
-
-    it("reorderWithinGroup swaps card positions within a group", () => {
-      useCardboxStore.setState({
-        order: ["group:g1"],
-        groups: { g1: { name: "G", order: ["u1", "u2", "u3"], collapsed: false } },
-      });
-      useCardboxStore.getState().reorderWithinGroup("g1", "u1", "u3");
-      const s = useCardboxStore.getState();
-      expect(s.groups.g1!.order).toEqual(["u2", "u3", "u1"]);
-    });
-
-    it("reorderWithinGroup no-ops for nonexistent group", () => {
-      useCardboxStore.setState({
-        order: ["group:g1"],
-        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
-      });
-      useCardboxStore.getState().reorderWithinGroup("missing", "u1", "u2");
-      // Original state unchanged
-      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u2"]);
-    });
-
-    it("reorderWithinGroup no-ops when uuid not found in group", () => {
-      useCardboxStore.setState({
-        order: ["group:g1"],
-        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
-      });
-      useCardboxStore.getState().reorderWithinGroup("g1", "u1", "u3");
-      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u1", "u2"]);
-    });
-
-    it("reorderWithinGroup moves card forward", () => {
-      useCardboxStore.setState({
-        order: ["group:g1"],
-        groups: { g1: { name: "G", order: ["u1", "u2", "u3"], collapsed: false } },
-      });
-      useCardboxStore.getState().reorderWithinGroup("g1", "u3", "u1");
-      const s = useCardboxStore.getState();
-      expect(s.groups.g1!.order).toEqual(["u3", "u1", "u2"]);
     });
   });
 
@@ -859,39 +876,17 @@ describe("cardbox store", () => {
   // --- batchMoveCards tests ---
 
   describe("batchMoveCards", () => {
-    it("moves multiple top-level cards to a new position", () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "u3", "u4"],
-        groups: {},
-      });
-      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 2 });
-      const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u2", "u4", "u1", "u3"]);
-    });
-
-    it("moves cards to the beginning", () => {
-      useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
-      });
-      useCardboxStore.getState().batchMoveCards(["u3"], { type: "topLevel", insertAtIndex: 0 });
-      expect(useCardboxStore.getState().order).toEqual(["u3", "u1", "u2"]);
-    });
-
     it("moves top-level cards into a group", () => {
       useCardboxStore.setState({
-        order: ["u1", "u2", "group:g1", "u3"],
         groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
       });
       useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "toGroup", groupId: "g1" });
       const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u2", "group:g1"]);
       expect(s.groups.g1!.order).toEqual(["u4", "u1", "u3"]);
     });
 
     it("moves cards into a group at a specific index", () => {
       useCardboxStore.setState({
-        order: ["u1", "u2", "group:g1"],
         groups: { g1: { name: "G", order: ["u3", "u4"], collapsed: false } },
       });
       useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g1", index: 1 });
@@ -899,65 +894,139 @@ describe("cardbox store", () => {
       expect(s.groups.g1!.order).toEqual(["u3", "u1", "u2", "u4"]);
     });
 
-    it("moves cards from mixed origins (group + top-level) to top-level", () => {
+    it("moves cards from mixed origins (group + top-level) into a group", () => {
       useCardboxStore.setState({
-        order: ["u1", "group:g1", "u4"],
-        groups: { g1: { name: "G", order: ["u2", "u3"], collapsed: false } },
-      });
-      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "topLevel", insertAtIndex: 1 });
-      const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["group:g1", "u1", "u2", "u4"]);
-      expect(s.groups.g1!.order).toEqual(["u3"]);
-    });
-
-    it("auto-dissolves a group left empty after removal", () => {
-      useCardboxStore.setState({
-        order: ["u1", "group:g1", "u3"],
-        groups: { g1: { name: "G", order: ["u2"], collapsed: false } },
-      });
-      useCardboxStore.getState().batchMoveCards(["u2"], { type: "topLevel", insertAtIndex: 0 });
-      const s = useCardboxStore.getState();
-      expect(s.groups.g1).toBeUndefined();
-      expect(s.order).not.toContain("group:g1");
-      expect(s.order).toContain("u2");
-    });
-
-    it("moves cards from multiple groups to top-level", () => {
-      useCardboxStore.setState({
-        order: ["group:g1", "group:g2"],
         groups: {
-          g1: { name: "G1", order: ["u1", "u2"], collapsed: false },
-          g2: { name: "G2", order: ["u3", "u4"], collapsed: false },
+          g1: { name: "G1", order: ["u2", "u3"], collapsed: false },
+          g2: { name: "G2", order: ["u4"], collapsed: false },
         },
       });
-      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 0 });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g2" });
       const s = useCardboxStore.getState();
-      expect(s.order[0]).toBe("u1");
-      expect(s.order[1]).toBe("u3");
-      expect(s.groups.g1!.order).toEqual(["u2"]);
-      expect(s.groups.g2!.order).toEqual(["u4"]);
+      expect(s.groups.g1!.order).toEqual(["u3"]);
+      expect(s.groups.g2!.order).toEqual(["u4", "u1", "u2"]);
     });
 
-    it("clamps insertAtIndex to array length", () => {
+    it("auto-dissolves a group left empty after moving its last card away", () => {
       useCardboxStore.setState({
-        order: ["u1", "u2"],
-        groups: {},
+        groups: {
+          g1: { name: "G1", order: ["u2"], collapsed: false },
+          g2: { name: "G2", order: ["u4"], collapsed: false },
+        },
       });
-      useCardboxStore.getState().batchMoveCards(["u1"], { type: "topLevel", insertAtIndex: 100 });
+      useCardboxStore.getState().batchMoveCards(["u2"], { type: "toGroup", groupId: "g2" });
       const s = useCardboxStore.getState();
-      expect(s.order).toEqual(["u2", "u1"]);
+      expect(s.groups.g1).toBeUndefined();
+      expect(s.groups.g2!.order).toEqual(["u4", "u2"]);
+    });
+
+    it("preserves the target group when its full membership is moved onto itself", () => {
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2"], { type: "toGroup", groupId: "g1" });
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1).toBeDefined();
+      expect(s.groups.g1!.order).toEqual(["u1", "u2"]);
+    });
+
+    it("appends outside cards when the target group's own members are part of the move", () => {
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u1", "u2"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1", "u2", "u3"], { type: "toGroup", groupId: "g1" });
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u1", "u2", "u3"]);
+    });
+
+    it("undo restores membership after moving a group's cards onto the same group", async () => {
+      useCardboxUndoStore.getState().clear();
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u2", "u1"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u2", "u1"], { type: "toGroup", groupId: "g1" });
+      await useCardboxUndoStore.getState().undo();
+      const s = useCardboxStore.getState();
+      expect(s.groups.g1!.order).toEqual(["u2", "u1"]);
     });
 
     it("pushes an undo entry that restores previous state", () => {
       useCardboxStore.setState({
-        order: ["u1", "u2", "u3"],
-        groups: {},
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
       });
-      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "topLevel", insertAtIndex: 1 });
-      expect(useCardboxStore.getState().order).toEqual(["u2", "u1", "u3"]);
+      useCardboxStore.getState().batchMoveCards(["u1", "u3"], { type: "toGroup", groupId: "g1" });
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u4", "u1", "u3"]);
 
       const stack = useCardboxUndoStore.getState().undoStack;
       expect(stack.length).toBeGreaterThan(0);
+      expect(stack[stack.length - 1]!.description).toBe("Move 2 cards");
+    });
+
+    it("describes a single-card move in the singular", () => {
+      useCardboxUndoStore.getState().clear();
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
+      const stack = useCardboxUndoStore.getState().undoStack;
+      expect(stack[stack.length - 1]!.description).toBe("Move 1 card");
+    });
+
+    it("persists the moved layout immediately via write_cardbox_layout", async () => {
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      await useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "write_cardbox_layout",
+        expect.objectContaining({
+          layout: expect.objectContaining({
+            groups: { g1: { name: "G", order: ["u4", "u1"], collapsed: false } },
+          }),
+        }),
+      );
+    });
+
+    it("undo and redo persist their layouts via write_cardbox_layout", async () => {
+      useCardboxUndoStore.getState().clear();
+      const invokeSpy = vi.fn().mockResolvedValue(null);
+      mockInvoke((cmd, args) => {
+        invokeSpy(cmd, args);
+        return null;
+      });
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      await useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
+      invokeSpy.mockClear();
+
+      await useCardboxUndoStore.getState().undo();
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u4"]);
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "write_cardbox_layout",
+        expect.objectContaining({
+          layout: expect.objectContaining({
+            groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+          }),
+        }),
+      );
+      invokeSpy.mockClear();
+
+      await useCardboxUndoStore.getState().redo();
+      expect(useCardboxStore.getState().groups.g1!.order).toEqual(["u4", "u1"]);
+      expect(invokeSpy).toHaveBeenCalledWith(
+        "write_cardbox_layout",
+        expect.objectContaining({
+          layout: expect.objectContaining({
+            groups: { g1: { name: "G", order: ["u4", "u1"], collapsed: false } },
+          }),
+        }),
+      );
     });
   });
 
@@ -1006,6 +1075,26 @@ describe("cardbox store", () => {
     });
   });
 
+  describe("pendingNotePrefill (#968)", () => {
+    it("initializes as null", () => {
+      expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+    });
+
+    it("setPendingNotePrefill stages a quote for a card", () => {
+      useCardboxStore.getState().setPendingNotePrefill({ uuid: "u1", text: "> quoted" });
+      expect(useCardboxStore.getState().pendingNotePrefill).toEqual({
+        uuid: "u1",
+        text: "> quoted",
+      });
+    });
+
+    it("setPendingNotePrefill(null) clears the staged quote", () => {
+      useCardboxStore.getState().setPendingNotePrefill({ uuid: "u1", text: "> quoted" });
+      useCardboxStore.getState().setPendingNotePrefill(null);
+      expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+    });
+  });
+
   describe("loadLayout slip-note migration", () => {
     const MIGRATE_OK = {
       migrated: 3,
@@ -1014,7 +1103,7 @@ describe("cardbox store", () => {
       changed_pages: [],
       failures: [],
     };
-    const LAYOUT = { version: 3, order: ["u1"], links: [], groups: {}, pinned: [] };
+    const LAYOUT = { version: 3, order: [], links: [], groups: {}, pinned: ["u1"] };
 
     beforeEach(() => {
       useStatusMessageStore.setState({ message: null, variant: "success", action: null });
@@ -1047,7 +1136,7 @@ describe("cardbox store", () => {
       );
       expect(useStatusMessageStore.getState().variant).toBe("error");
       expect(callLog[callLog.length - 1]).toBe("read_cardbox_layout");
-      expect(useCardboxStore.getState().order).toEqual(["u1"]);
+      expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
     });
 
     it("logs per-note failure reasons to the console when migration reports failures", async () => {
@@ -1104,7 +1193,7 @@ describe("cardbox store", () => {
         "Slip-note migration failed; will retry next open",
       );
       expect(useStatusMessageStore.getState().variant).toBe("error");
-      expect(useCardboxStore.getState().order).toEqual(["u1"]);
+      expect(useCardboxStore.getState().pinned).toEqual(["u1"]);
     });
 
     // layoutLoaded gates pending-focus consumption in CardboxView: the NOTE
@@ -1333,7 +1422,6 @@ describe("cardbox store", () => {
 
     it("saveLayout never transmits client notes (backend derives them from sn)", async () => {
       useCardboxStore.setState({
-        order: ["u1"],
         notes: { u1: { body: "in-memory note", updated_at: "2026-07-29T00:00:00Z" } },
       });
       let sentNotes: unknown = null;

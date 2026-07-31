@@ -39,6 +39,7 @@ pub const EVENT_CTX_GRAPH_EXPORT_NETWORK: &str = "context-menu://graph/export-ne
 pub const EVENT_CTX_GRAPH_FETCH_DETAILS: &str = "context-menu://graph/fetch-details";
 pub const EVENT_CTX_GRAPH_CREATE_NOTE: &str = "context-menu://graph/create-note";
 
+pub const CTX_CARDBOX_QUOTE_REPLY: &str = "ctx_cardbox_quote_reply";
 pub const CTX_CARDBOX_NEW_GROUP: &str = "ctx_cardbox_new_group";
 pub const CTX_CARDBOX_ADD_TO_GROUP: &str = "ctx_cardbox_add_to_group";
 pub const CTX_CARDBOX_REMOVE_FROM_GROUP: &str = "ctx_cardbox_remove_from_group";
@@ -47,6 +48,7 @@ pub const CTX_CARDBOX_RENAME_GROUP: &str = "ctx_cardbox_rename_group";
 pub const CTX_CARDBOX_PIN: &str = "ctx_cardbox_pin";
 pub const CTX_CARDBOX_UNPIN: &str = "ctx_cardbox_unpin";
 
+pub const EVENT_CTX_CARDBOX_QUOTE_REPLY: &str = "context-menu://cardbox/quote-reply";
 pub const EVENT_CTX_CARDBOX_NEW_GROUP: &str = "context-menu://cardbox/new-group";
 pub const EVENT_CTX_CARDBOX_ADD_TO_GROUP: &str = "context-menu://cardbox/add-to-group";
 pub const EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP: &str = "context-menu://cardbox/remove-from-group";
@@ -81,6 +83,7 @@ pub enum ContextMenuAction {
     GraphExportNetwork,
     GraphFetchDetails,
     GraphCreateNote,
+    CardboxQuoteReply,
     CardboxNewGroup,
     CardboxAddToGroup,
     CardboxRemoveFromGroup,
@@ -107,6 +110,7 @@ impl ContextMenuAction {
             CTX_GRAPH_EXPORT_NETWORK => Some(Self::GraphExportNetwork),
             CTX_GRAPH_FETCH_DETAILS => Some(Self::GraphFetchDetails),
             CTX_GRAPH_CREATE_NOTE => Some(Self::GraphCreateNote),
+            CTX_CARDBOX_QUOTE_REPLY => Some(Self::CardboxQuoteReply),
             CTX_CARDBOX_NEW_GROUP => Some(Self::CardboxNewGroup),
             CTX_CARDBOX_ADD_TO_GROUP => Some(Self::CardboxAddToGroup),
             CTX_CARDBOX_REMOVE_FROM_GROUP => Some(Self::CardboxRemoveFromGroup),
@@ -241,6 +245,7 @@ pub struct CardboxMenuContext {
     pub is_group_header: bool,
     pub has_groups: bool,
     pub is_pinned: bool,
+    pub has_quote_selection: bool,
 }
 
 pub fn graph_menu_items(ctx: &GraphMenuContext) -> Vec<MenuItemSpec> {
@@ -341,6 +346,13 @@ pub fn cardbox_menu_items(ctx: &CardboxMenuContext, current_color: Option<&str>)
         }));
         // NO color submenu for group headers
     } else if ctx.is_grouped {
+        if ctx.has_quote_selection {
+            items.push(MenuEntry::Item(MenuItemSpec {
+                id: CTX_CARDBOX_QUOTE_REPLY,
+                label: "Quote Reply".into(),
+                enabled: true,
+            }));
+        }
         items.push(MenuEntry::Item(MenuItemSpec {
             id: CTX_CARDBOX_REMOVE_FROM_GROUP,
             label: "Remove from Group".into(),
@@ -356,6 +368,13 @@ pub fn cardbox_menu_items(ctx: &CardboxMenuContext, current_color: Option<&str>)
             items: color_submenu_items(current_color),
         });
     } else {
+        if ctx.has_quote_selection {
+            items.push(MenuEntry::Item(MenuItemSpec {
+                id: CTX_CARDBOX_QUOTE_REPLY,
+                label: "Quote Reply".into(),
+                enabled: true,
+            }));
+        }
         items.push(MenuEntry::Item(MenuItemSpec {
             id: CTX_CARDBOX_NEW_GROUP,
             label: "New Group".into(),
@@ -428,6 +447,7 @@ pub fn dispatch_cardbox_action(
         color: None,
     };
     let event = match action {
+        ContextMenuAction::CardboxQuoteReply => EVENT_CTX_CARDBOX_QUOTE_REPLY,
         ContextMenuAction::CardboxNewGroup => EVENT_CTX_CARDBOX_NEW_GROUP,
         ContextMenuAction::CardboxAddToGroup => EVENT_CTX_CARDBOX_ADD_TO_GROUP,
         ContextMenuAction::CardboxRemoveFromGroup => EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP,
@@ -616,6 +636,7 @@ pub fn show_cardbox_context_menu(
     is_group_header: bool,
     has_groups: bool,
     is_pinned: bool,
+    has_quote_selection: bool,
     current_color: Option<String>,
     window: tauri::Window,
     pending: tauri::State<PendingContextMenu>,
@@ -629,6 +650,7 @@ pub fn show_cardbox_context_menu(
         is_group_header,
         has_groups,
         is_pinned,
+        has_quote_selection,
     };
     let entries = cardbox_menu_items(&ctx, current_color.as_deref());
     show_popup_menu(&entries, &window)
@@ -1312,6 +1334,7 @@ mod tests {
 
     #[test]
     fn cardbox_context_menu_ids_are_defined() {
+        assert_eq!(CTX_CARDBOX_QUOTE_REPLY, "ctx_cardbox_quote_reply");
         assert_eq!(CTX_CARDBOX_NEW_GROUP, "ctx_cardbox_new_group");
         assert_eq!(CTX_CARDBOX_ADD_TO_GROUP, "ctx_cardbox_add_to_group");
         assert_eq!(CTX_CARDBOX_REMOVE_FROM_GROUP, "ctx_cardbox_remove_from_group");
@@ -1323,6 +1346,7 @@ mod tests {
 
     #[test]
     fn cardbox_event_constants_are_defined() {
+        assert_eq!(EVENT_CTX_CARDBOX_QUOTE_REPLY, "context-menu://cardbox/quote-reply");
         assert_eq!(EVENT_CTX_CARDBOX_NEW_GROUP, "context-menu://cardbox/new-group");
         assert_eq!(EVENT_CTX_CARDBOX_ADD_TO_GROUP, "context-menu://cardbox/add-to-group");
         assert_eq!(EVENT_CTX_CARDBOX_REMOVE_FROM_GROUP, "context-menu://cardbox/remove-from-group");
@@ -1334,6 +1358,10 @@ mod tests {
 
     #[test]
     fn from_id_maps_cardbox_ids() {
+        assert_eq!(
+            ContextMenuAction::from_id(CTX_CARDBOX_QUOTE_REPLY),
+            Some(ContextMenuAction::CardboxQuoteReply)
+        );
         assert_eq!(
             ContextMenuAction::from_id(CTX_CARDBOX_NEW_GROUP),
             Some(ContextMenuAction::CardboxNewGroup)
@@ -1372,6 +1400,7 @@ mod tests {
             menu::MENU_ID_ABOUT,
         ];
         let cardbox_ids = [
+            CTX_CARDBOX_QUOTE_REPLY,
             CTX_CARDBOX_NEW_GROUP,
             CTX_CARDBOX_ADD_TO_GROUP,
             CTX_CARDBOX_REMOVE_FROM_GROUP,
@@ -1404,6 +1433,7 @@ mod tests {
             CTX_GRAPH_CREATE_NOTE,
         ];
         let cardbox_ids = [
+            CTX_CARDBOX_QUOTE_REPLY,
             CTX_CARDBOX_NEW_GROUP,
             CTX_CARDBOX_ADD_TO_GROUP,
             CTX_CARDBOX_REMOVE_FROM_GROUP,
@@ -1440,6 +1470,7 @@ mod tests {
             is_group_header: false,
             has_groups: false,
             is_pinned: false,
+            has_quote_selection: false,
         };
         let entries = cardbox_menu_items(&ctx, None);
         let items = flat_items(&entries);
@@ -1458,6 +1489,7 @@ mod tests {
             is_group_header: false,
             has_groups: true,
             is_pinned: false,
+            has_quote_selection: false,
         };
         let entries = cardbox_menu_items(&ctx, None);
         let items = flat_items(&entries);
@@ -1479,6 +1511,7 @@ mod tests {
             is_group_header: false,
             has_groups: true,
             is_pinned: false,
+            has_quote_selection: false,
         };
         let entries = cardbox_menu_items(&ctx, None);
         let items = flat_items(&entries);
@@ -1497,6 +1530,7 @@ mod tests {
             is_group_header: true,
             has_groups: true,
             is_pinned: false,
+            has_quote_selection: false,
         };
         let entries = cardbox_menu_items(&ctx, None);
         let items = flat_items(&entries);
@@ -1512,7 +1546,80 @@ mod tests {
     }
 
     #[test]
+    fn cardbox_menu_items_with_quote_selection_puts_quote_reply_first() {
+        // Ungrouped card
+        let ctx = CardboxMenuContext {
+            is_grouped: false,
+            is_group_header: false,
+            has_groups: true,
+            is_pinned: false,
+            has_quote_selection: true,
+        };
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
+        assert_eq!(items[0].id, CTX_CARDBOX_QUOTE_REPLY);
+        assert_eq!(items[0].label, "Quote Reply");
+        assert!(items[0].enabled);
+        assert_eq!(items[1].id, CTX_CARDBOX_NEW_GROUP);
+
+        // Grouped card
+        let ctx = CardboxMenuContext {
+            is_grouped: true,
+            is_group_header: false,
+            has_groups: true,
+            is_pinned: false,
+            has_quote_selection: true,
+        };
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
+        assert_eq!(items[0].id, CTX_CARDBOX_QUOTE_REPLY);
+        assert_eq!(items[0].label, "Quote Reply");
+        assert!(items[0].enabled);
+        assert_eq!(items[1].id, CTX_CARDBOX_REMOVE_FROM_GROUP);
+    }
+
+    #[test]
+    fn cardbox_menu_items_without_quote_selection_omits_quote_reply() {
+        for is_grouped in [false, true] {
+            let ctx = CardboxMenuContext {
+                is_grouped,
+                is_group_header: false,
+                has_groups: true,
+                is_pinned: false,
+                has_quote_selection: false,
+            };
+            let entries = cardbox_menu_items(&ctx, None);
+            let items = flat_items(&entries);
+            assert!(items.iter().all(|i| i.id != CTX_CARDBOX_QUOTE_REPLY));
+        }
+    }
+
+    #[test]
+    fn cardbox_menu_items_group_header_never_shows_quote_reply() {
+        let ctx = CardboxMenuContext {
+            is_grouped: false,
+            is_group_header: true,
+            has_groups: true,
+            is_pinned: false,
+            has_quote_selection: true,
+        };
+        let entries = cardbox_menu_items(&ctx, None);
+        let items = flat_items(&entries);
+        assert!(items.iter().all(|i| i.id != CTX_CARDBOX_QUOTE_REPLY));
+    }
+
+    #[test]
     fn dispatch_cardbox_actions() {
+        // Quote Reply
+        let (event, payload) = dispatch_cardbox_action(
+            ContextMenuAction::CardboxQuoteReply,
+            Some("uuid-q".to_string()),
+            None,
+        );
+        assert_eq!(event, EVENT_CTX_CARDBOX_QUOTE_REPLY);
+        assert_eq!(payload.card_uuid.as_deref(), Some("uuid-q"));
+        assert!(payload.group_id.is_none());
+
         // New Group
         let (event, payload) = dispatch_cardbox_action(
             ContextMenuAction::CardboxNewGroup,
@@ -1657,6 +1764,7 @@ mod tests {
             is_group_header: false,
             has_groups: false,
             is_pinned: false,
+            has_quote_selection: false,
         };
         let entries = cardbox_menu_items(&ctx, None);
         let sub = find_submenu(&entries, "Color").expect("Color submenu missing");
@@ -1670,6 +1778,7 @@ mod tests {
             is_group_header: false,
             has_groups: true,
             is_pinned: false,
+            has_quote_selection: false,
         };
         let entries = cardbox_menu_items(&ctx, Some("green"));
         let sub = find_submenu(&entries, "Color").expect("Color submenu missing");

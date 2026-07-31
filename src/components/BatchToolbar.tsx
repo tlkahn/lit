@@ -4,8 +4,10 @@ import { CARDBOX_COLORS } from "../lib/ipc";
 interface BatchToolbarProps {
   selectedCount: number;
   mergingToDraft?: boolean;
+  hasGroups?: boolean;
   onMergeToDraft: () => void;
   onGroup: () => void;
+  onAddToGroup?: () => void;
   onLinkAll: () => void;
   onSetColor: (color: string) => void;
   onClearColor: () => void;
@@ -17,8 +19,10 @@ interface BatchToolbarProps {
 export const BatchToolbar = memo(function BatchToolbar({
   selectedCount,
   mergingToDraft,
+  hasGroups,
   onMergeToDraft,
   onGroup,
+  onAddToGroup,
   onLinkAll,
   onSetColor,
   onClearColor,
@@ -68,6 +72,16 @@ export const BatchToolbar = memo(function BatchToolbar({
       >
         Group
       </button>
+
+      {hasGroups && onAddToGroup && (
+        <button
+          className="rounded px-2 py-1 text-xs text-text-normal hover:bg-bg-hover"
+          onClick={onAddToGroup}
+          data-testid="batch-add-to-group"
+        >
+          Add to Group
+        </button>
+      )}
 
       <button
         className="rounded px-2 py-1 text-xs text-text-normal hover:bg-bg-hover"

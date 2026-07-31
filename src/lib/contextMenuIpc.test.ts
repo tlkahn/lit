@@ -480,6 +480,7 @@ describe("showCardboxContextMenu", () => {
       isGrouped: false,
       isGroupHeader: false,
       hasGroups: true,
+      hasQuoteSelection: true,
     });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
@@ -488,6 +489,7 @@ describe("showCardboxContextMenu", () => {
       isGrouped: false,
       isGroupHeader: false,
       hasGroups: true,
+      hasQuoteSelection: true,
     });
   });
 
@@ -504,6 +506,7 @@ describe("showCardboxContextMenu", () => {
       isGrouped: true,
       isGroupHeader: false,
       hasGroups: true,
+      hasQuoteSelection: false,
     });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
@@ -513,6 +516,7 @@ describe("showCardboxContextMenu", () => {
       isGrouped: true,
       isGroupHeader: false,
       hasGroups: true,
+      hasQuoteSelection: false,
     });
   });
 
@@ -528,6 +532,7 @@ describe("showCardboxContextMenu", () => {
       isGroupHeader: true,
       isGrouped: false,
       hasGroups: true,
+      hasQuoteSelection: false,
     });
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_cardbox_context_menu", {
@@ -536,6 +541,7 @@ describe("showCardboxContextMenu", () => {
       isGroupHeader: true,
       isGrouped: false,
       hasGroups: true,
+      hasQuoteSelection: false,
     });
   });
 });
@@ -556,6 +562,7 @@ describe("useCardboxContextMenu", () => {
       onDissolveGroup: vi.fn(),
       onRenameGroup: vi.fn(),
       onSetColor: vi.fn(),
+      onQuoteReply: vi.fn(),
     };
   }
 
@@ -643,6 +650,32 @@ describe("useCardboxContextMenu", () => {
     emitMockEvent("context-menu://cardbox/remove-from-group", { card_uuid: "card-1", group_id: null });
 
     expect(handlers.onRemoveFromGroup).not.toHaveBeenCalled();
+  });
+
+  it("fires onQuoteReply with card_uuid on quote-reply event", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/quote-reply", { card_uuid: "card-1", group_id: null });
+
+    expect(handlers.onQuoteReply).toHaveBeenCalledWith("card-1");
+    expect(handlers.onNewGroup).not.toHaveBeenCalled();
+    expect(handlers.onPin).not.toHaveBeenCalled();
+  });
+
+  it("does not fire onQuoteReply when card_uuid is null", async () => {
+    const { useCardboxContextMenu } = await import("./contextMenuIpc");
+    const handlers = makeHandlers();
+
+    const { renderHook } = await import("@testing-library/react");
+    renderHook(() => useCardboxContextMenu(handlers));
+
+    emitMockEvent("context-menu://cardbox/quote-reply", { card_uuid: null, group_id: null });
+
+    expect(handlers.onQuoteReply).not.toHaveBeenCalled();
   });
 
   it("cleans up listeners on unmount", async () => {

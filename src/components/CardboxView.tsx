@@ -1,17 +1,7 @@
 import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import type { DragStartEvent, DragEndEvent, DragOverEvent } from "@dnd-kit/core";
-import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortable";
 import { showCardboxContextMenu, useCardboxContextMenu } from "../lib/contextMenuIpc";
 import { useCardboxStore } from "../stores/cardbox";
-import type { BatchMoveTarget } from "../stores/cardbox";
 import { usePaneLoadingStore } from "../stores/paneLoading";
 import { usePaneStore } from "../stores/panes";
 import { useCardboxUndoStore } from "../stores/cardboxUndo";
@@ -19,32 +9,21 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useCardboxKeyboard } from "../hooks/useCardboxKeyboard";
 import { useCardboxSelection } from "../hooks/useCardboxSelection";
-import { CardboxCard } from "./CardboxCard";
-import { SortableCard } from "./SortableCard";
-import { SortableGroup } from "./SortableGroup";
+import { CardboxCardItem } from "./CardboxCardItem";
+import { CardboxGroup } from "./CardboxGroup";
 import { LinkPicker } from "./LinkPicker";
 import { GroupPicker } from "./GroupPicker";
 import { CardboxShortcutsOverlay } from "./CardboxShortcutsOverlay";
 import { BatchToolbar } from "./BatchToolbar";
-import { makeCardboxCollision } from "../lib/cardboxCollision";
-import { parseActiveId, parseOverId } from "../lib/dndIds";
-import type { ParsedActiveId, ParsedOverId } from "../lib/dndIds";
-import type { CardboxAnnotation } from "../lib/ipc";
-import { DraggedUuidsContext } from "./DraggedUuidsContext";
+import type { CardboxAnnotation, GroupInfo } from "../lib/ipc";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { resolveQuoteTarget, expandSelectionToCardText, type QuoteTarget } from "../lib/cardboxQuote";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
 import { resolvePendingFocus, computeCenteredScrollTop, computeCollapseScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
 
 const EMPTY_LINKED: CardboxAnnotation[] = [];
-
-interface DragState {
-  activeId: string;
-  parsed: ParsedActiveId;
-  overGroupId: string | null;
-  draggedUuids: string[];
-}
 
 // Measure a card element against the cardbox grid's own scroll container for
 // the compute*ScrollTop helpers. Scrolling must stay confined to that
@@ -88,8 +67,6 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const setSearchQuery = useCardboxStore((s) => s.setSearchQuery);
   const resetFilters = useCardboxStore((s) => s.resetFilters);
   const toggleType = useCardboxStore((s) => s.toggleType);
-  const order = useCardboxStore((s) => s.order);
-  const setOrder = useCardboxStore((s) => s.setOrder);
   const loadLayout = useCardboxStore((s) => s.loadLayout);
   const saveLayout = useCardboxStore((s) => s.saveLayout);
   const links = useCardboxStore((s) => s.links);
@@ -100,10 +77,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const dissolveGroup = useCardboxStore((s) => s.dissolveGroup);
   const renameGroup = useCardboxStore((s) => s.renameGroup);
   const toggleGroupCollapse = useCardboxStore((s) => s.toggleGroupCollapse);
-  const moveCardToGroup = useCardboxStore((s) => s.moveCardToGroup);
   const removeCardFromGroup = useCardboxStore((s) => s.removeCardFromGroup);
-  const reorderWithinGroup = useCardboxStore((s) => s.reorderWithinGroup);
-  const moveCardBetweenGroups = useCardboxStore((s) => s.moveCardBetweenGroups);
   const pinned = useCardboxStore((s) => s.pinned);
   const pinCard = useCardboxStore((s) => s.pinCard);
   const unpinCard = useCardboxStore((s) => s.unpinCard);
@@ -117,6 +91,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
   const pendingFocusUuid = useCardboxStore((s) => s.pendingFocusUuid);
   const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
+  const pendingNotePrefill = useCardboxStore((s) => s.pendingNotePrefill);
+  const setPendingNotePrefill = useCardboxStore((s) => s.setPendingNotePrefill);
   const layoutLoaded = useCardboxStore((s) => s.layoutLoaded);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
@@ -134,23 +110,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const { selectedUuids, selectedCount, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
 
-  const [dragState, setDragState] = useState<DragState | null>(null);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
-  const [groupPickerCardUuid, setGroupPickerCardUuid] = useState<string | null>(null);
+  const [groupPickerUuids, setGroupPickerUuids] = useState<string[] | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mergingToDraft, setMergingToDraft] = useState(false);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-  );
-
-  const collisionDetection = useMemo(() => {
-    if (!dragState) return makeCardboxCollision(null);
-    const sourceGroupId = dragState.parsed.type === "groupCard" ? dragState.parsed.groupId : null;
-    return makeCardboxCollision(sourceGroupId);
-  }, [dragState]);
 
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
 
@@ -298,30 +261,6 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [filteredAnnotations, connectionsUuidSet],
   );
 
-  // Visible pinned UUIDs: pinned cards that survived type filtering, in pinned-array order
-  const visiblePinnedUuids = useMemo(() => {
-    const filteredSet = new Set(effectiveAnnotations.map((a) => a.uuid));
-    return pinned.filter((uuid) => filteredSet.has(uuid));
-  }, [effectiveAnnotations, pinned]);
-
-  // Sort filtered annotations by user's custom order (used for keyboard nav + DnD fallback)
-  const sortedAnnotations = useMemo(() => {
-    const annMap = new Map(effectiveAnnotations.map((a) => [a.uuid, a]));
-    const pinnedSection = visiblePinnedUuids
-      .map((uuid) => annMap.get(uuid)!)
-      .filter(Boolean);
-    const pinnedUuids = new Set(visiblePinnedUuids);
-    const unpinnedFiltered = effectiveAnnotations.filter((a) => !pinnedUuids.has(a.uuid));
-    if (order.length === 0) return [...pinnedSection, ...unpinnedFiltered];
-    const orderMap = new Map(order.map((uuid, i) => [uuid, i]));
-    const unpinnedSorted = [...unpinnedFiltered].sort((a, b) => {
-      const ai = orderMap.get(a.uuid) ?? Infinity;
-      const bi = orderMap.get(b.uuid) ?? Infinity;
-      return ai - bi;
-    });
-    return [...pinnedSection, ...unpinnedSorted];
-  }, [effectiveAnnotations, order, visiblePinnedUuids]);
-
   // Build filtered UUID set for quick membership tests
   const filteredUuidSet = useMemo(
     () => new Set(effectiveAnnotations.map((a) => a.uuid)),
@@ -335,9 +274,28 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   }, [annotations]);
 
   const renderEntries = useMemo(
-    () => buildRenderEntries(order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned),
-    [order, groups, annotationMap, filteredUuidSet, effectiveAnnotations, pinned],
+    () => buildRenderEntries(effectiveAnnotations, groups, pinned),
+    [effectiveAnnotations, groups, pinned],
   );
+
+  // Groups the current filter actually renders (same predicate as
+  // buildRenderEntries): "Add to Group" must never target an invisible group.
+  // Identity-stable across filter keystrokes that don't change the outcome,
+  // so the context-menu callbacks (and thus every card) don't re-render.
+  const visibleGroupsRef = useRef<Record<string, GroupInfo>>({});
+  const visibleGroups = useMemo(() => {
+    const visible: Record<string, GroupInfo> = {};
+    for (const [gid, info] of Object.entries(groups)) {
+      if (info.order.some((uuid) => filteredUuidSet.has(uuid))) visible[gid] = info;
+    }
+    const prev = visibleGroupsRef.current;
+    const keys = Object.keys(visible);
+    if (keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === visible[k])) {
+      return prev;
+    }
+    visibleGroupsRef.current = visible;
+    return visible;
+  }, [groups, filteredUuidSet]);
 
   const orderedUuids = useMemo(
     () => renderEntries.flatMap((e) =>
@@ -404,6 +362,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [setNote],
   );
 
+  const handleNotePrefillConsumed = useCallback(
+    () => setPendingNotePrefill(null),
+    [setPendingNotePrefill],
+  );
+
   const handleExportNote = useCallback(
     async (uuid: string) => {
       try {
@@ -442,16 +405,16 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const { gridRef, handleKeyDown: handleGridKeyDown } = useCardboxKeyboard({
     onExpand: (index) => {
-      const ann = sortedAnnotations[index];
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
       if (ann) handleToggleExpand(ann.uuid);
     },
     onNavigate: (index) => {
-      const ann = sortedAnnotations[index];
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
       if (ann) handleNavigate(ann);
     },
     onOpenLinkPicker: () => setLinkPickerOpen(true),
     onTogglePin: (index) => {
-      const ann = sortedAnnotations[index];
+      const ann = annotationMap.get(orderedUuids[index] ?? "");
       if (ann) {
         if (pinnedSet.has(ann.uuid)) {
           unpinCard(ann.uuid);
@@ -481,14 +444,24 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     },
     onExitConnections: () => exitConnections(),
     onShowShortcuts: () => setShortcutsOpen(true),
+    onExpandTextSelection: () => expandSelectionToCardText(window.getSelection(), gridRef.current),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
     onToggleScope: () => { if (!connectionsForUuid) handleScopeChange(scope === "document" ? "workspace" : "document"); },
-    onUndo: async () => { await undo(); debouncedSave(); },
-    onRedo: async () => { await redo(); debouncedSave(); },
+    onQuoteSelection: () => {
+      const target = resolveQuoteTarget(window.getSelection(), gridRef.current);
+      if (!target) return false;
+      expand(target.uuid);
+      setPendingNotePrefill(target);
+      return true;
+    },
+    // Every undoable store action self-persists through its own IPC call, so
+    // undo/redo replay needs no extra layout save.
+    onUndo: () => undo(),
+    onRedo: () => redo(),
     expandedUuid,
     connectionsActive: !!connectionsForUuid,
-    itemCount: sortedAnnotations.length,
+    itemCount: orderedUuids.length,
   });
 
   // Pending scroll/highlight delay from handleFocusCard; cleared on repeat
@@ -600,6 +573,22 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   // ---------- Context menu handlers ----------
 
+  // Quote target resolved at menu-open time, so the advertised "Quote Reply"
+  // item and the text it quotes always agree regardless of what the native
+  // menu does to the DOM selection. Overwritten on every menu open, so a
+  // stale stash can never outlive the menu that advertised it.
+  const quoteReplyTargetRef = useRef<QuoteTarget | null>(null);
+
+  const stashQuoteReplyTarget = useCallback(
+    (uuid: string) => {
+      const target = resolveQuoteTarget(window.getSelection(), gridRef.current);
+      const matched = target?.uuid === uuid ? target : null;
+      quoteReplyTargetRef.current = matched;
+      return matched !== null;
+    },
+    [gridRef],
+  );
+
   const handleCardContextMenu = useCallback(
     (uuid: string, e: React.MouseEvent) => {
       e.preventDefault();
@@ -609,10 +598,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isPinned: pinnedSet.has(uuid),
         isGrouped: false,
         isGroupHeader: false,
-        hasGroups: Object.keys(groups).length > 0,
+        hasGroups: Object.keys(visibleGroups).length > 0,
+        hasQuoteSelection: stashQuoteReplyTarget(uuid),
       });
     },
-    [groups, pinnedSet, colors],
+    [visibleGroups, pinnedSet, colors, stashQuoteReplyTarget],
   );
 
   const handleGroupCardContextMenu = useCallback(
@@ -625,24 +615,52 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
         isPinned: pinnedSet.has(cardUuid),
         isGrouped: true,
         isGroupHeader: false,
-        hasGroups: Object.keys(groups).length > 0,
+        hasGroups: Object.keys(visibleGroups).length > 0,
+        hasQuoteSelection: stashQuoteReplyTarget(cardUuid),
       });
     },
-    [groups, pinnedSet, colors],
+    [visibleGroups, pinnedSet, colors, stashQuoteReplyTarget],
   );
 
   const handleGroupHeaderContextMenu = useCallback(
     (groupId: string, e: React.MouseEvent) => {
       e.preventDefault();
+      quoteReplyTargetRef.current = null;
       showCardboxContextMenu({
         groupId,
         isPinned: false,
         isGroupHeader: true,
         isGrouped: false,
-        hasGroups: Object.keys(groups).length > 0,
+        hasGroups: Object.keys(visibleGroups).length > 0,
+        hasQuoteSelection: false,
       });
     },
-    [groups],
+    [visibleGroups],
+  );
+
+  // ---------- Add to group without drag (#968) ----------
+
+  const applyAddToGroup = useCallback(
+    (uuids: string[], groupId: string) => {
+      // Single cards go through batchMoveCards too: it dissolves an emptied
+      // source group and persists the layout itself — no debounced save.
+      batchMoveCards(uuids, { type: "toGroup", groupId });
+      clearSelection();
+    },
+    [batchMoveCards, clearSelection],
+  );
+
+  const openAddToGroup = useCallback(
+    (uuids: string[]) => {
+      const groupIds = Object.keys(visibleGroups);
+      if (groupIds.length === 0 || uuids.length === 0) return;
+      if (groupIds.length === 1) {
+        applyAddToGroup(uuids, groupIds[0]!);
+        return;
+      }
+      setGroupPickerUuids(uuids);
+    },
+    [visibleGroups, applyAddToGroup],
   );
 
   useCardboxContextMenu({
@@ -663,19 +681,17 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       debouncedSave();
     },
     onNewGroup: (cardUuid) => {
-      const groupId = crypto.randomUUID();
-      createGroup(groupId, "New Group", [cardUuid], cardUuid);
+      if (selectedUuids.has(cardUuid) && selectedCount > 1) {
+        batchCreateGroup([...selectedUuids], "New Group");
+        clearSelection();
+      } else {
+        createGroup(crypto.randomUUID(), "New Group", [cardUuid]);
+      }
       debouncedSave();
     },
     onAddToGroup: (cardUuid) => {
-      const groupIds = Object.keys(groups);
-      if (groupIds.length === 0) return;
-      if (groupIds.length === 1) {
-        moveCardToGroup(cardUuid, groupIds[0]!);
-        debouncedSave();
-        return;
-      }
-      setGroupPickerCardUuid(cardUuid);
+      const uuids = selectedUuids.has(cardUuid) && selectedCount > 1 ? [...selectedUuids] : [cardUuid];
+      openAddToGroup(uuids);
     },
     onRemoveFromGroup: (cardUuid, groupId) => {
       removeCardFromGroup(cardUuid, groupId);
@@ -690,6 +706,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       if (el) {
         el.dispatchEvent(new CustomEvent("lit:start-rename", { bubbles: false }));
       }
+    },
+    onQuoteReply: (cardUuid) => {
+      const target = quoteReplyTargetRef.current;
+      if (!target || target.uuid !== cardUuid) return;
+      expand(target.uuid);
+      setPendingNotePrefill(target);
     },
     onSetColor: (cardUuid, color) => {
       if (selectedUuids.has(cardUuid) && selectedCount > 1) {
@@ -710,256 +732,14 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     },
   });
 
-  // ---------- DnD event handlers ----------
-
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const id = event.active.id as string;
-    const parsed = parseActiveId(id);
-    const cardUuid = parsed.type === "topCard" ? parsed.uuid : parsed.type === "groupCard" ? parsed.uuid : null;
-    if (cardUuid && selectedUuids.has(cardUuid) && selectedUuids.size >= 2) {
-      setDragState({ activeId: id, parsed, overGroupId: null, draggedUuids: [...selectedUuids] });
-    } else {
-      setDragState({ activeId: id, parsed, overGroupId: null, draggedUuids: cardUuid ? [cardUuid] : [] });
-      clearSelection();
-    }
-  }, [clearSelection, selectedUuids]);
-
-  const handleDragOver = useCallback((event: DragOverEvent) => {
-    const { over } = event;
-    if (!over) {
-      setDragState((prev) => prev ? { ...prev, overGroupId: null } : null);
-      return;
-    }
-    const overId = over.id as string;
-    if (overId.startsWith("droppable:group:")) {
-      const groupId = overId.slice("droppable:group:".length);
-      setDragState((prev) => prev ? { ...prev, overGroupId: groupId } : null);
-    } else if (overId.startsWith("ingroup:")) {
-      const rest = overId.slice("ingroup:".length);
-      const sep = rest.indexOf(":");
-      const groupId = sep >= 0 ? rest.slice(0, sep) : rest;
-      setDragState((prev) => prev ? { ...prev, overGroupId: groupId } : null);
-    } else {
-      setDragState((prev) => prev ? { ...prev, overGroupId: null } : null);
-    }
-  }, []);
-
-  const handleDragCancel = useCallback(() => {
-    setDragState(null);
-  }, []);
-
-  /**
-   * Reorder at top level — works for cards and groups alike.
-   * Moves `activeIdStr` to the position of `overIdStr` in visible order,
-   * then maps that back to the full `order` array.
-   */
-  const reorderTopLevel = useCallback(
-    (activeIdStr: string, overIdStr: string) => {
-      const visibleIds = renderEntries.map((e) =>
-        e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
-      );
-      const oldIndex = visibleIds.indexOf(activeIdStr);
-      const newIndex = visibleIds.indexOf(overIdStr);
-      if (oldIndex === -1 || newIndex === -1) return;
-
-      const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
-      const withoutActive = currentOrder.filter((id) => id !== activeIdStr);
-      const newVisibleOrder = arrayMove(visibleIds, oldIndex, newIndex);
-      const insertAfterItem = newIndex > 0 ? newVisibleOrder[newIndex - 1] ?? null : null;
-      const insertAt = insertAfterItem === null ? 0 : withoutActive.indexOf(insertAfterItem) + 1;
-      withoutActive.splice(insertAt, 0, activeIdStr);
-      setOrder(withoutActive);
-    },
-    [renderEntries, order, annotations, setOrder],
-  );
-
-  const computeBatchTarget = useCallback(
-    (dst: ParsedOverId, overIdStr: string): BatchMoveTarget | null => {
-      if (dst.type === "topCard" || dst.type === "group") {
-        const visibleIds = renderEntries.map((e) =>
-          e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
-        );
-        const visIdx = visibleIds.indexOf(overIdStr);
-        if (visIdx === -1) return null;
-        const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
-        const insertAfterItem = visIdx > 0 ? visibleIds[visIdx - 1] ?? null : null;
-        const insertAtIndex = insertAfterItem === null ? 0 : currentOrder.indexOf(insertAfterItem) + 1;
-        return { type: "topLevel", insertAtIndex };
-      }
-      if (dst.type === "groupDropZone") {
-        return { type: "toGroup", groupId: dst.groupId };
-      }
-      if (dst.type === "groupCard") {
-        const group = groups[dst.groupId];
-        const idx = group ? group.order.indexOf(dst.uuid) : undefined;
-        return { type: "toGroup", groupId: dst.groupId, index: idx != null && idx >= 0 ? idx : undefined };
-      }
-      return null;
-    },
-    [renderEntries, order, annotations, groups],
-  );
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const prevDragState = dragState;
-      setDragState(null);
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-
-      // Multi-card drag path
-      if (prevDragState && prevDragState.draggedUuids.length > 1) {
-        const dst = parseOverId(over.id as string);
-        const target = computeBatchTarget(dst, over.id as string);
-        if (target) {
-          batchMoveCards(prevDragState.draggedUuids, target);
-          clearSelection();
-          debouncedSave();
-        }
-        return;
-      }
-
-      const src = parseActiveId(active.id as string);
-      const dst = parseOverId(over.id as string);
-
-      // CASE 1: Group being dragged — top-level reorder only
-      if (src.type === "group") {
-        if (dst.type === "topCard" || dst.type === "group") {
-          reorderTopLevel(`group:${src.groupId}`, over.id as string);
-          debouncedSave();
-        }
-        return;
-      }
-
-      // CASE 2: Top-level card → top-level card (reorder)
-      if (src.type === "topCard" && dst.type === "topCard") {
-        reorderTopLevel(src.uuid, dst.uuid);
-        debouncedSave();
-        return;
-      }
-
-      // CASE 3: Top-level card → group drop zone
-      if (src.type === "topCard" && dst.type === "groupDropZone") {
-        moveCardToGroup(src.uuid, dst.groupId);
-        debouncedSave();
-        return;
-      }
-
-      // CASE 4: Top-level card → card inside a group (insert at that position)
-      if (src.type === "topCard" && dst.type === "groupCard") {
-        const group = groups[dst.groupId];
-        const idx = group ? group.order.indexOf(dst.uuid) : undefined;
-        moveCardToGroup(src.uuid, dst.groupId, idx != null && idx >= 0 ? idx : undefined);
-        debouncedSave();
-        return;
-      }
-
-      // CASE 5: Group card → group drop zone
-      if (src.type === "groupCard" && dst.type === "groupDropZone") {
-        if (src.groupId === dst.groupId) return; // same group, no-op
-        moveCardBetweenGroups(src.uuid, src.groupId, dst.groupId);
-        debouncedSave();
-        return;
-      }
-
-      // CASE 6: Group card → group card
-      if (src.type === "groupCard" && dst.type === "groupCard") {
-        if (src.groupId === dst.groupId) {
-          // Intra-group reorder
-          reorderWithinGroup(src.groupId, src.uuid, dst.uuid);
-          debouncedSave();
-          return;
-        }
-        // Cross-group move
-        const targetGroup = groups[dst.groupId];
-        const idx = targetGroup ? targetGroup.order.indexOf(dst.uuid) : undefined;
-        moveCardBetweenGroups(src.uuid, src.groupId, dst.groupId, idx != null && idx >= 0 ? idx : undefined);
-        debouncedSave();
-        return;
-      }
-
-      // CASE 7: Group card → top-level card or group entry (drag out of group)
-      if (src.type === "groupCard" && (dst.type === "topCard" || dst.type === "group")) {
-        // Guard: dropping on own group header is a no-op
-        if (dst.type === "group" && src.groupId === dst.groupId) return;
-
-        const currentOrder = order.length > 0 ? [...order] : annotations.map((a) => a.uuid);
-        const overEntry = over.id as string;
-
-        // Fix 4: account for auto-dissolve shifting indices
-        const sourceGroup = groups[src.groupId];
-        const willDissolve = sourceGroup != null && sourceGroup.order.length <= 1;
-        let topLevelIndex: number | undefined;
-        if (willDissolve) {
-          // After dissolve, group:{gid} is removed — insert at the group's former position
-          const groupPos = currentOrder.indexOf(`group:${src.groupId}`);
-          topLevelIndex = groupPos >= 0 ? groupPos : undefined;
-        } else {
-          const pos = currentOrder.indexOf(overEntry);
-          topLevelIndex = pos >= 0 ? pos : undefined;
-        }
-        removeCardFromGroup(src.uuid, src.groupId, topLevelIndex);
-        debouncedSave();
-        return;
-      }
-
-      // CASE 8: Top-level card → group entry (top-level reorder past a group)
-      if (src.type === "topCard" && dst.type === "group") {
-        reorderTopLevel(src.uuid, `group:${dst.groupId}`);
-        debouncedSave();
-        return;
-      }
-    },
-    [
-      dragState,
-      groups,
-      order,
-      annotations,
-      renderEntries,
-      reorderTopLevel,
-      moveCardToGroup,
-      removeCardFromGroup,
-      reorderWithinGroup,
-      moveCardBetweenGroups,
-      batchMoveCards,
-      clearSelection,
-      computeBatchTarget,
-      debouncedSave,
-    ],
-  );
-
   const handleGroupPickerSelect = useCallback(
     (groupId: string) => {
-      if (groupPickerCardUuid) {
-        moveCardToGroup(groupPickerCardUuid, groupId);
-        debouncedSave();
+      if (groupPickerUuids) {
+        applyAddToGroup(groupPickerUuids, groupId);
       }
-      setGroupPickerCardUuid(null);
+      setGroupPickerUuids(null);
     },
-    [groupPickerCardUuid, moveCardToGroup, debouncedSave],
-  );
-
-  // ---------- Drag overlay helpers ----------
-
-  /** Look up annotation for overlay rendering, supports both top-level and ingroup IDs. */
-  const overlayAnnotation = useMemo(() => {
-    if (!dragState) return null;
-    const { parsed } = dragState;
-    if (parsed.type === "topCard") return annotationMap.get(parsed.uuid) ?? null;
-    if (parsed.type === "groupCard") return annotationMap.get(parsed.uuid) ?? null;
-    return null;
-  }, [dragState, annotationMap]);
-
-  /** Group info for overlay when dragging a group. */
-  const overlayGroup = useMemo(() => {
-    if (!dragState || dragState.parsed.type !== "group") return null;
-    const info = groups[dragState.parsed.groupId];
-    if (!info) return null;
-    return { name: info.name, cardCount: info.order.length };
-  }, [dragState, groups]);
-
-  const draggedUuidsSet = useMemo(
-    () => dragState ? new Set(dragState.draggedUuids) : new Set<string>(),
-    [dragState],
+    [groupPickerUuids, applyAddToGroup],
   );
 
   // ---------- Render ----------
@@ -1096,127 +876,79 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
           </div>
         ) : (
           <MasonryObserverProvider>
-          <DraggedUuidsContext.Provider value={draggedUuidsSet}>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetection}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={handleDragEnd}
-            onDragCancel={handleDragCancel}
-          >
-            <SortableContext
-              items={renderEntries.map((e) =>
-                e.kind === "card" ? e.annotation.uuid : `group:${e.groupId}`,
-              )}
-              strategy={rectSortingStrategy}
+            <div
+              ref={gridRef}
+              className="grid"
+              style={{
+                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                gridAutoRows: "8px",
+                columnGap: "1rem",
+                alignItems: "start",
+              }}
+              onKeyDown={handleGridKeyDown}
             >
-              <div
-                ref={gridRef}
-                className="grid"
-                style={{
-                  gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                  gridAutoRows: "8px",
-                  columnGap: "1rem",
-                  alignItems: "start",
-                }}
-                onKeyDown={handleGridKeyDown}
-              >
-                {renderEntries.map((entry) =>
-                  entry.kind === "card" ? (
-                    <SortableCard
-                      key={entry.annotation.uuid}
-                      annotation={entry.annotation}
-                      expanded={expandedUuid === entry.annotation.uuid}
-                      isPinned={pinnedSet.has(entry.annotation.uuid)}
-                      colorTag={colors[entry.annotation.uuid]}
-                      onToggleExpand={handleToggleExpand}
-                      onNavigate={handleNavigate}
-                      linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
-                      onFocusCard={handleFocusCard}
-                      onRemoveLink={handleRemoveLink}
-                      note={notesMap[entry.annotation.uuid]}
-                      onSetNote={handleSetNote}
-                      onExportNote={handleExportNote}
-                      onShowConnections={enterConnections}
-                      onContextMenu={handleCardContextMenu}
-                      onSelect={handleSelect}
-                    />
-                  ) : (
-                    <SortableGroup
-                      key={`group:${entry.groupId}`}
-                      groupId={entry.groupId}
-                      info={entry.info}
-                      cards={entry.cards}
-                      allFilteredCount={groups[entry.groupId]?.order.filter(uuid => annotationMap.has(uuid)).length ?? 0}
-                      expandedUuid={expandedUuid}
-                      linkedCardsMap={linkedCardsMap}
-                      isDropTarget={dragState?.overGroupId === entry.groupId}
-                      onToggleExpand={handleToggleExpand}
-                      onNavigate={handleNavigate}
-                      onFocusCard={handleFocusCard}
-                      onRemoveLink={handleRemoveLink}
-                      notesMap={notes}
-                      onSetNote={handleSetNote}
-                      onExportNote={handleExportNote}
-                      onShowConnections={enterConnections}
-                      onToggleCollapse={toggleGroupCollapse}
-                      onRename={renameGroup}
-                      onCardContextMenu={handleGroupCardContextMenu}
-                      onHeaderContextMenu={handleGroupHeaderContextMenu}
-                      colors={colors}
-                      onCardSelect={handleSelect}
-                    />
-                  ),
-                )}
-              </div>
-            </SortableContext>
-            <DragOverlay dropAnimation={{ duration: 150, easing: "ease-out" }}>
-              {overlayAnnotation ? (
-                dragState && dragState.draggedUuids.length > 1 ? (
-                  <div className="relative" style={{ transform: "scale(1.02)" }}>
-                    <div className="absolute inset-0 rounded-lg bg-bg-secondary border border-border" style={{ transform: "translate(8px, 8px)", opacity: 0.4 }} />
-                    {dragState.draggedUuids.length > 2 && (
-                      <div className="absolute inset-0 rounded-lg bg-bg-secondary border border-border" style={{ transform: "translate(4px, 4px)", opacity: 0.6 }} />
-                    )}
-                    <div className="relative opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}>
-                      <CardboxCard
-                        annotation={overlayAnnotation}
-                        expanded={false}
-                        isPinned={pinnedSet.has(overlayAnnotation.uuid)}
-                        colorTag={colors[overlayAnnotation.uuid]}
-                        onToggleExpand={() => {}}
-                        onNavigate={() => {}}
-                      />
-                    </div>
-                    <div
-                      className="absolute flex items-center justify-center rounded-full bg-interactive-accent text-on-accent text-xs font-bold"
-                      style={{ top: -8, right: -8, width: 24, height: 24, zIndex: 1 }}
-                    >
-                      {dragState.draggedUuids.length}
-                    </div>
-                  </div>
+              {renderEntries.map((entry) =>
+                entry.kind === "card" ? (
+                  <CardboxCardItem
+                    key={entry.annotation.uuid}
+                    annotation={entry.annotation}
+                    expanded={expandedUuid === entry.annotation.uuid}
+                    isPinned={pinnedSet.has(entry.annotation.uuid)}
+                    colorTag={colors[entry.annotation.uuid]}
+                    onToggleExpand={handleToggleExpand}
+                    onNavigate={handleNavigate}
+                    linkedCards={linkedCardsMap.get(entry.annotation.uuid) ?? EMPTY_LINKED}
+                    onFocusCard={handleFocusCard}
+                    onRemoveLink={handleRemoveLink}
+                    note={notesMap[entry.annotation.uuid]}
+                    notePrefill={
+                      pendingNotePrefill?.uuid === entry.annotation.uuid
+                        ? pendingNotePrefill.text
+                        : undefined
+                    }
+                    onNotePrefillConsumed={handleNotePrefillConsumed}
+                    onSetNote={handleSetNote}
+                    onExportNote={handleExportNote}
+                    onShowConnections={enterConnections}
+                    onContextMenu={handleCardContextMenu}
+                    onSelect={handleSelect}
+                  />
                 ) : (
-                  <div className="opacity-90" style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)", transform: "scale(1.02)" }}>
-                    <CardboxCard
-                      annotation={overlayAnnotation}
-                      expanded={false}
-                      isPinned={pinnedSet.has(overlayAnnotation.uuid)}
-                      colorTag={colors[overlayAnnotation.uuid]}
-                      onToggleExpand={() => {}}
-                      onNavigate={() => {}}
-                    />
-                  </div>
-                )
-              ) : overlayGroup ? (
-                <div className="rounded bg-bg-secondary px-3 py-2 shadow-lg border border-border">
-                  <span className="text-sm font-medium">{overlayGroup.name}</span>
-                  <span className="ml-2 text-xs text-text-muted">{overlayGroup.cardCount} cards</span>
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-          </DraggedUuidsContext.Provider>
+                  <CardboxGroup
+                    key={`group:${entry.groupId}`}
+                    groupId={entry.groupId}
+                    info={entry.info}
+                    cards={entry.cards}
+                    allFilteredCount={groups[entry.groupId]?.order.filter(uuid => annotationMap.has(uuid)).length ?? 0}
+                    expandedUuid={expandedUuid}
+                    linkedCardsMap={linkedCardsMap}
+                    onToggleExpand={handleToggleExpand}
+                    onNavigate={handleNavigate}
+                    onFocusCard={handleFocusCard}
+                    onRemoveLink={handleRemoveLink}
+                    notesMap={notes}
+                    // A pinned group member dual-renders (hoisted + in-group);
+                    // the hoisted copy wins the prefill so only one note
+                    // editor opens (#968).
+                    notePrefill={
+                      pendingNotePrefill && pinnedSet.has(pendingNotePrefill.uuid)
+                        ? null
+                        : pendingNotePrefill
+                    }
+                    onNotePrefillConsumed={handleNotePrefillConsumed}
+                    onSetNote={handleSetNote}
+                    onExportNote={handleExportNote}
+                    onShowConnections={enterConnections}
+                    onToggleCollapse={toggleGroupCollapse}
+                    onRename={renameGroup}
+                    onCardContextMenu={handleGroupCardContextMenu}
+                    onHeaderContextMenu={handleGroupHeaderContextMenu}
+                    colors={colors}
+                    onCardSelect={handleSelect}
+                  />
+                ),
+              )}
+            </div>
           </MasonryObserverProvider>
         )}
       </div>
@@ -1231,10 +963,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       />
 
       <GroupPicker
-        open={groupPickerCardUuid !== null}
-        groups={groups}
+        open={groupPickerUuids !== null}
+        groups={visibleGroups}
         onSelect={handleGroupPickerSelect}
-        onClose={() => setGroupPickerCardUuid(null)}
+        onClose={() => setGroupPickerUuids(null)}
       />
 
       <CardboxShortcutsOverlay
@@ -1245,6 +977,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       <BatchToolbar
         selectedCount={selectedCount}
         mergingToDraft={mergingToDraft}
+        hasGroups={Object.keys(visibleGroups).length > 0}
+        onAddToGroup={() => openAddToGroup([...selectedUuids])}
         onMergeToDraft={async () => {
           const uuids = [...selectedUuids];
           const paneId = usePaneStore.getState().focusedPaneId;
