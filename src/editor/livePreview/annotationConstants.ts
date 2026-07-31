@@ -21,7 +21,6 @@ export const CLS = {
 
   CARDBOX_LINK: "cm-annotation-cardbox-link",
 
-  DATE: "cm-annotation-date",
   SPINNER: "cm-annotation-spinner",
   STOP_ICON: "cm-annotation-stop-icon",
   FOLD_ICON: "cm-annotation-fold-icon",

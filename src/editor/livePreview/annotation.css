@@ -22,11 +22,6 @@
   white-space: nowrap;
 }
 
-.cm-annotation-date {
-  font-size: 0.8em;
-  opacity: 0.6;
-}
-
 .cm-annotation-loading {
   opacity: 0.5;
 }

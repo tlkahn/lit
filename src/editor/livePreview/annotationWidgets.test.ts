@@ -57,7 +57,7 @@ describe("PillWidget", () => {
     view.destroy();
   });
 
-  it("renders type icon, body, and date", () => {
+  it("renders type icon and body but never a date", () => {
     const view = makeEditorView();
     const ann = makeAnnotation({
       annotation_type: "note",
@@ -72,7 +72,7 @@ describe("PillWidget", () => {
     const dom = w.toDOM(view);
     expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("N");
     expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("hello");
-    expect(dom.querySelector(".cm-annotation-date")!.textContent).toBe("2026-04");
+    expect(dom.querySelector(".cm-annotation-date")).toBeNull();
     expect(dom.classList.contains("cm-annotation-firm")).toBe(true);
     view.destroy();
   });
@@ -365,7 +365,7 @@ describe("CalloutWidget", () => {
     const dom = w.toDOM(null as unknown as import("@codemirror/view").EditorView);
     const header = dom.querySelector(".cm-annotation-callout-header")!;
     expect(header.querySelector(".cm-annotation-callout-label")!.textContent).toBe("question");
-    expect(header.querySelector(".cm-annotation-date")!.textContent).toBe("2026-05");
+    expect(header.querySelector(".cm-annotation-date")).toBeNull();
     expect(header.querySelector(".cm-annotation-fold-icon")).toBeTruthy();
   });
 

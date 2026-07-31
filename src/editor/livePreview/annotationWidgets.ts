@@ -222,13 +222,6 @@ function buildPillDOM(ann: Annotation): HTMLSpanElement {
     pill.appendChild(bodyEl);
   }
 
-  if (ann.date) {
-    const date = document.createElement("span");
-    date.className = CLS.DATE;
-    date.textContent = ann.date;
-    pill.appendChild(date);
-  }
-
   return pill;
 }
 
@@ -512,13 +505,6 @@ export class CalloutWidget extends WidgetType {
     label.className = CLS.CALLOUT_LABEL;
     label.textContent = ann.annotation_type;
     header.appendChild(label);
-
-    if (ann.date) {
-      const date = document.createElement("span");
-      date.className = CLS.DATE;
-      date.textContent = ann.date;
-      header.appendChild(date);
-    }
 
     const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     if (fireBtn) header.appendChild(fireBtn);

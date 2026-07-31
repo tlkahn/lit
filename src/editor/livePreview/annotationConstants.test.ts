@@ -114,7 +114,6 @@ describe("CLS constants", () => {
   });
 
   it("has correct values for shared classes", () => {
-    expect(CLS.DATE).toBe("cm-annotation-date");
     expect(CLS.SPINNER).toBe("cm-annotation-spinner");
     expect(CLS.STOP_ICON).toBe("cm-annotation-stop-icon");
     expect(CLS.FOLD_ICON).toBe("cm-annotation-fold-icon");
