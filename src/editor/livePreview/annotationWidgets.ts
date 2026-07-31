@@ -534,6 +534,12 @@ export class ThreadWidget extends WidgetType {
       const cardboxLink = createCardboxLinkButton(ann);
       if (cardboxLink) pill.appendChild(cardboxLink);
 
+      if (this.isFiring) {
+        const spinner = document.createElement("span");
+        spinner.className = CLS.SPINNER;
+        pill.appendChild(spinner);
+      }
+
       const arrow = document.createElement("span");
       arrow.className = CLS.FOLD_ICON;
       arrow.classList.add(CLS.IS_COLLAPSED);

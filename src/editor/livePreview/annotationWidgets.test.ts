@@ -1443,6 +1443,23 @@ describe("ThreadWidget", () => {
     expect(chevron.querySelector("svg")).toBeTruthy();
   });
 
+  it("collapsed pill renders the firing spinner before the fold chevron", () => {
+    const w = new ThreadWidget(makeThread(), 0, true, 0, true);
+    const dom = w.toDOM(null as unknown as EditorView) as HTMLElement;
+    const spinner = dom.querySelector(".cm-annotation-spinner")!;
+    expect(spinner).toBeTruthy();
+    // Plain span, no fire-button chrome — threads have no manual fire handler.
+    expect(spinner.tagName).toBe("SPAN");
+    expect(spinner.classList.contains("cm-annotation-fire-btn")).toBe(false);
+    expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
+    const chevron = dom.querySelector(".cm-annotation-fold-icon")!;
+    expect(spinner.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Existing collapsed chrome is unchanged.
+    expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("◇");
+    expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("First question?");
+    expect(chevron.classList.contains("is-collapsed")).toBe(true);
+  });
+
   it("collapsed pill adds the certainty class", () => {
     const w = new ThreadWidget(makeThread({ certainty: "tentative" }), 0, true, 0);
     const dom = w.toDOM(null as unknown as EditorView);
