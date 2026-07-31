@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { CardboxCard, showCardFlipped } from "./CardboxCard";
 import type { CardboxAnnotation } from "../lib/ipc";
 
@@ -1199,7 +1200,7 @@ describe("CardboxCard", () => {
       </div>,
     );
     const flip = screen.getByTestId("card-flip");
-    flip.focus();
+    act(() => { flip.focus(); });
     fireEvent.keyDown(flip, { key: "Enter" });
     expect(onGridEnter).not.toHaveBeenCalled();
     fireEvent.keyDown(flip, { key: " " });
@@ -1227,7 +1228,7 @@ describe("CardboxCard", () => {
     );
     // card-navigate is representative of the new strip action buttons (#981).
     const navigate = screen.getByTestId("card-navigate");
-    navigate.focus();
+    act(() => { navigate.focus(); });
     fireEvent.keyDown(navigate, { key: "Enter" });
     expect(onGridEnter).not.toHaveBeenCalled();
     fireEvent.keyDown(navigate, { key: " " });
@@ -1273,7 +1274,7 @@ describe("CardboxCard", () => {
     );
     const root = screen.getByTestId("cardbox-card");
     const navigate = screen.getByTestId("card-navigate");
-    navigate.focus();
+    act(() => { navigate.focus(); });
     expect(document.activeElement).toBe(navigate);
 
     fireEvent.keyDown(navigate, { key: "f" });
@@ -1918,6 +1919,207 @@ describe("CardboxCard", () => {
       expect(strip.className).toMatch(/flex-col/);
     });
 
+    it("places the strip before the stage in DOM order and visually last via order-last", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const stage = screen.getByTestId("card-flip-stage");
+      expect(strip.compareDocumentPosition(stage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(strip.classList.contains("order-last")).toBe(true);
+    });
+
+    it("exposes the toolbar with accessible name Card actions", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByRole("toolbar", { name: "Card actions" })).toBeInTheDocument();
+    });
+
+    function stripButtons(strip: HTMLElement): HTMLElement[] {
+      return Array.from(strip.querySelectorAll("button"));
+    }
+
+    function expectSingleRovingStop(strip: HTMLElement) {
+      const buttons = stripButtons(strip);
+      const zeros = buttons.filter((b) => b.tabIndex === 0);
+      const minusOnes = buttons.filter((b) => b.tabIndex === -1);
+      expect(zeros).toHaveLength(1);
+      expect(minusOnes).toHaveLength(buttons.length - 1);
+      return zeros[0]!;
+    }
+
+    it("keeps exactly one strip control as the roving tab stop (full strip)", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      // full: flip, expand, navigate, connections, add-note
+      expect(stripButtons(strip)).toHaveLength(5);
+      expectSingleRovingStop(strip);
+    });
+
+    it("keeps exactly one strip control as the roving tab stop (minimal strip)", () => {
+      render(
+        <CardboxCard
+          annotation={{ ...baseAnnotation, original: null }}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      // minimal: expand, navigate
+      expect(stripButtons(strip)).toHaveLength(2);
+      expectSingleRovingStop(strip);
+    });
+
+    it("ArrowDown/ArrowUp/Home/End move the roving tab stop without wrapping", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const buttons = stripButtons(strip);
+      act(() => { buttons[0]!.focus(); });
+      expect(document.activeElement).toBe(buttons[0]);
+
+      fireEvent.keyDown(strip, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(buttons[1]);
+      expect(buttons[1]!.tabIndex).toBe(0);
+      expect(buttons[0]!.tabIndex).toBe(-1);
+
+      fireEvent.keyDown(strip, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(buttons[0]);
+
+      // Clamped: ArrowUp at first stays put.
+      fireEvent.keyDown(strip, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(buttons[0]);
+
+      fireEvent.keyDown(strip, { key: "End" });
+      expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+
+      // Clamped: ArrowDown at last stays put.
+      fireEvent.keyDown(strip, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+
+      fireEvent.keyDown(strip, { key: "Home" });
+      expect(document.activeElement).toBe(buttons[0]);
+    });
+
+    it("arrow keys inside the strip do not reach the card key handler", () => {
+      const onKeyDown = vi.fn();
+      render(
+        <div onKeyDown={onKeyDown}>
+          <CardboxCard
+            annotation={baseAnnotation}
+            expanded={false}
+            onToggleExpand={() => {}}
+            onNavigate={() => {}}
+          />
+        </div>,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const first = stripButtons(strip)[0]!;
+      act(() => { first.focus(); });
+      fireEvent.keyDown(first, { key: "ArrowDown" });
+      fireEvent.keyDown(first, { key: "ArrowUp" });
+      fireEvent.keyDown(first, { key: "Home" });
+      fireEvent.keyDown(first, { key: "End" });
+      // Parent div would see bubbled events; strip must stop them.
+      const arrowish = onKeyDown.mock.calls.filter(
+        ([e]) => ["ArrowDown", "ArrowUp", "Home", "End"].includes((e as KeyboardEvent).key),
+      );
+      expect(arrowish).toHaveLength(0);
+    });
+
+    it("focusing a strip control makes it the roving tab stop", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const buttons = stripButtons(strip);
+      act(() => { buttons[2]!.focus(); });
+      expect(buttons[2]!.tabIndex).toBe(0);
+      expect(buttons.filter((b) => b.tabIndex === 0)).toHaveLength(1);
+    });
+
+    it("reassigns the roving tab stop when the active control unmounts", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      const addNote = screen.getByTestId("card-note-add");
+      act(() => { addNote.focus(); });
+      expect(addNote.tabIndex).toBe(0);
+      fireEvent.click(addNote);
+      // add-note unmounted; strip still has exactly one tab stop.
+      expect(screen.queryByTestId("card-note-add")).not.toBeInTheDocument();
+      expectSingleRovingStop(screen.getByTestId("card-action-strip"));
+    });
+
+    it("Tab from the card root lands on the single strip stop then leaves the card", async () => {
+      const user = userEvent.setup();
+      render(
+        <div>
+          <CardboxCard
+            annotation={baseAnnotation}
+            expanded={false}
+            onToggleExpand={() => {}}
+            onNavigate={() => {}}
+            onShowConnections={() => {}}
+            onSetNote={() => {}}
+          />
+          <button type="button" data-testid="after-card">after</button>
+        </div>,
+      );
+      const card = screen.getByTestId("cardbox-card");
+      const strip = screen.getByTestId("card-action-strip");
+      const stop = expectSingleRovingStop(strip);
+      card.focus();
+      expect(document.activeElement).toBe(card);
+
+      await user.tab();
+      expect(document.activeElement).toBe(stop);
+
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByTestId("after-card"));
+    });
+
     it("absorbs pin, flip, and expand controls; old absolute corner is gone", () => {
       render(
         <CardboxCard
@@ -2156,7 +2358,7 @@ describe("CardboxCard", () => {
         </div>,
       );
       const toggle = screen.getByTestId("card-expand-toggle");
-      toggle.focus();
+      act(() => { toggle.focus(); });
       fireEvent.keyDown(toggle, { key: "Enter" });
       expect(onGridEnter).not.toHaveBeenCalled();
       fireEvent.keyDown(toggle, { key: " " });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo, Fragment } from "react";
 import { flushSync } from "react-dom";
 import { canAnimateFlip, runFlipAnimation } from "./cardFlipAnimation";
 import { TYPE_ICON, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
@@ -174,28 +174,58 @@ function StripButton({
   onClick,
   title,
   pressed,
+  expanded,
+  tabIndex,
+  onFocus,
+  buttonRef,
+  children,
+  className,
 }: {
   testId: string;
   label: string;
-  glyph: string;
+  glyph?: string;
   onClick: () => void;
   title?: string;
   pressed?: boolean;
+  expanded?: boolean;
+  tabIndex?: number;
+  onFocus?: () => void;
+  buttonRef?: (el: HTMLButtonElement | null) => void;
+  children?: React.ReactNode;
+  className?: string;
 }) {
   return (
     <button
       type="button"
-      className={STRIP_BTN_CLASS}
+      className={className ?? STRIP_BTN_CLASS}
       data-testid={testId}
       aria-label={label}
       title={title ?? label}
       aria-pressed={pressed}
+      aria-expanded={expanded}
+      tabIndex={tabIndex}
+      ref={buttonRef}
       onClick={onClick}
+      onFocus={onFocus}
       onKeyDown={stopStripKeyDown}
     >
-      {glyph}
+      {children ?? glyph}
     </button>
   );
+}
+
+interface StripAction {
+  testId: string;
+  label: string;
+  title?: string;
+  onClick: () => void;
+  pressed?: boolean;
+  expanded?: boolean;
+  glyph?: string;
+  children?: React.ReactNode;
+  /** Insert separator before this action when rendering. */
+  separatorBefore?: boolean;
+  className?: string;
 }
 
 interface CardboxCardProps {
@@ -312,6 +342,104 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     [expanded, onToggleExpand, canFlip, flipCard],
   );
 
+  const stripActions = useMemo((): StripAction[] => {
+    const actions: StripAction[] = [];
+    if (canFlip) {
+      actions.push({
+        testId: "card-flip",
+        label: showFlipped ? "Show annotation" : "Show original quote",
+        title: showFlipped ? "Show annotation (F)" : "Show original quote (F)",
+        glyph: "\u{F2F1}",
+        onClick: flipCard,
+        pressed: showFlipped,
+      });
+    }
+    actions.push({
+      testId: "card-expand-toggle",
+      label: expanded ? "Collapse card" : "Expand card",
+      onClick: onToggleExpand,
+      expanded,
+      // Match prior expand chrome (no nerd-font / text-sm); SVG is the glyph.
+      className:
+        "p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent",
+      children: (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          fill="none"
+          className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
+          aria-hidden="true"
+        >
+          <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ),
+    });
+    actions.push({
+      testId: "card-navigate",
+      label: "Open in document",
+      glyph: "\u{F0219}",
+      onClick: onNavigate,
+      separatorBefore: true,
+    });
+    if (onShowConnections) {
+      actions.push({
+        testId: "card-show-connections",
+        label: "Show connections",
+        glyph: "\u{F0339}",
+        onClick: onShowConnections,
+      });
+    }
+    if (onSetNote && !note && !noteEditing) {
+      actions.push({
+        testId: "card-note-add",
+        label: "Add note",
+        glyph: "\u{F0FE}",
+        onClick: () => {
+          ensureFrontFace();
+          setNoteEditing(true);
+          if (!expanded) onToggleExpand();
+        },
+      });
+    }
+    return actions;
+  }, [
+    canFlip,
+    showFlipped,
+    flipCard,
+    expanded,
+    onToggleExpand,
+    onNavigate,
+    onShowConnections,
+    onSetNote,
+    note,
+    noteEditing,
+    ensureFrontFace,
+  ]);
+
+  const [stripActiveIdx, setStripActiveIdx] = useState(0);
+  const stripBtnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const stripClampedIdx =
+    stripActions.length === 0 ? 0 : Math.min(stripActiveIdx, stripActions.length - 1);
+
+  const handleStripKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (stripActions.length === 0) return;
+      const last = stripActions.length - 1;
+      let next: number | null = null;
+      if (e.key === "ArrowDown") next = Math.min(stripClampedIdx + 1, last);
+      else if (e.key === "ArrowUp") next = Math.max(stripClampedIdx - 1, 0);
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = last;
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+      setStripActiveIdx(next);
+      stripBtnRefs.current[next]?.focus();
+    },
+    [stripActions.length, stripClampedIdx],
+  );
+
   const icon = TYPE_ICON[annotation.annotation_type as AnnotationType] ?? "…";
   const certainty = certaintyMark(annotation.certainty);
   const renderedBody = useMemo(() => renderMarkdown(annotation.body ?? ""), [annotation.body]);
@@ -331,6 +459,54 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-color-tag={colorTag || undefined}
       data-flipped={showFlipped}
     >
+      {/* Vertical action strip on the right edge (#981). Negative margins pull
+          it to ~2px from the card edge, matching the old top/right-0.5 inset.
+          DOM-first + order-last: tab order matches visual top-right priority
+          while flex keeps the strip on the right. */}
+      <div
+        role="toolbar"
+        aria-label="Card actions"
+        aria-orientation="vertical"
+        data-testid="card-action-strip"
+        className="order-last z-10 -mt-3.5 -mr-3.5 ml-1 flex shrink-0 flex-col items-center"
+        onKeyDown={handleStripKeyDown}
+      >
+        {isPinned && (
+          <span
+            className="nerd-font p-1.5 text-sm text-interactive-accent"
+            data-testid="pin-icon"
+            aria-hidden="true"
+          >{'\u{F0403}'}</span>
+        )}
+        {stripActions.map((action, i) => (
+          <Fragment key={action.testId}>
+            {action.separatorBefore && (
+              <div
+                aria-hidden="true"
+                data-testid="card-strip-separator"
+                className="my-0.5 h-px w-4 bg-border"
+              />
+            )}
+            <StripButton
+              testId={action.testId}
+              label={action.label}
+              title={action.title}
+              glyph={action.glyph}
+              onClick={action.onClick}
+              pressed={action.pressed}
+              expanded={action.expanded}
+              className={action.className}
+              tabIndex={i === stripClampedIdx ? 0 : -1}
+              onFocus={() => setStripActiveIdx(i)}
+              buttonRef={(el) => {
+                stripBtnRefs.current[i] = el;
+              }}
+            >
+              {action.children}
+            </StripButton>
+          </Fragment>
+        ))}
+      </div>
       <div className="cardbox-card-stage min-w-0 flex-1" ref={stageRef} data-testid="card-flip-stage">
         {!showFlipped ? (
           <div data-testid="card-face-front">
@@ -474,80 +650,6 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
               </button>
             )}
           </div>
-        )}
-      </div>
-      {/* Vertical action strip on the right edge (#981). Negative margins pull
-          it to ~2px from the card edge, matching the old top/right-0.5 inset. */}
-      <div
-        role="toolbar"
-        aria-orientation="vertical"
-        data-testid="card-action-strip"
-        className="z-10 -mt-3.5 -mr-3.5 ml-1 flex shrink-0 flex-col items-center"
-      >
-        {isPinned && (
-          <span
-            className="nerd-font p-1.5 text-sm text-interactive-accent"
-            data-testid="pin-icon"
-            aria-hidden="true"
-          >{'\u{F0403}'}</span>
-        )}
-        {canFlip && (
-          <StripButton
-            testId="card-flip"
-            label={showFlipped ? "Show annotation" : "Show original quote"}
-            title={showFlipped ? "Show annotation (F)" : "Show original quote (F)"}
-            glyph={'\u{F2F1}'}
-            onClick={flipCard}
-            pressed={showFlipped}
-          />
-        )}
-        <button
-          type="button"
-          className="p-1.5 text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent"
-          data-testid="card-expand-toggle"
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse card" : "Expand card"}
-          title={expanded ? "Collapse card" : "Expand card"}
-          onClick={onToggleExpand}
-          onKeyDown={stopStripKeyDown}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            className={`transition-transform duration-200${expanded ? " rotate-180" : ""}`}
-            aria-hidden="true"
-          >
-            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <div aria-hidden="true" data-testid="card-strip-separator" className="my-0.5 h-px w-4 bg-border" />
-        <StripButton
-          testId="card-navigate"
-          label="Open in document"
-          glyph={'\u{F0219}'}
-          onClick={onNavigate}
-        />
-        {onShowConnections && (
-          <StripButton
-            testId="card-show-connections"
-            label="Show connections"
-            glyph={'\u{F0339}'}
-            onClick={onShowConnections}
-          />
-        )}
-        {onSetNote && !note && !noteEditing && (
-          <StripButton
-            testId="card-note-add"
-            label="Add note"
-            glyph={'\u{F0FE}'}
-            onClick={() => {
-              ensureFrontFace();
-              setNoteEditing(true);
-              if (!expanded) onToggleExpand();
-            }}
-          />
         )}
       </div>
     </div>
