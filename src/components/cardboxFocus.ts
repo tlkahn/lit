@@ -23,11 +23,25 @@ export interface UuidCollection {
  * - `focus`: consume the pending uuid and scroll/highlight; `clearFilters` is
  *   true when the card is present in annotations but hidden by an active
  *   search/type/color filter, so the effect must reset filters first (F2).
+ *   `expandGroupId` is set when the card lives in a collapsed group (F4), so
+ *   the effect can expand the group before scrolling (#972).
  */
 export type PendingFocusAction =
   | { kind: "wait" }
   | { kind: "clear" }
-  | { kind: "focus"; uuid: string; clearFilters: boolean };
+  | { kind: "focus"; uuid: string; clearFilters: boolean; expandGroupId: string | null };
+
+/** First collapsed group whose order contains the uuid, or null. */
+function findCollapsedGroupId(
+  groups: Record<string, { order: string[]; collapsed: boolean }> | undefined,
+  uuid: string,
+): string | null {
+  if (!groups) return null;
+  for (const [id, g] of Object.entries(groups)) {
+    if (g.collapsed && g.order.includes(uuid)) return id;
+  }
+  return null;
+}
 
 export function resolvePendingFocus(input: {
   loading: boolean;
@@ -35,8 +49,9 @@ export function resolvePendingFocus(input: {
   pendingFocusUuid: string | null;
   annotationUuids: UuidCollection; // pass the component's annotationMap
   filteredUuids: UuidCollection; // pass the component's filteredUuidSet (F2)
+  groups?: Record<string, { order: string[]; collapsed: boolean }>; // F4 collapsed-group reveal
 }): PendingFocusAction {
-  const { loading, layoutReady, pendingFocusUuid, annotationUuids, filteredUuids } = input;
+  const { loading, layoutReady, pendingFocusUuid, annotationUuids, filteredUuids, groups } = input;
 
   // 1. Nothing to do until annotations AND the layout have loaded and a focus
   //    is requested. The layout gate (#958): the NOTE section only renders once
@@ -59,15 +74,18 @@ export function resolvePendingFocus(input: {
   //    fresh annotations (the effect re-fires when annotationMap identity changes).
   if (!annotationUuids.has(pendingFocusUuid)) return { kind: "wait" };
 
+  const expandGroupId = findCollapsedGroupId(groups, pendingFocusUuid);
+
   // 4. F2: the card exists but an active search/type/color filter hides it from
   //    the rendered grid (filteredUuidSet). Focus it, but signal the effect to
   //    reset filters first so the card is actually in the DOM to scroll to.
   if (!filteredUuids.has(pendingFocusUuid)) {
-    return { kind: "focus", uuid: pendingFocusUuid, clearFilters: true };
+    return { kind: "focus", uuid: pendingFocusUuid, clearFilters: true, expandGroupId };
   }
 
-  // 5. The card is present and visible — focus it.
-  return { kind: "focus", uuid: pendingFocusUuid, clearFilters: false };
+  // 5. The card is present and visible — focus it. expandGroupId may still be
+  //    set (F4): group collapse is orthogonal to filter membership.
+  return { kind: "focus", uuid: pendingFocusUuid, clearFilters: false, expandGroupId };
 }
 
 // Remove -> force reflow -> re-add so the CSS animation restarts even when the

@@ -570,6 +570,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       pendingFocusUuid,
       annotationUuids: annotationMap,
       filteredUuids: filteredUuidSet,
+      groups,
     });
     if (action.kind === "wait") return;
     // Capture before setPendingFocusUuid(null) resets the flag alongside the uuid.
@@ -589,10 +590,13 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       // F2: the card is present but hidden by an active filter; reset filters so
       // it re-renders into the DOM before handleFocusCard's scroll/highlight.
       if (action.clearFilters) resetFilters();
+      // F4: card lives in a collapsed group — expand it so the card mounts (#972).
+      // toggleGroupCollapse persists via IPC; store update is sync.
+      if (action.expandGroupId) void toggleGroupCollapse(action.expandGroupId);
       handleFocusCard(action.uuid, highlightNote);
     }
     // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
-  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard, pagePath, setScope]);
+  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, groups, setPendingFocusUuid, resetFilters, handleFocusCard, pagePath, setScope, toggleGroupCollapse]);
 
   // ---------- Context menu handlers ----------
 

@@ -40,6 +40,25 @@ vi.mock("./SortableCard", async () => {
   return { SortableCard };
 });
 
+// Same probe surface for cards rendered inside a SortableGroup (group path
+// used by the collapsed-group pending-focus case, #972 Cycle 4).
+vi.mock("./SortableGroupCard", async () => {
+  const React = await import("react");
+  const SortableGroupCard = React.memo(function SortableGroupCardProbe(props: ProbeProps) {
+    const uuid = props.annotation.uuid;
+    probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
+    probe.latestProps.set(uuid, props);
+    return React.createElement(
+      "div",
+      { "data-testid": `probe-card-${uuid}`, "data-uuid": uuid },
+      props.note != null
+        ? React.createElement("div", { "data-testid": "card-note-display" })
+        : null,
+    );
+  });
+  return { SortableGroupCard };
+});
+
 const A = "uuid-a";
 const B = "uuid-b";
 const C = "uuid-c";
@@ -189,6 +208,46 @@ describe("collapse-on-scope-change ownership (#972)", () => {
 
     expect(useCardboxStore.getState().scope).toBe("workspace");
     expect(useCardboxStore.getState().expandedUuid).toBe(A);
+  });
+});
+
+describe("pending focus expands collapsed group (#972)", () => {
+  it("expands the group and focuses the card inside it", async () => {
+    const groupedLayout: CardboxLayout = {
+      ...emptyLayout,
+      order: ["group:g1", B],
+      groups: {
+        g1: { name: "Group 1", order: [A], collapsed: true },
+      },
+    };
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout") return groupedLayout;
+      if (cmd === "toggle_group_collapsed") return undefined;
+      return undefined;
+    });
+
+    render(<CardboxView pagePath="test.md" />);
+    // Wait for group chrome (card A is hidden while the group is collapsed).
+    await screen.findByTestId("cardbox-group");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId(`probe-card-${A}`)).toBeNull();
+    expect(useCardboxStore.getState().groups["g1"].collapsed).toBe(true);
+
+    act(() => {
+      useCardboxStore.getState().setPendingFocusUuid(A);
+    });
+    // Advance past the 250ms focus timer so any scroll/highlight path settles.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    expect(useCardboxStore.getState().groups["g1"].collapsed).toBe(false);
+    expect(screen.getByTestId(`probe-card-${A}`)).toBeInTheDocument();
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
   });
 });
 
