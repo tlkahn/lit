@@ -116,8 +116,8 @@
 .cm-annotation-callout {
   padding: 8px 12px;
   border-radius: 4px;
-  border-inline-start: 4px solid rgba(68, 138, 255, 0.6);
-  background: rgba(68, 138, 255, 0.05);
+  border-inline-start: 4px solid rgba(171, 71, 188, 0.6);
+  background: rgba(171, 71, 188, 0.05);
 }
 
 .cm-annotation-callout-header {
@@ -357,11 +357,6 @@
 
 .cm-annotation-marker[data-annotation-type="thread"] {
   color: rgb(171, 71, 188);
-}
-
-.cm-annotation-callout[data-annotation-type="thread"] {
-  border-inline-start-color: rgba(171, 71, 188, 0.6);
-  background: rgba(171, 71, 188, 0.05);
 }
 
 /* Thread widget chrome */

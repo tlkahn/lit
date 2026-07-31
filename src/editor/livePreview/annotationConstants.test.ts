@@ -28,11 +28,13 @@ describe("annotationConstants", () => {
     );
   });
 
-  it("annotation.css keeps thread as the only per-type callout rule (callouts are thread-only)", () => {
+  it("annotation.css has no per-type callout rules (thread colors live in the base rule)", () => {
     const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
     const perTypeCallout = [...css.matchAll(/\.cm-annotation-callout\[data-annotation-type="([^"]+)"\]/g)]
       .map((m) => m[1]);
-    expect(perTypeCallout).toEqual(["thread"]);
+    expect(perTypeCallout).toEqual([]);
+    const baseRule = css.match(/\.cm-annotation-callout\s*\{[^}]*\}/)![0];
+    expect(baseRule).toContain("rgba(171, 71, 188");
   });
 
   it("index.css defines cardbox --ann-color for slipnote", () => {
