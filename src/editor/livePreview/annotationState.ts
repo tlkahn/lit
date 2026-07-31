@@ -175,6 +175,10 @@ export const annotationPlugin = ViewPlugin.fromClass(
     private lastIndexedGroups: Map<string, IndexedGroup> = new Map();
     private unlistenGraphUpdated: (() => void) | null = null;
     private destroyed = false;
+    /** Monotonic fireIPC run id: a run that resumes from an await after a
+     * newer run started must abort, so stale responses cannot overwrite a
+     * fresher dispatch or the groups cache (last-started wins). */
+    private ipcGen = 0;
 
     constructor(private view: EditorView) {
       this.lastDocStr = view.state.doc.toString();
@@ -214,10 +218,12 @@ export const annotationPlugin = ViewPlugin.fromClass(
     }
 
     private async fireIPC() {
+      const gen = ++this.ipcGen;
       const docStr = this.view.state.doc.toString();
       this.lastDocStr = docStr;
       try {
         const annotations = await parseAnnotations(docStr);
+        if (gen !== this.ipcGen) return;
         if (this.view.state.doc.toString() !== this.lastDocStr) return;
 
         // Snapshot before enrich/dispatch so carry-forward and the empty-empty
@@ -232,11 +238,13 @@ export const annotationPlugin = ViewPlugin.fromClass(
           if (nodeChanged || fingerprint !== this.lastAnnotationFingerprint) {
             try {
               const indexed = await listAnnotations(nodeId);
+              if (gen !== this.ipcGen) return;
               if (this.view.state.doc.toString() !== this.lastDocStr) return;
               this.lastIndexedGroups = buildIndexedGroups(indexed);
               this.lastAnnotationFingerprint = fingerprint;
               this.lastNodeId = nodeId;
             } catch {
+              if (gen !== this.ipcGen) return;
               // Transient list failure: enrich/carry-forward below still run
               // off the cached groups and prev snapshot. Except on a page
               // switch, where the cache belongs to the old page - drop it so

@@ -663,6 +663,54 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("a stale in-flight fireIPC does not overwrite a fresher graph-updated run (#978 review)", async () => {
+    // Run A (doc-change) snapshots prev and stalls in listAnnotations; run B
+    // (graph-updated) completes with the fresh post-reindex uuid. When A's
+    // stale list finally resolves, A must abort instead of dispatching its
+    // pre-B enrichment (which would strip the uuid until the next event).
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "hello", char_start: 0, char_end: 10 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([]);
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBeUndefined();
+
+    // Body edit; run A's re-list stalls on a controlled promise.
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "hello edited", char_start: 0, char_end: 10 }),
+    ]);
+    let resolveStaleList!: (v: unknown) => void;
+    mockListAnnotations.mockImplementationOnce(
+      () => new Promise((res) => { resolveStaleList = res; }),
+    );
+    view.dispatch({ changes: { from: 11, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    // Save/reindex completed: run B lists fresh and dispatches the real uuid.
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "hello edited", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "u-new" },
+    ]);
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("u-new");
+
+    // Run A's stale response arrives last.
+    resolveStaleList([]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data[0]!.uuid).toBe("u-new");
+  });
+
   it("still carries forward the uuid when listAnnotations rejects transiently (#978 review)", async () => {
     // Carry-forward only needs the prev field snapshot, not a fresh index:
     // a transient list failure during a same-page body edit must not drop
