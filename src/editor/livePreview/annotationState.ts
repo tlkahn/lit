@@ -242,8 +242,9 @@ export const annotationPlugin = ViewPlugin.fromClass(
             enrichWithGroups(annotations, this.lastIndexedGroups);
             // #978: after body-key miss on a stale index, keep the uuid the
             // live plugin already committed this session (prev snapshot beats
-            // index positional fallback which can steal orphan uuids).
-            carryForwardUuids(annotations, prev);
+            // index positional fallback which can steal orphan uuids). On a
+            // page switch prev belongs to the old page - never carry across.
+            if (!nodeChanged) carryForwardUuids(annotations, prev);
           } catch { /* best-effort enrichment */ }
         }
 

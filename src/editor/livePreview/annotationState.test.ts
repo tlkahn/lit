@@ -663,6 +663,42 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("does not carry uuids across a page switch (#978 review)", async () => {
+    // The EditorView survives navigation (useCodeMirror replaces the doc in
+    // place), so the annotationDataField still holds page 1's enriched anns
+    // when the first fireIPC for page 2 runs. Page 2's unenriched anns must
+    // not inherit page 1's uuids.
+    const p1Ann = makeAnnotation({ annotation_type: "note", body: "hello", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([p1Ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/p1.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/p1.md", node_title: "p1", annotation_type: "note", certainty: "neutral", body: "hello", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "p1-uuid" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello page one",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("p1-uuid");
+
+    // Navigate: new page path, replaced doc, un-indexed annotation.
+    useWorkspaceStore.setState({ currentPagePath: "notes/p2.md" });
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "brand new", char_start: 0, char_end: 10 }),
+    ]);
+    mockListAnnotations.mockResolvedValue([]);
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "page two text" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBeUndefined();
+  });
+
   it("enriches correct UUIDs when two annotations share type but differ in body", async () => {
     const parsedAnn1 = makeAnnotation({ annotation_type: "note", body: "first", char_start: 5, char_end: 15 });
     const parsedAnn2 = makeAnnotation({ annotation_type: "note", body: "second", char_start: 5, char_end: 25 });
