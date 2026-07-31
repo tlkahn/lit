@@ -221,6 +221,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   const cardRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const animatingRef = useRef(false);
+  // Monotonic run id: midpoint only applies if this flip is still current.
+  // Invalidated by ensureFrontFace so add-note/prefill win over in-flight flips.
+  const flipRunRef = useRef(0);
   const prevPinnedRef = useRef(isPinned);
   const [justPinned, setJustPinned] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -231,15 +234,23 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   }
   const showFlipped = showCardFlipped(flipped, canFlip);
 
+  // Force front face and invalidate any in-flight flip so its midpoint cannot
+  // re-invert us. Best-effort WAAPI cancel is a prod-only extra (jsdom has none).
+  const ensureFrontFace = useCallback(() => {
+    flipRunRef.current++;
+    stageRef.current?.getAnimations?.().forEach((a) => a.cancel());
+    setFlipped(false);
+  }, []);
+
   // A staged quote prefill auto-opens the note editor, unflipping first —
   // the editor only mounts on the front face. Expanding the card is
   // CardboxView's job (#968).
   useEffect(() => {
     if (notePrefill != null) {
-      setFlipped(false);
+      ensureFrontFace();
       setNoteEditing(true);
     }
-  }, [notePrefill]);
+  }, [notePrefill, ensureFrontFace]);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -269,8 +280,14 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       return;
     }
     animatingRef.current = true;
+    const run = ++flipRunRef.current;
     // flushSync so the face swap commits between the two animation phases.
-    void runFlipAnimation(stage, () => flushSync(() => setFlipped((v) => !v)))
+    // Guarded by flipRunRef so ensureFrontFace can invalidate mid-flight.
+    void runFlipAnimation(stage, () => {
+      if (flipRunRef.current === run) {
+        flushSync(() => setFlipped((v) => !v));
+      }
+    })
       .finally(() => {
         animatingRef.current = false;
         refocus();
@@ -526,7 +543,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             label="Add note"
             glyph={'\u{F0FE}'}
             onClick={() => {
-              setFlipped(false);
+              ensureFrontFace();
               setNoteEditing(true);
               if (!expanded) onToggleExpand();
             }}

@@ -1561,6 +1561,33 @@ describe("CardboxCard", () => {
     expect(addBtn.className).not.toContain("text-text-faint");
   });
 
+  it("add-note during in-flight flip lands on front face with editor open", async () => {
+    render(
+      <CardboxCard
+        annotation={baseAnnotation}
+        expanded={false}
+        onToggleExpand={() => {}}
+        onNavigate={() => {}}
+        onSetNote={() => {}}
+      />,
+    );
+    const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+
+    fireEvent.click(screen.getByTestId("card-flip"));
+    // Out phase pending: click add-note before midpoint.
+    fireEvent.click(screen.getByTestId("card-note-add"));
+
+    await act(async () => {
+      deferreds[0]!.resolve();
+    });
+    await act(async () => {
+      deferreds[1]?.resolve();
+    });
+
+    expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+    expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+  });
+
   describe("code rendering (#965)", () => {
     const indexCss = () =>
       readFileSync(resolve(__dirname, "../index.css"), "utf8");
@@ -1768,6 +1795,33 @@ describe("CardboxCard", () => {
       expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
       const ta = screen.getByTestId("card-note-textarea") as HTMLTextAreaElement;
       expect(ta.value).toContain("> X");
+    });
+
+    it("prefill during in-flight flip lands on front face with editor open", async () => {
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        onSetNote: () => {},
+        onNotePrefillConsumed: () => {},
+      };
+      const { rerender } = render(<CardboxCard {...props} />);
+      const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+
+      fireEvent.click(screen.getByTestId("card-flip"));
+      // Out phase pending: stage a prefill before midpoint.
+      rerender(<CardboxCard {...props} notePrefill="> quoted" />);
+
+      await act(async () => {
+        deferreds[0]!.resolve();
+      });
+      await act(async () => {
+        deferreds[1]?.resolve();
+      });
+
+      expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
     });
 
     it("does not expand the card itself (expansion is CardboxView's job)", () => {
