@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { GroupHeader } from "./GroupHeader";
 
 function renderHeader(
@@ -45,5 +47,28 @@ describe("GroupHeader", () => {
     fireEvent.change(input, { target: { value: "Renamed" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRename).toHaveBeenCalledWith("Renamed");
+  });
+
+  describe("title text selection (#968)", () => {
+    const indexCss = () => readFileSync(resolve(__dirname, "../index.css"), "utf8");
+
+    /** The `#root ... { user-select: auto }` opt-in selector list. */
+    const optInSelectors = () => {
+      const match = indexCss().match(
+        /((?:#root [^{}]+,\s*)*#root [^{},]+)\s*\{\s*user-select:\s*auto;/,
+      );
+      expect(match).not.toBeNull();
+      return match![1]!;
+    };
+
+    it("index.css opts the group name into user-select auto", () => {
+      expect(optInSelectors()).toMatch(/#root \.group-name/);
+    });
+
+    it("index.css gives the group name a text cursor", () => {
+      const rule = indexCss().match(/\.group-name\s*\{[^}]*\}/);
+      expect(rule).not.toBeNull();
+      expect(rule![0]!).toContain("cursor: text");
+    });
   });
 });

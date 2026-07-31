@@ -136,6 +136,7 @@ html, body, #root {
 #root .textLayer,
 #root .prose,
 #root [data-testid="card-original"],
+#root .group-name,
 #root pre,
 #root code {
   user-select: auto;
@@ -328,7 +329,7 @@ select:disabled {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-normal);
-  cursor: default;
+  cursor: text;
 }
 
 .group-name-input {
