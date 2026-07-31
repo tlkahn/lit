@@ -4,7 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, CalloutWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, isEffectiveFoldAllEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, isEffectiveFoldAllEffect } from "./annotationWidgets";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -236,11 +236,11 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
         // Reuse already-computed line numbers for the multiline check.
         const isMultiLine = startLine !== endLine;
 
-        // A multiline block annotation's callout is a line-break-spanning
+        // A multiline block annotation's widget is a line-break-spanning
         // replacement, which CodeMirror forbids from plugin sources;
         // splitAnnotationDecorations would route it to the discarded "block"
         // subset. annotationBlockDecorationField (a StateField) is the sole
-        // producer of that callout, so skip building it here - the line
+        // producer of that widget, so skip building it here - the line
         // tracking above keeps these lines cursor-sensitive.
         if (node.name === "BlockAnnotation" && isMultiLine) return;
 
@@ -264,8 +264,8 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
 
 /**
  * Split a built annotation decoration set into the line-safe subset (inline /
- * single-line replacements) and the line-break-spanning subset (expanded
- * multiline callouts).
+ * single-line replacements) and the line-break-spanning subset (multiline
+ * block widgets).
  *
  * CodeMirror forbids line-break-spanning and block replacements from
  * `ViewPlugin` sources (it throws "Decorations that replace line breaks may not
@@ -400,9 +400,9 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
 }
 
 /**
- * Builds ONLY the line-break-spanning annotation decorations (expanded multiline
- * callouts) over the full document. These cannot be delivered via the
- * `annotationDecorationPlugin` (CodeMirror forbids line-break-spanning
+ * Builds ONLY the line-break-spanning annotation decorations (multiline block
+ * pills and thread widgets) over the full document. These cannot be delivered
+ * via the `annotationDecorationPlugin` (CodeMirror forbids line-break-spanning
  * replacements from plugins), so they live in this StateField instead.
  *
  * Mirrors `buildAnnotationDecorations` but is viewport-independent (block
@@ -414,7 +414,7 @@ export function hasAnnotationEffect(tr: { effects: readonly StateEffect<unknown>
  */
 /** State shape for `annotationBlockDecorationField`. */
 export interface BlockDecorationState {
-  /** The DecorationSet containing line-break-spanning block annotation callouts. */
+  /** The DecorationSet containing line-break-spanning block annotation widgets. */
   decorations: DecorationSet;
   /**
    * Document line numbers spanned by multiline block annotations. Used by the
@@ -431,12 +431,14 @@ function blockWidgetFor(
   turnState: Map<number, number> | undefined,
   firingSet: Set<number>,
   llmLocked: boolean,
-): CalloutWidget | ThreadWidget {
-  const isCollapsed = foldState?.get(pos) ?? false;
+): PillWidget | ThreadWidget {
   const isFiring = firingSet.has(pos);
-  return ann.annotation_type === "thread"
-    ? new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos, isFiring)
-    : new CalloutWidget(ann, isCollapsed, pos, isFiring, llmLocked);
+  if (ann.annotation_type === "thread") {
+    const isCollapsed = foldState?.get(pos) ?? false;
+    return new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos, isFiring);
+  }
+  // Non-thread blocks render as pills — fold state is thread-only and ignored.
+  return new PillWidget(ann, isFiring, llmLocked);
 }
 
 export function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecorationState {
@@ -598,15 +600,16 @@ export function shouldRebuildBlocksOnTreeChange(
 }
 
 /**
- * Delivers line-break-spanning annotation callouts via a `StateField` (not the
- * plugin) because CodeMirror only permits such replacements from field/facet
- * sources. Recomputes on doc change and annotation effects via an
- * annotation-driven builder with bounded per-annotation `tree.iterate` calls.
- * Fold/turn-only transactions take a surgical path that replaces only affected
- * positions (unless the transaction also carries a selection change, which
- * forces a full rebuild). For selection-only transactions it applies a
- * cursor-sensitivity guard: the rebuild is skipped unless the old or new
- * cursor line spans a block annotation, so plain cursor moves cost nothing.
+ * Delivers line-break-spanning annotation widgets (pills, threads) via a
+ * `StateField` (not the plugin) because CodeMirror only permits such
+ * replacements from field/facet sources. Recomputes on doc change and
+ * annotation effects via an annotation-driven builder with bounded
+ * per-annotation `tree.iterate` calls. Fold/turn-only transactions take a
+ * surgical path that replaces only affected positions (unless the transaction
+ * also carries a selection change, which forces a full rebuild). For
+ * selection-only transactions it applies a cursor-sensitivity guard: the
+ * rebuild is skipped unless the old or new cursor line spans a block
+ * annotation, so plain cursor moves cost nothing.
  *
  * Value shape: `BlockDecorationState` - `.decorations` for the DecorationSet,
  * `.blockSensitiveLines` for the cursor guard set.

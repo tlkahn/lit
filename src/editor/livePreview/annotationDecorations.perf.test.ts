@@ -21,7 +21,7 @@ import {
   setThreadTurnEffect,
   firingAnnotationsField,
   llmLockedField,
-  CalloutWidget,
+  PillWidget,
   ThreadWidget,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
@@ -429,14 +429,15 @@ describe("targeted iteration (step 1)", () => {
       fieldResult.push({
         from: iter.from,
         to: iter.to,
-        kind: w instanceof ThreadWidget ? "thread" : "callout",
-        isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+        kind: w instanceof ThreadWidget ? "thread" : "pill",
+        isCollapsed: w instanceof ThreadWidget ? w.isCollapsed : false,
       });
       iter.next();
     }
 
     // Pre-refactor reference: full syntaxTree(state).iterate over BlockAnnotation
     // nodes with multiline check, isCursorOnLine guard, and exact rangeMap lookup.
+    // Fold state only reaches thread widgets; pills are fold-ignorant.
     const refResult: Tuple[] = [];
     const state = view.state;
     const foldState = state.field(annotationFoldField, false);
@@ -453,12 +454,12 @@ describe("targeted iteration (step 1)", () => {
         if (isCursorOnLine(state, from, to)) return;
         const ann = rangeMap.get(`${from}:${to}`);
         if (!ann) return;
-        const isCollapsed = foldState?.get(from) ?? false;
+        const isThread = ann.annotation_type === "thread";
         refResult.push({
           from,
           to,
-          kind: ann.annotation_type === "thread" ? "thread" : "callout",
-          isCollapsed,
+          kind: isThread ? "thread" : "pill",
+          isCollapsed: isThread ? (foldState?.get(from) ?? false) : false,
         });
       },
     });
@@ -491,8 +492,8 @@ describe("targeted iteration (step 1)", () => {
         result.push({
           from: iter.from,
           to: iter.to,
-          kind: w instanceof ThreadWidget ? "thread" : "callout",
-          isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+          kind: w instanceof ThreadWidget ? "thread" : "pill",
+          isCollapsed: w instanceof ThreadWidget ? w.isCollapsed : false,
         });
         iter.next();
       }
@@ -533,8 +534,8 @@ describe("targeted iteration (step 1)", () => {
         freshTuples.push({
           from: iter.from,
           to: iter.to,
-          kind: w instanceof ThreadWidget ? "thread" : "callout",
-          isCollapsed: w instanceof CalloutWidget ? w.isCollapsed : w instanceof ThreadWidget ? w.isCollapsed : false,
+          kind: w instanceof ThreadWidget ? "thread" : "pill",
+          isCollapsed: w instanceof ThreadWidget ? w.isCollapsed : false,
         });
         iter.next();
       }
@@ -579,14 +580,14 @@ describe("surgical DecorationSet update (step 2)", () => {
     return view;
   }
 
-  type DecoEntry = { from: number; to: number; widget: CalloutWidget | ThreadWidget };
+  type DecoEntry = { from: number; to: number; widget: PillWidget | ThreadWidget };
 
   function collectDecos(view: EditorView): DecoEntry[] {
     const entries: DecoEntry[] = [];
     const iter = view.state.field(annotationBlockDecorationField).decorations.iter();
     while (iter.value) {
       const w = iter.value.spec.widget;
-      if (w instanceof CalloutWidget || w instanceof ThreadWidget) {
+      if (w instanceof PillWidget || w instanceof ThreadWidget) {
         entries.push({ from: iter.from, to: iter.to, widget: w });
       }
       iter.next();
@@ -882,9 +883,9 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
    *    cluster fits in CM6's ~1000px default viewport margin.
    */
   function makeStressBlockViewFullViewport(): { view: EditorView; restoreHeights: () => void } {
-    const calloutDesc = Object.getOwnPropertyDescriptor(CalloutWidget.prototype, "estimatedHeight")!;
+    const pillDesc = Object.getOwnPropertyDescriptor(PillWidget.prototype, "estimatedHeight")!;
     const threadDesc = Object.getOwnPropertyDescriptor(ThreadWidget.prototype, "estimatedHeight")!;
-    Object.defineProperty(CalloutWidget.prototype, "estimatedHeight", {
+    Object.defineProperty(PillWidget.prototype, "estimatedHeight", {
       configurable: true,
       get() {
         return 1;
@@ -898,7 +899,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     });
 
     const restoreHeights = () => {
-      Object.defineProperty(CalloutWidget.prototype, "estimatedHeight", calloutDesc);
+      Object.defineProperty(PillWidget.prototype, "estimatedHeight", pillDesc);
       Object.defineProperty(ThreadWidget.prototype, "estimatedHeight", threadDesc);
     };
 
@@ -938,7 +939,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     }
   }
 
-  type WidgetMap = Map<number, CalloutWidget | ThreadWidget>;
+  type WidgetMap = Map<number, PillWidget | ThreadWidget>;
 
   function collectBlockWidgets(view: EditorView): WidgetMap {
     const map: WidgetMap = new Map();
@@ -946,7 +947,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     const iter = deco.iter();
     while (iter.value) {
       const widget = iter.value.spec.widget;
-      if (widget instanceof CalloutWidget || widget instanceof ThreadWidget) {
+      if (widget instanceof PillWidget || widget instanceof ThreadWidget) {
         map.set(iter.from, widget);
       }
       iter.next();
@@ -958,56 +959,48 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
   function measureEqBlastRadius(
     before: WidgetMap,
     after: WidgetMap,
-  ): { calloutEqFalse: number; threadEqFalse: number; calloutEqCalls: number; threadEqCalls: number } {
-    let calloutEqFalse = 0;
+  ): { pillEqFalse: number; threadEqFalse: number; pillEqCalls: number; threadEqCalls: number } {
+    let pillEqFalse = 0;
     let threadEqFalse = 0;
-    let calloutEqCalls = 0;
+    let pillEqCalls = 0;
     let threadEqCalls = 0;
 
     for (const [from, oldWidget] of before) {
       const newWidget = after.get(from);
       if (!newWidget) continue;
-      if (oldWidget instanceof CalloutWidget && newWidget instanceof CalloutWidget) {
-        calloutEqCalls++;
-        if (!oldWidget.eq(newWidget)) calloutEqFalse++;
+      if (oldWidget instanceof PillWidget && newWidget instanceof PillWidget) {
+        pillEqCalls++;
+        if (!oldWidget.eq(newWidget)) pillEqFalse++;
       } else if (oldWidget instanceof ThreadWidget && newWidget instanceof ThreadWidget) {
         threadEqCalls++;
         if (!oldWidget.eq(newWidget)) threadEqFalse++;
       }
     }
-    return { calloutEqFalse, threadEqFalse, calloutEqCalls, threadEqCalls };
+    return { pillEqFalse, threadEqFalse, pillEqCalls, threadEqCalls };
   }
 
   function installDOMSpies(): {
-    calloutToDOM: number;
+    pillToDOM: number;
     threadToDOM: number;
-    calloutUpdateDOM: number;
     threadUpdateDOM: number;
     restore: () => void;
   } {
-    const stats = { calloutToDOM: 0, threadToDOM: 0, calloutUpdateDOM: 0, threadUpdateDOM: 0 };
-    const origCalloutToDOM = CalloutWidget.prototype.toDOM;
+    const stats = { pillToDOM: 0, threadToDOM: 0, threadUpdateDOM: 0 };
+    const origPillToDOM = PillWidget.prototype.toDOM;
     const origThreadToDOM = ThreadWidget.prototype.toDOM;
-    const origCalloutUpdateDOM = CalloutWidget.prototype.updateDOM;
     const origThreadUpdateDOM = ThreadWidget.prototype.updateDOM;
 
-    const calloutSpy = vi
-      .spyOn(CalloutWidget.prototype, "toDOM")
-      .mockImplementation(function (this: CalloutWidget, view: EditorView) {
-        stats.calloutToDOM++;
-        return origCalloutToDOM.call(this, view);
+    const pillSpy = vi
+      .spyOn(PillWidget.prototype, "toDOM")
+      .mockImplementation(function (this: PillWidget, view: EditorView) {
+        stats.pillToDOM++;
+        return origPillToDOM.call(this, view);
       });
     const threadSpy = vi
       .spyOn(ThreadWidget.prototype, "toDOM")
       .mockImplementation(function (this: ThreadWidget, view: EditorView) {
         stats.threadToDOM++;
         return origThreadToDOM.call(this, view);
-      });
-    const calloutUpdateSpy = vi
-      .spyOn(CalloutWidget.prototype, "updateDOM")
-      .mockImplementation(function (this: CalloutWidget, dom: HTMLElement, view: EditorView, from: CalloutWidget) {
-        stats.calloutUpdateDOM++;
-        return origCalloutUpdateDOM.call(this, dom, view, from);
       });
     const threadUpdateSpy = vi
       .spyOn(ThreadWidget.prototype, "updateDOM")
@@ -1017,25 +1010,25 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
       });
 
     return {
-      get calloutToDOM() { return stats.calloutToDOM; },
+      get pillToDOM() { return stats.pillToDOM; },
       get threadToDOM() { return stats.threadToDOM; },
-      get calloutUpdateDOM() { return stats.calloutUpdateDOM; },
       get threadUpdateDOM() { return stats.threadUpdateDOM; },
       restore: () => {
-        calloutSpy.mockRestore();
+        pillSpy.mockRestore();
         threadSpy.mockRestore();
-        calloutUpdateSpy.mockRestore();
         threadUpdateSpy.mockRestore();
       },
     };
   }
 
-  // Stress fixture invariants (pure multiline, line-start blocks) make the
-  // unfiltered char_start map equivalent to the helper's target set; if the
-  // fixture ever gains compact/inline rows, switch these cases to the helper.
+  // Folding is thread-only, so fold-all targets exactly the thread positions
+  // (mirrors toggleAllBlockAnnotationFolds' isFoldAllTarget filter on this
+  // pure-multiline, line-start stress fixture).
   function foldAllEffects(view: EditorView) {
     const annotations = view.state.field(annotationDataField);
-    const positions = annotations.map((a) => a.char_start);
+    const positions = annotations
+      .filter((a) => a.annotation_type === "thread")
+      .map((a) => a.char_start);
     const foldMap = view.state.field(annotationFoldField, false);
     const allCollapsed = positions.every((pos) => foldMap?.get(pos) ?? false);
     return [setAllAnnotationFoldsEffect.of({ positions, collapsed: !allCollapsed })];
@@ -1052,7 +1045,7 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     return { notes, threads };
   }
 
-  it("fold-all blast radius: eq() and updateDOM/toDOM call counts", { timeout: 60_000 }, () => {
+  it("fold-all blast radius: bounded by thread count, pill identity preserved", { timeout: 60_000 }, () => {
     const { view, restoreHeights } = makeStressBlockViewFullViewport();
     try {
       const { notes, threads } = countAnnotationMix(view);
@@ -1069,17 +1062,23 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        expect(blast.calloutEqCalls).toBe(notes);
+        // Fold-all only targets threads: every thread flips, no pill changes.
         expect(blast.threadEqCalls).toBe(threads);
-        expect(blast.calloutEqFalse).toBe(notes);
         expect(blast.threadEqFalse).toBe(threads);
-        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
-        expect(totalUpdateDOM).toBeGreaterThan(1);
-        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
+        expect(blast.pillEqFalse).toBe(0);
+        // Pill decorations at note positions keep object identity (surgical
+        // path never touches non-target positions).
+        for (const [from, w] of before) {
+          if (w instanceof PillWidget) expect(after.get(from)).toBe(w);
+        }
+        // The eq-based blast radius above is viewport-independent; the drawn
+        // range only guarantees at least one thread flip goes through updateDOM.
+        expect(spies.threadUpdateDOM).toBeGreaterThanOrEqual(1);
+        const totalToDOM = spies.pillToDOM + spies.threadToDOM;
         expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius fold-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +
+          `[perf] H2 blast-radius fold-all: pill eqFalse=${blast.pillEqFalse}/${notes} toDOM=${spies.pillToDOM}; ` +
             `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
         );
       } finally {
@@ -1106,15 +1105,16 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        expect(blast.calloutEqFalse).toBe(notes);
+        expect(blast.pillEqFalse).toBe(0);
         expect(blast.threadEqFalse).toBe(threads);
-        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
-        expect(totalUpdateDOM).toBeGreaterThan(1);
-        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
+        // The eq-based blast radius above is viewport-independent; the drawn
+        // range only guarantees at least one thread flip goes through updateDOM.
+        expect(spies.threadUpdateDOM).toBeGreaterThanOrEqual(1);
+        const totalToDOM = spies.pillToDOM + spies.threadToDOM;
         expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius expand-all: callout eqFalse=${blast.calloutEqFalse}/${notes} updateDOM=${spies.calloutUpdateDOM} toDOM=${spies.calloutToDOM}; ` +
+          `[perf] H2 blast-radius expand-all: pill eqFalse=${blast.pillEqFalse}/${notes} toDOM=${spies.pillToDOM}; ` +
             `thread eqFalse=${blast.threadEqFalse}/${threads} updateDOM=${spies.threadUpdateDOM} toDOM=${spies.threadToDOM}`,
         );
       } finally {
@@ -1126,10 +1126,12 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
     }
   });
 
-  it("single fold toggle: blast radius is 1", { timeout: 60_000 }, () => {
+  it("single fold toggle on a thread: blast radius is 1", { timeout: 60_000 }, () => {
     const { view, restoreHeights } = makeStressBlockViewFullViewport();
     try {
-      const target = view.state.field(annotationDataField)[1];
+      const target = view.state
+        .field(annotationDataField)
+        .find((a) => a.annotation_type === "thread");
       expect(target).toBeDefined();
 
       const before = collectBlockWidgets(view);
@@ -1141,15 +1143,14 @@ describe("annotationBlockDecorationField - 1.3MB stress fixture", () => {
         const after = collectBlockWidgets(view);
         const blast = measureEqBlastRadius(before, after);
 
-        const totalEqFalse = blast.calloutEqFalse + blast.threadEqFalse;
+        const totalEqFalse = blast.pillEqFalse + blast.threadEqFalse;
         expect(totalEqFalse).toBe(1);
-        const totalUpdateDOM = spies.calloutUpdateDOM + spies.threadUpdateDOM;
-        expect(totalUpdateDOM).toBeLessThanOrEqual(1);
-        const totalToDOM = spies.calloutToDOM + spies.threadToDOM;
+        expect(spies.threadUpdateDOM).toBeLessThanOrEqual(1);
+        const totalToDOM = spies.pillToDOM + spies.threadToDOM;
         expect(totalToDOM).toBe(0);
 
         console.warn(
-          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} updateDOM=${totalUpdateDOM} toDOM=${totalToDOM}`,
+          `[perf] H2 blast-radius single fold: eqFalse=${totalEqFalse} updateDOM=${spies.threadUpdateDOM} toDOM=${totalToDOM}`,
         );
       } finally {
         spies.restore();
