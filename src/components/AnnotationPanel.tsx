@@ -97,11 +97,11 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
   const view = getCurrentEditorView();
   const doc = view?.state.doc;
 
-  const hasMultilineBlock = doc != null && annotations.some((ann) => isFoldAllTarget(doc, ann));
+  const hasFoldAllThread = doc != null && annotations.some((ann) => isFoldAllTarget(doc, ann));
 
   return (
     <div className="flex h-full flex-col px-4 py-2">
-      {hasMultilineBlock && (
+      {hasFoldAllThread && (
         <div data-testid="annotation-panel-toolbar" className="mb-1 flex shrink-0 items-center justify-end">
           <button
             data-testid="annotation-panel-fold-all"

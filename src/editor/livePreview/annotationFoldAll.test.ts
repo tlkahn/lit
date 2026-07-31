@@ -120,7 +120,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D2: expands all when every block annotation is collapsed", () => {
+  it("D2: expands all when every thread annotation is collapsed", () => {
     const { view, A, B } = makeViewWithBlocks();
     try {
       toggleAllBlockAnnotationFolds(view);
@@ -172,7 +172,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D5: records fold state for a block the cursor sits inside", () => {
+  it("D5: records fold state for a thread the cursor sits inside", () => {
     const { view, A, B } = makeViewWithBlocks();
     try {
       view.dispatch({ selection: { anchor: A.from + 2 } });
@@ -187,7 +187,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D5b: cursor-suppressed block reveals collapsed widget after cursor exits", () => {
+  it("D5b: cursor-suppressed thread reveals collapsed widget after cursor exits", () => {
     const { view, A, B } = makeViewWithBlocks();
     try {
       view.dispatch({ selection: { anchor: A.from + 2 } });
