@@ -310,6 +310,29 @@ describe("ContentArea lit:focus-cardbox-card bridge", () => {
     expect(useCardboxStore.getState().pendingFocusUuid).toBe("u2");
     expect(useCardboxStore.getState().pendingHighlightNote).toBe(false);
   });
+
+  // #972 Cycle 5: pin step 1 of the acceptance path end-to-end — the focused
+  // pane must flip to cardbox view when the glyph event fires.
+  it("switches the focused pane viewMode to cardbox", async () => {
+    render(<ContentArea />);
+    expect(usePaneStore.getState().root).toMatchObject({
+      type: "leaf",
+      id: "test-pane",
+    });
+    // Default is editor (viewMode unset).
+    const before = usePaneStore.getState().root;
+    expect(before.type === "leaf" ? before.viewMode : undefined).toBeUndefined();
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("lit:focus-cardbox-card", { detail: { uuid: "u3" } }),
+      );
+    });
+
+    const after = usePaneStore.getState().root;
+    expect(after.type === "leaf" ? after.viewMode : undefined).toBe("cardbox");
+    expect(useCardboxStore.getState().pendingFocusUuid).toBe("u3");
+  });
 });
 
 describe("frontmatter editing", () => {
