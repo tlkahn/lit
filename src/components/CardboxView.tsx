@@ -600,7 +600,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     },
     onNewGroup: (cardUuid) => {
       const groupId = crypto.randomUUID();
-      createGroup(groupId, "New Group", [cardUuid], cardUuid);
+      createGroup(groupId, "New Group", [cardUuid]);
       debouncedSave();
     },
     onAddToGroup: (cardUuid) => {
