@@ -1095,6 +1095,27 @@ describe("cardbox store", () => {
     });
   });
 
+  describe("pendingNoteEdit (#982)", () => {
+    it("initializes as null", () => {
+      expect(useCardboxStore.getState().pendingNoteEdit).toBeNull();
+    });
+
+    it("requestNoteEdit stages a seq for a card and bumps on repeat", () => {
+      useCardboxStore.getState().requestNoteEdit("u1");
+      expect(useCardboxStore.getState().pendingNoteEdit).toEqual({ uuid: "u1", seq: 1 });
+      useCardboxStore.getState().requestNoteEdit("u1");
+      expect(useCardboxStore.getState().pendingNoteEdit).toEqual({ uuid: "u1", seq: 2 });
+      useCardboxStore.getState().requestNoteEdit("u2");
+      expect(useCardboxStore.getState().pendingNoteEdit).toEqual({ uuid: "u2", seq: 3 });
+    });
+
+    it("clearNoteEdit clears the staged request", () => {
+      useCardboxStore.getState().requestNoteEdit("u1");
+      useCardboxStore.getState().clearNoteEdit();
+      expect(useCardboxStore.getState().pendingNoteEdit).toBeNull();
+    });
+  });
+
   describe("loadLayout slip-note migration", () => {
     const MIGRATE_OK = {
       migrated: 3,

@@ -245,9 +245,12 @@ interface CardboxCardProps {
   onShowConnections?: () => void;
   notePrefill?: string;
   onNotePrefillConsumed?: () => void;
+  /** Monotonic seq targeting this card for a note-edit open; undefined when not targeted. */
+  noteEditRequest?: number;
+  onNoteEditRequestConsumed?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections, notePrefill, onNotePrefillConsumed }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections, notePrefill, onNotePrefillConsumed, noteEditRequest, onNoteEditRequestConsumed }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const animatingRef = useRef(false);
@@ -275,15 +278,42 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     setFlipped(false);
   }, []);
 
+  // Open the note editor on the front face. Shared by prefill, note-edit
+  // request, and the strip Add-note action. Expanding the card is
+  // CardboxView's job (#968 / #982).
+  const openNoteEditor = useCallback(() => {
+    ensureFrontFace();
+    setNoteEditing(true);
+  }, [ensureFrontFace]);
+
   // A staged quote prefill auto-opens the note editor, unflipping first —
-  // the editor only mounts on the front face. Expanding the card is
-  // CardboxView's job (#968).
+  // the editor only mounts on the front face.
   useEffect(() => {
     if (notePrefill != null) {
-      ensureFrontFace();
-      setNoteEditing(true);
+      openNoteEditor();
     }
-  }, [notePrefill, ensureFrontFace]);
+  }, [notePrefill, openNoteEditor]);
+
+  // N-shortcut note-edit request channel (#982). Dedupe on seq so a stable
+  // prop does not re-fire; clear the ref when the prop drops so a later
+  // identical seq is still honored. The rAF focus covers the already-editing
+  // case where CardNoteEditor's init-focus effect will not re-run.
+  const appliedNoteEditReqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (noteEditRequest == null) {
+      appliedNoteEditReqRef.current = null;
+      return;
+    }
+    if (appliedNoteEditReqRef.current === noteEditRequest) return;
+    appliedNoteEditReqRef.current = noteEditRequest;
+    openNoteEditor();
+    requestAnimationFrame(() => {
+      cardRef.current
+        ?.querySelector<HTMLTextAreaElement>('[data-testid="card-note-textarea"]')
+        ?.focus();
+    });
+    onNoteEditRequestConsumed?.();
+  }, [noteEditRequest, openNoteEditor, onNoteEditRequestConsumed]);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -404,8 +434,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
         label: "Add note",
         glyph: "\u{F0FE}",
         onClick: () => {
-          ensureFrontFace();
-          setNoteEditing(true);
+          openNoteEditor();
           if (!expanded) onToggleExpand();
         },
       });
@@ -422,7 +451,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     onSetNote,
     note,
     noteEditing,
-    ensureFrontFace,
+    openNoteEditor,
   ]);
 
   const [stripActiveIdx, setStripActiveIdx] = useState(0);

@@ -87,6 +87,9 @@ export interface CardboxStore {
   // Quote staged by the Q shortcut, consumed by the target card's note
   // editor (#968).
   pendingNotePrefill: { uuid: string; text: string } | null;
+  // N-shortcut note-edit request. Monotonic seq so re-pressing N re-fires
+  // even for the same uuid; consumed by the target card (#982).
+  pendingNoteEdit: { uuid: string; seq: number } | null;
   // True once loadLayout has settled (success or failure). Gates pending-focus
   // consumption: the NOTE highlight needs the layout's notes in the store.
   // Stays true for the session; notes persist in the store across cardbox
@@ -94,6 +97,8 @@ export interface CardboxStore {
   layoutLoaded: boolean;
   setPendingFocusUuid: (uuid: string | null, highlightNote?: boolean) => void;
   setPendingNotePrefill: (prefill: { uuid: string; text: string } | null) => void;
+  requestNoteEdit: (uuid: string) => void;
+  clearNoteEdit: () => void;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   expand: (uuid: string) => void;
@@ -154,10 +159,16 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   pendingFocusUuid: null,
   pendingHighlightNote: false,
   pendingNotePrefill: null,
+  pendingNoteEdit: null,
   layoutLoaded: false,
   setPendingFocusUuid: (uuid, highlightNote = false) =>
     set({ pendingFocusUuid: uuid, pendingHighlightNote: uuid ? highlightNote : false }),
   setPendingNotePrefill: (prefill) => set({ pendingNotePrefill: prefill }),
+  requestNoteEdit: (uuid) =>
+    set((s) => ({
+      pendingNoteEdit: { uuid, seq: (s.pendingNoteEdit?.seq ?? 0) + 1 },
+    })),
+  clearNoteEdit: () => set({ pendingNoteEdit: null }),
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });

@@ -1930,6 +1930,129 @@ describe("CardboxCard", () => {
     });
   });
 
+  describe("note edit request (#982)", () => {
+    it("opens the note editor on a flipped noted card", () => {
+      const onConsumed = vi.fn();
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        note: "existing note",
+        onSetNote: () => {},
+        onNoteEditRequestConsumed: onConsumed,
+      };
+      const { rerender } = render(<CardboxCard {...props} />);
+      fireEvent.click(screen.getByTestId("card-flip"));
+      expect(screen.getByTestId("card-face-back")).toBeInTheDocument();
+      expect(screen.queryByTestId("card-note-textarea")).not.toBeInTheDocument();
+
+      rerender(<CardboxCard {...props} noteEditRequest={1} />);
+
+      expect(screen.getByTestId("card-face-front")).toBeInTheDocument();
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("refocuses the textarea when a request arrives while already editing", async () => {
+      const onConsumed = vi.fn();
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        note: "existing note",
+        onSetNote: () => {},
+        onNoteEditRequestConsumed: onConsumed,
+      };
+      const { rerender } = render(<CardboxCard {...props} noteEditRequest={1} />);
+      const textarea = screen.getByTestId("card-note-textarea");
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+      expect(document.activeElement).toBe(textarea);
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+
+      // Stay in edit mode (no blur-commit). Spy focus so the second request's
+      // rAF re-focus is observable even though activeElement is already the ta.
+      const focusSpy = vi.spyOn(textarea, "focus");
+      rerender(<CardboxCard {...props} noteEditRequest={2} />);
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+
+      expect(focusSpy).toHaveBeenCalled();
+      expect(document.activeElement).toBe(textarea);
+      expect(onConsumed).toHaveBeenCalledTimes(2);
+      focusSpy.mockRestore();
+    });
+
+    it("does not reapply the same request seq on re-render", () => {
+      const onConsumed = vi.fn();
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        note: "existing note",
+        onSetNote: () => {},
+        onNoteEditRequestConsumed: onConsumed,
+      };
+      const { rerender } = render(<CardboxCard {...props} noteEditRequest={1} />);
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+
+      rerender(<CardboxCard {...props} noteEditRequest={1} />);
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("request during in-flight flip lands on front face with editor open", async () => {
+      const onConsumed = vi.fn();
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        note: "existing note",
+        onSetNote: () => {},
+        onNoteEditRequestConsumed: onConsumed,
+      };
+      const { rerender } = render(<CardboxCard {...props} />);
+      const { deferreds } = installFakeAnimate(screen.getByTestId("card-flip-stage"));
+
+      fireEvent.click(screen.getByTestId("card-flip"));
+      // Out phase pending: stage a note-edit request before midpoint.
+      rerender(<CardboxCard {...props} noteEditRequest={1} />);
+
+      await act(async () => {
+        deferreds[0]!.resolve();
+      });
+      await act(async () => {
+        deferreds[1]?.resolve();
+      });
+
+      expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-flipped", "false");
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not expand the card itself (expansion is CardboxView's job)", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          note="x"
+          onSetNote={() => {}}
+          noteEditRequest={1}
+          onNoteEditRequestConsumed={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-expanded", "false");
+      expect(screen.getByTestId("card-note-textarea")).toBeInTheDocument();
+    });
+  });
+
   describe("text selection (#968)", () => {
     const indexCss = () =>
       readFileSync(resolve(__dirname, "../index.css"), "utf8");

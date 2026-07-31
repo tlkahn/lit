@@ -19,6 +19,8 @@ interface CardboxGroupCardItemProps {
   note?: string;
   notePrefill?: string;
   onNotePrefillConsumed?: () => void;
+  noteEditRequest?: number;
+  onNoteEditRequestConsumed?: () => void;
   onSetNote?: (uuid: string, body: string) => void;
   onExportNote?: (uuid: string) => void;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
@@ -38,6 +40,8 @@ export const CardboxGroupCardItem = memo(function CardboxGroupCardItem({
   note,
   notePrefill,
   onNotePrefillConsumed,
+  noteEditRequest,
+  onNoteEditRequestConsumed,
   onSetNote,
   onExportNote,
   onSelect,
@@ -81,6 +85,8 @@ export const CardboxGroupCardItem = memo(function CardboxGroupCardItem({
           note={note}
           notePrefill={notePrefill}
           onNotePrefillConsumed={onNotePrefillConsumed}
+          noteEditRequest={noteEditRequest}
+          onNoteEditRequestConsumed={onNoteEditRequestConsumed}
           onSetNote={handleSetNote}
           onExportNote={handleExportNote}
           onShowConnections={handleShowConnections}
