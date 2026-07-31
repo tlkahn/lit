@@ -188,11 +188,13 @@ export const annotationPlugin = ViewPlugin.fromClass(
 
     private bindGraphUpdated() {
       // #978 H2: save/reindex does not change the live fingerprint, so wipe
-      // the cache and re-list immediately when the graph emits.
+      // the cache and re-list when the graph emits. Debounced via scheduleIPC:
+      // cardbox link ops emit one event per operation and every open editor
+      // listens, so bursts must coalesce into a single parse+list.
       listen("lit:graph-updated", () => {
         if (this.destroyed) return;
         this.lastAnnotationFingerprint = "";
-        this.fireIPC();
+        this.scheduleIPC();
       })
         .then((unlisten) => {
           if (this.destroyed) {

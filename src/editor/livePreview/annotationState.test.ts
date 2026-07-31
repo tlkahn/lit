@@ -1118,12 +1118,45 @@ describe("annotationPlugin", () => {
     ]);
 
     emitMockEvent("lit:graph-updated", null);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(150);
 
     expect(mockListAnnotations).toHaveBeenCalledTimes(1);
     const data = view.state.field(annotationDataField);
     expect(data[0]!.body).toBe("B");
     expect(data[0]!.uuid).toBe("uuid-1");
+
+    view.destroy();
+  });
+
+  it("coalesces rapid lit:graph-updated bursts into one re-list (#978 review)", async () => {
+    // Cardbox link ops emit one graph-updated per operation; each open editor
+    // must not pay a full parse+list per event. Bursts inside the debounce
+    // window collapse to a single fireIPC.
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "A", date: null, source_line: 1, char_start: 10, char_end: 20, uuid: "uuid-1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    mockListAnnotations.mockClear();
+    vi.mocked(parseAnnotations).mockClear();
+
+    emitMockEvent("lit:graph-updated", null);
+    emitMockEvent("lit:graph-updated", null);
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(parseAnnotations).toHaveBeenCalledTimes(1);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
 
     view.destroy();
   });
@@ -1193,7 +1226,7 @@ describe("annotationPlugin", () => {
     ]);
 
     emitMockEvent("lit:graph-updated", null);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(150);
 
     // 4. field uuid still uuid-1 (re-list body-key hit)
     expect(mockListAnnotations).toHaveBeenCalledTimes(1);
