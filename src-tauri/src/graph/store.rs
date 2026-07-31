@@ -1748,10 +1748,25 @@ impl Store {
             "INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid, original)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
+        // uuid is globally UNIQUE (idx_annotations_uuid): a stamped uuid that a
+        // matched row keeps (or another insert already used) must not be
+        // inserted verbatim or the whole upsert aborts. Deleted rows have
+        // already freed theirs above.
+        let mut used_uuids: HashSet<String> = HashSet::new();
+        for &(new_idx, old_idx) in &diff.updates {
+            let kept = annotations[new_idx].uuid.clone()
+                .unwrap_or_else(|| existing[old_idx].uuid.clone());
+            used_uuids.insert(kept);
+        }
+
         let mut inserted_rowids = Vec::with_capacity(diff.inserts.len());
         for &new_idx in &diff.inserts {
             let ann = &annotations[new_idx];
-            let uuid_val = ann.uuid.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let mut uuid_val = ann.uuid.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            if !used_uuids.insert(uuid_val.clone()) {
+                uuid_val = uuid::Uuid::new_v4().to_string();
+                used_uuids.insert(uuid_val.clone());
+            }
             insert_stmt.execute(rusqlite::params![
                 node_id,
                 ann.annotation_type,
@@ -4878,6 +4893,38 @@ mod tests {
             |r| r.get(0),
         ).unwrap();
         assert_eq!(fts_type, "question", "FTS annotation_type must follow the type edit");
+    }
+
+    #[test]
+    fn upsert_annotations_duplicate_stamped_uuid_gets_fresh_uuid() {
+        // Copy-pasting a stamped annotation yields two incoming anns with the
+        // same authored uuid. The first keeps it; the second must get a fresh
+        // uuid: idx_annotations_uuid is UNIQUE, so a verbatim duplicate insert
+        // aborts the whole upsert (save/reindex failure).
+        let store = Store::open_memory().unwrap();
+        store.upsert_node(&make_node("a.md", "A", &[], json!({})), 1).unwrap();
+
+        let authored_uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        store.upsert_annotations("a.md", &[
+            super::IndexableAnnotation {
+                uuid: Some(authored_uuid.to_string()),
+                char_start: 10,
+                ..make_annotation("note", Some("body A"))
+            },
+            super::IndexableAnnotation {
+                uuid: Some(authored_uuid.to_string()),
+                char_start: 200,
+                ..make_annotation("note", Some("body A"))
+            },
+        ]).unwrap();
+
+        let uuids: Vec<String> = store.conn.prepare(
+            "SELECT uuid FROM annotations WHERE node_id = 'a.md' ORDER BY char_start",
+        ).unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+
+        assert_eq!(uuids.len(), 2, "both annotations are inserted");
+        assert_eq!(uuids[0], authored_uuid, "first occurrence keeps the stamped uuid");
+        assert_ne!(uuids[1], authored_uuid, "duplicate stamped uuid must not create a second row with the same uuid");
     }
 
     // --- #978: body-edit identity second pass ---
