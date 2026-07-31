@@ -41,7 +41,7 @@ function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   };
 }
 
-function blockAnnotationsFromTree(state: EditorState): Annotation[] {
+function blockAnnotationsFromTree(state: EditorState, opts: { asThread?: boolean } = {}): Annotation[] {
   const tree = ensureSyntaxTree(state, state.doc.length, 10_000);
   if (!tree) throw new Error("parse incomplete");
   const annotations: Annotation[] = [];
@@ -51,6 +51,7 @@ function blockAnnotationsFromTree(state: EditorState): Annotation[] {
       annotations.push(
         makeAnnotation({
           form: "block",
+          annotation_type: opts.asThread ? "thread" : "note",
           char_start: node.from,
           char_end: node.to,
           original: state.doc.sliceString(node.from, node.to),
@@ -76,7 +77,7 @@ const fullExtensions = [
   annotationDecorationPlugin,
 ];
 
-function makeBlockOnlyView(): EditorView {
+function makeBlockOnlyView(opts: { asThread?: boolean } = {}): EditorView {
   const state = EditorState.create({
     doc: stressDoc,
     selection: { anchor: 0 },
@@ -84,12 +85,12 @@ function makeBlockOnlyView(): EditorView {
   });
   const view = new EditorView({ state, parent: document.createElement("div") });
   ensureSyntaxTree(view.state, view.state.doc.length, 10_000);
-  const annotations = blockAnnotationsFromTree(view.state);
+  const annotations = blockAnnotationsFromTree(view.state, opts);
   view.dispatch({ effects: setAnnotationData.of(annotations) });
   return view;
 }
 
-function makeFullView(): EditorView {
+function makeFullView(opts: { asThread?: boolean } = {}): EditorView {
   const state = EditorState.create({
     doc: stressDoc,
     selection: { anchor: 0 },
@@ -97,7 +98,7 @@ function makeFullView(): EditorView {
   });
   const view = new EditorView({ state, parent: document.createElement("div") });
   ensureSyntaxTree(view.state, view.state.doc.length, 10_000);
-  const annotations = blockAnnotationsFromTree(view.state);
+  const annotations = blockAnnotationsFromTree(view.state, opts);
   view.dispatch({ effects: setAnnotationData.of(annotations) });
   return view;
 }
@@ -121,9 +122,11 @@ describe("H1a: raw tree iterate (1.3MB stress doc)", () => {
   });
 });
 
-// H1b: toggleAnnotationFoldEffect dispatch (block field only, no inline plugin)
+// H1b: toggleAnnotationFoldEffect dispatch (block field only, no inline plugin).
+// Thread fixtures: folding is thread-only, so a note fixture would make the
+// surgical path rebuild an eq-equal pill instead of a real fold flip.
 describe("H1b: fold toggle dispatch (block field only)", () => {
-  const view = makeBlockOnlyView();
+  const view = makeBlockOnlyView({ asThread: true });
   const firstBlockPos = view.state.field(annotationDataField)[0]?.char_start ?? 0;
 
   bench("single fold toggle", () => {
@@ -133,7 +136,7 @@ describe("H1b: fold toggle dispatch (block field only)", () => {
 
 // H3: fold toggle dispatch with inline plugin installed
 describe("H3: fold toggle dispatch (full extension stack)", () => {
-  const view = makeFullView();
+  const view = makeFullView({ asThread: true });
   const firstBlockPos = view.state.field(annotationDataField)[0]?.char_start ?? 0;
 
   bench("single fold toggle", () => {
