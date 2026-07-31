@@ -829,6 +829,17 @@ describe("cardbox store", () => {
 
       const stack = useCardboxUndoStore.getState().undoStack;
       expect(stack.length).toBeGreaterThan(0);
+      expect(stack[stack.length - 1]!.description).toBe("Move 2 cards");
+    });
+
+    it("describes a single-card move in the singular", () => {
+      useCardboxUndoStore.getState().clear();
+      useCardboxStore.setState({
+        groups: { g1: { name: "G", order: ["u4"], collapsed: false } },
+      });
+      useCardboxStore.getState().batchMoveCards(["u1"], { type: "toGroup", groupId: "g1" });
+      const stack = useCardboxUndoStore.getState().undoStack;
+      expect(stack[stack.length - 1]!.description).toBe("Move 1 card");
     });
 
     it("persists the moved layout immediately via write_cardbox_layout", async () => {

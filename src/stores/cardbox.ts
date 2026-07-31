@@ -853,7 +853,7 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
     };
 
     pushUndo({
-      description: `Move ${uuids.length} cards`,
+      description: `Move ${uuids.length} card${uuids.length === 1 ? "" : "s"}`,
       undo: async () => {
         set({ groups: prevGroups });
         await get().saveLayout();

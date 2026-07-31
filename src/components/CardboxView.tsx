@@ -77,7 +77,6 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const dissolveGroup = useCardboxStore((s) => s.dissolveGroup);
   const renameGroup = useCardboxStore((s) => s.renameGroup);
   const toggleGroupCollapse = useCardboxStore((s) => s.toggleGroupCollapse);
-  const moveCardToGroup = useCardboxStore((s) => s.moveCardToGroup);
   const removeCardFromGroup = useCardboxStore((s) => s.removeCardFromGroup);
   const pinned = useCardboxStore((s) => s.pinned);
   const pinCard = useCardboxStore((s) => s.pinCard);
@@ -621,16 +620,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const applyAddToGroup = useCallback(
     (uuids: string[], groupId: string) => {
-      if (uuids.length === 1) {
-        moveCardToGroup(uuids[0]!, groupId);
-        debouncedSave();
-      } else {
-        // batchMoveCards persists the layout itself — no debounced save needed.
-        batchMoveCards(uuids, { type: "toGroup", groupId });
-      }
+      // Single cards go through batchMoveCards too: it dissolves an emptied
+      // source group and persists the layout itself — no debounced save.
+      batchMoveCards(uuids, { type: "toGroup", groupId });
       clearSelection();
     },
-    [moveCardToGroup, batchMoveCards, clearSelection, debouncedSave],
+    [batchMoveCards, clearSelection],
   );
 
   const openAddToGroup = useCallback(
