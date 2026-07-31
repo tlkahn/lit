@@ -1,6 +1,7 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, type PluginValue, keymap } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { listen } from "@tauri-apps/api/event";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
@@ -41,16 +42,16 @@ export const annotationDataField = StateField.define<Annotation[]>({
 });
 
 /** Build a fingerprint from annotation types+bodies (position-independent). */
-function buildAnnotationFingerprint(annotations: Annotation[]): string {
+export function buildAnnotationFingerprint(annotations: Annotation[]): string {
   return annotations
     .map((a) => `${a.annotation_type}:${a.body ?? ""}`)
     .join("\n");
 }
 
-type IndexedGroup = Array<{ uuid: string; char_start: number }>;
+export type IndexedGroup = Array<{ uuid: string; char_start: number }>;
 
 /** Group indexed annotations by (type, body) for fuzzy matching. */
-function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: string | null; uuid: string; char_start: number }>): Map<string, IndexedGroup> {
+export function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: string | null; uuid: string; char_start: number }>): Map<string, IndexedGroup> {
   const groups = new Map<string, IndexedGroup>();
   for (const ia of indexed) {
     const key = `${ia.annotation_type}:${ia.body ?? ""}`;
@@ -61,19 +62,107 @@ function buildIndexedGroups(indexed: Array<{ annotation_type: string; body: stri
   return groups;
 }
 
-/** Enrich annotations with UUIDs using fuzzy (type+body) matching + proximity tiebreaker. */
-function enrichWithGroups(annotations: Annotation[], groups: Map<string, IndexedGroup>): void {
+/**
+ * Enrich annotations with UUIDs using fuzzy (type+body) matching + proximity
+ * tiebreaker. Authored (already-set) uuids are left alone. Chosen candidates
+ * are consumed so two live anns cannot share one indexed uuid. The input
+ * `groups` map is not mutated (cloned per call) so the plugin cache stays intact.
+ */
+export function enrichWithGroups(annotations: Annotation[], groups: Map<string, IndexedGroup>): void {
+  // Clone group arrays so consumption does not empty the caller's cache.
+  const working = new Map<string, IndexedGroup>();
+  for (const [key, arr] of groups) working.set(key, arr.slice());
+
   for (const ann of annotations) {
     const key = `${ann.annotation_type}:${ann.body ?? ""}`;
-    const candidates = groups.get(key);
+    const candidates = working.get(key);
+    if (ann.uuid != null && ann.uuid !== "") {
+      // Authored uuid wins; still consume matching candidate so it cannot be re-handed.
+      if (candidates) {
+        const idx = candidates.findIndex((c) => c.uuid === ann.uuid);
+        if (idx >= 0) candidates.splice(idx, 1);
+      }
+      continue;
+    }
     if (!candidates || candidates.length === 0) continue;
-    let best = candidates[0]!;
-    let bestDist = Math.abs(best.char_start - ann.char_start);
+    let bestIdx = 0;
+    let bestDist = Math.abs(candidates[0]!.char_start - ann.char_start);
     for (let i = 1; i < candidates.length; i++) {
       const d = Math.abs(candidates[i]!.char_start - ann.char_start);
-      if (d < bestDist) { best = candidates[i]!; bestDist = d; }
+      if (d < bestDist) { bestIdx = i; bestDist = d; }
     }
-    ann.uuid = best.uuid;
+    const [best] = candidates.splice(bestIdx, 1);
+    ann.uuid = best!.uuid;
+  }
+}
+
+/**
+ * Second-pass identity: unmatched live annotations inherit uuid from the
+ * previous annotationDataField snapshot when type matches. Prev uuids already
+ * present on live are excluded (true consumption), so a body-key hit cannot
+ * be re-handed to a second live ann. Within each type, equal counts pair
+ * ordinal-by-char_start (anti-swap, mirrors the indexer); unequal counts pair
+ * greedy nearest-char_start so a same-window delete does not hand its uuid to
+ * an ordinal neighbor. Bridges the stale-index window after a body edit
+ * without inventing uuids the index never had (#978).
+ */
+export function carryForwardUuids(live: Annotation[], prev: Annotation[]): void {
+  if (prev.length === 0) return;
+
+  type Slot = { ann: Annotation; char_start: number };
+  const usedUuids = new Set<string>();
+  const unmatchedLiveByType = new Map<string, Slot[]>();
+  for (const ann of live) {
+    if (ann.uuid != null && ann.uuid !== "") {
+      usedUuids.add(ann.uuid);
+      continue;
+    }
+    let arr = unmatchedLiveByType.get(ann.annotation_type);
+    if (!arr) { arr = []; unmatchedLiveByType.set(ann.annotation_type, arr); }
+    arr.push({ ann, char_start: ann.char_start });
+  }
+  if (unmatchedLiveByType.size === 0) return;
+
+  const prevByType = new Map<string, Slot[]>();
+  for (const ann of prev) {
+    if (ann.uuid == null || ann.uuid === "" || usedUuids.has(ann.uuid)) continue;
+    let arr = prevByType.get(ann.annotation_type);
+    if (!arr) { arr = []; prevByType.set(ann.annotation_type, arr); }
+    arr.push({ ann, char_start: ann.char_start });
+  }
+
+  for (const [type, liveSlots] of unmatchedLiveByType) {
+    const prevSlots = prevByType.get(type);
+    if (!prevSlots || prevSlots.length === 0) continue;
+    liveSlots.sort((a, b) => a.char_start - b.char_start);
+    prevSlots.sort((a, b) => a.char_start - b.char_start);
+
+    if (liveSlots.length === prevSlots.length) {
+      for (let i = 0; i < liveSlots.length; i++) {
+        liveSlots[i]!.ann.uuid = prevSlots[i]!.ann.uuid;
+      }
+      continue;
+    }
+
+    // Count mismatch: greedy nearest-char_start with consumption.
+    // Tie-break (prev char_start, live char_start) for determinism.
+    const candidates: Array<[number, number, number, number, number]> = [];
+    for (let pi = 0; pi < prevSlots.length; pi++) {
+      for (let li = 0; li < liveSlots.length; li++) {
+        const p = prevSlots[pi]!.char_start;
+        const l = liveSlots[li]!.char_start;
+        candidates.push([Math.abs(p - l), p, l, pi, li]);
+      }
+    }
+    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    const prevUsed = new Array<boolean>(prevSlots.length).fill(false);
+    const liveUsed = new Array<boolean>(liveSlots.length).fill(false);
+    for (const [, , , pi, li] of candidates) {
+      if (prevUsed[pi] || liveUsed[li]) continue;
+      prevUsed[pi] = true;
+      liveUsed[li] = true;
+      liveSlots[li]!.ann.uuid = prevSlots[pi]!.ann.uuid;
+    }
   }
 }
 
@@ -84,10 +173,37 @@ export const annotationPlugin = ViewPlugin.fromClass(
     private lastAnnotationFingerprint = "";
     private lastNodeId: string | null = null;
     private lastIndexedGroups: Map<string, IndexedGroup> = new Map();
+    private unlistenGraphUpdated: (() => void) | null = null;
+    private destroyed = false;
+    /** Monotonic fireIPC run id: a run that resumes from an await after a
+     * newer run started must abort, so stale responses cannot overwrite a
+     * fresher dispatch or the groups cache (last-started wins). */
+    private ipcGen = 0;
 
     constructor(private view: EditorView) {
       this.lastDocStr = view.state.doc.toString();
+      this.bindGraphUpdated();
       this.fireIPC();
+    }
+
+    private bindGraphUpdated() {
+      // #978 H2: save/reindex does not change the live fingerprint, so wipe
+      // the cache and re-list when the graph emits. Debounced via scheduleIPC:
+      // cardbox link ops emit one event per operation and every open editor
+      // listens, so bursts must coalesce into a single parse+list.
+      listen("lit:graph-updated", () => {
+        if (this.destroyed) return;
+        this.lastAnnotationFingerprint = "";
+        this.scheduleIPC();
+      })
+        .then((unlisten) => {
+          if (this.destroyed) {
+            unlisten();
+            return;
+          }
+          this.unlistenGraphUpdated = unlisten;
+        })
+        .catch(() => { /* non-tauri / test envs */ });
     }
 
     update(update: ViewUpdate) {
@@ -104,32 +220,52 @@ export const annotationPlugin = ViewPlugin.fromClass(
     }
 
     private async fireIPC() {
+      const gen = ++this.ipcGen;
       const docStr = this.view.state.doc.toString();
       this.lastDocStr = docStr;
       try {
         const annotations = await parseAnnotations(docStr);
+        if (gen !== this.ipcGen) return;
         if (this.view.state.doc.toString() !== this.lastDocStr) return;
+
+        // Snapshot before enrich/dispatch so carry-forward and the empty-empty
+        // guard both see the pre-update field value.
+        const prev = this.view.state.field(annotationDataField);
 
         const nodeId = useWorkspaceStore.getState().currentPagePath;
         if (nodeId && annotations.length > 0) {
-          try {
-            const fingerprint = buildAnnotationFingerprint(annotations);
-            const nodeChanged = nodeId !== this.lastNodeId;
-            const fpChanged = fingerprint !== this.lastAnnotationFingerprint;
+          const fingerprint = buildAnnotationFingerprint(annotations);
+          const nodeChanged = nodeId !== this.lastNodeId;
 
-            if (nodeChanged || fpChanged) {
+          if (nodeChanged || fingerprint !== this.lastAnnotationFingerprint) {
+            try {
               const indexed = await listAnnotations(nodeId);
+              if (gen !== this.ipcGen) return;
               if (this.view.state.doc.toString() !== this.lastDocStr) return;
               this.lastIndexedGroups = buildIndexedGroups(indexed);
               this.lastAnnotationFingerprint = fingerprint;
               this.lastNodeId = nodeId;
+            } catch {
+              if (gen !== this.ipcGen) return;
+              // Transient list failure: enrich/carry-forward below still run
+              // off the cached groups and prev snapshot. Except on a page
+              // switch, where the cache belongs to the old page - drop it so
+              // nothing body-key matches across pages (retry on next fire).
+              if (nodeChanged) {
+                this.lastIndexedGroups = new Map();
+                this.lastAnnotationFingerprint = "";
+              }
             }
+          }
 
-            enrichWithGroups(annotations, this.lastIndexedGroups);
-          } catch { /* best-effort enrichment */ }
+          enrichWithGroups(annotations, this.lastIndexedGroups);
+          // #978: after body-key miss on a stale index, keep the uuid the
+          // live plugin already committed this session (prev snapshot beats
+          // index positional fallback which can steal orphan uuids). On a
+          // page switch prev belongs to the old page - never carry across.
+          if (!nodeChanged) carryForwardUuids(annotations, prev);
         }
 
-        const prev = this.view.state.field(annotationDataField);
         if (annotations.length === 0 && prev.length === 0) return;
         this.view.dispatch({ effects: setAnnotationData.of(annotations) });
         window.dispatchEvent(new CustomEvent("lit:annotations-changed"));
@@ -137,6 +273,9 @@ export const annotationPlugin = ViewPlugin.fromClass(
     }
 
     destroy() {
+      this.destroyed = true;
+      this.unlistenGraphUpdated?.();
+      this.unlistenGraphUpdated = null;
       if (this.debounceTimer != null) clearTimeout(this.debounceTimer);
     }
   },

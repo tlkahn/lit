@@ -19,6 +19,10 @@ import {
   shouldRebuildBlocksOnTreeChange,
   buildAnnotationRangeMap,
   findAnnotationForRange,
+  buildAnnotationFingerprint,
+  buildIndexedGroups,
+  enrichWithGroups,
+  carryForwardUuids,
 } from "./annotationState";
 import {
   annotationFoldField,
@@ -42,6 +46,7 @@ import { parseAnnotations, listAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { mockListen, emitMockEvent, resetListenMock } from "../../test/tauri-mock";
 
 vi.mock("../../lib/ipc", () => ({
   parseAnnotations: vi.fn(async () => []),
@@ -137,13 +142,229 @@ describe("displayModeField", () => {
   });
 });
 
+describe("annotation enrich helpers (#978)", () => {
+  it("buildAnnotationFingerprint joins type:body per ann with newline", () => {
+    const anns = [
+      makeAnnotation({ annotation_type: "note", body: "hello" }),
+      makeAnnotation({ annotation_type: "question", body: null }),
+      makeAnnotation({ annotation_type: "todo", body: "x" }),
+    ];
+    expect(buildAnnotationFingerprint(anns)).toBe("note:hello\nquestion:\ntodo:x");
+  });
+
+  it("buildAnnotationFingerprint is position-independent and follows input order", () => {
+    const a = makeAnnotation({ annotation_type: "note", body: "A", char_start: 10 });
+    const b = makeAnnotation({ annotation_type: "note", body: "B", char_start: 99 });
+    expect(buildAnnotationFingerprint([a, b])).toBe("note:A\nnote:B");
+    expect(buildAnnotationFingerprint([b, a])).toBe("note:B\nnote:A");
+    // Same bodies at different positions yield the same fingerprint
+    const aShifted = makeAnnotation({ annotation_type: "note", body: "A", char_start: 50 });
+    const bShifted = makeAnnotation({ annotation_type: "note", body: "B", char_start: 200 });
+    expect(buildAnnotationFingerprint([aShifted, bShifted])).toBe(
+      buildAnnotationFingerprint([a, b]),
+    );
+  });
+
+  it("buildIndexedGroups keys by type:body and collects uuid+char_start", () => {
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "hello", uuid: "u1", char_start: 5 },
+      { annotation_type: "note", body: "hello", uuid: "u2", char_start: 50 },
+      { annotation_type: "todo", body: null, uuid: "u3", char_start: 0 },
+    ]);
+    expect(groups.get("note:hello")).toEqual([
+      { uuid: "u1", char_start: 5 },
+      { uuid: "u2", char_start: 50 },
+    ]);
+    expect(groups.get("todo:")).toEqual([{ uuid: "u3", char_start: 0 }]);
+    expect(groups.has("missing")).toBe(false);
+  });
+
+  it("enrichWithGroups assigns uuid on exact type+body hit", () => {
+    const live = [makeAnnotation({ annotation_type: "note", body: "hello", char_start: 5 })];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "hello", uuid: "enriched-1", char_start: 5 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBe("enriched-1");
+  });
+
+  it("enrichWithGroups uses proximity tiebreak when two indexed share type+body", () => {
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 50 }),
+    ];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "dup", uuid: "near-10", char_start: 12 },
+      { annotation_type: "note", body: "dup", uuid: "near-50", char_start: 48 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBe("near-10");
+    expect(live[1]!.uuid).toBe("near-50");
+  });
+
+  it("enrichWithGroups leaves uuid unset when body diverges (pass-1 negative pin)", () => {
+    const live = [makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 })];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "A", uuid: "uuid-1", char_start: 10 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("enrichWithGroups does not overwrite a pre-set authored uuid", () => {
+    const live = [
+      makeAnnotation({
+        annotation_type: "note",
+        body: "hello",
+        char_start: 5,
+        uuid: "authored-uuid",
+      }),
+    ];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "hello", uuid: "indexed-uuid", char_start: 5 },
+    ]);
+    enrichWithGroups(live, groups);
+    expect(live[0]!.uuid).toBe("authored-uuid");
+  });
+
+  it("enrichWithGroups consumes candidates so one uuid is not handed to two live anns", () => {
+    // Two live anns at the same position share type+body; only one indexed candidate.
+    // Without consumption both would get the same uuid via proximity (equal distance).
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "dup", char_start: 10 }),
+    ];
+    const groups = buildIndexedGroups([
+      { annotation_type: "note", body: "dup", uuid: "only-one", char_start: 10 },
+    ]);
+    enrichWithGroups(live, groups);
+    const uuids = live.map((a) => a.uuid);
+    expect(uuids.filter((u) => u === "only-one")).toHaveLength(1);
+    expect(uuids.filter((u) => u == null || u === "")).toHaveLength(1);
+  });
+
+  it("carryForwardUuids inherits uuid from prev when body changed (same type+pos)", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 }),
+    ];
+    // body-key already ran and missed
+    expect(live[0]!.uuid).toBeUndefined();
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("u1");
+  });
+
+  it("carryForwardUuids does not overwrite an already-set live uuid", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", uuid: "authored", char_start: 10 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("authored");
+  });
+
+  it("carryForwardUuids does not carry when types differ", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "question", body: "B", char_start: 10 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids pairs two same-type body-edits 1:1 by ordinal position", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A1", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "A2", uuid: "u2", char_start: 100 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B1", char_start: 12 }),
+      makeAnnotation({ annotation_type: "note", body: "B2", char_start: 105 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("u1");
+    expect(live[1]!.uuid).toBe("u2");
+  });
+
+  it("carryForwardUuids ignores prev anns without uuid", () => {
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids is a no-op when prev is empty", () => {
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10 }),
+    ];
+    carryForwardUuids(live, []);
+    expect(live[0]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids skips prev uuids already assigned to live (mixed hit+miss)", () => {
+    // First note body-key matched the stale index (kept u1); second note was
+    // body-edited and missed. The miss must get u2, not re-share u1.
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "hello", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "world", uuid: "u2", char_start: 100 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "hello", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "world!", char_start: 100 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[1]!.uuid).toBe("u2");
+    expect(live.filter((a) => a.uuid === "u1")).toHaveLength(1);
+  });
+
+  it("carryForwardUuids does not hand a neighbor's uuid to a new same-type annotation", () => {
+    // User typed a brand-new note while the existing one still body-matches:
+    // the new note has no prior identity and must stay unset.
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "new note", char_start: 500 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[1]!.uuid).toBeUndefined();
+  });
+
+  it("carryForwardUuids pairs nearest char_start on count mismatch (delete+edit mix)", () => {
+    // User deleted the first note and body-edited the second in one debounce
+    // window: the survivor keeps its own uuid, not the deleted note's.
+    const prev = [
+      makeAnnotation({ annotation_type: "note", body: "A", uuid: "u1", char_start: 10 }),
+      makeAnnotation({ annotation_type: "note", body: "B", uuid: "u2", char_start: 100 }),
+    ];
+    const live = [
+      makeAnnotation({ annotation_type: "note", body: "B edited", char_start: 100 }),
+    ];
+    carryForwardUuids(live, prev);
+    expect(live[0]!.uuid).toBe("u2");
+  });
+});
+
 describe("annotationPlugin", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    mockListen();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    resetListenMock();
   });
 
   it("calls parseAnnotations on creation", async () => {
@@ -442,6 +663,124 @@ describe("annotationPlugin", () => {
     view.destroy();
   });
 
+  it("a stale in-flight fireIPC does not overwrite a fresher graph-updated run (#978 review)", async () => {
+    // Run A (doc-change) snapshots prev and stalls in listAnnotations; run B
+    // (graph-updated) completes with the fresh post-reindex uuid. When A's
+    // stale list finally resolves, A must abort instead of dispatching its
+    // pre-B enrichment (which would strip the uuid until the next event).
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "hello", char_start: 0, char_end: 10 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([]);
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBeUndefined();
+
+    // Body edit; run A's re-list stalls on a controlled promise.
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "hello edited", char_start: 0, char_end: 10 }),
+    ]);
+    let resolveStaleList!: (v: unknown) => void;
+    mockListAnnotations.mockImplementationOnce(
+      () => new Promise((res) => { resolveStaleList = res; }),
+    );
+    view.dispatch({ changes: { from: 11, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    // Save/reindex completed: run B lists fresh and dispatches the real uuid.
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "hello edited", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "u-new" },
+    ]);
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("u-new");
+
+    // Run A's stale response arrives last.
+    resolveStaleList([]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data[0]!.uuid).toBe("u-new");
+  });
+
+  it("still carries forward the uuid when listAnnotations rejects transiently (#978 review)", async () => {
+    // Carry-forward only needs the prev field snapshot, not a fresh index:
+    // a transient list failure during a same-page body edit must not drop
+    // the uuid (and with it the go-to-cardbox glyph) for the whole window.
+    const p1Ann = makeAnnotation({ annotation_type: "note", body: "hello", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([p1Ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "hello", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "u1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello world",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("u1");
+
+    // Same page, body edit; the re-list for the changed fingerprint fails.
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "hello edited", char_start: 0, char_end: 10 }),
+    ]);
+    mockListAnnotations.mockRejectedValue(new Error("transient ipc failure"));
+    view.dispatch({ changes: { from: 11, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBe("u1");
+  });
+
+  it("does not carry uuids across a page switch (#978 review)", async () => {
+    // The EditorView survives navigation (useCodeMirror replaces the doc in
+    // place), so the annotationDataField still holds page 1's enriched anns
+    // when the first fireIPC for page 2 runs. Page 2's unenriched anns must
+    // not inherit page 1's uuids.
+    const p1Ann = makeAnnotation({ annotation_type: "note", body: "hello", char_start: 0, char_end: 10 });
+    vi.mocked(parseAnnotations).mockResolvedValue([p1Ann]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/p1.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/p1.md", node_title: "p1", annotation_type: "note", certainty: "neutral", body: "hello", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "p1-uuid" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello page one",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("p1-uuid");
+
+    // Navigate: new page path, replaced doc, un-indexed annotation.
+    useWorkspaceStore.setState({ currentPagePath: "notes/p2.md" });
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "brand new", char_start: 0, char_end: 10 }),
+    ]);
+    mockListAnnotations.mockResolvedValue([]);
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "page two text" } });
+    await vi.advanceTimersByTimeAsync(150);
+
+    const data = view.state.field(annotationDataField);
+    view.destroy();
+
+    expect(data).toHaveLength(1);
+    expect(data[0]!.uuid).toBeUndefined();
+  });
+
   it("enriches correct UUIDs when two annotations share type but differ in body", async () => {
     const parsedAnn1 = makeAnnotation({ annotation_type: "note", body: "first", char_start: 5, char_end: 15 });
     const parsedAnn2 = makeAnnotation({ annotation_type: "note", body: "second", char_start: 5, char_end: 25 });
@@ -632,8 +971,11 @@ describe("annotationPlugin", () => {
   });
 
   it("invalidates cache on page change (nodeId differs)", async () => {
-    const ann = makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 });
-    vi.mocked(parseAnnotations).mockResolvedValue([ann]);
+    // Fresh objects per call: enrich mutates ann.uuid in place, and a reused
+    // object would look "authored" on the second fireIPC (#978 short-circuit).
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "stable", char_start: 0, char_end: 10 }),
+    ]);
     useWorkspaceStore.setState({ currentPagePath: "notes/page1.md" });
     mockListAnnotations.mockResolvedValue([
       { annotation_id: 1, node_id: "notes/page1.md", node_title: "page1", annotation_type: "note", certainty: "neutral", body: "stable", date: null, source_line: 1, char_start: 0, char_end: 10, uuid: "uuid-page1" },
@@ -666,6 +1008,277 @@ describe("annotationPlugin", () => {
     expect(data[0]!.uuid).toBe("uuid-page2");
 
     view.destroy();
+  });
+
+  it("keeps uuid after annotation body edit (carry-forward, #978)", async () => {
+    // t0: parse body A, listAnnotations returns A/uuid-1 -> enriched
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+
+    // t1: parse body B, listAnnotations still returns A/uuid-1 (stale index)
+    vi.mocked(parseAnnotations).mockResolvedValue([
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10, char_end: 20 }),
+    ]);
+    // keep stale list response (body A)
+    mockListAnnotations.mockClear();
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // body-key miss on stale index, but carry-forward keeps uuid-1
+    const data = view.state.field(annotationDataField);
+    expect(data).toHaveLength(1);
+    expect(data[0]!.body).toBe("B");
+    expect(data[0]!.uuid).toBe("uuid-1");
+
+    view.destroy();
+  });
+
+  it("re-lists annotations when lit:graph-updated fires (#978)", async () => {
+    // Initial enrich with body A / uuid-1
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    // Let listen() promise resolve and assign unlisten
+    await Promise.resolve();
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    // Simulate identity-preserving reindex: index now has body B / same uuid-1.
+    // Parse still returns B (doc was edited) with a fresh object.
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10, char_end: 20 }),
+    ]);
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "B",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.body).toBe("B");
+    expect(data[0]!.uuid).toBe("uuid-1");
+
+    view.destroy();
+  });
+
+  it("coalesces rapid lit:graph-updated bursts into one re-list (#978 review)", async () => {
+    // Cardbox link ops emit one graph-updated per operation; each open editor
+    // must not pay a full parse+list per event. Bursts inside the debounce
+    // window collapse to a single fireIPC.
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      { annotation_id: 1, node_id: "notes/test.md", node_title: "test", annotation_type: "note", certainty: "neutral", body: "A", date: null, source_line: 1, char_start: 10, char_end: 20, uuid: "uuid-1" },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    mockListAnnotations.mockClear();
+    vi.mocked(parseAnnotations).mockClear();
+
+    emitMockEvent("lit:graph-updated", null);
+    emitMockEvent("lit:graph-updated", null);
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(parseAnnotations).toHaveBeenCalledTimes(1);
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+
+    view.destroy();
+  });
+
+  it("body edit -> stale index -> graph-updated reindex keeps same uuid (#978)", async () => {
+    // 1. open: parse A, list -> A/uuid-1, field uuid-1
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 10, char_end: 20 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello text here",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve(); // listen resolves
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+
+    // 2. edit: parse B, list still A/uuid-1, field uuid-1 via carry-forward
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "B", char_start: 10, char_end: 20 }),
+    ]);
+    mockListAnnotations.mockClear();
+    // list still returns stale A (mock not updated yet)
+
+    view.dispatch({ changes: { from: 5, insert: "!" } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(view.state.field(annotationDataField)[0]!.body).toBe("B");
+    expect(view.state.field(annotationDataField)[0]!.uuid).toBe("uuid-1");
+
+    // 3. simulate reindex: list mock -> B/uuid-1; emit lit:graph-updated
+    mockListAnnotations.mockClear();
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "B",
+        date: null,
+        source_line: 1,
+        char_start: 10,
+        char_end: 20,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    emitMockEvent("lit:graph-updated", null);
+    await vi.advanceTimersByTimeAsync(150);
+
+    // 4. field uuid still uuid-1 (re-list body-key hit)
+    expect(mockListAnnotations).toHaveBeenCalledTimes(1);
+    const data = view.state.field(annotationDataField);
+    expect(data[0]!.body).toBe("B");
+    expect(data[0]!.uuid).toBe("uuid-1");
+
+    // 5. PillWidget from field ann renders the cardbox link glyph
+    const pill = new PillWidget(data[0]!);
+    const dom = pill.toDOM(view);
+    expect(dom.querySelector(".cm-annotation-cardbox-link")).not.toBeNull();
+
+    view.destroy();
+  });
+
+  it("destroy unsubscribes lit:graph-updated (#978)", async () => {
+    vi.mocked(parseAnnotations).mockImplementation(async () => [
+      makeAnnotation({ annotation_type: "note", body: "A", char_start: 0, char_end: 10 }),
+    ]);
+    useWorkspaceStore.setState({ currentPagePath: "notes/test.md" });
+    mockListAnnotations.mockResolvedValue([
+      {
+        annotation_id: 1,
+        node_id: "notes/test.md",
+        node_title: "test",
+        annotation_type: "note",
+        certainty: "neutral",
+        body: "A",
+        date: null,
+        source_line: 1,
+        char_start: 0,
+        char_end: 10,
+        uuid: "uuid-1",
+      },
+    ]);
+
+    const state = EditorState.create({
+      doc: "hello",
+      extensions: [annotationExtension()],
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve(); // listen resolves
+
+    view.destroy();
+    mockListAnnotations.mockClear();
+
+    // Emitting after destroy must not call listAnnotations and must not throw
+    expect(() => emitMockEvent("lit:graph-updated", null)).not.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockListAnnotations).not.toHaveBeenCalled();
   });
 });
 
