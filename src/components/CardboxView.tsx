@@ -669,7 +669,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       debouncedSave();
     },
     onAddToGroup: (cardUuid) => {
-      openAddToGroup([cardUuid]);
+      const uuids = selectedUuids.has(cardUuid) && selectedCount > 1 ? [...selectedUuids] : [cardUuid];
+      openAddToGroup(uuids);
     },
     onRemoveFromGroup: (cardUuid, groupId) => {
       removeCardFromGroup(cardUuid, groupId);

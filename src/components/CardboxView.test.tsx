@@ -703,6 +703,47 @@ describe("add to group without drag (#968)", () => {
     expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
   });
 
+  it("context-menu Add to Group moves the whole selection when the clicked card is selected", async () => {
+    mockListen();
+    mockWithGroups({
+      g1: { name: "G1", order: [A], collapsed: false },
+      g2: { name: "G2", order: [B], collapsed: false },
+    });
+    await renderView();
+    selectCards([B, C]);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/add-to-group", { card_uuid: C });
+    });
+    const items = screen.getAllByTestId("group-picker-item");
+    act(() => {
+      fireEvent.click(items[0]!);
+    });
+    const s = useCardboxStore.getState();
+    expect(s.groups.g1!.order).toEqual([A, B, C]);
+    expect(s.groups.g2).toBeUndefined();
+    expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
+  });
+
+  it("context-menu Add to Group on a non-selected card moves only that card", async () => {
+    mockListen();
+    mockWithGroups({
+      g1: { name: "G1", order: [A], collapsed: false },
+      g2: { name: "G2", order: [B], collapsed: false },
+    });
+    await renderView();
+    selectCards([B]);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/add-to-group", { card_uuid: C });
+    });
+    const items = screen.getAllByTestId("group-picker-item");
+    act(() => {
+      fireEvent.click(items[0]!);
+    });
+    const s = useCardboxStore.getState();
+    expect(s.groups.g1!.order).toEqual([A, C]);
+    expect(s.groups.g2!.order).toEqual([B]);
+  });
+
   it("hides Add to Group when every group is filtered out of view", async () => {
     mockWithGroups({ g1: { name: "G1", order: [A], collapsed: false } });
     await renderView();
