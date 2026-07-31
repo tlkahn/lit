@@ -1301,12 +1301,42 @@ describe("useKeymaps", () => {
     expect(ids).not.toContain("app.toggleAllBlockAnnotations");
   });
 
-  it("visible in the palette when an editor view exists", async () => {
+  // Minimal doc interface matching isFoldAllTarget's needs: length + lineAt.
+  // "line0\nline1\nline2" -> line starts at 0, 6, 12; length 17.
+  function makeMockDoc() {
+    const lines: Array<{ from: number; number: number }> = [
+      { from: 0, number: 1 },
+      { from: 6, number: 2 },
+      { from: 12, number: 3 },
+    ];
+    return {
+      length: 17,
+      lineAt(pos: number) {
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i]!;
+          if (pos >= line.from) return line;
+        }
+        return lines[0]!;
+      },
+    };
+  }
+
+  it("visible in the palette when the view has a fold-all-target thread", async () => {
     await loadHook();
     const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
+    // Multiline thread starting at a line boundary -> isFoldAllTarget true.
+    const thread = {
+      annotation_type: "thread",
+      char_start: 6,
+      char_end: 17,
+    };
     const mockView = {
       focus: vi.fn(),
-      state: { field: () => undefined, selection: { main: { head: 0 } } },
+      state: {
+        field: () => [thread],
+        doc: makeMockDoc(),
+        selection: { main: { head: 0 } },
+      },
     } as unknown as EditorView;
     registerPaneView("main", mockView);
     setFocusedPane("main");
@@ -1314,6 +1344,55 @@ describe("useKeymaps", () => {
     const visible = getVisibleCommands("all threads");
     const ids = visible.map((c) => c.id);
     expect(ids).toContain("app.toggleAllBlockAnnotations");
+  });
+
+  it("hidden from the palette when annotations exist but none is a fold-all target", async () => {
+    await loadHook();
+    const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
+    // Multiline note (wrong type) + single-line thread (not multiline) -> no target.
+    const note = {
+      annotation_type: "note",
+      char_start: 6,
+      char_end: 17,
+    };
+    const singleLineThread = {
+      annotation_type: "thread",
+      char_start: 0,
+      char_end: 5,
+    };
+    const mockView = {
+      focus: vi.fn(),
+      state: {
+        field: () => [note, singleLineThread],
+        doc: makeMockDoc(),
+        selection: { main: { head: 0 } },
+      },
+    } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    setFocusedPane("main");
+    usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
+    const visible = getVisibleCommands("all threads");
+    const ids = visible.map((c) => c.id);
+    expect(ids).not.toContain("app.toggleAllBlockAnnotations");
+  });
+
+  it("hidden from the palette when the view has no annotations", async () => {
+    await loadHook();
+    const leaf: PaneLeaf = { type: "leaf", id: "main", pagePath: "test.md" };
+    const mockView = {
+      focus: vi.fn(),
+      state: {
+        field: () => undefined,
+        doc: makeMockDoc(),
+        selection: { main: { head: 0 } },
+      },
+    } as unknown as EditorView;
+    registerPaneView("main", mockView);
+    setFocusedPane("main");
+    usePaneStore.setState({ root: leaf, focusedPaneId: "main" });
+    const visible = getVisibleCommands("all threads");
+    const ids = visible.map((c) => c.id);
+    expect(ids).not.toContain("app.toggleAllBlockAnnotations");
   });
 
   it("surfaces Mod-Shift-m as shortcut on the palette entry", async () => {

@@ -5,7 +5,7 @@ import { annotationDataField } from "../editor/livePreview/annotationState";
 import { TYPE_ICON, getMarkIcon, certaintyMark, truncateBody } from "../editor/livePreview/annotationConstants";
 import type { Annotation } from "../lib/ipc";
 import { executeCommand } from "../lib/commandRegistry";
-import { isFoldAllTarget } from "../editor/livePreview/annotationFoldAll";
+import { hasAnyFoldAllTarget } from "../editor/livePreview/annotationFoldAll";
 
 interface AnnotationPanelProps {
   pageId: string;
@@ -97,7 +97,7 @@ export function AnnotationPanel({ pageId, onCountChange, contentHeight }: Annota
   const view = getCurrentEditorView();
   const doc = view?.state.doc;
 
-  const hasFoldAllThread = doc != null && annotations.some((ann) => isFoldAllTarget(doc, ann));
+  const hasFoldAllThread = view != null && hasAnyFoldAllTarget(view.state);
 
   return (
     <div className="flex h-full flex-col px-4 py-2">

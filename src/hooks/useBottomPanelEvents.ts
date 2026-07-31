@@ -4,7 +4,7 @@ import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
 import { getCurrentEditorView } from "../lib/editorViewRef";
 import { annotationDataField } from "../editor/livePreview/annotationState";
-import { isFoldAllTarget } from "../editor/livePreview/annotationFoldAll";
+import { hasAnyFoldAllTarget } from "../editor/livePreview/annotationFoldAll";
 import type { AnnotationDisplayMode } from "../stores/preferences";
 
 export function useBottomPanelEvents() {
@@ -41,9 +41,7 @@ export function useBottomPanelEvents() {
       }
       const data = view.state.field(annotationDataField, false);
       store.setTabCount("annotations", data ? data.length : 0);
-      store.setHasFoldAllThread(
-        (data ?? []).some((ann) => isFoldAllTarget(view.state.doc, ann)),
-      );
+      store.setHasFoldAllThread(hasAnyFoldAllTarget(view.state));
     };
     window.addEventListener("lit:annotations-changed", handler);
     return () => window.removeEventListener("lit:annotations-changed", handler);

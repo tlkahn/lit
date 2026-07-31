@@ -17,7 +17,7 @@ import {
   firingAnnotationsField,
   llmLockedField,
 } from "./annotationWidgets";
-import { isFoldAllTarget, toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
+import { hasAnyFoldAllTarget, isFoldAllTarget, toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
@@ -603,5 +603,44 @@ describe("toggleAllBlockAnnotationFolds - parse frontier", () => {
     } finally {
       view.destroy();
     }
+  });
+});
+
+describe("hasAnyFoldAllTarget", () => {
+  it("returns true when a fold-all-target thread is present", () => {
+    const { view } = makeViewWithBlocks();
+    try {
+      expect(hasAnyFoldAllTarget(view.state)).toBe(true);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("returns false when only non-thread multiline annotations exist", () => {
+    const doc = "first line\n\n<!---\nbody\n--->\ntail";
+    const state = EditorState.create({
+      doc,
+      extensions: [annotationDataField],
+    });
+    // char_start 12 is the line-start of the block; multiline note is not a target.
+    const note = makeAnnotation({
+      form: "block",
+      annotation_type: "note",
+      char_start: 12,
+      char_end: 27,
+      original: "<!---\nbody\n--->",
+    });
+    const view = new EditorView({ state, parent: document.createElement("div") });
+    try {
+      view.dispatch({ effects: setAnnotationData.of([note]) });
+      expect(hasAnyFoldAllTarget(view.state)).toBe(false);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("returns false when the annotationDataField is absent", () => {
+    const state = EditorState.create({ doc: "hello" });
+    expect(hasAnyFoldAllTarget(state)).toBe(false);
   });
 });

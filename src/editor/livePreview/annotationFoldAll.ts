@@ -1,3 +1,4 @@
+import type { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { annotationDataField } from "./annotationState";
 import { annotationFoldField, setAllAnnotationFoldsEffect } from "./annotationWidgets";
@@ -15,6 +16,12 @@ export function isFoldAllTarget(
   const startLine = doc.lineAt(from);
   if (startLine.from !== from) return false;
   return startLine.number !== doc.lineAt(to).number;
+}
+
+/** True when the editor state has at least one fold-all-target thread. */
+export function hasAnyFoldAllTarget(state: EditorState): boolean {
+  const data = state.field(annotationDataField, false) ?? [];
+  return data.some((ann) => isFoldAllTarget(state.doc, ann));
 }
 
 export function toggleAllBlockAnnotationFolds(view: EditorView): boolean {
