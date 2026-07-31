@@ -804,7 +804,7 @@ describe("annotationDecorationPlugin", () => {
 
   it("multi-line BlockAnnotation → NOT in plugin set (delivered by block field)", () => {
     // Blank line needed so paragraph doesn't swallow the block annotation.
-    // The line-break-spanning callout is forbidden from a ViewPlugin source, so
+    // The line-break-spanning block widget is forbidden from a ViewPlugin source, so
     // the plugin must not build it; annotationBlockDecorationField owns it (see
     // the multiline block rendering regression + selection-guard suites).
     const doc = "first line\n\n<!---\nbody\n--->\nafter";
@@ -847,7 +847,7 @@ describe("annotationDecorationPlugin", () => {
     view.destroy();
   });
 
-  it("single-line BlockAnnotation produces no block-field callout (lineAt multiline guard)", () => {
+  it("single-line BlockAnnotation produces no block-field widget (lineAt multiline guard)", () => {
     const doc = "first line\n<!---content--->";
     const state = EditorState.create({
       doc,
@@ -1014,7 +1014,7 @@ describe("annotationDecorationPlugin", () => {
   });
 
   it("multi-line BlockAnnotation + mode 'footnote' → still NOT in plugin set (block field owns it)", () => {
-    // Footnote mode only affects inline widgets; the multiline callout is never
+    // Footnote mode only affects inline widgets; the multiline block widget is never
     // built by the plugin regardless of mode and is delivered by the block field.
     const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const state = EditorState.create({
@@ -1689,7 +1689,7 @@ describe("buildAnnotationDecorations", () => {
   it("multiline BlockAnnotation is NOT built (field owns it), but its lines stay cursor-sensitive", () => {
     // splitAnnotationDecorations would route a multiline-spanning replace to the
     // discarded "block" subset; annotationBlockDecorationField is the sole
-    // producer of the callout. So buildAnnotationDecorations must not build it,
+    // producer of the block widget. So buildAnnotationDecorations must not build it,
     // while still recording its lines as cursor-sensitive.
     const doc = "first line\n\n<!---\nbody\n--->\nafter";
     const view = makeView(doc, 28);
@@ -1883,7 +1883,7 @@ describe("annotationExtension", () => {
 
 describe("annotationExtension multiline block rendering (regression)", () => {
   // CodeMirror forbids line-break-spanning replacements from ViewPlugin sources.
-  // Multiline callouts must therefore be delivered via annotationBlockDecorationField.
+  // Multiline block widgets must therefore be delivered via annotationBlockDecorationField.
   // This guards the full production wiring against the "Decorations that replace
   // line breaks may not be specified via plugins" RangeError.
   beforeEach(() => {
@@ -1913,7 +1913,7 @@ describe("annotationExtension multiline block rendering (regression)", () => {
       view.dispatch({ effects: setAnnotationData.of([ann]) });
     }).not.toThrow();
 
-    // The callout is delivered by the block field, not the plugin's rendered set.
+    // The block widget is delivered by the block field, not the plugin's rendered set.
     const fieldSet = view.state.field(annotationBlockDecorationField).decorations;
     let foundInField = false;
     const it1 = fieldSet.iter();
@@ -1923,7 +1923,7 @@ describe("annotationExtension multiline block rendering (regression)", () => {
     }
     expect(foundInField).toBe(true);
 
-    // The plugin's rendered (inline) set excludes the line-spanning callout.
+    // The plugin's rendered (inline) set excludes the line-spanning block widget.
     const pluginSet = view.plugin(annotationDecorationPlugin)!.inlineDecorations;
     let foundInPlugin = false;
     const it2 = pluginSet.iter();

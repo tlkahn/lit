@@ -303,7 +303,7 @@ describe("toggleAllBlockAnnotationFolds", () => {
     }
   });
 
-  it("D9: skips mid-line multiline annotations that render no callout", () => {
+  it("D9: skips mid-line multiline annotations that render no block widget", () => {
     const doc = "first line\n\ntext <!---\nmultiline\n---> more\n\n<!---\nreal block\n--->\ntail";
     const state = EditorState.create({
       doc,
