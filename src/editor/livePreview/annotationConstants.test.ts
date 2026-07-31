@@ -44,6 +44,15 @@ describe("annotationConstants", () => {
     expect(rule).toMatch(/cursor:\s*default/);
   });
 
+  // #972 Cycle 6: enlarge the glyph hit target after pill unification made
+  // pills smaller. Padding only — never margin (CM6 height-map rule).
+  it("annotation.css gives .cm-annotation-cardbox-link padding: 0 6px", () => {
+    const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
+    const rule = css.match(/\.cm-annotation-cardbox-link\s*\{[^}]*\}/)?.[0];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/padding:\s*0\s+6px/);
+  });
+
   it("index.css defines cardbox --ann-color for slipnote", () => {
     const css = readFileSync(
       resolve(__dirname, "../../index.css"),

@@ -183,9 +183,20 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     clearSelection();
   }, [searchQuery, activeTypes, activeColors, scope, clearSelection]);
 
+  // Mount-only: every cardbox open starts collapsed. User-initiated scope
+  // changes collapse via handleScopeChange; programmatic setScope (e.g.
+  // cross-page pending-focus widen) must NOT collapse (#972).
   useEffect(() => {
     collapseAll();
-  }, [scope, collapseAll]);
+  }, [collapseAll]);
+
+  const handleScopeChange = useCallback(
+    (next: "document" | "workspace") => {
+      collapseAll();
+      setScope(next);
+    },
+    [collapseAll, setScope],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -472,7 +483,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onShowShortcuts: () => setShortcutsOpen(true),
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
-    onToggleScope: () => { if (!connectionsForUuid) setScope(scope === "document" ? "workspace" : "document"); },
+    onToggleScope: () => { if (!connectionsForUuid) handleScopeChange(scope === "document" ? "workspace" : "document"); },
     onUndo: async () => { await undo(); debouncedSave(); },
     onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
@@ -559,19 +570,33 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       pendingFocusUuid,
       annotationUuids: annotationMap,
       filteredUuids: filteredUuidSet,
+      groups,
     });
     if (action.kind === "wait") return;
     // Capture before setPendingFocusUuid(null) resets the flag alongside the uuid.
     const highlightNote = useCardboxStore.getState().pendingHighlightNote;
     setPendingFocusUuid(null);
     if (action.kind === "focus") {
+      // Cross-page target under document scope: the page filter hides the card
+      // forever. Widen with raw setScope so we do NOT collapse (Cycle 2) (#972).
+      const target = annotationMap.get(action.uuid);
+      if (
+        target &&
+        target.source_page_id !== pagePath &&
+        useCardboxStore.getState().scope === "document"
+      ) {
+        setScope("workspace");
+      }
       // F2: the card is present but hidden by an active filter; reset filters so
       // it re-renders into the DOM before handleFocusCard's scroll/highlight.
       if (action.clearFilters) resetFilters();
+      // F4: card lives in a collapsed group — expand it so the card mounts (#972).
+      // toggleGroupCollapse persists via IPC; store update is sync.
+      if (action.expandGroupId) void toggleGroupCollapse(action.expandGroupId);
       handleFocusCard(action.uuid, highlightNote);
     }
     // 'clear' (F3): pendingFocusUuid was already nulled above; nothing to focus.
-  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, setPendingFocusUuid, resetFilters, handleFocusCard]);
+  }, [loading, layoutLoaded, pendingFocusUuid, annotationMap, filteredUuidSet, groups, setPendingFocusUuid, resetFilters, handleFocusCard, pagePath, setScope, toggleGroupCollapse]);
 
   // ---------- Context menu handlers ----------
 
@@ -952,7 +977,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       <div className="flex h-full flex-col items-center justify-center gap-2 text-text-faint" data-testid="cardbox-empty">
         <span>{scope === "document" ? "No annotations in this document" : "No annotations in this workspace"}</span>
         {scope === "document" && annotations.length > 0 && (
-          <button onClick={() => setScope("workspace")} className="text-xs text-interactive-accent hover:underline" data-testid="cardbox-show-all">
+          <button onClick={() => handleScopeChange("workspace")} className="text-xs text-interactive-accent hover:underline" data-testid="cardbox-show-all">
             Show all workspace cards
           </button>
         )}
@@ -1008,7 +1033,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
                     scope === "document" ? "bg-bg-primary text-text-normal font-medium shadow-sm" : "text-text-faint hover:text-text-normal"
                   }`}
-                  onClick={() => setScope("document")}
+                  onClick={() => handleScopeChange("document")}
                   data-testid="scope-document"
                 >
                   Document
@@ -1018,7 +1043,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                   className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
                     scope === "workspace" ? "bg-bg-primary text-text-normal font-medium shadow-sm" : "text-text-faint hover:text-text-normal"
                   }`}
-                  onClick={() => setScope("workspace")}
+                  onClick={() => handleScopeChange("workspace")}
                   data-testid="scope-workspace"
                 >
                   Workspace

@@ -92,7 +92,7 @@ describe("resolvePendingFocus", () => {
         annotationUuids: new Set(["x", "b"]),
         filteredUuids: new Set(["b"]),
       }),
-    ).toEqual({ kind: "focus", uuid: "x", clearFilters: true });
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: true, expandGroupId: null });
   });
 
   // F2 variant: all annotations filtered out (empty filteredUuids) but the
@@ -107,7 +107,7 @@ describe("resolvePendingFocus", () => {
         annotationUuids: new Set(["x", "b"]),
         filteredUuids: empty,
       }),
-    ).toEqual({ kind: "focus", uuid: "x", clearFilters: true });
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: true, expandGroupId: null });
   });
 
   // F3 CORE: a fetch failed (IPC error) or genuinely returned nothing, so after
@@ -163,7 +163,7 @@ describe("resolvePendingFocus", () => {
         annotationUuids: new Set(["x", "b"]),
         filteredUuids: new Set(["x"]),
       }),
-    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false });
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false, expandGroupId: null });
   });
 
   it("accepts a ReadonlyMap as annotationUuids (component passes annotationMap directly)", () => {
@@ -176,7 +176,75 @@ describe("resolvePendingFocus", () => {
         annotationUuids: annotationMap,
         filteredUuids: new Set(["x"]),
       }),
-    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false });
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false, expandGroupId: null });
+  });
+
+  // F4 (#972): target lives inside a collapsed group — expand the group so the
+  // card is in the DOM for scroll/highlight.
+  it("focuses with expandGroupId when the uuid is in a collapsed group", () => {
+    expect(
+      resolvePendingFocus({
+        layoutReady: true,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(["x", "b"]),
+        filteredUuids: new Set(["x", "b"]),
+        groups: {
+          g1: { order: ["x"], collapsed: true },
+          g2: { order: ["b"], collapsed: false },
+        },
+      }),
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false, expandGroupId: "g1" });
+  });
+
+  it("focuses with expandGroupId null when the uuid is in an expanded group", () => {
+    expect(
+      resolvePendingFocus({
+        layoutReady: true,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(["x"]),
+        filteredUuids: new Set(["x"]),
+        groups: { g1: { order: ["x"], collapsed: false } },
+      }),
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false, expandGroupId: null });
+  });
+
+  it("focuses with expandGroupId null when the uuid is ungrouped or groups omitted", () => {
+    expect(
+      resolvePendingFocus({
+        layoutReady: true,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(["x"]),
+        filteredUuids: new Set(["x"]),
+        groups: { g1: { order: ["other"], collapsed: true } },
+      }),
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false, expandGroupId: null });
+
+    expect(
+      resolvePendingFocus({
+        layoutReady: true,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(["x"]),
+        filteredUuids: new Set(["x"]),
+      }),
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: false, expandGroupId: null });
+  });
+
+  // F4 + F2: collapsed group AND filter-hidden still carries both signals.
+  it("combines clearFilters with expandGroupId when both apply", () => {
+    expect(
+      resolvePendingFocus({
+        layoutReady: true,
+        loading: false,
+        pendingFocusUuid: "x",
+        annotationUuids: new Set(["x", "b"]),
+        filteredUuids: new Set(["b"]),
+        groups: { g1: { order: ["x"], collapsed: true } },
+      }),
+    ).toEqual({ kind: "focus", uuid: "x", clearFilters: true, expandGroupId: "g1" });
   });
 });
 

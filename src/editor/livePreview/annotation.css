@@ -267,7 +267,8 @@
   font-family: "Symbols Nerd Font Mono";
   font-size: 0.8em;
   opacity: 0.6;
-  padding: 0 2px;
+  /* Enlarged hit target post-pill-unification (#972); padding not margin (CM6). */
+  padding: 0 6px;
   transition: opacity 0.15s ease;
 }
 

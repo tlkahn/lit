@@ -40,6 +40,25 @@ vi.mock("./SortableCard", async () => {
   return { SortableCard };
 });
 
+// Same probe surface for cards rendered inside a SortableGroup (group path
+// used by the collapsed-group pending-focus case, #972 Cycle 4).
+vi.mock("./SortableGroupCard", async () => {
+  const React = await import("react");
+  const SortableGroupCard = React.memo(function SortableGroupCardProbe(props: ProbeProps) {
+    const uuid = props.annotation.uuid;
+    probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
+    probe.latestProps.set(uuid, props);
+    return React.createElement(
+      "div",
+      { "data-testid": `probe-card-${uuid}`, "data-uuid": uuid },
+      props.note != null
+        ? React.createElement("div", { "data-testid": "card-note-display" })
+        : null,
+    );
+  });
+  return { SortableGroupCard };
+});
+
 const A = "uuid-a";
 const B = "uuid-b";
 const C = "uuid-c";
@@ -157,6 +176,141 @@ describe("CardboxView memo effectiveness (#850)", () => {
     // falls back to single-select. A stale ordering [A, B, C] would instead
     // produce {A, B}.
     expect(useCardboxSelectionStore.getState().selectedUuids).toEqual(new Set([B]));
+  });
+});
+
+describe("collapse-on-scope-change ownership (#972)", () => {
+  it("toolbar scope toggle collapses the expanded card", async () => {
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().toggleExpand(A);
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+
+    await act(async () => {
+      screen.getByTestId("scope-workspace").click();
+    });
+
+    expect(useCardboxStore.getState().scope).toBe("workspace");
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+  });
+
+  it("programmatic setScope does not collapse the expanded card", async () => {
+    await renderView();
+    act(() => {
+      useCardboxStore.getState().toggleExpand(A);
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+
+    act(() => {
+      useCardboxStore.getState().setScope("workspace");
+    });
+
+    expect(useCardboxStore.getState().scope).toBe("workspace");
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+  });
+});
+
+describe("pending focus expands collapsed group (#972)", () => {
+  it("expands the group and focuses the card inside it", async () => {
+    const groupedLayout: CardboxLayout = {
+      ...emptyLayout,
+      order: ["group:g1", B],
+      groups: {
+        g1: { name: "Group 1", order: [A], collapsed: true },
+      },
+    };
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout") return groupedLayout;
+      if (cmd === "toggle_group_collapsed") return undefined;
+      return undefined;
+    });
+
+    render(<CardboxView pagePath="test.md" />);
+    // Wait for group chrome (card A is hidden while the group is collapsed).
+    await screen.findByTestId("cardbox-group");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId(`probe-card-${A}`)).toBeNull();
+    expect(useCardboxStore.getState().groups["g1"]?.collapsed).toBe(true);
+
+    act(() => {
+      useCardboxStore.getState().setPendingFocusUuid(A);
+    });
+    // Advance past the 250ms focus timer so any scroll/highlight path settles.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    expect(useCardboxStore.getState().groups["g1"]?.collapsed).toBe(false);
+    expect(screen.getByTestId(`probe-card-${A}`)).toBeInTheDocument();
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+  });
+});
+
+describe("cross-page pending focus widens scope (#972)", () => {
+  it("widens to workspace and expands a card from another page", async () => {
+    const D = "uuid-d";
+    const crossPageFixtures = [
+      makeAnnotation(A, "apple pie card"),
+      makeAnnotation(B, "banana split card"),
+      { ...makeAnnotation(D, "other page card"), source_page_id: "other.md" },
+    ];
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return crossPageFixtures;
+      if (cmd === "read_cardbox_layout") return emptyLayout;
+      return undefined;
+    });
+    useCardboxStore.setState({
+      scope: "document",
+      layoutLoaded: true,
+    });
+    useCardboxStore.getState().setPendingFocusUuid(D);
+
+    render(<CardboxView pagePath="test.md" />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(useCardboxStore.getState().scope).toBe("workspace");
+    expect(useCardboxStore.getState().expandedUuid).toBe(D);
+    expect(screen.getByTestId(`probe-card-${D}`)).toBeInTheDocument();
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+  });
+});
+
+describe("pending focus never re-collapses the focused card (#972)", () => {
+  it("stays expanded after F2 filter-reset when warm scope is workspace", async () => {
+    // Warm store: workspace scope + a type filter that hides card A (note).
+    // F2 resetFilters used to flip scope -> document, which fired the [scope]
+    // effect's collapseAll and undid the expand. Card must end expanded.
+    const mixedFixtures = [
+      { ...makeAnnotation(A, "apple pie card"), annotation_type: "note" },
+      { ...makeAnnotation(B, "banana llm card"), annotation_type: "llm" },
+    ];
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return mixedFixtures;
+      if (cmd === "read_cardbox_layout") return emptyLayout;
+      return undefined;
+    });
+    useCardboxStore.setState({
+      scope: "workspace",
+      activeTypes: new Set(["llm"]),
+      layoutLoaded: true,
+    });
+    useCardboxStore.getState().setPendingFocusUuid(A);
+
+    render(<CardboxView pagePath="test.md" />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(useCardboxStore.getState().pendingFocusUuid).toBeNull();
+    expect(useCardboxStore.getState().expandedUuid).toBe(A);
+    expect(screen.getByTestId(`probe-card-${A}`)).toBeInTheDocument();
   });
 });
 
