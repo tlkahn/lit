@@ -22,6 +22,7 @@ export const CLS = {
   CARDBOX_LINK: "cm-annotation-cardbox-link",
 
   SPINNER: "cm-annotation-spinner",
+  SPINNER_PASSIVE: "cm-annotation-spinner-passive",
   STOP_ICON: "cm-annotation-stop-icon",
   FOLD_ICON: "cm-annotation-fold-icon",
 

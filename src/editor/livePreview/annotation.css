@@ -303,6 +303,10 @@
   position: relative;
 }
 
+.cm-annotation-spinner-passive {
+  cursor: default;
+}
+
 .cm-annotation-spinner::after {
   content: "";
   display: inline-block;

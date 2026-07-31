@@ -537,6 +537,7 @@ export class ThreadWidget extends WidgetType {
       if (this.isFiring) {
         const spinner = document.createElement("span");
         spinner.className = CLS.SPINNER;
+        spinner.classList.add(CLS.SPINNER_PASSIVE);
         pill.appendChild(spinner);
       }
 
@@ -553,7 +554,7 @@ export class ThreadWidget extends WidgetType {
       pill.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       pill.onmouseleave = () => handleAnnotationLeave(view);
       pill.onclick = (e) => {
-        if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}`)) return;
+        if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}, .${CLS.SPINNER}`)) return;
         e.preventDefault();
         dispatchEditEvent(ann);
       };
@@ -593,7 +594,7 @@ export class ThreadWidget extends WidgetType {
     header.onclick = (e) => {
       if (
         (e.target as HTMLElement).closest(
-          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`,
+          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}, .${CLS.SPINNER}`,
         )
       )
         return;
@@ -650,6 +651,7 @@ export class ThreadWidget extends WidgetType {
     if (this.isFiring) {
       const spinner = document.createElement("span");
       spinner.className = CLS.SPINNER;
+      spinner.classList.add(CLS.SPINNER_PASSIVE);
       header.appendChild(spinner);
     }
 

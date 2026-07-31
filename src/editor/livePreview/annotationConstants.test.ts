@@ -37,6 +37,13 @@ describe("annotationConstants", () => {
     expect(baseRule).toContain("rgba(171, 71, 188");
   });
 
+  it("annotation.css defines .cm-annotation-spinner-passive with cursor: default", () => {
+    const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
+    const rule = css.match(/\.cm-annotation-spinner-passive\s*\{[^}]*\}/)?.[0];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/cursor:\s*default/);
+  });
+
   it("index.css defines cardbox --ann-color for slipnote", () => {
     const css = readFileSync(
       resolve(__dirname, "../../index.css"),
@@ -130,6 +137,7 @@ describe("CLS constants", () => {
 
   it("has correct values for shared classes", () => {
     expect(CLS.SPINNER).toBe("cm-annotation-spinner");
+    expect(CLS.SPINNER_PASSIVE).toBe("cm-annotation-spinner-passive");
     expect(CLS.STOP_ICON).toBe("cm-annotation-stop-icon");
     expect(CLS.FOLD_ICON).toBe("cm-annotation-fold-icon");
     expect(CLS.TENTATIVE).toBe("cm-annotation-tentative");

@@ -1460,6 +1460,47 @@ describe("ThreadWidget", () => {
     expect(chevron.classList.contains("is-collapsed")).toBe(true);
   });
 
+  it("clicking the collapsed pill spinner does not open the annotation builder", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, true, 0, true);
+    const dom = w.toDOM(view) as HTMLElement;
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+
+    (dom.querySelector(".cm-annotation-spinner")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).not.toHaveBeenCalled();
+
+    // Edit path still works via the pill body.
+    (dom.querySelector(".cm-annotation-pill-body")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
+  });
+
+  it("bare spinners carry cm-annotation-spinner-passive; fire-button spinner does not", () => {
+    const collapsed = new ThreadWidget(makeThread(), 0, true, 0, true)
+      .toDOM(null as unknown as EditorView) as HTMLElement;
+    const collapsedSpinner = collapsed.querySelector(".cm-annotation-spinner")!;
+    expect(collapsedSpinner.classList.contains("cm-annotation-spinner-passive")).toBe(true);
+
+    const expanded = new ThreadWidget(makeThread(), 0, false, 0, true)
+      .toDOM(null as unknown as EditorView) as HTMLElement;
+    const expandedSpinner = expanded.querySelector(
+      ".cm-annotation-callout-header .cm-annotation-spinner",
+    )!;
+    expect(expandedSpinner.classList.contains("cm-annotation-spinner-passive")).toBe(true);
+
+    // Fire-button spinner keeps cancel affordance / pointer cursor - no passive class.
+    const fireBtn = createFireButton(makeAnnotation({ annotation_type: "llm" }), true)!;
+    expect(fireBtn.classList.contains("cm-annotation-spinner")).toBe(true);
+    expect(fireBtn.classList.contains("cm-annotation-spinner-passive")).toBe(false);
+  });
+
   it("collapsed pill adds the certainty class", () => {
     const w = new ThreadWidget(makeThread({ certainty: "tentative" }), 0, true, 0);
     const dom = w.toDOM(null as unknown as EditorView);
@@ -1643,6 +1684,22 @@ describe("ThreadWidget", () => {
     const dom = w.toDOM(null as unknown as EditorView);
     expect(dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")).toBeTruthy();
     expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
+  });
+
+  it("clicking the expanded header spinner does not open the annotation builder", () => {
+    const view = makeEditorView("x".repeat(50));
+    const w = new ThreadWidget(makeThread(), 0, false, 0, true);
+    const dom = w.toDOM(view);
+    const spy = vi.fn();
+    window.addEventListener("lit:open-annotation-builder", spy);
+
+    (dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")! as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    expect(spy).not.toHaveBeenCalled();
+
+    window.removeEventListener("lit:open-annotation-builder", spy);
+    view.destroy();
   });
 
   it("does NOT render a fire button (threads are not fireable)", () => {
