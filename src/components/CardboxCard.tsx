@@ -9,22 +9,27 @@ import type { CardboxAnnotation, AnnotationType } from "../lib/ipc";
 function CardNoteEditor({
   note,
   editing,
+  prefill,
   onStartEditing,
   onStopEditing,
   onSetNote,
   onExportNote,
+  onPrefillConsumed,
 }: {
   note?: string;
   editing: boolean;
+  prefill?: string;
   onStartEditing: () => void;
   onStopEditing: () => void;
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
+  onPrefillConsumed?: () => void;
 }) {
   const [draft, setDraft] = useState(note ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelingRef = useRef(false);
   const initializedRef = useRef(false);
+  const appliedPrefillRef = useRef<string | null>(null);
 
   const autoResize = useCallback(() => {
     const ta = textareaRef.current;
@@ -45,6 +50,28 @@ function CardNoteEditor({
       autoResize();
     });
   }, [editing, note, autoResize]);
+
+  // Quote prefill (#968): append the staged blockquote to whatever the init
+  // effect put in the draft. Declared AFTER the init effect and using the
+  // functional updater so it composes with the init effect's queued update
+  // when both fire in the same commit.
+  useEffect(() => {
+    if (!editing || prefill == null) {
+      appliedPrefillRef.current = null;
+      return;
+    }
+    if (appliedPrefillRef.current === prefill) return;
+    appliedPrefillRef.current = prefill;
+    setDraft((d) => (d.trim() ? `${d.replace(/\n+$/, "")}\n\n${prefill}\n\n` : `${prefill}\n\n`));
+    onPrefillConsumed?.();
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      autoResize();
+    });
+  }, [editing, prefill, onPrefillConsumed, autoResize]);
 
   const commitDraft = useCallback(() => {
     if (cancelingRef.current) return;
@@ -146,9 +173,11 @@ interface CardboxCardProps {
   onSetNote?: (body: string) => void;
   onExportNote?: () => void;
   onShowConnections?: () => void;
+  notePrefill?: string;
+  onNotePrefillConsumed?: () => void;
 }
 
-export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections }: CardboxCardProps) {
+export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isPinned, isSelected, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, note, onSetNote, onExportNote, onShowConnections, notePrefill, onNotePrefillConsumed }: CardboxCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const animatingRef = useRef(false);
@@ -161,6 +190,12 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
     setFlipped(false);
   }
   const showFlipped = showCardFlipped(flipped, canFlip);
+
+  // A staged quote prefill auto-opens the note editor; expanding the card is
+  // CardboxView's job (#968).
+  useEffect(() => {
+    if (notePrefill != null) setNoteEditing(true);
+  }, [notePrefill]);
 
   useEffect(() => {
     if (isPinned && !prevPinnedRef.current) {
@@ -424,10 +459,12 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
                     <CardNoteEditor
                       note={note}
                       editing={noteEditing}
+                      prefill={notePrefill}
                       onStartEditing={() => setNoteEditing(true)}
                       onStopEditing={() => setNoteEditing(false)}
                       onSetNote={onSetNote}
                       onExportNote={onExportNote}
+                      onPrefillConsumed={onNotePrefillConsumed}
                     />
                   )}
                 </div>

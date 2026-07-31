@@ -1582,6 +1582,116 @@ describe("CardboxCard", () => {
     expect(onContainerPointerDown).toHaveBeenCalledTimes(4);
   });
 
+  describe("quote prefill (#968)", () => {
+    const flushRaf = async () => {
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+      });
+    };
+
+    it("opens the note editor with the quote appended and the caret at the end", async () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+          notePrefill={"> quoted"}
+          onNotePrefillConsumed={() => {}}
+        />,
+      );
+      const ta = screen.getByTestId("card-note-textarea") as HTMLTextAreaElement;
+      expect(ta.value).toBe("> quoted\n\n");
+      await flushRaf();
+      expect(ta.selectionStart).toBe(ta.value.length);
+      expect(ta.selectionEnd).toBe(ta.value.length);
+    });
+
+    it("separates an existing note from the quote with a blank line", async () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          note="old"
+          onSetNote={() => {}}
+          notePrefill={"> quoted"}
+          onNotePrefillConsumed={() => {}}
+        />,
+      );
+      const ta = screen.getByTestId("card-note-textarea") as HTMLTextAreaElement;
+      expect(ta.value).toBe("old\n\n> quoted\n\n");
+    });
+
+    it("appends a second quote into an already-open editor", async () => {
+      const props = {
+        annotation: baseAnnotation,
+        expanded: true,
+        onToggleExpand: () => {},
+        onNavigate: () => {},
+        onSetNote: () => {},
+      };
+      const { rerender } = render(
+        <CardboxCard {...props} notePrefill={"> one"} onNotePrefillConsumed={() => {}} />,
+      );
+      const ta = screen.getByTestId("card-note-textarea") as HTMLTextAreaElement;
+      expect(ta.value).toBe("> one\n\n");
+      rerender(
+        <CardboxCard {...props} notePrefill={undefined} onNotePrefillConsumed={() => {}} />,
+      );
+      rerender(
+        <CardboxCard {...props} notePrefill={"> two"} onNotePrefillConsumed={() => {}} />,
+      );
+      expect(ta.value).toBe("> one\n\n> two\n\n");
+    });
+
+    it("calls onNotePrefillConsumed exactly once per prefill", () => {
+      const onConsumed = vi.fn();
+      const { rerender } = render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+          notePrefill={"> quoted"}
+          onNotePrefillConsumed={onConsumed}
+        />,
+      );
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+      // A re-render with the same staged prefill must not re-apply it.
+      rerender(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+          notePrefill={"> quoted"}
+          onNotePrefillConsumed={onConsumed}
+        />,
+      );
+      expect(onConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not expand the card itself (expansion is CardboxView's job)", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onSetNote={() => {}}
+          notePrefill={"> quoted"}
+          onNotePrefillConsumed={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("cardbox-card")).toHaveAttribute("data-expanded", "false");
+    });
+  });
+
   describe("text selection (#968)", () => {
     const indexCss = () =>
       readFileSync(resolve(__dirname, "../index.css"), "utf8");

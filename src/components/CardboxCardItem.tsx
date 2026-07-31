@@ -18,12 +18,14 @@ interface CardboxCardItemProps {
   onShowConnections?: (uuid: string) => void;
   onContextMenu?: (uuid: string, e: React.MouseEvent) => void;
   note?: string;
+  notePrefill?: string;
+  onNotePrefillConsumed?: () => void;
   onSetNote?: (uuid: string, body: string) => void;
   onExportNote?: (uuid: string) => void;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
 }
 
-export const CardboxCardItem = memo(function CardboxCardItem({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onShowConnections, onContextMenu, note, onSetNote, onExportNote, onSelect }: CardboxCardItemProps) {
+export const CardboxCardItem = memo(function CardboxCardItem({ annotation, expanded, isPinned, colorTag, onToggleExpand, onNavigate, linkedCards, onFocusCard, onRemoveLink, onShowConnections, onContextMenu, note, notePrefill, onNotePrefillConsumed, onSetNote, onExportNote, onSelect }: CardboxCardItemProps) {
   const isSelected = useCardboxSelectionStore((s) => s.selectedUuids.has(annotation.uuid));
 
   const masonryRef = useMasonryRef();
@@ -62,6 +64,8 @@ export const CardboxCardItem = memo(function CardboxCardItem({ annotation, expan
           onFocusCard={onFocusCard}
           onRemoveLink={onRemoveLink}
           note={note}
+          notePrefill={notePrefill}
+          onNotePrefillConsumed={onNotePrefillConsumed}
           onSetNote={handleSetNote}
           onExportNote={handleExportNote}
           onShowConnections={handleShowConnections}

@@ -10,6 +10,7 @@ interface ProbeProps {
   annotation: CardboxAnnotation;
   expanded: boolean;
   note?: string;
+  notePrefill?: string;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
   onToggleExpand: (uuid: string) => void;
 }
@@ -612,5 +613,80 @@ describe("document ordering (#968)", () => {
     fireEvent.keyDown(cards[1]!, { key: "p" });
     expect(useCardboxStore.getState().pinned).toContain(C);
     expect(useCardboxStore.getState().pinned).not.toContain(B);
+  });
+});
+
+describe("quote to slip note (#968)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubSelection(anchorNode: Node | null, text: string, collapsed = false) {
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      isCollapsed: collapsed,
+      anchorNode,
+      toString: () => text,
+    } as unknown as Selection);
+  }
+
+  it("Q with a selection inside a card expands it and stages a blockquote prefill", async () => {
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "q" });
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBe(B);
+    expect(useCardboxStore.getState().pendingNotePrefill).toEqual({
+      uuid: B,
+      text: "> quoted",
+    });
+  });
+
+  it("does nothing for a collapsed selection", async () => {
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "", true);
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "q" });
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+    expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+  });
+
+  it("does nothing for a selection outside the grid", async () => {
+    await renderView();
+    stubSelection(document.body, "outside text");
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "q" });
+    });
+    expect(useCardboxStore.getState().expandedUuid).toBeNull();
+    expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+  });
+
+  it("does not fire while typing in a textarea", async () => {
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
+    const textarea = document.createElement("textarea");
+    document.body.appendChild(textarea);
+    try {
+      textarea.focus();
+      act(() => {
+        fireEvent.keyDown(textarea, { key: "q" });
+      });
+      expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+    } finally {
+      textarea.remove();
+    }
+  });
+
+  it("passes notePrefill only to the target card", async () => {
+    await renderView();
+    stubSelection(screen.getByTestId(`probe-card-${B}`), "quoted");
+    act(() => {
+      fireEvent.keyDown(document.body, { key: "q" });
+    });
+    expect(probe.latestProps.get(B)?.notePrefill).toBe("> quoted");
+    // Non-targets keep a stable undefined so memo() is not defeated (#850).
+    expect(probe.latestProps.get(A)?.notePrefill).toBeUndefined();
+    expect(probe.latestProps.get(C)?.notePrefill).toBeUndefined();
   });
 });

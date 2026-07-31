@@ -18,6 +18,7 @@ import { BatchToolbar } from "./BatchToolbar";
 import type { CardboxAnnotation } from "../lib/ipc";
 import { MasonryObserverProvider } from "../hooks/useMasonryObserver";
 import { buildRenderEntries } from "../lib/buildRenderEntries";
+import { resolveQuoteTarget } from "../lib/cardboxQuote";
 import { perfMark, perfMeasure, perfTable } from "../lib/perf";
 import { resolvePendingFocus, computeCenteredScrollTop, computeCollapseScrollTop, applyFocusHighlight } from "./cardboxFocus";
 import { truncateBody } from "../editor/livePreview/annotationConstants";
@@ -91,6 +92,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const connectionsForUuid = useCardboxStore((s) => s.connectionsForUuid);
   const pendingFocusUuid = useCardboxStore((s) => s.pendingFocusUuid);
   const setPendingFocusUuid = useCardboxStore((s) => s.setPendingFocusUuid);
+  const pendingNotePrefill = useCardboxStore((s) => s.pendingNotePrefill);
+  const setPendingNotePrefill = useCardboxStore((s) => s.setPendingNotePrefill);
   const layoutLoaded = useCardboxStore((s) => s.layoutLoaded);
   const enterConnections = useCardboxStore((s) => s.enterConnections);
   const exitConnections = useCardboxStore((s) => s.exitConnections);
@@ -340,6 +343,11 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [setNote],
   );
 
+  const handleNotePrefillConsumed = useCallback(
+    () => setPendingNotePrefill(null),
+    [setPendingNotePrefill],
+  );
+
   const handleExportNote = useCallback(
     async (uuid: string) => {
       try {
@@ -420,6 +428,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     onSelectAll: () => selectAll(orderedUuids),
     onClearSelection: clearSelection,
     onToggleScope: () => { if (!connectionsForUuid) handleScopeChange(scope === "document" ? "workspace" : "document"); },
+    onQuoteSelection: () => {
+      const target = resolveQuoteTarget(window.getSelection(), gridRef.current);
+      if (!target) return;
+      expand(target.uuid);
+      setPendingNotePrefill(target);
+    },
     onUndo: async () => { await undo(); debouncedSave(); },
     onRedo: async () => { await redo(); debouncedSave(); },
     expandedUuid,
@@ -816,6 +830,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                     onFocusCard={handleFocusCard}
                     onRemoveLink={handleRemoveLink}
                     note={notesMap[entry.annotation.uuid]}
+                    notePrefill={
+                      pendingNotePrefill?.uuid === entry.annotation.uuid
+                        ? pendingNotePrefill.text
+                        : undefined
+                    }
+                    onNotePrefillConsumed={handleNotePrefillConsumed}
                     onSetNote={handleSetNote}
                     onExportNote={handleExportNote}
                     onShowConnections={enterConnections}
@@ -836,6 +856,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
                     onFocusCard={handleFocusCard}
                     onRemoveLink={handleRemoveLink}
                     notesMap={notes}
+                    notePrefill={pendingNotePrefill}
+                    onNotePrefillConsumed={handleNotePrefillConsumed}
                     onSetNote={handleSetNote}
                     onExportNote={handleExportNote}
                     onShowConnections={enterConnections}

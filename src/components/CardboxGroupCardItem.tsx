@@ -18,6 +18,8 @@ interface CardboxGroupCardItemProps {
   onShowConnections?: (uuid: string) => void;
   onContextMenu?: (uuid: string, e: React.MouseEvent) => void;
   note?: string;
+  notePrefill?: string;
+  onNotePrefillConsumed?: () => void;
   onSetNote?: (uuid: string, body: string) => void;
   onExportNote?: (uuid: string) => void;
   onSelect?: (uuid: string, event: React.MouseEvent) => void;
@@ -35,6 +37,8 @@ export const CardboxGroupCardItem = memo(function CardboxGroupCardItem({
   onShowConnections,
   onContextMenu,
   note,
+  notePrefill,
+  onNotePrefillConsumed,
   onSetNote,
   onExportNote,
   onSelect,
@@ -76,6 +80,8 @@ export const CardboxGroupCardItem = memo(function CardboxGroupCardItem({
           onFocusCard={onFocusCard}
           onRemoveLink={onRemoveLink}
           note={note}
+          notePrefill={notePrefill}
+          onNotePrefillConsumed={onNotePrefillConsumed}
           onSetNote={handleSetNote}
           onExportNote={handleExportNote}
           onShowConnections={handleShowConnections}

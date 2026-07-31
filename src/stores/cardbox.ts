@@ -70,12 +70,16 @@ export interface CardboxStore {
   connectionsSavedFilters: { searchQuery: string; activeTypes: Set<string> | null } | null;
   pendingFocusUuid: string | null;
   pendingHighlightNote: boolean;
+  // Quote staged by the Q shortcut, consumed by the target card's note
+  // editor (#968).
+  pendingNotePrefill: { uuid: string; text: string } | null;
   // True once loadLayout has settled (success or failure). Gates pending-focus
   // consumption: the NOTE highlight needs the layout's notes in the store, and
   // the saved order must be applied before scroll positions are computed. Stays
   // true for the session; notes persist in the store across cardbox visits.
   layoutLoaded: boolean;
   setPendingFocusUuid: (uuid: string | null, highlightNote?: boolean) => void;
+  setPendingNotePrefill: (prefill: { uuid: string; text: string } | null) => void;
   fetchAnnotations: () => Promise<void>;
   toggleExpand: (uuid: string) => void;
   expand: (uuid: string) => void;
@@ -135,9 +139,11 @@ export const useCardboxStore = create<CardboxStore>((set, get) => ({
   connectionsSavedFilters: null,
   pendingFocusUuid: null,
   pendingHighlightNote: false,
+  pendingNotePrefill: null,
   layoutLoaded: false,
   setPendingFocusUuid: (uuid, highlightNote = false) =>
     set({ pendingFocusUuid: uuid, pendingHighlightNote: uuid ? highlightNote : false }),
+  setPendingNotePrefill: (prefill) => set({ pendingNotePrefill: prefill }),
   fetchAnnotations: async () => {
     if (get().loading) return;
     set({ loading: true });

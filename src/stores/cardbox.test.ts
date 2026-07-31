@@ -847,6 +847,26 @@ describe("cardbox store", () => {
     });
   });
 
+  describe("pendingNotePrefill (#968)", () => {
+    it("initializes as null", () => {
+      expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+    });
+
+    it("setPendingNotePrefill stages a quote for a card", () => {
+      useCardboxStore.getState().setPendingNotePrefill({ uuid: "u1", text: "> quoted" });
+      expect(useCardboxStore.getState().pendingNotePrefill).toEqual({
+        uuid: "u1",
+        text: "> quoted",
+      });
+    });
+
+    it("setPendingNotePrefill(null) clears the staged quote", () => {
+      useCardboxStore.getState().setPendingNotePrefill({ uuid: "u1", text: "> quoted" });
+      useCardboxStore.getState().setPendingNotePrefill(null);
+      expect(useCardboxStore.getState().pendingNotePrefill).toBeNull();
+    });
+  });
+
   describe("loadLayout slip-note migration", () => {
     const MIGRATE_OK = {
       migrated: 3,

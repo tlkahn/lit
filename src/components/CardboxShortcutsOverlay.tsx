@@ -14,6 +14,7 @@ const SHORTCUTS: { key: string; description: string }[] = [
   { key: "P", description: "Toggle pin" },
   { key: "F", description: "Flip card (when quote exists)" },
   { key: "N", description: "Toggle note (expanded card)" },
+  { key: "Q", description: "Quote selection into slip note" },
   { key: "C", description: "Show connections (expanded card)" },
   { key: "S", description: "Toggle document / workspace scope" },
   { key: "Esc", description: "Exit connections mode" },

@@ -8,6 +8,7 @@ interface UseCardboxKeyboardOptions {
   onTogglePin?: (index: number) => void;
   onToggleNote?: () => void;
   onToggleScope?: () => void;
+  onQuoteSelection?: () => void;
   onShowConnections?: () => void;
   onExitConnections?: () => void;
   onShowShortcuts?: () => void;
@@ -20,7 +21,7 @@ interface UseCardboxKeyboardOptions {
   itemCount: number;
 }
 
-export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
+export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onTogglePin, onToggleNote, onToggleScope, onQuoteSelection, onShowConnections, onExitConnections, onShowShortcuts, onSelectAll, onClearSelection, onUndo, onRedo, expandedUuid, connectionsActive, itemCount }: UseCardboxKeyboardOptions) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   const getColumnCount = useCallback(() => {
@@ -72,6 +73,18 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
       return;
     }
 
+    // Q: quote the current text selection into the card's slip note (#968).
+    // Global layer, not grid layer: after a drag-selection focus usually sits
+    // on the body, never inside the grid.
+    if ((e.key === "q" || e.key === "Q") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (onQuoteSelection) {
+        e.preventDefault();
+        e.stopPropagation();
+        onQuoteSelection();
+      }
+      return;
+    }
+
     // Escape: clear selection (globally, regardless of focus)
     // Connections-mode Escape stays on the grid-level handler
     if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
@@ -82,7 +95,7 @@ export function useCardboxKeyboard({ onExpand, onNavigate, onOpenLinkPicker, onT
         return;
       }
     }
-  }, [onUndo, onRedo, onSelectAll, onClearSelection, onToggleScope, connectionsActive]);
+  }, [onUndo, onRedo, onSelectAll, onClearSelection, onToggleScope, onQuoteSelection, connectionsActive]);
 
   useEffect(() => {
     window.addEventListener("keydown", globalHandler, true);

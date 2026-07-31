@@ -47,6 +47,14 @@ describe("CardboxShortcutsOverlay", () => {
     expect(flipEntry.querySelector("kbd")).toHaveTextContent("F");
   });
 
+  it("lists the Q quote shortcut", () => {
+    render(<CardboxShortcutsOverlay open={true} onClose={() => {}} />);
+    const entry = screen
+      .getByText(/quote selection into slip note/i)
+      .closest('[data-testid="shortcut-entry"]')!;
+    expect(entry.querySelector("kbd")).toHaveTextContent("Q");
+  });
+
   it("calls onClose when ? is pressed (toggle off)", () => {
     const onClose = vi.fn();
     render(<CardboxShortcutsOverlay open={true} onClose={onClose} />);
