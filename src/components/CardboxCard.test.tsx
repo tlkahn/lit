@@ -2138,6 +2138,20 @@ describe("CardboxCard", () => {
       expect(root.querySelector(".absolute")).toBeNull();
     });
 
+    it("exposes a pinned indicator with an accessible name", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          isPinned
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByRole("img", { name: "Pinned" })).toBeInTheDocument();
+      expect(screen.getByTestId("pin-icon")).not.toHaveAttribute("aria-hidden");
+    });
+
     it("renders the strip when collapsed and when expanded", () => {
       const { unmount } = render(
         <CardboxCard
@@ -2322,7 +2336,7 @@ describe("CardboxCard", () => {
   });
 
   describe("expand toggle button (#968)", () => {
-    it("renders a top-right expand toggle whose click calls onToggleExpand", () => {
+    it("renders an expand toggle in the action strip whose click calls onToggleExpand", () => {
       const onToggle = vi.fn();
       render(
         <CardboxCard

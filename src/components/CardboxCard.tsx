@@ -459,8 +459,9 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
       data-color-tag={colorTag || undefined}
       data-flipped={showFlipped}
     >
-      {/* Vertical action strip on the right edge (#981). Negative margins pull
-          it to ~2px from the card edge, matching the old top/right-0.5 inset.
+      {/* Vertical action strip on the right edge (#981). Negative margins
+          (-mt-3.5 -mr-3.5 = 14px) cancel the root's p-4 (16px) so the strip
+          sits ~2px from the card edge, matching the old top/right-0.5 inset.
           DOM-first + order-last: tab order matches visual top-right priority
           while flex keeps the strip on the right. */}
       <div
@@ -475,7 +476,8 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
           <span
             className="nerd-font p-1.5 text-sm text-interactive-accent"
             data-testid="pin-icon"
-            aria-hidden="true"
+            role="img"
+            aria-label="Pinned"
           >{'\u{F0403}'}</span>
         )}
         {stripActions.map((action, i) => (
