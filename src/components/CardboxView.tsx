@@ -664,8 +664,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       debouncedSave();
     },
     onNewGroup: (cardUuid) => {
-      const groupId = crypto.randomUUID();
-      createGroup(groupId, "New Group", [cardUuid]);
+      if (selectedUuids.has(cardUuid) && selectedCount > 1) {
+        batchCreateGroup([...selectedUuids], "New Group");
+        clearSelection();
+      } else {
+        createGroup(crypto.randomUUID(), "New Group", [cardUuid]);
+      }
       debouncedSave();
     },
     onAddToGroup: (cardUuid) => {

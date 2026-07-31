@@ -798,6 +798,34 @@ describe("add to group without drag (#968)", () => {
     );
   });
 
+  it("context-menu New Group groups the whole selection when the clicked card is selected", async () => {
+    mockListen();
+    mockWithGroups({});
+    await renderView();
+    selectCards([B, C]);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/new-group", { card_uuid: C });
+    });
+    const groups = Object.values(useCardboxStore.getState().groups);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.order).toEqual([B, C]);
+    expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
+  });
+
+  it("context-menu New Group on a non-selected card creates a singleton group", async () => {
+    mockListen();
+    mockWithGroups({});
+    await renderView();
+    selectCards([B]);
+    act(() => {
+      emitMockEvent("context-menu://cardbox/new-group", { card_uuid: C });
+    });
+    const groups = Object.values(useCardboxStore.getState().groups);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.order).toEqual([C]);
+    expect(useCardboxSelectionStore.getState().selectedUuids).toEqual(new Set([B]));
+  });
+
   it("a batch add-to-group is a single undo step", async () => {
     mockWithGroups({ g1: { name: "G1", order: [A], collapsed: false } });
     await renderView();
