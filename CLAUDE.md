@@ -25,6 +25,7 @@ bun tauri build                      # release build (lit-cli bundled via extern
 - **IPC boundary:** Rust commands in `src-tauri/src/commands/` (one file per domain). Frontend wrappers in `src/lib/ipc.ts`.
 - **Rust crate name is `lit_lib`** — commands registered in `lib.rs` via `generate_handler!` using full module path.
 - **Multi-window** — each window has its own workspace, state keyed by window label.
+- **Annotation grammar** lives in `tlkahn/lit-annotation-core` (git dep, pinned tag; re-exported as `lit_lib::annotation`). Grammar changes go to that crate first, then bump the tag here. Never reimplement or patch grammar behavior in-tree.
 
 See `doc/architecture.md` for full module map, state registry, startup flow, and frontend structure.
 

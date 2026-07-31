@@ -1,4 +1,4 @@
-pub mod annotation;
+pub use lit_annotation_core as annotation;
 pub mod bib;
 pub mod pdf;
 pub mod recognize;
