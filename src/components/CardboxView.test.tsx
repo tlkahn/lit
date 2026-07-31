@@ -20,6 +20,9 @@ interface ProbeProps {
 const probe = vi.hoisted(() => ({
   renderCounts: new Map<string, number>(),
   latestProps: new Map<string, ProbeProps>(),
+  // Separate map for the in-group dual-render path so a pinned group member's
+  // hoisted and group copies do not overwrite each other.
+  latestGroupProps: new Map<string, ProbeProps>(),
 }));
 
 // Memoized probe: its render count only increases when CardboxView passes a
@@ -45,23 +48,24 @@ vi.mock("./CardboxCardItem", async () => {
   return { CardboxCardItem };
 });
 
-// Same probe surface for cards rendered inside a SortableGroup (group path
+// Same probe surface for cards rendered inside a CardboxGroup (group path
 // used by the collapsed-group pending-focus case, #972 Cycle 4).
-vi.mock("./SortableGroupCard", async () => {
+vi.mock("./CardboxGroupCardItem", async () => {
   const React = await import("react");
-  const SortableGroupCard = React.memo(function SortableGroupCardProbe(props: ProbeProps) {
+  const CardboxGroupCardItem = React.memo(function CardboxGroupCardItemProbe(props: ProbeProps) {
     const uuid = props.annotation.uuid;
     probe.renderCounts.set(uuid, (probe.renderCounts.get(uuid) ?? 0) + 1);
-    probe.latestProps.set(uuid, props);
+    probe.latestGroupProps.set(uuid, props);
     return React.createElement(
       "div",
       { "data-testid": `probe-card-${uuid}`, "data-uuid": uuid },
+      React.createElement("div", { "data-testid": "cardbox-card", "data-uuid": uuid, tabIndex: 0 }),
       props.note != null
         ? React.createElement("div", { "data-testid": "card-note-display" })
         : null,
     );
   });
-  return { SortableGroupCard };
+  return { CardboxGroupCardItem };
 });
 
 const A = "uuid-a";
@@ -111,6 +115,7 @@ beforeEach(() => {
   useCardboxSelectionStore.setState(initialSelectionState, true);
   probe.renderCounts.clear();
   probe.latestProps.clear();
+  probe.latestGroupProps.clear();
   mockInvoke((cmd) => {
     if (cmd === "list_all_annotations") return fixtures;
     if (cmd === "read_cardbox_layout") return emptyLayout;
@@ -972,9 +977,9 @@ describe("quote to slip note (#968)", () => {
 
   it("Q on a pinned group member prefills only the hoisted copy, not the group copy", async () => {
     // A pinned card that is also a group member dual-renders: hoisted at the
-    // top (CardboxCardItem probe) and inside its group (real CardboxCard).
-    // Only the hoisted copy may receive the prefill — otherwise two note
-    // editors open for the same uuid.
+    // top (CardboxCardItem probe) and inside its group (CardboxGroupCardItem
+    // probe). Only the hoisted copy may receive the prefill - otherwise two
+    // note editors open for the same uuid.
     mockInvoke((cmd) => {
       if (cmd === "list_all_annotations") return fixtures;
       if (cmd === "read_cardbox_layout")
@@ -986,14 +991,16 @@ describe("quote to slip note (#968)", () => {
       return undefined;
     });
     await renderView();
-    stubSelection(screen.getByTestId(`probe-card-${A}`), "quoted");
+    // Two probe nodes share the uuid (hoisted + in-group); either is fine as
+    // the selection target since resolveQuoteTarget keys off data-uuid.
+    stubSelection(screen.getAllByTestId(`probe-card-${A}`)[0]!, "quoted");
     act(() => {
       fireEvent.keyDown(document.body, { key: "q" });
     });
     // The hoisted copy receives the prefill…
     expect(probe.latestProps.get(A)?.notePrefill).toBe("> quoted");
-    // …and the group copy must not open a second note editor.
-    expect(screen.queryByTestId("card-note-textarea")).toBeNull();
+    // …and the in-group copy must not.
+    expect(probe.latestGroupProps.get(A)?.notePrefill).toBeUndefined();
   });
 
   it("⌘A with a selection inside a card's text expands it instead of selecting all cards", async () => {
