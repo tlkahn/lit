@@ -3,8 +3,9 @@ import { render, screen, act, fireEvent } from "@testing-library/react";
 import CardboxView from "./CardboxView";
 import { useCardboxStore } from "../stores/cardbox";
 import { useCardboxSelectionStore } from "../stores/cardboxSelection";
-import { mockInvoke } from "../test/tauri-mock";
-import type { CardboxAnnotation, CardboxLayout } from "../lib/ipc";
+import { useCardboxUndoStore } from "../stores/cardboxUndo";
+import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
+import type { CardboxAnnotation, CardboxLayout, GroupInfo } from "../lib/ipc";
 
 interface ProbeProps {
   annotation: CardboxAnnotation;
@@ -613,6 +614,90 @@ describe("document ordering (#968)", () => {
     fireEvent.keyDown(cards[1]!, { key: "p" });
     expect(useCardboxStore.getState().pinned).toContain(C);
     expect(useCardboxStore.getState().pinned).not.toContain(B);
+  });
+});
+
+describe("add to group without drag (#968)", () => {
+  function mockWithGroups(groups: Record<string, GroupInfo>) {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") return fixtures;
+      if (cmd === "read_cardbox_layout") return { ...emptyLayout, groups };
+      return undefined;
+    });
+  }
+
+  function selectCards(uuids: string[]) {
+    act(() => {
+      useCardboxSelectionStore.setState({
+        selectedUuids: new Set(uuids),
+        lastSelectedUuid: uuids[uuids.length - 1] ?? null,
+      });
+    });
+  }
+
+  it("Add to Group with two groups opens the picker and moves every selected card into the chosen group", async () => {
+    mockWithGroups({
+      g1: { name: "G1", order: [A], collapsed: false },
+      g2: { name: "G2", order: [B], collapsed: false },
+    });
+    await renderView();
+    selectCards([B, C]);
+    fireEvent.click(screen.getByTestId("batch-add-to-group"));
+    expect(screen.getByTestId("group-picker-panel")).toBeInTheDocument();
+    const items = screen.getAllByTestId("group-picker-item");
+    act(() => {
+      fireEvent.click(items[0]!);
+    });
+    const s = useCardboxStore.getState();
+    expect(s.groups.g1!.order).toEqual([A, B, C]);
+    // g2 lost its only member to the move and auto-dissolves.
+    expect(s.groups.g2).toBeUndefined();
+    expect(useCardboxSelectionStore.getState().selectedUuids.size).toBe(0);
+  });
+
+  it("skips the picker when only one group exists", async () => {
+    mockWithGroups({ g1: { name: "G1", order: [A], collapsed: false } });
+    await renderView();
+    selectCards([B, C]);
+    act(() => {
+      fireEvent.click(screen.getByTestId("batch-add-to-group"));
+    });
+    expect(screen.queryByTestId("group-picker-panel")).not.toBeInTheDocument();
+    expect(useCardboxStore.getState().groups.g1!.order).toEqual([A, B, C]);
+  });
+
+  it("context-menu Add to Group still works for a single card", async () => {
+    mockListen();
+    mockWithGroups({
+      g1: { name: "G1", order: [A], collapsed: false },
+      g2: { name: "G2", order: [B], collapsed: false },
+    });
+    await renderView();
+    act(() => {
+      emitMockEvent("context-menu://cardbox/add-to-group", { card_uuid: C });
+    });
+    const items = screen.getAllByTestId("group-picker-item");
+    act(() => {
+      fireEvent.click(items[1]!);
+    });
+    expect(useCardboxStore.getState().groups.g2!.order).toEqual([B, C]);
+  });
+
+  it("a batch add-to-group is a single undo step", async () => {
+    mockWithGroups({ g1: { name: "G1", order: [A], collapsed: false } });
+    await renderView();
+    selectCards([B, C]);
+    const stackBefore = useCardboxUndoStore.getState().undoStack.length;
+    act(() => {
+      fireEvent.click(screen.getByTestId("batch-add-to-group"));
+    });
+    expect(useCardboxStore.getState().groups.g1!.order).toEqual([A, B, C]);
+    expect(useCardboxUndoStore.getState().undoStack.length).toBe(stackBefore + 1);
+
+    await act(async () => {
+      await useCardboxUndoStore.getState().undo();
+    });
+    expect(useCardboxStore.getState().groups.g1!.order).toEqual([A]);
   });
 });
 

@@ -121,4 +121,23 @@ describe("BatchToolbar", () => {
     fireEvent.click(screen.getByTestId("batch-merge-to-draft"));
     expect(onMergeToDraft).not.toHaveBeenCalled();
   });
+
+  describe("add to group (#968)", () => {
+    it("calls onAddToGroup when the Add to Group button is clicked", () => {
+      const onAddToGroup = vi.fn();
+      render(<BatchToolbar {...defaultProps} hasGroups={true} onAddToGroup={onAddToGroup} />);
+      fireEvent.click(screen.getByTestId("batch-add-to-group"));
+      expect(onAddToGroup).toHaveBeenCalledOnce();
+    });
+
+    it("hides the Add to Group button when there are no groups", () => {
+      render(<BatchToolbar {...defaultProps} hasGroups={false} onAddToGroup={vi.fn()} />);
+      expect(screen.queryByTestId("batch-add-to-group")).not.toBeInTheDocument();
+    });
+
+    it("shows the Add to Group button when groups exist", () => {
+      render(<BatchToolbar {...defaultProps} hasGroups={true} onAddToGroup={vi.fn()} />);
+      expect(screen.getByTestId("batch-add-to-group")).toBeInTheDocument();
+    });
+  });
 });

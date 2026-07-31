@@ -102,6 +102,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const batchPin = useCardboxStore((s) => s.batchPin);
   const batchUnpin = useCardboxStore((s) => s.batchUnpin);
   const batchLink = useCardboxStore((s) => s.batchLink);
+  const batchMoveCards = useCardboxStore((s) => s.batchMoveCards);
   const batchCreateGroup = useCardboxStore((s) => s.batchCreateGroup);
   const undo = useCardboxUndoStore((s) => s.undo);
   const redo = useCardboxUndoStore((s) => s.redo);
@@ -111,7 +112,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
   const { selectedUuids, selectedCount, handleCardClick, selectAll, clearSelection } = useCardboxSelection();
 
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
-  const [groupPickerCardUuid, setGroupPickerCardUuid] = useState<string | null>(null);
+  const [groupPickerUuids, setGroupPickerUuids] = useState<string[] | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mergingToDraft, setMergingToDraft] = useState(false);
 
@@ -595,6 +596,34 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
     [groups],
   );
 
+  // ---------- Add to group without drag (#968) ----------
+
+  const applyAddToGroup = useCallback(
+    (uuids: string[], groupId: string) => {
+      if (uuids.length === 1) {
+        moveCardToGroup(uuids[0]!, groupId);
+      } else {
+        batchMoveCards(uuids, { type: "toGroup", groupId });
+        clearSelection();
+      }
+      debouncedSave();
+    },
+    [moveCardToGroup, batchMoveCards, clearSelection, debouncedSave],
+  );
+
+  const openAddToGroup = useCallback(
+    (uuids: string[]) => {
+      const groupIds = Object.keys(groups);
+      if (groupIds.length === 0 || uuids.length === 0) return;
+      if (groupIds.length === 1) {
+        applyAddToGroup(uuids, groupIds[0]!);
+        return;
+      }
+      setGroupPickerUuids(uuids);
+    },
+    [groups, applyAddToGroup],
+  );
+
   useCardboxContextMenu({
     onPin: (cardUuid) => {
       if (selectedUuids.has(cardUuid) && selectedCount > 1) {
@@ -618,14 +647,7 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       debouncedSave();
     },
     onAddToGroup: (cardUuid) => {
-      const groupIds = Object.keys(groups);
-      if (groupIds.length === 0) return;
-      if (groupIds.length === 1) {
-        moveCardToGroup(cardUuid, groupIds[0]!);
-        debouncedSave();
-        return;
-      }
-      setGroupPickerCardUuid(cardUuid);
+      openAddToGroup([cardUuid]);
     },
     onRemoveFromGroup: (cardUuid, groupId) => {
       removeCardFromGroup(cardUuid, groupId);
@@ -662,13 +684,12 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
 
   const handleGroupPickerSelect = useCallback(
     (groupId: string) => {
-      if (groupPickerCardUuid) {
-        moveCardToGroup(groupPickerCardUuid, groupId);
-        debouncedSave();
+      if (groupPickerUuids) {
+        applyAddToGroup(groupPickerUuids, groupId);
       }
-      setGroupPickerCardUuid(null);
+      setGroupPickerUuids(null);
     },
-    [groupPickerCardUuid, moveCardToGroup, debouncedSave],
+    [groupPickerUuids, applyAddToGroup],
   );
 
   // ---------- Render ----------
@@ -885,10 +906,10 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       />
 
       <GroupPicker
-        open={groupPickerCardUuid !== null}
+        open={groupPickerUuids !== null}
         groups={groups}
         onSelect={handleGroupPickerSelect}
-        onClose={() => setGroupPickerCardUuid(null)}
+        onClose={() => setGroupPickerUuids(null)}
       />
 
       <CardboxShortcutsOverlay
@@ -899,6 +920,8 @@ export default function CardboxView({ pagePath }: { pagePath: string }) {
       <BatchToolbar
         selectedCount={selectedCount}
         mergingToDraft={mergingToDraft}
+        hasGroups={Object.keys(groups).length > 0}
+        onAddToGroup={() => openAddToGroup([...selectedUuids])}
         onMergeToDraft={async () => {
           const uuids = [...selectedUuids];
           const paneId = usePaneStore.getState().focusedPaneId;
