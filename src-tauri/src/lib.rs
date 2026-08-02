@@ -482,6 +482,7 @@ pub fn run() {
             commands::ocr::is_ocr_companion_current,
             commands::paper_search::list_search_providers,
             commands::paper_search::search_papers,
+            commands::critical_edition::export_critical_edition,
             context_menu::show_sidebar_context_menu,
             context_menu::show_mindmap_context_menu,
             context_menu::show_graph_context_menu,

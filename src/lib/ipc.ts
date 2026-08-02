@@ -1651,3 +1651,17 @@ export async function exportDocument(request: ExportRequest): Promise<ExportDocu
     },
   });
 }
+
+export interface CriticalEditionRequest {
+  relativePath: string;
+  outputPath: string;
+  csl?: string;
+  lineNumbers: boolean;
+  routing: Record<string, string>;
+}
+
+export async function exportCriticalEdition(
+  request: CriticalEditionRequest,
+): Promise<ExportDocumentResult> {
+  return invoke<ExportDocumentResult>("export_critical_edition", { request });
+}

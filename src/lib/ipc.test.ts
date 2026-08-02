@@ -129,6 +129,7 @@ import {
   annotationFindUuid,
   detectPandoc,
   exportDocument,
+  exportCriticalEdition,
   type SecretStoreStatus,
   autoUnlockSecretStore,
   migrateSecretStore,
@@ -671,6 +672,7 @@ describe("ipc", () => {
             crossref_version: "pandoc-crossref 0.3.17.0",
           };
         case "export_document":
+        case "export_critical_edition":
           return {
             output_path: "/tmp/output.tex",
             success: true,
@@ -2289,6 +2291,28 @@ describe("ipc", () => {
         csl: "ieee",
         template: "/t.tex",
         reference_doc: "/r.docx",
+      },
+    });
+  });
+
+  it("exportCriticalEdition calls export_critical_edition with request payload", async () => {
+    const result = await exportCriticalEdition({
+      relativePath: "notes/text.md",
+      outputPath: "/tmp/critical.tex",
+      csl: "apa",
+      lineNumbers: true,
+      routing: { q: "right", app: "suppress" },
+    });
+    expect(result.output_path).toBe("/tmp/output.tex");
+    expect(result.success).toBe(true);
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_critical_edition", {
+      request: {
+        relativePath: "notes/text.md",
+        outputPath: "/tmp/critical.tex",
+        csl: "apa",
+        lineNumbers: true,
+        routing: { q: "right", app: "suppress" },
       },
     });
   });

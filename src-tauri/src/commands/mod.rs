@@ -29,3 +29,4 @@ pub mod ocr;
 pub mod paper_search;
 pub mod pdf_link;
 pub mod font;
+pub mod critical_edition;

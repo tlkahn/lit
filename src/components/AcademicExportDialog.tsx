@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { usePreferencesStore } from "../stores/preferences";
-import { exportDocument } from "../lib/ipc";
+import { exportDocument, exportCriticalEdition, setPreference } from "../lib/ipc";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { ExportDocumentResult } from "../lib/ipc";
 
-type ExportFormat = "latex" | "html" | "docx";
+export type ExportFormat = "latex" | "html" | "docx" | "reledmac";
 
 interface AcademicExportDialogProps {
   open: boolean;
@@ -17,12 +17,14 @@ const FORMAT_LABELS: Record<ExportFormat, string> = {
   latex: "LaTeX",
   html: "HTML",
   docx: "DOCX",
+  reledmac: "Critical Edition (LaTeX)",
 };
 
 const FORMAT_EXTENSIONS: Record<ExportFormat, string> = {
   latex: "tex",
   html: "html",
   docx: "docx",
+  reledmac: "tex",
 };
 
 const CSL_OPTIONS = [
@@ -39,6 +41,35 @@ const CSL_OPTIONS = [
   { value: "springer-basic-author-date", label: "Springer (Author-Date)" },
 ];
 
+const ROUTE_OPTIONS = [
+  { value: "right", label: "Right Page" },
+  { value: "afootnote", label: "Apparatus Footnote" },
+  { value: "bfootnote", label: "Footnote" },
+  { value: "suppress", label: "Suppress" },
+];
+
+const DEFAULT_ROUTING: Record<string, string> = {
+  n: "right",
+  tr: "right",
+  app: "afootnote",
+  cf: "bfootnote",
+  q: "suppress",
+  todo: "suppress",
+  llm: "suppress",
+  th: "suppress",
+};
+
+const ROUTING_LABELS: Record<string, string> = {
+  n: "Note (n)",
+  tr: "Translation (tr)",
+  app: "Apparatus (app)",
+  cf: "Cross-ref (cf)",
+  q: "Question (q)",
+  todo: "Todo",
+  llm: "LLM",
+  th: "Thread (th)",
+};
+
 export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>(initialFormat ?? "latex");
   const [outputPath, setOutputPath] = useState("");
@@ -47,6 +78,8 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
   const [referenceDoc, setReferenceDoc] = useState("");
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<ExportDocumentResult | null>(null);
+  const [lineNumbers, setLineNumbers] = useState(true);
+  const [routing, setRouting] = useState<Record<string, string>>({ ...DEFAULT_ROUTING });
 
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, open);
@@ -62,6 +95,9 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
       setReferenceDoc(prefs.academicDefaultReferenceDoc || "");
       setResult(null);
       setExporting(false);
+
+      setRouting({ ...DEFAULT_ROUTING });
+      setLineNumbers(true);
     }
   }, [open, initialFormat]);
 
@@ -101,14 +137,29 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
     setExporting(true);
     setResult(null);
     try {
-      const exportResult = await exportDocument({
-        relativePath,
-        outputPath,
-        format,
-        csl: csl || undefined,
-        template: format === "latex" && template ? template : undefined,
-        referenceDoc: format === "docx" && referenceDoc ? referenceDoc : undefined,
-      });
+      let exportResult: ExportDocumentResult;
+
+      if (format === "reledmac") {
+        setPreference("academic.reledmacRouting", routing).catch(() => {});
+        setPreference("academic.reledmacLineNumbers", lineNumbers).catch(() => {});
+
+        exportResult = await exportCriticalEdition({
+          relativePath,
+          outputPath,
+          csl: csl || undefined,
+          lineNumbers,
+          routing,
+        });
+      } else {
+        exportResult = await exportDocument({
+          relativePath,
+          outputPath,
+          format,
+          csl: csl || undefined,
+          template: format === "latex" && template ? template : undefined,
+          referenceDoc: format === "docx" && referenceDoc ? referenceDoc : undefined,
+        });
+      }
       setResult(exportResult);
     } catch (e) {
       setResult({
@@ -204,7 +255,7 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
             </select>
           </div>
 
-          {/* Template override (latex/pdf only) */}
+          {/* Template override (latex only, not reledmac) */}
           {format === "latex" && (
             <div>
               <label className="block text-sm text-text-muted mb-1">Template Path</label>
@@ -232,6 +283,45 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
                 placeholder="(Default reference doc)"
               />
             </div>
+          )}
+
+          {/* Reledmac-specific: line numbers + routing table */}
+          {format === "reledmac" && (
+            <>
+              <div className="flex items-center gap-2">
+                <input
+                  data-testid="reledmac-line-numbers"
+                  type="checkbox"
+                  checked={lineNumbers}
+                  onChange={(e) => setLineNumbers(e.target.checked)}
+                  id="line-numbers-checkbox"
+                />
+                <label htmlFor="line-numbers-checkbox" className="text-sm text-text-normal">
+                  Line numbers (every 5 lines)
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm text-text-muted mb-2">Annotation Routing</label>
+                <div data-testid="reledmac-routing-table" className="space-y-1.5">
+                  {Object.keys(DEFAULT_ROUTING).map((key) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className="w-32 text-sm text-text-normal">{ROUTING_LABELS[key] || key}</span>
+                      <select
+                        data-testid={`reledmac-route-${key}`}
+                        className="flex-1 rounded border border-border bg-bg-secondary px-2 py-1 text-sm text-text-normal"
+                        value={routing[key] || "suppress"}
+                        onChange={(e) => setRouting((prev) => ({ ...prev, [key]: e.target.value }))}
+                      >
+                        {ROUTE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
 
           {/* Result display */}

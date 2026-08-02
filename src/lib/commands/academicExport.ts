@@ -38,5 +38,15 @@ export function initAcademicExportCommands(): void {
         window.dispatchEvent(new CustomEvent("lit:open-academic-export", { detail: { format: "docx" } }));
       },
     },
+    {
+      id: "academic.exportCriticalEdition",
+      label: "Export Critical Edition (LaTeX)",
+      keywords: ["export", "critical", "edition", "reledmac", "reledpar", "parallel", "academic"],
+      icon: "\u{1F4D6}",
+      when: hasPage,
+      action: () => {
+        window.dispatchEvent(new CustomEvent("lit:open-academic-export", { detail: { format: "reledmac" } }));
+      },
+    },
   ]);
 }

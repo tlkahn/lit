@@ -16,12 +16,15 @@ beforeEach(() => {
   invokeCalls = [];
   mockInvoke((cmd, args) => {
     invokeCalls.push({ cmd, args: args ?? {} });
-    if (cmd === "export_document") {
+    if (cmd === "export_document" || cmd === "export_critical_edition") {
       return {
         output_path: "/tmp/output.tex",
         success: true,
         stderr: "",
       };
+    }
+    if (cmd === "set_preference") {
+      return undefined;
     }
     return undefined;
   });
@@ -267,5 +270,93 @@ describe("AcademicExportDialog", () => {
     const stderrDiv = errorDiv!.querySelector(".whitespace-pre-line");
     expect(stderrDiv).toBeTruthy();
     expect(stderrDiv!.textContent).toContain("brew install pandoc");
+  });
+
+  // --- C2: format offers Critical Edition ---
+
+  it("format select offers Critical Edition (LaTeX)", () => {
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={vi.fn()} />,
+    );
+    const select = container.querySelector("[data-testid='academic-export-format']") as HTMLSelectElement;
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.value);
+    expect(options).toContain("reledmac");
+  });
+
+  it("selecting reledmac shows routing table and line numbers", () => {
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="reledmac" />,
+    );
+    const routingTable = container.querySelector("[data-testid='reledmac-routing-table']");
+    expect(routingTable).toBeTruthy();
+    const checkbox = container.querySelector("[data-testid='reledmac-line-numbers']");
+    expect(checkbox).toBeTruthy();
+  });
+
+  it("selecting reledmac hides template and reference-doc fields", () => {
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="reledmac" />,
+    );
+    expect(container.querySelector("[data-testid='academic-export-template']")).toBeNull();
+    expect(container.querySelector("[data-testid='academic-export-reference-doc']")).toBeNull();
+  });
+
+  // --- C3: default routing UI ---
+
+  it("routing table defaults to issue mapping", () => {
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="reledmac" />,
+    );
+    const nRoute = container.querySelector("[data-testid='reledmac-route-n']") as HTMLSelectElement;
+    expect(nRoute.value).toBe("right");
+    const appRoute = container.querySelector("[data-testid='reledmac-route-app']") as HTMLSelectElement;
+    expect(appRoute.value).toBe("afootnote");
+    const cfRoute = container.querySelector("[data-testid='reledmac-route-cf']") as HTMLSelectElement;
+    expect(cfRoute.value).toBe("bfootnote");
+    const qRoute = container.querySelector("[data-testid='reledmac-route-q']") as HTMLSelectElement;
+    expect(qRoute.value).toBe("suppress");
+  });
+
+  // --- C4: export invocation ---
+
+  it("clicking Export with reledmac calls exportCriticalEdition", async () => {
+    const { container } = render(
+      <AcademicExportDialog open={true} onClose={vi.fn()} initialFormat="reledmac" />,
+    );
+
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    (save as ReturnType<typeof vi.fn>).mockResolvedValueOnce("/tmp/critical.tex");
+
+    const browseBtn = container.querySelector("[data-testid='academic-export-browse-btn']")!;
+    await act(async () => {
+      fireEvent.click(browseBtn);
+    });
+
+    const exportBtn = container.querySelector("[data-testid='academic-export-btn']") as HTMLButtonElement;
+    expect(exportBtn.disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(exportBtn);
+    });
+
+    const ceCall = invokeCalls.find((c) => c.cmd === "export_critical_edition");
+    expect(ceCall).toBeTruthy();
+    const req = ceCall!.args.request as Record<string, unknown>;
+    expect(req.relativePath).toBe("hello.md");
+    expect(req.outputPath).toBe("/tmp/critical.tex");
+    expect(req.lineNumbers).toBe(true);
+    expect(req.routing).toEqual({
+      n: "right",
+      tr: "right",
+      app: "afootnote",
+      cf: "bfootnote",
+      q: "suppress",
+      todo: "suppress",
+      llm: "suppress",
+      th: "suppress",
+    });
+
+    const successMsg = container.querySelector("[data-testid='academic-export-success']");
+    expect(successMsg).toBeTruthy();
   });
 });
