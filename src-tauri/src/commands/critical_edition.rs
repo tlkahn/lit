@@ -259,6 +259,36 @@ const LEMMA_MAX_CHARS: usize = 40;
 /// ~`LEMMA_MAX_CHARS` characters. Latin text truncates at a word boundary;
 /// CJK truncates at a char boundary. Empty ranges yield an empty string.
 /// Markdown is left intact (pandoc converts later).
+fn flatten_to_inline(raw: &str) -> String {
+    let stripped: String = raw
+        .lines()
+        .map(|line| {
+            let t = line.trim_start();
+            if t.starts_with('#') {
+                t.trim_start_matches('#').trim_start()
+            } else {
+                let plen = detect_block_prefix_len(t);
+                if plen > 0 { &t[plen..] } else { line }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = String::with_capacity(stripped.len());
+    let mut prev_ws = false;
+    for ch in stripped.chars() {
+        if ch.is_whitespace() {
+            if !prev_ws {
+                out.push(' ');
+            }
+            prev_ws = true;
+        } else {
+            out.push(ch);
+            prev_ws = false;
+        }
+    }
+    out.trim().to_string()
+}
+
 pub fn lemma_excerpt(body: &str, range: &ScopeRange) -> String {
     let start = range.start.min(body.len());
     let end = range.end.min(body.len()).max(start);
@@ -268,7 +298,9 @@ pub fn lemma_excerpt(body: &str, range: &ScopeRange) -> String {
     // Ensure we land on char boundaries.
     let start = floor_char_boundary(body, start);
     let end = floor_char_boundary(body, end);
-    let excerpt = &body[start..end];
+    let raw_excerpt = &body[start..end];
+    let excerpt_owned = flatten_to_inline(raw_excerpt);
+    let excerpt = excerpt_owned.as_str();
     let char_count = excerpt.chars().count();
     if char_count <= LEMMA_MAX_CHARS {
         return excerpt.to_string();
@@ -603,6 +635,12 @@ pub fn transform_document(
                     let route = routing.get(&rk).copied();
                     if route != Some(Route::Suppress) {
                         let body_md = ann.body.clone().unwrap_or_default();
+                        let fallback_scope = ScopeRange {
+                            start: byte_start,
+                            end: byte_start,
+                        };
+                        let adj_start =
+                            normalize_label_start(content, &paragraphs, &fallback_scope);
                         let ni = right_notes.len();
                         right_notes.push(RightNote {
                             note_index: ni,
@@ -610,13 +648,13 @@ pub fn transform_document(
                             certainty: ann.certainty.clone(),
                             body_md,
                             scope_range: ScopeRange {
-                                start: byte_start,
-                                end: byte_start,
+                                start: adj_start,
+                                end: adj_start,
                             },
                         });
                         injections.push(Injection {
-                            scope_start: byte_start,
-                            scope_end: byte_start,
+                            scope_start: adj_start,
+                            scope_end: adj_start,
                             kind: InjectionKind::Label { index: ni },
                         });
                     }
@@ -666,17 +704,22 @@ pub fn transform_document(
             if crosses_paragraph_boundary(scope_range, &paragraphs)
                 || has_partial_overlap(scope_range, &injection_ranges)
             {
+                let adj_start =
+                    normalize_label_start(content, &paragraphs, scope_range);
                 let ni = right_notes.len();
                 right_notes.push(RightNote {
                     note_index: ni,
                     annotation_type: rk,
                     certainty: ann.certainty.clone(),
                     body_md,
-                    scope_range: scope_range.clone(),
+                    scope_range: ScopeRange {
+                        start: adj_start,
+                        end: scope_range.end,
+                    },
                 });
                 injections.push(Injection {
-                    scope_start: scope_range.start,
-                    scope_end: scope_range.start,
+                    scope_start: adj_start,
+                    scope_end: adj_start,
                     kind: InjectionKind::Label { index: ni },
                 });
                 continue;
@@ -694,17 +737,22 @@ pub fn transform_document(
                 kind: InjectionKind::Footnote { index: fi },
             });
         } else {
+            let adj_start =
+                normalize_label_start(content, &paragraphs, scope_range);
             let ni = right_notes.len();
             right_notes.push(RightNote {
                 note_index: ni,
                 annotation_type: rk,
                 certainty: ann.certainty.clone(),
                 body_md,
-                scope_range: scope_range.clone(),
+                scope_range: ScopeRange {
+                    start: adj_start,
+                    end: scope_range.end,
+                },
             });
             injections.push(Injection {
-                scope_start: scope_range.start,
-                scope_end: scope_range.start,
+                scope_start: adj_start,
+                scope_end: adj_start,
                 kind: InjectionKind::Label { index: ni },
             });
         }
@@ -924,6 +972,81 @@ fn adjust_pos(pos: usize, sorted_deletions: &[(usize, usize)]) -> usize {
         adjusted -= del_end - start;
     }
     adjusted
+}
+
+fn normalize_label_start(
+    content: &str,
+    paragraphs: &[ParagraphSpan],
+    scope: &ScopeRange,
+) -> usize {
+    let para = match paragraphs
+        .iter()
+        .find(|p| scope.start >= p.start && scope.start < p.end)
+    {
+        Some(p) => p,
+        None => return scope.start,
+    };
+
+    let para_text = &content[para.start..para.end];
+    let first_line = para_text.lines().next().unwrap_or("");
+    let trimmed = first_line.trim_start();
+
+    if trimmed.starts_with('#') {
+        let scope_extends_beyond = scope.end > para.end;
+        if scope_extends_beyond {
+            if let Some(next) = paragraphs.iter().find(|p| p.start > para.end) {
+                return next.start;
+            }
+        }
+        let prefix_len = first_line.len() - first_line.trim_start_matches('#').trim_start().len();
+        return para.start + prefix_len;
+    }
+
+    if trimmed.starts_with("```") || trimmed.starts_with("~~~") || trimmed.starts_with('|') {
+        if let Some(next) = paragraphs.iter().find(|p| p.start > para.end) {
+            return next.start;
+        }
+        return scope.start;
+    }
+
+    let block_prefix_len = detect_block_prefix_len(trimmed);
+    if block_prefix_len > 0 {
+        let leading_ws = first_line.len() - trimmed.len();
+        return para.start + leading_ws + block_prefix_len;
+    }
+
+    scope.start
+}
+
+fn detect_block_prefix_len(trimmed: &str) -> usize {
+    if trimmed.starts_with("> ") {
+        return 2;
+    }
+    if trimmed.starts_with("- ")
+        || trimmed.starts_with("* ")
+        || trimmed.starts_with("+ ")
+    {
+        return 2;
+    }
+    let mut chars = trimmed.chars().peekable();
+    let mut digits = 0;
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            digits += 1;
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if digits > 0 {
+        if let Some(&'.') = chars.peek() {
+            chars.next();
+            if let Some(&' ') = chars.peek() {
+                return digits + 2;
+            }
+        }
+    }
+    0
 }
 
 fn crosses_paragraph_boundary(scope: &ScopeRange, paragraphs: &[ParagraphSpan]) -> bool {
@@ -1205,6 +1328,19 @@ pub fn substitute_label_placeholders(text: &str, nonce: &str, n: usize) -> Strin
 // Nonce survival guard
 // ---------------------------------------------------------------------------
 
+fn contains_block_latex(s: &str) -> bool {
+    const BLOCK_CMDS: &[&str] = &[
+        "\\chapter",
+        "\\section",
+        "\\subsection",
+        "\\subsubsection",
+        "\\paragraph{",
+        "\\begin{",
+        "\\pstart",
+    ];
+    BLOCK_CMDS.iter().any(|cmd| s.contains(cmd))
+}
+
 pub fn assert_no_residual_nonce(tex: &str, nonce: &str) -> Result<(), String> {
     let count = tex.matches(nonce).count();
     if count > 0 {
@@ -1285,6 +1421,19 @@ pub fn build_preamble(opts: &PreambleOptions) -> String {
     if let Some(ref font) = opts.cjk_font {
         lines.push("\\usepackage{xeCJK}".to_string());
         lines.push(format!("\\setCJKmainfont{{{font}}}"));
+        lines.push("\\IfFileExists{newunicodechar.sty}{%".to_string());
+        lines.push("  \\IfFontExistsTF{Apple Symbols}{%".to_string());
+        lines.push("    \\usepackage{newunicodechar}%".to_string());
+        lines.push("    \\newfontfamily\\litsymbolfont{Apple Symbols}%".to_string());
+        for cp in 0x2630u32..=0x2637u32 {
+            if let Some(ch) = char::from_u32(cp) {
+                lines.push(format!(
+                    "    \\newunicodechar{{{ch}}}{{{{\\litsymbolfont {ch}}}}}"
+                ));
+            }
+        }
+        lines.push("  }{}%".to_string());
+        lines.push("}{}".to_string());
     }
 
     if let Some(ref indic) = opts.indic_preamble {
@@ -1639,9 +1788,9 @@ pub async fn export_critical_edition(
                     a.body_latex = Some(right_notes_latex[i].clone());
                 }
                 if i < split.lemmas.len() {
-                    let lemma = split.lemmas[i].trim();
-                    if !lemma.is_empty() {
-                        a.lemma_latex = Some(lemma.to_string());
+                    let lemma = split.lemmas[i].trim().replace('\n', " ");
+                    if !lemma.is_empty() && !contains_block_latex(&lemma) {
+                        a.lemma_latex = Some(lemma);
                     }
                 }
                 a
@@ -3118,6 +3267,165 @@ mod tests {
         assert!(!split.paragraphs[0].is_empty(), "para 0 should not be empty");
         assert!(!split.paragraphs[1].is_empty(), "para 1 should not be empty");
         assert!(!split.notes[0].is_empty(), "note 0 should not be empty");
+    }
+
+    // --- normalize_label_start ---
+
+    #[test]
+    fn normalize_label_start_heading_scope_extends_beyond() {
+        let content = "### Heading\n\nBody text here.";
+        let paras = split_paragraphs(content);
+        let scope = ScopeRange { start: 0, end: content.len() };
+        let result = normalize_label_start(content, &paras, &scope);
+        let body_start = content.find("Body").unwrap();
+        assert_eq!(result, body_start, "should move to next paragraph start");
+    }
+
+    #[test]
+    fn normalize_label_start_heading_only_scope() {
+        let content = "### Heading\n\nBody text here.";
+        let paras = split_paragraphs(content);
+        let heading_end = content.find('\n').unwrap();
+        let scope = ScopeRange { start: 0, end: heading_end };
+        let result = normalize_label_start(content, &paras, &scope);
+        assert_eq!(&content[result..result + 7], "Heading");
+    }
+
+    #[test]
+    fn normalize_label_start_list_item() {
+        let content = "- List item text";
+        let paras = split_paragraphs(content);
+        let scope = ScopeRange { start: 0, end: content.len() };
+        let result = normalize_label_start(content, &paras, &scope);
+        assert_eq!(result, 2, "should skip past '- '");
+        assert_eq!(&content[result..result + 4], "List");
+    }
+
+    #[test]
+    fn normalize_label_start_ordered_list() {
+        let content = "1. First item";
+        let paras = split_paragraphs(content);
+        let scope = ScopeRange { start: 0, end: content.len() };
+        let result = normalize_label_start(content, &paras, &scope);
+        assert_eq!(result, 3, "should skip past '1. '");
+    }
+
+    #[test]
+    fn normalize_label_start_blockquote() {
+        let content = "> Quoted text";
+        let paras = split_paragraphs(content);
+        let scope = ScopeRange { start: 0, end: content.len() };
+        let result = normalize_label_start(content, &paras, &scope);
+        assert_eq!(result, 2, "should skip past '> '");
+    }
+
+    #[test]
+    fn normalize_label_start_plain_prose() {
+        let content = "Just plain text here.";
+        let paras = split_paragraphs(content);
+        let scope = ScopeRange { start: 0, end: content.len() };
+        let result = normalize_label_start(content, &paras, &scope);
+        assert_eq!(result, 0, "plain prose unchanged");
+    }
+
+    #[test]
+    fn normalize_label_start_fenced_code() {
+        let content = "```rust\nfn main() {}\n```\n\nBody text.";
+        let paras = split_paragraphs(content);
+        let scope = ScopeRange { start: 0, end: content.len() };
+        let result = normalize_label_start(content, &paras, &scope);
+        let body_start = content.find("Body").unwrap();
+        assert_eq!(result, body_start, "should move past code fence to body");
+    }
+
+    // --- lemma_excerpt flattening ---
+
+    #[test]
+    fn lemma_excerpt_heading_flattened() {
+        let body = "### Heading\n\nBody paragraph text.";
+        let s = lemma_excerpt(body, &ScopeRange { start: 0, end: body.len() });
+        assert!(!s.contains('#'), "heading markers should be stripped: {s:?}");
+        assert!(s.contains("Heading"), "heading text preserved: {s:?}");
+        assert!(!s.contains('\n'), "no newlines: {s:?}");
+    }
+
+    #[test]
+    fn lemma_excerpt_list_flattened() {
+        let body = "- item one\n- item two";
+        let s = lemma_excerpt(body, &ScopeRange { start: 0, end: body.len() });
+        assert!(!s.starts_with('-'), "list marker stripped: {s:?}");
+        assert!(s.contains("item one"), "content preserved: {s:?}");
+    }
+
+    #[test]
+    fn lemma_excerpt_plain_prose_unchanged() {
+        let body = "Hello world, this is fine.";
+        let s = lemma_excerpt(body, &ScopeRange { start: 0, end: body.len() });
+        assert_eq!(s, "Hello world, this is fine.");
+    }
+
+    // --- lemma guard ---
+
+    #[test]
+    fn contains_block_latex_detects_subsection() {
+        assert!(contains_block_latex("\\subsubsection{Foo}"));
+        assert!(contains_block_latex("text \\begin{itemize} stuff"));
+        assert!(contains_block_latex("\\pstart more"));
+    }
+
+    #[test]
+    fn contains_block_latex_passes_inline() {
+        assert!(!contains_block_latex("\\emph{foo} bar"));
+        assert!(!contains_block_latex("plain text here"));
+    }
+
+    // --- transform with heading-scoped note ---
+
+    #[test]
+    fn transform_heading_scope_preserves_heading_and_moves_label() {
+        let content = "### \u{4e8c}\u{5341}\u{56db}\n\nBody text for section.\n\n<!--- n | Section note. --->";
+        let ann_start = content.find("<!---").unwrap();
+        let ann_end = content.len();
+        let ann = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Sentence(1),
+            Some("Section note."),
+            ann_start,
+            ann_end,
+            None,
+        );
+        let heading_start = 0;
+        let scope_end = content.find("\n\n<!---").unwrap();
+        let scope = Some(ScopeRange {
+            start: heading_start,
+            end: scope_end,
+        });
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "zh");
+        let nonce = &result.nonce;
+        let body = result.body();
+        let lb = format!("{nonce}LB0{nonce}");
+
+        assert!(body.contains(&lb), "label placeholder must exist");
+
+        let heading_chunk = result.chunks.iter().find(|c| c.text.contains("###")).unwrap();
+        assert!(
+            !heading_chunk.text.contains(&lb),
+            "label must NOT be in heading chunk: {:?}",
+            heading_chunk.text,
+        );
+        assert!(
+            heading_chunk.text.contains("### "),
+            "heading markers must be preserved: {:?}",
+            heading_chunk.text,
+        );
+
+        let label_chunk = result.chunks.iter().find(|c| c.text.contains(&lb)).unwrap();
+        assert!(
+            label_chunk.text.contains("Body"),
+            "label should be in the body chunk: {:?}",
+            label_chunk.text,
+        );
     }
 
     // --- Cycle 9: end-to-end acceptance (ignored; needs pandoc/latexmk) ---
