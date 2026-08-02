@@ -150,6 +150,29 @@ pub struct MarkEntry {
 }
 
 // ---------------------------------------------------------------------------
+// UTF-16 to byte offset conversion
+// ---------------------------------------------------------------------------
+
+fn build_utf16_to_byte_map(content: &str) -> Vec<usize> {
+    let mut map = Vec::new();
+    for (byte_idx, ch) in content.char_indices() {
+        for _ in 0..ch.len_utf16() {
+            map.push(byte_idx);
+        }
+    }
+    map.push(content.len());
+    map
+}
+
+fn utf16_to_byte(map: &[usize], utf16_pos: usize) -> usize {
+    if utf16_pos >= map.len() {
+        *map.last().unwrap_or(&0)
+    } else {
+        map[utf16_pos]
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Paragraph span
 // ---------------------------------------------------------------------------
 
@@ -252,6 +275,9 @@ pub fn transform_document(
     scopes: &[Option<ScopeRange>],
     routing: &HashMap<String, Route>,
 ) -> TransformResult {
+    let u16map = build_utf16_to_byte_map(content);
+    let to_byte = |u16pos: usize| utf16_to_byte(&u16map, u16pos);
+
     let nonce = make_nonce();
     let mut footnotes: Vec<FootnoteEntry> = Vec::new();
     let mut marks: Vec<MarkEntry> = Vec::new();
@@ -275,11 +301,13 @@ pub fn transform_document(
     let mut injections: Vec<Injection> = Vec::new();
 
     for (i, ann) in annotations.iter().enumerate() {
-        deletions.push((ann.char_start, ann.char_end));
+        let byte_start = to_byte(ann.char_start);
+        let byte_end = to_byte(ann.char_end);
+        deletions.push((byte_start, byte_end));
 
         let rk = route_key(ann);
 
-        let scope_range = match scopes.get(i) {
+        let scope_range_u16 = match scopes.get(i) {
             Some(Some(sr)) => sr,
             _ => {
                 if ann.annotation_type != AnnotationType::Mark {
@@ -291,14 +319,18 @@ pub fn transform_document(
                             certainty: ann.certainty.clone(),
                             body_md,
                             scope_range: ScopeRange {
-                                start: ann.char_start,
-                                end: ann.char_start,
+                                start: byte_start,
+                                end: byte_start,
                             },
                         });
                     }
                 }
                 continue;
             }
+        };
+        let scope_range = &ScopeRange {
+            start: to_byte(scope_range_u16.start),
+            end: to_byte(scope_range_u16.end),
         };
 
         if ann.annotation_type == AnnotationType::Mark {
@@ -2335,5 +2367,44 @@ mod tests {
         assert!(!split.paragraphs[0].is_empty(), "para 0 should not be empty");
         assert!(!split.paragraphs[1].is_empty(), "para 1 should not be empty");
         assert!(!split.notes[0].is_empty(), "note 0 should not be empty");
+    }
+
+    #[test]
+    fn transform_cjk_content_does_not_panic() {
+        // CJK chars are 3 bytes UTF-8 but 1 UTF-16 code unit.
+        // Annotation offsets are UTF-16, so byte != utf16 offset.
+        // "Hello" = 5 chars, then annotation at UTF-16 positions 5..25
+        let content = "Hello{.n Hello} world";
+        // UTF-16 offsets: {=5, }=15, so char_start=5, char_end=16
+        let ann = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Words(1),
+            Some("A note"),
+            5, 16,
+            None,
+        );
+        let scope = Some(ScopeRange { start: 0, end: 5 });
+        let routing = [("n".to_string(), Route::Right)].into_iter().collect();
+        let result = transform_document(content, &[ann], &[scope], &routing);
+        assert!(!result.body.is_empty());
+
+        // Now test with actual CJK content where UTF-16 != byte offsets
+        // "\u{4ec1}" is 3 bytes in UTF-8, 1 UTF-16 code unit
+        let cjk_content = "\u{4ec1}\u{5b66}{.n note}\u{4e16}\u{754c}";
+        // UTF-16 offsets: \u{4ec1}=0..1, \u{5b66}=1..2, {.n note}=2..12
+        // \u{4e16}=12..13, \u{754c}=13..14
+        let ann = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Words(1),
+            Some("A note"),
+            2, 12,
+            None,
+        );
+        let scope = Some(ScopeRange { start: 0, end: 2 });
+        let result = transform_document(cjk_content, &[ann], &[scope], &routing);
+        assert!(!result.body.is_empty());
+        assert!(!result.body.contains("{.n"));
     }
 }
