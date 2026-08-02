@@ -249,20 +249,307 @@ fn skip_frontmatter(content: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
+// Lemma excerpt extraction
+// ---------------------------------------------------------------------------
+
+/// Approximate max display characters for a lemma key on the right page.
+const LEMMA_MAX_CHARS: usize = 40;
+
+/// Extract a lemma excerpt from `body` at byte `range`, truncating to
+/// ~`LEMMA_MAX_CHARS` characters. Latin text truncates at a word boundary;
+/// CJK truncates at a char boundary. Empty ranges yield an empty string.
+/// Markdown is left intact (pandoc converts later).
+pub fn lemma_excerpt(body: &str, range: &ScopeRange) -> String {
+    let start = range.start.min(body.len());
+    let end = range.end.min(body.len()).max(start);
+    if start == end {
+        return String::new();
+    }
+    // Ensure we land on char boundaries.
+    let start = floor_char_boundary(body, start);
+    let end = floor_char_boundary(body, end);
+    let excerpt = &body[start..end];
+    let char_count = excerpt.chars().count();
+    if char_count <= LEMMA_MAX_CHARS {
+        return excerpt.to_string();
+    }
+
+    let mut cut = 0;
+    for (i, (byte_idx, ch)) in excerpt.char_indices().enumerate() {
+        if i >= LEMMA_MAX_CHARS {
+            cut = byte_idx;
+            break;
+        }
+        cut = byte_idx + ch.len_utf8();
+    }
+    let truncated = &excerpt[..cut];
+
+    // Prefer word-boundary truncation for Latin-heavy text. CJK has no spaces,
+    // so fall through to the char cut.
+    let word_cut = truncated
+        .rfind(|c: char| c.is_whitespace())
+        .filter(|&idx| idx > 0)
+        .unwrap_or(cut);
+    let candidate = &truncated[..word_cut];
+    let use_word = candidate.chars().any(|c| c.is_ascii_alphabetic())
+        && !candidate.chars().any(is_cjk_char);
+    let final_cut = if use_word { word_cut } else { cut };
+    format!("{}…", excerpt[..final_cut].trim_end())
+}
+
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn is_cjk_char(c: char) -> bool {
+    matches!(c,
+        '一'..='鿿' | // CJK Unified Ideographs
+        '㐀'..='䶿' | // CJK Extension A
+        '豈'..='﫿' | // CJK Compatibility Ideographs
+        '　'..='〿' | // CJK Symbols and Punctuation
+        '＀'..='￯'   // Halfwidth and Fullwidth Forms
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Chunking (sentence-boundary sync units for reledpar)
+// ---------------------------------------------------------------------------
+
+/// Approx display-width budget per chunk (~5-6 typeset lines).
+/// ASCII = 1 unit, CJK char = 2 units.
+pub const MAX_CHUNK_WIDTH: usize = 400;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkSpan {
+    pub start: usize,
+    pub end: usize,
+    pub para_start: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunkText {
+    pub text: String,
+    pub para_start: bool,
+}
+
+fn display_width(s: &str) -> usize {
+    s.chars().map(|c| if is_cjk_char(c) { 2 } else { 1 }).sum()
+}
+
+fn is_structured_block(text: &str) -> bool {
+    let first = text.lines().next().unwrap_or("").trim_start();
+    if first.is_empty() {
+        return false;
+    }
+    if first.starts_with('#')
+        || first.starts_with('-')
+        || first.starts_with('*')
+        || first.starts_with('>')
+        || first.starts_with('|')
+        || first.starts_with("```")
+        || first.starts_with("~~~")
+    {
+        return true;
+    }
+    // ordered list: digits then '.'
+    let mut chars = first.chars();
+    let mut saw_digit = false;
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() {
+            saw_digit = true;
+            continue;
+        }
+        return saw_digit && c == '.';
+    }
+    false
+}
+
+/// True if any injection range is strictly split by a cut at `pos`
+/// (i.e. start < pos < end).
+fn cut_splits_injection(pos: usize, injection_ranges: &[(usize, usize)]) -> bool {
+    injection_ranges
+        .iter()
+        .any(|&(s, e)| s < pos && pos < e)
+}
+
+/// Chunk `body` into fine-grained spans for reledpar sync.
+///
+/// - Paragraph boundaries are always chunk boundaries.
+/// - Structured blocks (headings, lists, quotes, tables, fences) stay whole.
+/// - Prose splits only at sentencex sentence boundaries.
+/// - A sentence containing an anchor always starts a new chunk.
+/// - Unannotated runs accumulate until `max_width` display units.
+/// - Cuts never land inside an injection range.
+pub fn chunk_spans(
+    body: &str,
+    paragraphs: &[ParagraphSpan],
+    anchors: &[usize],
+    injection_ranges: &[(usize, usize)],
+    lang: &str,
+    max_width: usize,
+) -> Vec<ChunkSpan> {
+    let mut spans = Vec::new();
+
+    for para in paragraphs {
+        let para_start = para.start.min(body.len());
+        let para_end = para.end.min(body.len()).max(para_start);
+        if para_start == para_end {
+            continue;
+        }
+        let para_text = &body[para_start..para_end];
+
+        if is_structured_block(para_text) {
+            spans.push(ChunkSpan {
+                start: para_start,
+                end: para_end,
+                para_start: true,
+            });
+            continue;
+        }
+
+        // Sentence boundaries relative to the paragraph, then absolute.
+        let boundaries = sentencex::get_sentence_boundaries(lang, para_text);
+        let mut sent_ranges: Vec<(usize, usize)> = boundaries
+            .iter()
+            .map(|b| (para_start + b.start_byte, para_start + b.end_byte))
+            .filter(|(s, e)| s < e)
+            .collect();
+
+        // Fallback: whole paragraph as one sentence if segmenter returns nothing.
+        if sent_ranges.is_empty() {
+            sent_ranges.push((para_start, para_end));
+        } else {
+            // Ensure full coverage of the paragraph (segmenter may drop trailing whitespace).
+            if let Some(&(s, _)) = sent_ranges.first() {
+                if s > para_start {
+                    sent_ranges.insert(0, (para_start, s));
+                }
+            }
+            if let Some(&(_, e)) = sent_ranges.last() {
+                if e < para_end {
+                    sent_ranges.push((e, para_end));
+                }
+            }
+        }
+
+        // Determine which sentence indices must start a new chunk (contain an anchor).
+        let mut force_start = vec![false; sent_ranges.len()];
+        for &anchor in anchors {
+            if anchor < para_start || anchor >= para_end {
+                continue;
+            }
+            if let Some((si, _)) = sent_ranges
+                .iter()
+                .enumerate()
+                .find(|(_, &(s, e))| anchor >= s && anchor < e)
+            {
+                force_start[si] = true;
+            }
+        }
+        // First sentence of a paragraph always starts a chunk.
+        if !force_start.is_empty() {
+            force_start[0] = true;
+        }
+
+        let mut chunk_start = para_start;
+        let mut chunk_width = 0usize;
+        let mut is_para_start = true;
+
+        for (si, &(s_start, s_end)) in sent_ranges.iter().enumerate() {
+            let sent_text = &body[s_start..s_end];
+            let sent_w = display_width(sent_text);
+            let would_exceed = chunk_width > 0 && chunk_width + sent_w > max_width;
+            let must_break = (force_start[si] && chunk_start < s_start) || would_exceed;
+
+            if must_break {
+                let mut cut = s_start;
+                // Extend cut past any injection range it would split.
+                while cut_splits_injection(cut, injection_ranges) {
+                    if let Some(&(_, e)) = injection_ranges
+                        .iter()
+                        .find(|&&(s, e)| s < cut && cut < e)
+                    {
+                        cut = e;
+                    } else {
+                        break;
+                    }
+                }
+                cut = cut.min(para_end).max(chunk_start);
+                if cut > chunk_start {
+                    spans.push(ChunkSpan {
+                        start: chunk_start,
+                        end: cut,
+                        para_start: is_para_start,
+                    });
+                    is_para_start = false;
+                    chunk_start = cut;
+                    chunk_width = 0;
+                }
+            }
+
+            // If this sentence starts after chunk_start (because cut extended),
+            // include the gap in width accounting via the sentence itself next.
+            if s_end > chunk_start {
+                let included = &body[chunk_start.max(s_start)..s_end];
+                chunk_width += display_width(included);
+            }
+        }
+
+        if chunk_start < para_end {
+            spans.push(ChunkSpan {
+                start: chunk_start,
+                end: para_end,
+                para_start: is_para_start,
+            });
+        }
+    }
+
+    spans
+}
+
+// ---------------------------------------------------------------------------
 // Transform document: strip annotations, inject placeholders (A3-A7)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct TransformResult {
-    pub body: String,
+    pub chunks: Vec<ChunkText>,
+    /// body_no_del coordinates for each chunk (parallel to `chunks`).
+    pub chunk_spans: Vec<ChunkSpan>,
     pub footnotes: Vec<FootnoteEntry>,
     pub marks: Vec<MarkEntry>,
     pub right_notes: Vec<RightNote>,
+    pub lemma_excerpts: Vec<String>,
     pub nonce: String,
+}
+
+impl TransformResult {
+    /// Concatenate chunk texts (with original paragraph separators approximated
+    /// by blank lines between para_start chunks after the first). Useful for
+    /// tests that previously asserted on a single body string.
+    pub fn body(&self) -> String {
+        let mut out = String::new();
+        for (i, c) in self.chunks.iter().enumerate() {
+            if i > 0 {
+                if c.para_start {
+                    out.push_str("\n\n");
+                }
+            }
+            out.push_str(&c.text);
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RightNote {
+    pub note_index: usize,
     pub annotation_type: String,
     pub certainty: Certainty,
     pub body_md: String,
@@ -274,6 +561,7 @@ pub fn transform_document(
     annotations: &[Annotation],
     scopes: &[Option<ScopeRange>],
     routing: &HashMap<String, Route>,
+    lang: &str,
 ) -> TransformResult {
     let u16map = build_utf16_to_byte_map(content);
     let to_byte = |u16pos: usize| utf16_to_byte(&u16map, u16pos);
@@ -295,6 +583,7 @@ pub fn transform_document(
     enum InjectionKind {
         Footnote { index: usize },
         Mark { index: usize },
+        Label { index: usize },
     }
 
     let mut deletions: Vec<(usize, usize)> = Vec::new();
@@ -314,7 +603,9 @@ pub fn transform_document(
                     let route = routing.get(&rk).copied();
                     if route != Some(Route::Suppress) {
                         let body_md = ann.body.clone().unwrap_or_default();
+                        let ni = right_notes.len();
                         right_notes.push(RightNote {
+                            note_index: ni,
                             annotation_type: rk,
                             certainty: ann.certainty.clone(),
                             body_md,
@@ -322,6 +613,11 @@ pub fn transform_document(
                                 start: byte_start,
                                 end: byte_start,
                             },
+                        });
+                        injections.push(Injection {
+                            scope_start: byte_start,
+                            scope_end: byte_start,
+                            kind: InjectionKind::Label { index: ni },
                         });
                     }
                 }
@@ -367,21 +663,21 @@ pub fn transform_document(
         let body_md = ann.body.clone().unwrap_or_default();
 
         if route == Route::AFootnote || route == Route::BFootnote {
-            if crosses_paragraph_boundary(scope_range, &paragraphs) {
+            if crosses_paragraph_boundary(scope_range, &paragraphs)
+                || has_partial_overlap(scope_range, &injection_ranges)
+            {
+                let ni = right_notes.len();
                 right_notes.push(RightNote {
+                    note_index: ni,
                     annotation_type: rk,
                     certainty: ann.certainty.clone(),
                     body_md,
                     scope_range: scope_range.clone(),
                 });
-                continue;
-            }
-            if has_partial_overlap(scope_range, &injection_ranges) {
-                right_notes.push(RightNote {
-                    annotation_type: rk,
-                    certainty: ann.certainty.clone(),
-                    body_md,
-                    scope_range: scope_range.clone(),
+                injections.push(Injection {
+                    scope_start: scope_range.start,
+                    scope_end: scope_range.start,
+                    kind: InjectionKind::Label { index: ni },
                 });
                 continue;
             }
@@ -398,11 +694,18 @@ pub fn transform_document(
                 kind: InjectionKind::Footnote { index: fi },
             });
         } else {
+            let ni = right_notes.len();
             right_notes.push(RightNote {
+                note_index: ni,
                 annotation_type: rk,
                 certainty: ann.certainty.clone(),
                 body_md,
                 scope_range: scope_range.clone(),
+            });
+            injections.push(Injection {
+                scope_start: scope_range.start,
+                scope_end: scope_range.start,
+                kind: InjectionKind::Label { index: ni },
             });
         }
     }
@@ -410,7 +713,7 @@ pub fn transform_document(
     let mut sorted_deletions = deletions.clone();
     sorted_deletions.sort_by_key(|d| d.0);
 
-    // Build deletion-stripped body and track deleted ranges for position adjustment
+    // Build deletion-stripped body.
     let mut body_no_del = String::with_capacity(content.len());
     {
         let mut prev = 0;
@@ -429,73 +732,16 @@ pub fn transform_document(
         }
     }
 
-    // Collect open/close events at adjusted positions
-    struct Event {
-        pos: usize,
-        scope_start: usize,
-        scope_end: usize,
-        is_open: bool,
-        tag: String,
-    }
-
-    let mut events: Vec<Event> = Vec::new();
+    // Adjust injection positions and right-note scopes into body_no_del coords.
+    let mut adj_injections: Vec<(usize, usize, InjectionKind)> = Vec::new();
     for inj in &injections {
         let adj_start = adjust_pos(inj.scope_start, &sorted_deletions);
         let adj_end = adjust_pos(inj.scope_end, &sorted_deletions);
-        let (open_tag, close_tag) = match &inj.kind {
-            InjectionKind::Footnote { index } => (
-                format!("{nonce}FO{index}{nonce}"),
-                format!("{nonce}FC{index}{nonce}"),
-            ),
-            InjectionKind::Mark { index } => (
-                format!("{nonce}MO{index}{nonce}"),
-                format!("{nonce}MC{index}{nonce}"),
-            ),
-        };
-        events.push(Event {
-            pos: adj_start,
-            scope_start: adj_start,
-            scope_end: adj_end,
-            is_open: true,
-            tag: open_tag,
-        });
-        events.push(Event {
-            pos: adj_end,
-            scope_start: adj_start,
-            scope_end: adj_end,
-            is_open: false,
-            tag: close_tag,
-        });
-    }
-
-    // Sort: by position, then closes before opens at same position,
-    // among closes at same pos: inner first (larger scope_start),
-    // among opens at same pos: outer first (larger scope_end)
-    events.sort_by(|a, b| {
-        a.pos.cmp(&b.pos)
-            .then_with(|| a.is_open.cmp(&b.is_open)) // false < true, so closes first
-            .then_with(|| {
-                if !a.is_open {
-                    b.scope_start.cmp(&a.scope_start) // inner close first (larger start)
-                } else {
-                    b.scope_end.cmp(&a.scope_end) // outer open first (larger end)
-                }
-            })
-    });
-
-    // Build body in one left-to-right pass
-    let mut body = String::with_capacity(body_no_del.len() * 2);
-    let mut cursor = 0;
-    for ev in &events {
-        let p = ev.pos.min(body_no_del.len());
-        if p > cursor {
-            body.push_str(&body_no_del[cursor..p]);
-        }
-        body.push_str(&ev.tag);
-        cursor = p;
-    }
-    if cursor < body_no_del.len() {
-        body.push_str(&body_no_del[cursor..]);
+        adj_injections.push((adj_start, adj_end, match &inj.kind {
+            InjectionKind::Footnote { index } => InjectionKind::Footnote { index: *index },
+            InjectionKind::Mark { index } => InjectionKind::Mark { index: *index },
+            InjectionKind::Label { index } => InjectionKind::Label { index: *index },
+        }));
     }
 
     let adjusted_right_notes: Vec<RightNote> = right_notes
@@ -507,11 +753,163 @@ pub fn transform_document(
         })
         .collect();
 
+    // Lemma excerpts from body_no_del at adjusted scope ranges.
+    let lemma_excerpts: Vec<String> = adjusted_right_notes
+        .iter()
+        .map(|rn| lemma_excerpt(&body_no_del, &rn.scope_range))
+        .collect();
+
+    // Anchors = right-note adjusted scope starts.
+    let anchors: Vec<usize> = adjusted_right_notes
+        .iter()
+        .map(|rn| rn.scope_range.start)
+        .collect();
+
+    // Footnote/mark ranges in body_no_del coords (labels are points, skip).
+    let adj_injection_ranges: Vec<(usize, usize)> = adj_injections
+        .iter()
+        .filter_map(|(s, e, kind)| match kind {
+            InjectionKind::Label { .. } => None,
+            _ => Some((*s, *e)),
+        })
+        .collect();
+
+    // Re-split paragraphs on body_no_del (original content offsets no longer apply).
+    let body_paragraphs = split_paragraphs(&body_no_del);
+
+    let chunks_meta = chunk_spans(
+        &body_no_del,
+        &body_paragraphs,
+        &anchors,
+        &adj_injection_ranges,
+        lang,
+        MAX_CHUNK_WIDTH,
+    );
+
+    // Event kinds for ordering: Close=0, Label=1, Open=2.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum EvKind {
+        Close = 0,
+        Label = 1,
+        Open = 2,
+    }
+    struct Event {
+        pos: usize,
+        scope_start: usize,
+        scope_end: usize,
+        kind: EvKind,
+        tag: String,
+    }
+
+    let mut events: Vec<Event> = Vec::new();
+    for (adj_start, adj_end, kind) in &adj_injections {
+        match kind {
+            InjectionKind::Footnote { index } => {
+                events.push(Event {
+                    pos: *adj_start,
+                    scope_start: *adj_start,
+                    scope_end: *adj_end,
+                    kind: EvKind::Open,
+                    tag: format!("{nonce}FO{index}{nonce}"),
+                });
+                events.push(Event {
+                    pos: *adj_end,
+                    scope_start: *adj_start,
+                    scope_end: *adj_end,
+                    kind: EvKind::Close,
+                    tag: format!("{nonce}FC{index}{nonce}"),
+                });
+            }
+            InjectionKind::Mark { index } => {
+                events.push(Event {
+                    pos: *adj_start,
+                    scope_start: *adj_start,
+                    scope_end: *adj_end,
+                    kind: EvKind::Open,
+                    tag: format!("{nonce}MO{index}{nonce}"),
+                });
+                events.push(Event {
+                    pos: *adj_end,
+                    scope_start: *adj_start,
+                    scope_end: *adj_end,
+                    kind: EvKind::Close,
+                    tag: format!("{nonce}MC{index}{nonce}"),
+                });
+            }
+            InjectionKind::Label { index } => {
+                events.push(Event {
+                    pos: *adj_start,
+                    scope_start: *adj_start,
+                    scope_end: *adj_start,
+                    kind: EvKind::Label,
+                    tag: format!("{nonce}LB{index}{nonce}"),
+                });
+            }
+        }
+    }
+
+    // Sort: by position, then Close < Label < Open,
+    // among closes: inner first (larger scope_start),
+    // among opens: outer first (larger scope_end),
+    // among labels: by index order already stable via tag.
+    events.sort_by(|a, b| {
+        a.pos.cmp(&b.pos).then_with(|| a.kind.cmp(&b.kind)).then_with(|| {
+            match a.kind {
+                EvKind::Close => b.scope_start.cmp(&a.scope_start),
+                EvKind::Open => b.scope_end.cmp(&a.scope_end),
+                EvKind::Label => a.tag.cmp(&b.tag),
+            }
+        })
+    });
+
+    // Emit per-chunk placeholder-injected text.
+    // Opens/labels attach to the chunk whose half-open range contains pos.
+    // Closes attach to the chunk whose half-open range would have contained
+    // pos-1 (i.e. start < pos <= end). Events at body.len() land in the last
+    // chunk.
+    let mut chunks: Vec<ChunkText> = Vec::with_capacity(chunks_meta.len());
+    for cs in &chunks_meta {
+        let mut text = String::with_capacity(cs.end - cs.start + 64);
+        let mut cursor = cs.start;
+        for ev in &events {
+            let include = match ev.kind {
+                EvKind::Open | EvKind::Label => {
+                    (ev.pos >= cs.start && ev.pos < cs.end)
+                        || (ev.pos == cs.end
+                            && ev.pos == body_no_del.len()
+                            && ev.pos >= cs.start)
+                }
+                EvKind::Close => {
+                    (ev.pos > cs.start && ev.pos <= cs.end)
+                        || (ev.pos == cs.start && cs.start == cs.end)
+                }
+            };
+            if !include {
+                continue;
+            }
+            let p = ev.pos.min(body_no_del.len());
+            if p > cursor {
+                text.push_str(&body_no_del[cursor..p]);
+                cursor = p;
+            }
+            text.push_str(&ev.tag);
+        }
+        if cursor < cs.end {
+            text.push_str(&body_no_del[cursor..cs.end]);
+        }
+        chunks.push(ChunkText {
+            text,
+            para_start: cs.para_start,
+        });
+    }
+
     TransformResult {
-        body,
+        chunks,
+        chunk_spans: chunks_meta,
         footnotes,
         marks,
         right_notes: adjusted_right_notes,
+        lemma_excerpts,
         nonce,
     }
 }
@@ -555,53 +953,52 @@ fn has_partial_overlap(scope: &ScopeRange, existing: &[(usize, usize)]) -> bool 
 }
 
 // ---------------------------------------------------------------------------
-// Note-to-paragraph attachment (A9)
+// Note-to-chunk attachment
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone)]
 pub struct AttachedNote {
-    pub paragraph_index: usize,
-    pub span_prefix: Option<String>,
+    pub chunk_index: usize,
+    pub note_index: usize,
     pub annotation_type: String,
     pub certainty: Certainty,
     pub body_md: String,
     pub body_latex: Option<String>,
+    pub lemma_latex: Option<String>,
 }
 
-pub fn attach_notes_to_paragraphs(
+/// Attach each right note to the chunk containing its adjusted scope start.
+/// Empty-range (scope-resolution fallback) notes still attach by position.
+/// Out-of-range falls back to the last chunk.
+pub fn attach_notes_to_chunks(
     right_notes: &[RightNote],
-    paragraphs: &[ParagraphSpan],
+    chunks: &[ChunkSpan],
 ) -> Vec<AttachedNote> {
+    if chunks.is_empty() {
+        return Vec::new();
+    }
     right_notes
         .iter()
-        .filter_map(|note| {
-            let para = paragraphs
+        .map(|note| {
+            let pos = note.scope_range.start;
+            let chunk_index = chunks
                 .iter()
-                .find(|p| note.scope_range.start >= p.start && note.scope_range.start < p.end)
-                .or_else(|| paragraphs.last())?;
+                .position(|c| pos >= c.start && pos < c.end)
+                .or_else(|| {
+                    // Point at exact end of last chunk, or empty-range edge cases.
+                    chunks.iter().position(|c| pos >= c.start && pos <= c.end)
+                })
+                .unwrap_or(chunks.len() - 1);
 
-            let end_para = paragraphs
-                .iter()
-                .find(|p| note.scope_range.end > p.start && note.scope_range.end <= p.end)
-                .unwrap_or(para);
-
-            let span_prefix = if end_para.index != para.index {
-                Some(format!(
-                    "(paras {}-{})",
-                    para.index + 1,
-                    end_para.index + 1
-                ))
-            } else {
-                None
-            };
-
-            Some(AttachedNote {
-                paragraph_index: para.index,
-                span_prefix,
+            AttachedNote {
+                chunk_index,
+                note_index: note.note_index,
                 annotation_type: note.annotation_type.clone(),
                 certainty: note.certainty.clone(),
                 body_md: note.body_md.clone(),
                 body_latex: None,
-            })
+                lemma_latex: None,
+            }
         })
         .collect()
 }
@@ -610,10 +1007,14 @@ pub fn attach_notes_to_paragraphs(
 // Sentinel batch build + split (A10)
 // ---------------------------------------------------------------------------
 
+/// Build a single pandoc input from chunks + footnote/right-note bodies + lemmas.
+/// Piece order: chunks, then note_bodies, then lemmas, then a trailing sentinel
+/// so bibliography (if any) lands in its own piece.
 pub fn build_pandoc_input(
     frontmatter: Option<&str>,
-    paragraphs: &[&str],
+    chunks: &[&str],
     note_bodies: &[&str],
+    lemmas: &[&str],
     sentinel: &str,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -623,16 +1024,21 @@ pub fn build_pandoc_input(
         parts.push("\n\n".to_string());
     }
 
-    for (i, para) in paragraphs.iter().enumerate() {
+    for (i, chunk) in chunks.iter().enumerate() {
         if i > 0 {
             parts.push(format!("\n\n{sentinel}\n\n"));
         }
-        parts.push(para.to_string());
+        parts.push(chunk.to_string());
     }
 
     for note in note_bodies {
         parts.push(format!("\n\n{sentinel}\n\n"));
         parts.push(note.to_string());
+    }
+
+    for lemma in lemmas {
+        parts.push(format!("\n\n{sentinel}\n\n"));
+        parts.push(lemma.to_string());
     }
 
     parts.push(format!("\n\n{sentinel}\n\n"));
@@ -643,6 +1049,7 @@ pub fn build_pandoc_input(
 pub struct SplitOutput {
     pub paragraphs: Vec<String>,
     pub notes: Vec<String>,
+    pub lemmas: Vec<String>,
     pub bibliography: Option<String>,
 }
 
@@ -651,20 +1058,25 @@ pub fn split_pandoc_output(
     sentinel: &str,
     n_paras: usize,
     n_notes: usize,
+    n_lemmas: usize,
 ) -> SplitOutput {
     let pieces: Vec<&str> = latex.split(sentinel).collect();
-    let total_expected = n_paras + n_notes;
+    let notes_end = n_paras + n_notes;
+    let total_expected = notes_end + n_lemmas;
 
     let mut paragraphs = Vec::new();
     let mut notes = Vec::new();
+    let mut lemmas = Vec::new();
     let mut bibliography = None;
 
     for (i, piece) in pieces.iter().enumerate() {
         let trimmed = piece.trim();
         if i < n_paras {
             paragraphs.push(trimmed.to_string());
-        } else if i < total_expected {
+        } else if i < notes_end {
             notes.push(trimmed.to_string());
+        } else if i < total_expected {
+            lemmas.push(trimmed.to_string());
         } else {
             let bib = trimmed.to_string();
             if !bib.is_empty() {
@@ -679,10 +1091,14 @@ pub fn split_pandoc_output(
     while notes.len() < n_notes {
         notes.push(String::new());
     }
+    while lemmas.len() < n_lemmas {
+        lemmas.push(String::new());
+    }
 
     SplitOutput {
         paragraphs,
         notes,
+        lemmas,
         bibliography,
     }
 }
@@ -774,6 +1190,17 @@ pub fn substitute_mark_placeholders(text: &str, nonce: &str, marks: &[MarkEntry]
     result
 }
 
+/// Replace `{nonce}LB{i}{nonce}` with `\edlabel{lit:i}` for i in 0..n.
+pub fn substitute_label_placeholders(text: &str, nonce: &str, n: usize) -> String {
+    let mut result = text.to_string();
+    for i in 0..n {
+        let placeholder = format!("{nonce}LB{i}{nonce}");
+        let replacement = format!("\\edlabel{{lit:{i}}}");
+        result = result.replace(&placeholder, &replacement);
+    }
+    result
+}
+
 // ---------------------------------------------------------------------------
 // Nonce survival guard
 // ---------------------------------------------------------------------------
@@ -793,26 +1220,46 @@ pub fn assert_no_residual_nonce(tex: &str, nonce: &str) -> Result<(), String> {
 // Right-page note rendering (A13)
 // ---------------------------------------------------------------------------
 
-pub fn render_right_page_notes(notes: &[AttachedNote]) -> String {
+/// Render notes for one right-page chunk.
+///
+/// Format per note:
+///   [\textbf{\edlineref{lit:i}} ][\emph{lemma}] ]\textsc{type}<certainty> body
+/// - line_numbers off: omit the \edlineref part
+/// - empty lemma: omit the lemma + `]` part
+pub fn render_right_page_notes(notes: &[AttachedNote], line_numbers: bool) -> String {
     if notes.is_empty() {
         return "~".to_string();
     }
     notes
         .iter()
         .map(|note| {
+            let mut key = String::new();
+            if line_numbers {
+                key.push_str(&format!(
+                    "\\textbf{{\\edlineref{{lit:{}}}}}",
+                    note.note_index
+                ));
+            }
+            let lemma = note.lemma_latex.as_deref().unwrap_or("");
+            if !lemma.is_empty() {
+                if !key.is_empty() {
+                    key.push(' ');
+                }
+                key.push_str(&format!("\\emph{{{lemma}}}"));
+                key.push(']');
+            }
+            if !key.is_empty() {
+                key.push(' ');
+            }
+
             let label = format!("\\textsc{{{}}}", note.annotation_type);
             let certainty_suffix = match note.certainty {
                 Certainty::Tentative => "?",
                 Certainty::Firm => "!",
                 Certainty::Neutral => "",
             };
-            let prefix = note
-                .span_prefix
-                .as_ref()
-                .map(|p| format!("{p} "))
-                .unwrap_or_default();
             let body = note.body_latex.as_deref().unwrap_or(&note.body_md);
-            format!("{prefix}{label}{certainty_suffix} {body}")
+            format!("{key}{label}{certainty_suffix} {body}")
         })
         .collect::<Vec<_>>()
         .join("\n\n\\medskip\n\n")
@@ -881,10 +1328,12 @@ pub fn build_preamble(opts: &PreambleOptions) -> String {
 // Assembly (A15)
 // ---------------------------------------------------------------------------
 
+/// Assemble the final .tex. `left_chunks` is (text, para_start); continuation
+/// chunks (para_start=false) get a `\noindent ` prefix so they flush left.
 pub fn assemble_tex(
     preamble: &str,
-    left_paragraphs: &[String],
-    right_paragraphs: &[String],
+    left_chunks: &[(String, bool)],
+    right_chunks: &[String],
     bibliography: Option<&str>,
 ) -> String {
     let mut out = String::new();
@@ -895,16 +1344,20 @@ pub fn assemble_tex(
 
     out.push_str("\\begin{Leftside}\n");
     out.push_str("\\beginnumbering\n");
-    for para in left_paragraphs {
-        out.push_str(&format!("\\pstart\n{para}\n\\pend\n"));
+    for (text, para_start) in left_chunks {
+        if *para_start {
+            out.push_str(&format!("\\pstart\n{text}\n\\pend\n"));
+        } else {
+            out.push_str(&format!("\\pstart\n\\noindent {text}\n\\pend\n"));
+        }
     }
     out.push_str("\\endnumbering\n");
     out.push_str("\\end{Leftside}\n\n");
 
     out.push_str("\\begin{Rightside}\n");
     out.push_str("\\beginnumbering\n");
-    for para in right_paragraphs {
-        out.push_str(&format!("\\pstart\n{para}\n\\pend\n"));
+    for text in right_chunks {
+        out.push_str(&format!("\\pstart\n{text}\n\\pend\n"));
     }
     out.push_str("\\endnumbering\n");
     out.push_str("\\end{Rightside}\n");
@@ -961,6 +1414,12 @@ pub async fn export_critical_edition(
             _ => None,
         });
 
+    let doc_lang = crate::annotation::lang::effective_lang(
+        None,
+        frontmatter_lang.as_deref(),
+        Some("en"),
+    );
+
     let scopes: Vec<Option<ScopeRange>> = annotations
         .iter()
         .map(|ann| {
@@ -976,15 +1435,9 @@ pub async fn export_critical_edition(
         })
         .collect();
 
-    let transform = transform_document(&content, &annotations, &scopes, &routing);
+    let transform = transform_document(&content, &annotations, &scopes, &routing, &doc_lang);
 
-    let body_paragraphs = split_paragraphs(&transform.body);
-    let para_texts: Vec<String> = body_paragraphs
-        .iter()
-        .map(|p| transform.body[p.start..p.end].to_string())
-        .collect();
-
-    let attached = attach_notes_to_paragraphs(&transform.right_notes, &body_paragraphs);
+    let attached = attach_notes_to_chunks(&transform.right_notes, &transform.chunk_spans);
 
     let fn_bodies: Vec<String> = transform
         .footnotes
@@ -998,6 +1451,8 @@ pub async fn export_critical_edition(
         .map(|rn| rn.body_md.clone())
         .collect();
 
+    let lemma_bodies: Vec<String> = transform.lemma_excerpts.clone();
+
     let sentinel = format!("{}SENT{}", transform.nonce, transform.nonce);
 
     let fm_owned = if content.starts_with("---") {
@@ -1007,15 +1462,19 @@ pub async fn export_critical_edition(
         None
     };
 
-    let para_refs: Vec<&str> = para_texts.iter().map(|s| s.as_str()).collect();
+    let chunk_texts: Vec<String> = transform.chunks.iter().map(|c| c.text.clone()).collect();
+    let chunk_para_starts: Vec<bool> = transform.chunks.iter().map(|c| c.para_start).collect();
+    let chunk_refs: Vec<&str> = chunk_texts.iter().map(|s| s.as_str()).collect();
     let mut all_note_refs: Vec<&str> = fn_bodies.iter().map(|s| s.as_str()).collect();
     for b in &right_note_bodies {
         all_note_refs.push(b.as_str());
     }
+    let lemma_refs: Vec<&str> = lemma_bodies.iter().map(|s| s.as_str()).collect();
     let pandoc_input = build_pandoc_input(
         fm_owned.as_deref(),
-        &para_refs,
+        &chunk_refs,
         &all_note_refs,
+        &lemma_refs,
         &sentinel,
     );
 
@@ -1076,10 +1535,12 @@ pub async fn export_critical_edition(
     let nonce = transform.nonce.clone();
     let footnotes = transform.footnotes.clone();
     let marks = transform.marks.clone();
-    let n_para_texts = para_texts.len();
+    let n_right_notes = transform.right_notes.len();
+    let n_chunk_texts = chunk_texts.len();
     let n_fn_bodies = fn_bodies.len();
     let n_right_note_bodies = right_note_bodies.len();
     let n_all_notes = n_fn_bodies + n_right_note_bodies;
+    let n_lemmas = lemma_bodies.len();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _ = win.emit(
@@ -1138,28 +1599,38 @@ pub async fn export_critical_edition(
         let split = split_pandoc_output(
             &latex_output,
             &sentinel,
-            n_para_texts,
+            n_chunk_texts,
             n_all_notes,
+            n_lemmas,
         );
 
-        let fn_notes_latex: Vec<String> = split.notes[..n_fn_bodies].to_vec();
-        let right_notes_latex: Vec<String> = split.notes[n_fn_bodies..].to_vec();
+        let fn_notes_latex: Vec<String> = split.notes[..n_fn_bodies.min(split.notes.len())].to_vec();
+        let right_notes_latex: Vec<String> = if split.notes.len() > n_fn_bodies {
+            split.notes[n_fn_bodies..].to_vec()
+        } else {
+            Vec::new()
+        };
 
-        let left_paragraphs: Vec<String> = split
+        // Substitution order: footnotes, marks, then labels.
+        let left_chunks: Vec<(String, bool)> = split
             .paragraphs
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
                 let p = substitute_footnote_placeholders(
                     p,
                     &nonce,
                     &footnotes,
                     &fn_notes_latex,
                 );
-                substitute_mark_placeholders(&p, &nonce, &marks)
+                let p = substitute_mark_placeholders(&p, &nonce, &marks);
+                let p = substitute_label_placeholders(&p, &nonce, n_right_notes);
+                let para_start = chunk_para_starts.get(i).copied().unwrap_or(true);
+                (p, para_start)
             })
             .collect();
 
-        // Populate body_latex on attached notes
+        // Populate body_latex and lemma_latex on attached notes.
         let attached_with_latex: Vec<AttachedNote> = attached
             .into_iter()
             .enumerate()
@@ -1167,33 +1638,31 @@ pub async fn export_critical_edition(
                 if i < right_notes_latex.len() {
                     a.body_latex = Some(right_notes_latex[i].clone());
                 }
+                if i < split.lemmas.len() {
+                    let lemma = split.lemmas[i].trim();
+                    if !lemma.is_empty() {
+                        a.lemma_latex = Some(lemma.to_string());
+                    }
+                }
                 a
             })
             .collect();
 
-        // Build right-page paragraphs
-        let n_paras = left_paragraphs.len();
-        let mut right_paragraphs: Vec<String> = (0..n_paras)
-            .map(|pi| {
-                let notes_for_para: Vec<AttachedNote> = attached_with_latex
+        // Build right-page chunks (one per left chunk).
+        let n_chunks = left_chunks.len();
+        let mut right_chunks: Vec<String> = (0..n_chunks)
+            .map(|ci| {
+                let notes_for_chunk: Vec<AttachedNote> = attached_with_latex
                     .iter()
-                    .filter(|a| a.paragraph_index == pi)
-                    .map(|a| AttachedNote {
-                        paragraph_index: a.paragraph_index,
-                        span_prefix: a.span_prefix.clone(),
-                        annotation_type: a.annotation_type.clone(),
-                        certainty: a.certainty.clone(),
-                        body_md: a.body_md.clone(),
-                        body_latex: a.body_latex.clone(),
-                    })
+                    .filter(|a| a.chunk_index == ci)
+                    .cloned()
                     .collect();
-                render_right_page_notes(&notes_for_para)
+                render_right_page_notes(&notes_for_chunk, line_numbers)
             })
             .collect();
 
-        // Pad to equal lengths
-        while right_paragraphs.len() < left_paragraphs.len() {
-            right_paragraphs.push("~".to_string());
+        while right_chunks.len() < left_chunks.len() {
+            right_chunks.push("~".to_string());
         }
 
         let extra_preamble = academic_export::resolve_preamble("latex", resource_dir.as_deref())
@@ -1207,8 +1676,8 @@ pub async fn export_critical_edition(
 
         let tex = assemble_tex(
             &preamble,
-            &left_paragraphs,
-            &right_paragraphs,
+            &left_chunks,
+            &right_chunks,
             split.bibliography.as_deref(),
         );
 
@@ -1277,6 +1746,235 @@ mod tests {
             mark: mark.map(|s| s.to_string()),
             lang: None,
         }
+    }
+
+    // --- Cycle 1: lemma excerpts ---
+
+    #[test]
+    fn lemma_excerpt_plain() {
+        let body = "Hello world, this is fine.";
+        let s = lemma_excerpt(body, &ScopeRange { start: 0, end: 11 });
+        assert_eq!(s, "Hello world");
+    }
+
+    #[test]
+    fn lemma_excerpt_truncates_latin_at_word_boundary() {
+        let body = "The quick brown fox jumps over the lazy dog and then some more words here.";
+        let s = lemma_excerpt(body, &ScopeRange { start: 0, end: body.len() });
+        assert!(s.ends_with('…'), "got {s:?}");
+        assert!(!s.contains("more words"), "should be truncated: {s:?}");
+        // Must not end mid-word (ellipsis follows a full word).
+        let without = s.trim_end_matches('…');
+        assert!(!without.ends_with(|c: char| c.is_ascii_alphabetic() && without.chars().count() == LEMMA_MAX_CHARS),
+            "unexpected: {s:?}");
+        assert!(without.chars().count() <= LEMMA_MAX_CHARS);
+    }
+
+    #[test]
+    fn lemma_excerpt_truncates_cjk_at_char_boundary() {
+        // 50 CJK chars
+        let body: String = "仁".repeat(50);
+        let s = lemma_excerpt(&body, &ScopeRange { start: 0, end: body.len() });
+        assert!(s.ends_with('…'));
+        let without = s.trim_end_matches('…');
+        assert_eq!(without.chars().count(), LEMMA_MAX_CHARS);
+        // Must be valid UTF-8 / only full chars.
+        assert!(without.chars().all(|c| c == '仁'));
+    }
+
+    #[test]
+    fn lemma_excerpt_empty_range() {
+        let body = "Hello world";
+        assert_eq!(lemma_excerpt(body, &ScopeRange { start: 5, end: 5 }), "");
+    }
+
+    #[test]
+    fn lemma_excerpt_preserves_markdown() {
+        let body = "See *emphasis* and **bold** here.";
+        let s = lemma_excerpt(body, &ScopeRange { start: 0, end: body.len() });
+        assert!(s.contains("*emphasis*"));
+        assert!(s.contains("**bold**"));
+    }
+
+    // --- Cycle 2: chunking ---
+
+    #[test]
+    fn chunk_spans_short_paragraph_single() {
+        let body = "Hello world. Short.";
+        let paras = split_paragraphs(body);
+        let spans = chunk_spans(body, &paras, &[], &[], "en", MAX_CHUNK_WIDTH);
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].para_start);
+        assert_eq!(spans[0].start, 0);
+        assert_eq!(spans[0].end, body.len());
+    }
+
+    #[test]
+    fn chunk_spans_long_paragraph_splits_at_sentences() {
+        // Many short sentences so width cap forces splits at sentence boundaries.
+        let sent = "This is a short sentence. ";
+        let body = sent.repeat(40); // well over 400 width
+        let paras = split_paragraphs(&body);
+        let spans = chunk_spans(&body, &paras, &[], &[], "en", MAX_CHUNK_WIDTH);
+        assert!(spans.len() > 1, "expected multiple chunks, got {}", spans.len());
+        assert!(spans[0].para_start);
+        assert!(!spans[1].para_start);
+        // Spans tile the paragraph exactly.
+        assert_eq!(spans[0].start, paras[0].start);
+        assert_eq!(spans.last().unwrap().end, paras[0].end);
+        for w in spans.windows(2) {
+            assert_eq!(w[0].end, w[1].start);
+        }
+    }
+
+    #[test]
+    fn chunk_spans_anchored_sentence_starts_chunk() {
+        let body = "First sentence here. Second sentence here. Third sentence here.";
+        let paras = split_paragraphs(body);
+        // Anchor inside "Second sentence here."
+        let anchor = body.find("Second").unwrap();
+        let spans = chunk_spans(body, &paras, &[anchor], &[], "en", MAX_CHUNK_WIDTH);
+        assert!(spans.len() >= 2, "got {} spans", spans.len());
+        // Some chunk should start at the second sentence.
+        assert!(
+            spans.iter().any(|s| s.start == anchor || body[s.start..].starts_with("Second")),
+            "spans: {:?}", spans
+        );
+    }
+
+    #[test]
+    fn chunk_spans_two_anchors_adjacent_sentences() {
+        let body = "Alpha sentence one. Beta sentence two. Gamma sentence three.";
+        let paras = split_paragraphs(body);
+        let a1 = body.find("Alpha").unwrap();
+        let a2 = body.find("Beta").unwrap();
+        let spans = chunk_spans(body, &paras, &[a1, a2], &[], "en", MAX_CHUNK_WIDTH);
+        // At least two chunks: one starting at Alpha, one at Beta.
+        assert!(spans.len() >= 2);
+        let starts: Vec<&str> = spans.iter().map(|s| body[s.start..].split_whitespace().next().unwrap_or("")).collect();
+        assert!(starts.iter().any(|s| *s == "Alpha"), "starts={starts:?}");
+        assert!(starts.iter().any(|s| *s == "Beta"), "starts={starts:?}");
+    }
+
+    #[test]
+    fn chunk_spans_cjk_splits_at_ideographic_full_stop() {
+        let body = "这是第一句话。这是第二句话。这是第三句话。";
+        let paras = split_paragraphs(body);
+        let spans = chunk_spans(body, &paras, &[], &[], "zh", 10); // tiny width forces splits
+        assert!(spans.len() > 1, "expected CJK split, got {} spans", spans.len());
+        for w in spans.windows(2) {
+            assert_eq!(w[0].end, w[1].start);
+        }
+    }
+
+    #[test]
+    fn chunk_spans_heading_never_splits() {
+        let body = "# A Very Long Heading That Would Exceed Any Reasonable Width Cap If Split";
+        let paras = split_paragraphs(body);
+        let spans = chunk_spans(body, &paras, &[], &[], "en", 10);
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].para_start);
+    }
+
+    #[test]
+    fn chunk_spans_list_never_splits() {
+        let body = "- item one that is quite long and would split if it were prose content here";
+        let paras = split_paragraphs(body);
+        let spans = chunk_spans(body, &paras, &[], &[], "en", 10);
+        assert_eq!(spans.len(), 1);
+    }
+
+    #[test]
+    fn chunk_spans_never_splits_injection_range() {
+        let body = "First sentence here. Second sentence here. Third sentence here.";
+        let paras = split_paragraphs(body);
+        // Injection covering the boundary between first and second sentence.
+        let boundary = body.find("Second").unwrap();
+        let inj = vec![(boundary - 5, boundary + 5)];
+        let spans = chunk_spans(body, &paras, &[boundary], &inj, "en", MAX_CHUNK_WIDTH);
+        for s in &spans {
+            assert!(
+                !inj.iter().any(|&(a, b)| s.start > a && s.start < b),
+                "chunk start {} landed inside injection {:?}", s.start, inj
+            );
+        }
+    }
+
+    // --- Cycle 4: label substitution ---
+
+    #[test]
+    fn substitute_label_placeholders_replaces() {
+        let nonce = "XTEST";
+        let text = format!("ab {nonce}LB0{nonce} cd {nonce}LB1{nonce} ef");
+        let out = substitute_label_placeholders(&text, nonce, 2);
+        assert_eq!(out, "ab \\edlabel{lit:0} cd \\edlabel{lit:1} ef");
+    }
+
+    #[test]
+    fn substitute_label_placeholders_noop_when_absent() {
+        let out = substitute_label_placeholders("no labels here", "XTEST", 3);
+        assert_eq!(out, "no labels here");
+    }
+
+    // --- Cycle 3: label injections in transform ---
+
+    #[test]
+    fn transform_right_note_injects_label_placeholder() {
+        let content = "Hello world. <!--- n | This is a note. ---> More text.";
+        let ann = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Sentence(1),
+            Some("This is a note."),
+            13,
+            43,
+            None,
+        );
+        let scope = Some(ScopeRange { start: 0, end: 12 });
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
+        assert_eq!(result.right_notes.len(), 1);
+        let nonce = &result.nonce;
+        let body = result.body();
+        let lb = format!("{nonce}LB0{nonce}");
+        assert_eq!(body.matches(&lb).count(), 1, "exactly one label placeholder");
+        // Label at scope start ("Hello world.")
+        assert!(body.starts_with(&lb) || body.contains(&format!("{lb}Hello")),
+            "label should be at scope start, body={body:?}");
+        assert_eq!(result.lemma_excerpts.len(), 1);
+        assert!(result.lemma_excerpts[0].contains("Hello world"));
+        assert!(!result.chunks.is_empty());
+        assert!(result.chunks[0].para_start);
+    }
+
+    #[test]
+    fn transform_label_sorts_before_open_at_same_pos() {
+        // Right note and footnote sharing the same scope start: label before FO.
+        let content = "Hello world. <!--- n | Note. ---> <!--- app | App. --->";
+        let n_start = content.find("<!--- n").unwrap();
+        let n_end = content.find("Note. --->").unwrap() + "Note. --->".len();
+        let a_start = content.find("<!--- app").unwrap();
+        let a_end = content.len();
+        let ann_n = make_annotation(
+            AnnotationType::Note, Certainty::Neutral, Scope::Words(1),
+            Some("Note."), n_start, n_end, None,
+        );
+        let ann_a = make_annotation(
+            AnnotationType::Apparatus, Certainty::Neutral, Scope::Words(1),
+            Some("App."), a_start, a_end, None,
+        );
+        // Both scope to "Hello" [0,5)
+        let scopes = vec![
+            Some(ScopeRange { start: 0, end: 5 }),
+            Some(ScopeRange { start: 0, end: 5 }),
+        ];
+        let result = transform_document(content, &[ann_n, ann_a], &scopes, &default_routing(), "en");
+        let nonce = &result.nonce;
+        let body = result.body();
+        let lb = format!("{nonce}LB0{nonce}");
+        let fo = format!("{nonce}FO0{nonce}");
+        let pos_lb = body.find(&lb).expect("label");
+        let pos_fo = body.find(&fo).expect("footnote open");
+        assert!(pos_lb < pos_fo, "label should sort before open: body={body:?}");
     }
 
     // --- Cycle A1: routing defaults ---
@@ -1377,7 +2075,7 @@ mod tests {
             None,
         );
         let scope = Some(ScopeRange { start: 0, end: 12 });
-        let result = transform_document(content, &[ann], &[scope], &default_routing());
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
         assert_eq!(result.right_notes.len(), 1);
         assert_eq!(result.right_notes[0].annotation_type, "bare");
         assert_eq!(result.right_notes[0].body_md, "Bare note.");
@@ -1398,11 +2096,11 @@ mod tests {
             None,
         );
         let scope = Some(ScopeRange { start: 0, end: 12 });
-        let result = transform_document(content, &[ann], &[scope], &default_routing());
-        assert!(!result.body.contains("<!---"));
-        assert!(!result.body.contains("--->"));
-        assert!(result.body.contains("Hello world."));
-        assert!(result.body.contains("More text."));
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
+        assert!(!result.body().contains("<!---"));
+        assert!(!result.body().contains("--->"));
+        assert!(result.body().contains("Hello world."));
+        assert!(result.body().contains("More text."));
         assert!(result.footnotes.is_empty());
         assert_eq!(result.right_notes.len(), 1);
     }
@@ -1424,12 +2122,12 @@ mod tests {
             None,
         );
         let scope = Some(ScopeRange { start: 6, end: 11 });
-        let result = transform_document(content, &[ann], &[scope], &default_routing());
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
         assert_eq!(result.footnotes.len(), 1);
         assert_eq!(result.footnotes[0].route, Route::AFootnote);
         let nonce = &result.nonce;
-        assert!(result.body.contains(&format!("{nonce}FO0{nonce}")));
-        assert!(result.body.contains(&format!("{nonce}FC0{nonce}")));
+        assert!(result.body().contains(&format!("{nonce}FO0{nonce}")));
+        assert!(result.body().contains(&format!("{nonce}FC0{nonce}")));
     }
 
     // --- Cycle A5: nesting allowed, overlap degrades ---
@@ -1464,7 +2162,7 @@ mod tests {
             Some(ScopeRange { start: 0, end: 26 }),
             Some(ScopeRange { start: 4, end: 9 }),
         ];
-        let result = transform_document(content, &[ann_outer, ann_inner], &scopes, &default_routing());
+        let result = transform_document(content, &[ann_outer, ann_inner], &scopes, &default_routing(), "en");
         assert_eq!(result.footnotes.len(), 2);
 
         let nonce = &result.nonce;
@@ -1473,15 +2171,15 @@ mod tests {
         let fo1 = format!("{nonce}FO1{nonce}");
         let fc1 = format!("{nonce}FC1{nonce}");
         // All four placeholders must appear intact in the body
-        assert!(result.body.contains(&fo0), "FO0 missing");
-        assert!(result.body.contains(&fc0), "FC0 missing");
-        assert!(result.body.contains(&fo1), "FO1 missing");
-        assert!(result.body.contains(&fc1), "FC1 missing");
+        assert!(result.body().contains(&fo0), "FO0 missing");
+        assert!(result.body().contains(&fc0), "FC0 missing");
+        assert!(result.body().contains(&fo1), "FO1 missing");
+        assert!(result.body().contains(&fc1), "FC1 missing");
         // Nesting order: FO0 < FO1 < FC1 < FC0
-        let pos_fo0 = result.body.find(&fo0).unwrap();
-        let pos_fo1 = result.body.find(&fo1).unwrap();
-        let pos_fc1 = result.body.find(&fc1).unwrap();
-        let pos_fc0 = result.body.find(&fc0).unwrap();
+        let pos_fo0 = result.body().find(&fo0).unwrap();
+        let pos_fo1 = result.body().find(&fo1).unwrap();
+        let pos_fc1 = result.body().find(&fc1).unwrap();
+        let pos_fc0 = result.body().find(&fc0).unwrap();
         assert!(pos_fo0 < pos_fo1, "FO0 should come before FO1");
         assert!(pos_fo1 < pos_fc1, "FO1 should come before FC1");
         assert!(pos_fc1 < pos_fc0, "FC1 should come before FC0");
@@ -1516,7 +2214,7 @@ mod tests {
             Some(ScopeRange { start: 0, end: 4 }),
             Some(ScopeRange { start: 2, end: 6 }),
         ];
-        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing());
+        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing(), "en");
         assert_eq!(result.footnotes.len(), 1);
         assert_eq!(result.right_notes.len(), 1);
     }
@@ -1553,7 +2251,7 @@ mod tests {
             Some(ScopeRange { start: 0, end: 4 }),
             Some(ScopeRange { start: 2, end: 6 }),
         ];
-        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing());
+        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing(), "en");
         assert_eq!(result.footnotes.len(), 1, "footnote should stay");
         assert!(result.marks.is_empty(), "mark should be skipped due to partial overlap");
     }
@@ -1588,7 +2286,7 @@ mod tests {
             Some(ScopeRange { start: 0, end: 4 }),
             Some(ScopeRange { start: 2, end: 6 }),
         ];
-        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing());
+        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing(), "en");
         assert_eq!(result.marks.len(), 1, "mark should stay");
         assert!(result.footnotes.is_empty(), "footnote should degrade");
         assert_eq!(result.right_notes.len(), 1, "footnote degraded to right note");
@@ -1611,7 +2309,7 @@ mod tests {
             None,
         );
         let scope = Some(ScopeRange { start: 0, end: 35 });
-        let result = transform_document(content, &[ann], &[scope], &default_routing());
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
         assert!(result.footnotes.is_empty());
         assert_eq!(result.right_notes.len(), 1);
     }
@@ -1631,7 +2329,7 @@ mod tests {
             Some("hi"),
         );
         let scope = Some(ScopeRange { start: 0, end: 35 });
-        let result = transform_document(content, &[ann], &[scope], &default_routing());
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
         assert!(result.marks.is_empty());
     }
 
@@ -1652,12 +2350,12 @@ mod tests {
             Some("hi"),
         );
         let scope = Some(ScopeRange { start: 6, end: 11 });
-        let result = transform_document(content, &[ann], &[scope], &default_routing());
+        let result = transform_document(content, &[ann], &[scope], &default_routing(), "en");
         assert_eq!(result.marks.len(), 1);
         assert_eq!(result.marks[0].code, "hi");
         let nonce = &result.nonce;
-        assert!(result.body.contains(&format!("{nonce}MO0{nonce}")));
-        assert!(result.body.contains(&format!("{nonce}MC0{nonce}")));
+        assert!(result.body().contains(&format!("{nonce}MO0{nonce}")));
+        assert!(result.body().contains(&format!("{nonce}MC0{nonce}")));
     }
 
     // --- Cycle A8: paragraph split + frontmatter skip ---
@@ -1696,58 +2394,76 @@ mod tests {
         );
     }
 
-    // --- Cycle A9: note-to-paragraph attachment ---
+    // --- Cycle A9: note-to-chunk attachment ---
 
     #[test]
-    fn attach_notes_single_paragraph() {
-        let paras = vec![
-            ParagraphSpan {
-                index: 0,
-                start: 0,
-                end: 16,
-            },
-            ParagraphSpan {
-                index: 1,
-                start: 18,
-                end: 35,
-            },
+    fn attach_notes_scope_start_inside_chunk() {
+        let chunks = vec![
+            ChunkSpan { start: 0, end: 16, para_start: true },
+            ChunkSpan { start: 16, end: 35, para_start: false },
         ];
         let notes = vec![RightNote {
+            note_index: 0,
             annotation_type: "n".into(),
             certainty: Certainty::Neutral,
             body_md: "A note.".into(),
             scope_range: ScopeRange { start: 5, end: 10 },
         }];
-        let attached = attach_notes_to_paragraphs(&notes, &paras);
+        let attached = attach_notes_to_chunks(&notes, &chunks);
         assert_eq!(attached.len(), 1);
-        assert_eq!(attached[0].paragraph_index, 0);
-        assert!(attached[0].span_prefix.is_none());
+        assert_eq!(attached[0].chunk_index, 0);
+        assert_eq!(attached[0].note_index, 0);
     }
 
     #[test]
-    fn attach_notes_multi_paragraph_scope() {
-        let paras = vec![
-            ParagraphSpan {
-                index: 0,
-                start: 0,
-                end: 16,
-            },
-            ParagraphSpan {
-                index: 1,
-                start: 18,
-                end: 35,
-            },
+    fn attach_notes_second_chunk() {
+        let chunks = vec![
+            ChunkSpan { start: 0, end: 16, para_start: true },
+            ChunkSpan { start: 16, end: 35, para_start: false },
         ];
         let notes = vec![RightNote {
+            note_index: 0,
             annotation_type: "n".into(),
             certainty: Certainty::Neutral,
             body_md: "A note.".into(),
-            scope_range: ScopeRange { start: 5, end: 30 },
+            scope_range: ScopeRange { start: 20, end: 30 },
         }];
-        let attached = attach_notes_to_paragraphs(&notes, &paras);
-        assert_eq!(attached.len(), 1);
-        assert_eq!(attached[0].paragraph_index, 0);
-        assert_eq!(attached[0].span_prefix.as_deref(), Some("(paras 1-2)"));
+        let attached = attach_notes_to_chunks(&notes, &chunks);
+        assert_eq!(attached[0].chunk_index, 1);
+    }
+
+    #[test]
+    fn attach_notes_empty_range_by_position() {
+        let chunks = vec![
+            ChunkSpan { start: 0, end: 16, para_start: true },
+            ChunkSpan { start: 16, end: 35, para_start: false },
+        ];
+        let notes = vec![RightNote {
+            note_index: 0,
+            annotation_type: "n".into(),
+            certainty: Certainty::Neutral,
+            body_md: "Orphan.".into(),
+            scope_range: ScopeRange { start: 18, end: 18 },
+        }];
+        let attached = attach_notes_to_chunks(&notes, &chunks);
+        assert_eq!(attached[0].chunk_index, 1);
+    }
+
+    #[test]
+    fn attach_notes_out_of_range_falls_back_to_last() {
+        let chunks = vec![
+            ChunkSpan { start: 0, end: 16, para_start: true },
+            ChunkSpan { start: 16, end: 35, para_start: false },
+        ];
+        let notes = vec![RightNote {
+            note_index: 0,
+            annotation_type: "n".into(),
+            certainty: Certainty::Neutral,
+            body_md: "Far.".into(),
+            scope_range: ScopeRange { start: 999, end: 999 },
+        }];
+        let attached = attach_notes_to_chunks(&notes, &chunks);
+        assert_eq!(attached[0].chunk_index, 1);
     }
 
     // --- Cycle 13: scope-resolution failure fallback ---
@@ -1767,19 +2483,19 @@ mod tests {
             None,
         );
         let scopes = vec![None]; // scope resolution failed
-        let result = transform_document(content, &[ann], &scopes, &default_routing());
+        let result = transform_document(content, &[ann], &scopes, &default_routing(), "en");
         assert_eq!(result.right_notes.len(), 1, "should surface as right note");
         assert_eq!(result.right_notes[0].body_md, "Orphan note.");
     }
 
-    // --- Cycle 12: paragraph attachment on transformed coordinates ---
+    // --- Cycle 12: chunk attachment on transformed coordinates ---
 
     #[test]
     fn attach_notes_uses_transformed_coordinates() {
         // A block-form annotation sits between two prose paragraphs, occupying
         // its own paragraph in the original. After transform, it's deleted.
-        // A right note scoped to the 2nd prose paragraph (original index 2)
-        // must attach to transformed paragraph index 1.
+        // A right note scoped to the 2nd prose paragraph must attach to a later
+        // chunk (not the first).
         let content = "First paragraph.\n\n<!--- n | Block note. --->\n\nSecond paragraph.";
         let ann = make_annotation(
             AnnotationType::Note,
@@ -1803,21 +2519,17 @@ mod tests {
         let scope1 = Some(ScopeRange { start: 0, end: 16 }); // "First paragraph."
         let scope2 = Some(ScopeRange { start: 49, end: 66 }); // "Second paragraph."
         let routing = default_routing();
-        let result = transform_document(content, &[ann, ann2], &[scope1, scope2], &routing);
+        let result = transform_document(content, &[ann, ann2], &[scope1, scope2], &routing, "en");
 
-        // In the transformed body, annotation is deleted, so "Second paragraph."
-        // becomes paragraph index 1 (not 2)
-        let body_paras = split_paragraphs(&result.body);
-        assert_eq!(body_paras.len(), 2, "should have 2 paragraphs after stripping block annotation");
+        assert!(result.chunks.len() >= 2, "should have >=2 chunks after stripping block annotation");
 
-        // Attach using transformed paragraphs
-        let attached = attach_notes_to_paragraphs(&result.right_notes, &body_paras);
+        let attached = attach_notes_to_chunks(&result.right_notes, &result.chunk_spans);
         assert!(!attached.is_empty(), "should have at least one attached note");
-        // The note about "Second paragraph" should be at transformed index 1
         let second_note = attached.iter().find(|a| a.body_md == "About second.");
         assert!(second_note.is_some(), "note about second paragraph should be attached");
-        assert_eq!(second_note.unwrap().paragraph_index, 1,
-            "note should attach to transformed paragraph index 1, not original index 2");
+        assert!(second_note.unwrap().chunk_index >= 1,
+            "note should attach to a chunk after the first (got {})",
+            second_note.unwrap().chunk_index);
     }
 
     // --- Cycle A10: sentinel batch build + split ---
@@ -1829,14 +2541,15 @@ mod tests {
             Some("---\ntitle: T\n---"),
             &["Para one.", "Para two."],
             &["Note body."],
+            &[],
             sentinel,
         );
         assert!(input.contains("---\ntitle: T\n---"));
         assert!(input.contains("Para one."));
         assert!(input.contains("Para two."));
         assert!(input.contains("Note body."));
-        // Sentinels: (n_paras - 1) between paras + n_notes + 1 trailing
-        // = 1 + 1 + 1 = 3. No sentinel between frontmatter and para 0.
+        // Sentinels: (n_chunks - 1) between chunks + n_notes + n_lemmas + 1 trailing
+        // = 1 + 1 + 0 + 1 = 3. No sentinel between frontmatter and chunk 0.
         assert_eq!(input.matches(sentinel).count(), 3);
         // Frontmatter followed by plain \n\n, NOT by sentinel
         let fm_end = input.find("---\ntitle: T\n---").unwrap() + "---\ntitle: T\n---".len();
@@ -1850,9 +2563,43 @@ mod tests {
     }
 
     #[test]
+    fn build_pandoc_input_with_lemmas() {
+        let sentinel = "%%S%%";
+        let input = build_pandoc_input(
+            None,
+            &["Chunk."],
+            &["Note."],
+            &["Lemma text."],
+            sentinel,
+        );
+        // 0 between-chunk + 1 note + 1 lemma + 1 trailing = 3
+        assert_eq!(input.matches(sentinel).count(), 3);
+        assert!(input.contains("Lemma text."));
+    }
+
+    #[test]
+    fn split_pandoc_output_with_lemmas() {
+        let sentinel = "%%S%%";
+        let latex = "chunk%%S%%note%%S%%lemma%%S%%bib";
+        let split = split_pandoc_output(latex, sentinel, 1, 1, 1);
+        assert_eq!(split.paragraphs[0], "chunk");
+        assert_eq!(split.notes[0], "note");
+        assert_eq!(split.lemmas[0], "lemma");
+        assert_eq!(split.bibliography.as_deref(), Some("bib"));
+    }
+
+    #[test]
+    fn split_pandoc_output_lemma_shortfall_pads() {
+        let split = split_pandoc_output("c%%S%%n%%S%%", "%%S%%", 1, 1, 2);
+        assert_eq!(split.lemmas.len(), 2);
+        assert_eq!(split.lemmas[0], "");
+        assert_eq!(split.lemmas[1], "");
+    }
+
+    #[test]
     fn build_pandoc_input_no_fm_has_trailing_sentinel() {
         let sentinel = "%%S%%";
-        let input = build_pandoc_input(None, &["Only para."], &[], sentinel);
+        let input = build_pandoc_input(None, &["Only para."], &[], &[], sentinel);
         // 0 between-para sentinels + 0 note sentinels + 1 trailing = 1
         assert_eq!(input.matches(sentinel).count(), 1);
         assert!(input.ends_with(&format!("\n\n{sentinel}\n\n")));
@@ -1863,7 +2610,7 @@ mod tests {
         let sentinel = "%%S%%";
         let latex =
             "converted para1%%S%%converted para2%%S%%converted note%%S%%bibliography here";
-        let split = split_pandoc_output(latex, sentinel, 2, 1);
+        let split = split_pandoc_output(latex, sentinel, 2, 1, 0);
         assert_eq!(split.paragraphs[0], "converted para1");
         assert_eq!(split.paragraphs[1], "converted para2");
         assert_eq!(split.notes[0], "converted note");
@@ -1872,7 +2619,7 @@ mod tests {
 
     #[test]
     fn split_pandoc_output_no_bibliography() {
-        let split = split_pandoc_output("p1%%S%%p2%%S%%", "%%S%%", 2, 0);
+        let split = split_pandoc_output("p1%%S%%p2%%S%%", "%%S%%", 2, 0, 0);
         assert_eq!(split.paragraphs.len(), 2);
         assert!(split.bibliography.is_none());
     }
@@ -1882,7 +2629,7 @@ mod tests {
         // pandoc consumes frontmatter, so piece 0 is para 0 (not empty)
         let sentinel = "%%S%%";
         let latex = "para one%%S%%para two%%S%%note body%%S%%";
-        let split = split_pandoc_output(latex, sentinel, 2, 1);
+        let split = split_pandoc_output(latex, sentinel, 2, 1, 0);
         assert_eq!(split.paragraphs[0], "para one");
         assert_eq!(split.paragraphs[1], "para two");
         assert_eq!(split.notes[0], "note body");
@@ -1990,86 +2737,85 @@ mod tests {
 
     // --- Cycle A13: right-page note rendering ---
 
+    fn make_attached(
+        note_index: usize,
+        ann_type: &str,
+        certainty: Certainty,
+        body: &str,
+        lemma: Option<&str>,
+    ) -> AttachedNote {
+        AttachedNote {
+            chunk_index: 0,
+            note_index,
+            annotation_type: ann_type.into(),
+            certainty,
+            body_md: body.into(),
+            body_latex: None,
+            lemma_latex: lemma.map(|s| s.into()),
+        }
+    }
+
     #[test]
     fn render_right_notes_single() {
-        let notes = vec![AttachedNote {
-            paragraph_index: 0,
-            span_prefix: None,
-            annotation_type: "n".into(),
-            certainty: Certainty::Neutral,
-            body_md: "A note body.".into(),
-            body_latex: None,
-        }];
-        let rendered = render_right_page_notes(&notes);
+        let notes = vec![make_attached(0, "n", Certainty::Neutral, "A note body.", None)];
+        let rendered = render_right_page_notes(&notes, true);
         assert!(rendered.contains("\\textsc{n}"));
         assert!(rendered.contains("A note body."));
+        assert!(rendered.contains("\\textbf{\\edlineref{lit:0}}"));
         assert!(!rendered.contains('?'));
         assert!(!rendered.contains('!'));
     }
 
     #[test]
     fn render_right_notes_with_certainty() {
-        let notes = vec![AttachedNote {
-            paragraph_index: 0,
-            span_prefix: None,
-            annotation_type: "tr".into(),
-            certainty: Certainty::Tentative,
-            body_md: "Translation.".into(),
-            body_latex: None,
-        }];
-        let rendered = render_right_page_notes(&notes);
+        let notes = vec![make_attached(0, "tr", Certainty::Tentative, "Translation.", None)];
+        let rendered = render_right_page_notes(&notes, true);
         assert!(rendered.contains("\\textsc{tr}?"));
     }
 
     #[test]
-    fn render_right_notes_with_span_prefix() {
-        let notes = vec![AttachedNote {
-            paragraph_index: 0,
-            span_prefix: Some("(paras 1-3)".into()),
-            annotation_type: "n".into(),
-            certainty: Certainty::Neutral,
-            body_md: "Multi-para.".into(),
-            body_latex: None,
-        }];
-        let rendered = render_right_page_notes(&notes);
-        assert!(rendered.contains("(paras 1-3) \\textsc{n}"));
+    fn render_right_notes_line_numbers_on_with_lemma() {
+        let notes = vec![make_attached(2, "n", Certainty::Neutral, "Body.", Some("hello world"))];
+        let rendered = render_right_page_notes(&notes, true);
+        assert!(rendered.contains("\\textbf{\\edlineref{lit:2}}"));
+        assert!(rendered.contains("\\emph{hello world}]"));
+        assert!(rendered.contains("\\textsc{n} Body."));
+        assert!(!rendered.contains("(paras"));
+    }
+
+    #[test]
+    fn render_right_notes_line_numbers_off_lemma_only() {
+        let notes = vec![make_attached(2, "n", Certainty::Neutral, "Body.", Some("hello world"))];
+        let rendered = render_right_page_notes(&notes, false);
+        assert!(!rendered.contains("\\edlineref"));
+        assert!(rendered.contains("\\emph{hello world}]"));
+        assert!(rendered.contains("\\textsc{n} Body."));
+    }
+
+    #[test]
+    fn render_right_notes_empty_lemma_omitted() {
+        let notes = vec![make_attached(0, "n", Certainty::Neutral, "Body.", None)];
+        let rendered = render_right_page_notes(&notes, true);
+        assert!(!rendered.contains("\\emph"));
+        assert!(!rendered.contains(']'));
+        assert!(rendered.contains("\\textbf{\\edlineref{lit:0}} \\textsc{n} Body."));
     }
 
     #[test]
     fn render_right_notes_multiple_joined() {
         let notes = vec![
-            AttachedNote {
-                paragraph_index: 0,
-                span_prefix: None,
-                annotation_type: "n".into(),
-                certainty: Certainty::Neutral,
-                body_md: "First.".into(),
-                body_latex: None,
-            },
-            AttachedNote {
-                paragraph_index: 0,
-                span_prefix: None,
-                annotation_type: "tr".into(),
-                certainty: Certainty::Firm,
-                body_md: "Second.".into(),
-                body_latex: None,
-            },
+            make_attached(0, "n", Certainty::Neutral, "First.", None),
+            make_attached(1, "tr", Certainty::Firm, "Second.", None),
         ];
-        let rendered = render_right_page_notes(&notes);
+        let rendered = render_right_page_notes(&notes, true);
         assert!(rendered.contains("\\medskip"));
     }
 
     #[test]
     fn render_right_notes_uses_body_latex() {
-        let notes = vec![AttachedNote {
-            paragraph_index: 0,
-            span_prefix: None,
-            annotation_type: "n".into(),
-            certainty: Certainty::Neutral,
-            body_md: "raw % & _ markdown".into(),
-            body_latex: Some("converted \\% \\& \\_ latex".into()),
-        }];
-        let rendered = render_right_page_notes(&notes);
+        let mut note = make_attached(0, "n", Certainty::Neutral, "raw % & _ markdown", None);
+        note.body_latex = Some("converted \\% \\& \\_ latex".into());
+        let rendered = render_right_page_notes(&[note], true);
         assert!(rendered.contains("converted \\% \\& \\_ latex"),
             "should use body_latex when available");
         assert!(!rendered.contains("raw % & _ markdown"),
@@ -2078,7 +2824,7 @@ mod tests {
 
     #[test]
     fn render_right_notes_empty() {
-        assert_eq!(render_right_page_notes(&[]), "~");
+        assert_eq!(render_right_page_notes(&[], true), "~");
     }
 
     // --- Cycle A14: preamble ---
@@ -2227,14 +2973,14 @@ mod tests {
             extra_preamble: None,
         });
         let left = vec![
-            "Body paragraph one.".to_string(),
-            "Body paragraph two.".to_string(),
-            "Body paragraph three.".to_string(),
+            ("\\edlabel{lit:0}Body chunk one.".to_string(), true),
+            ("Body chunk two continuation.".to_string(), false),
+            ("Body chunk three.".to_string(), true),
         ];
         let right = vec![
-            "\\textsc{n} A note about para 1.".to_string(),
+            "\\textbf{\\edlineref{lit:0}} \\emph{Body}] \\textsc{n} A note.".to_string(),
             "~".to_string(),
-            "\\textsc{tr}? Translation of para 3.".to_string(),
+            "\\textsc{tr}? Translation.".to_string(),
         ];
         let tex = assemble_tex(&preamble, &left, &right, Some("\\printbibliography"));
 
@@ -2249,7 +2995,12 @@ mod tests {
         assert!(tex.contains("\\endnumbering"));
         // 3 pstarts on each side = 6 total
         assert_eq!(tex.matches("\\pstart").count(), 6);
-        // Empty right paragraph
+        // Continuation chunk gets \\noindent
+        assert!(tex.contains("\\noindent Body chunk two continuation."));
+        // Labels / linerefs present
+        assert!(tex.contains("\\edlabel{lit:0}"));
+        assert!(tex.contains("\\edlineref{lit:0}"));
+        // Empty right chunk
         assert!(tex.contains("~"));
         // Bibliography after \\Pages
         let pages_pos = tex.find("\\Pages").unwrap();
@@ -2340,7 +3091,7 @@ mod tests {
         let fm = "---\ntitle: Test\n---";
         let paras = &["First paragraph.", "Second paragraph."];
         let notes = &["A note body."];
-        let input = build_pandoc_input(Some(fm), paras, notes, sentinel);
+        let input = build_pandoc_input(Some(fm), paras, notes, &[], sentinel);
 
         let mut child = Command::new(&pandoc)
             .args(["-f", "markdown", "-t", "latex"])
@@ -2359,7 +3110,7 @@ mod tests {
         assert!(output.status.success(), "pandoc failed: {}", String::from_utf8_lossy(&output.stderr));
 
         let latex = String::from_utf8_lossy(&output.stdout).to_string();
-        let split = split_pandoc_output(&latex, sentinel, 2, 1);
+        let split = split_pandoc_output(&latex, sentinel, 2, 1, 0);
 
         assert_eq!(split.paragraphs.len(), 2, "expected 2 paragraphs");
         assert_eq!(split.notes.len(), 1, "expected 1 note");
@@ -2367,6 +3118,240 @@ mod tests {
         assert!(!split.paragraphs[0].is_empty(), "para 0 should not be empty");
         assert!(!split.paragraphs[1].is_empty(), "para 1 should not be empty");
         assert!(!split.notes[0].is_empty(), "note 0 should not be empty");
+    }
+
+    // --- Cycle 9: end-to-end acceptance (ignored; needs pandoc/latexmk) ---
+
+    #[test]
+    #[ignore = "requires pandoc (and optionally latexmk) on PATH; run with --ignored"]
+    fn e2e_critical_edition_export_aligns_chunks() {
+        let pandoc = match academic_export::find_in_path("pandoc") {
+            Some(p) => p,
+            None => {
+                eprintln!("SKIP: pandoc not found on PATH");
+                return;
+            }
+        };
+
+        // Fixture: frontmatter + page-spanning prose + 6 right notes + apparatus + CJK.
+        let mut sentences = Vec::new();
+        for i in 1..=30 {
+            sentences.push(format!(
+                "This is sentence number {i} of a long English paragraph designed to span pages."
+            ));
+        }
+        let long_para = sentences.join(" ");
+
+        let content = format!(
+            r#"---
+title: E2E Critical Edition
+annotation-lang: en
+---
+
+{long_para}
+
+仁学是中国近代的重要著作。它提出了平等的思想。这是第三句。
+
+A short trailing paragraph.
+"#
+        );
+
+        // UTF-16 index helper (annotation/scope offsets are UTF-16 code units).
+        let u16map = build_utf16_to_byte_map(&content);
+        let to_u16 = |byte: usize| -> usize {
+            u16map
+                .iter()
+                .position(|&b| b >= byte)
+                .unwrap_or(u16map.len() - 1)
+        };
+
+        // Build synthetic annotations: 6 right notes on various sentences + 1 apparatus.
+        let mut annotations = Vec::new();
+        let mut scopes = Vec::new();
+
+        // Place right notes at several points in the long paragraph.
+        let targets = [
+            ("sentence number 1 ", "Note on first."),
+            ("sentence number 5 ", "Note on fifth."),
+            ("sentence number 10 ", "Note on tenth."),
+            ("sentence number 15 ", "Note on fifteenth."),
+            ("sentence number 20 ", "Note on twentieth."),
+            ("sentence number 25 ", "Note on twenty-fifth."),
+        ];
+        for (needle, body) in targets {
+            let start = content.find(needle).expect(needle);
+            let end = start + needle.len();
+            // Empty deletion (no real marker in the fixture text).
+            annotations.push(make_annotation(
+                AnnotationType::Note,
+                Certainty::Neutral,
+                Scope::Sentence(1),
+                Some(body),
+                to_u16(end),
+                to_u16(end),
+                None,
+            ));
+            scopes.push(Some(ScopeRange {
+                start: to_u16(start),
+                end: to_u16(end),
+            }));
+        }
+
+        // Apparatus footnote on "trailing"
+        let t_start = content.find("trailing").unwrap();
+        let t_end = t_start + "trailing".len();
+        annotations.push(make_annotation(
+            AnnotationType::Apparatus,
+            Certainty::Neutral,
+            Scope::Words(1),
+            Some("Apparatus on trailing."),
+            to_u16(t_end),
+            to_u16(t_end),
+            None,
+        ));
+        scopes.push(Some(ScopeRange {
+            start: to_u16(t_start),
+            end: to_u16(t_end),
+        }));
+
+        // CJK right note
+        let cjk_start = content.find("仁学").unwrap();
+        let cjk_end = cjk_start + "仁学".len();
+        annotations.push(make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Sentence(1),
+            Some("CJK note."),
+            to_u16(cjk_end),
+            to_u16(cjk_end),
+            None,
+        ));
+        scopes.push(Some(ScopeRange {
+            start: to_u16(cjk_start),
+            end: to_u16(cjk_end),
+        }));
+
+        let result = transform_document(&content, &annotations, &scopes, &default_routing(), "en");
+        assert!(result.chunks.len() > 1, "expected multiple chunks");
+        assert_eq!(result.right_notes.len(), 7, "right_notes={:?}",
+            result.right_notes.iter().map(|r| &r.body_md).collect::<Vec<_>>());
+        assert_eq!(result.footnotes.len(), 1);
+
+        // Every right note got a label placeholder in some chunk.
+        let nonce = &result.nonce;
+        let body = result.body();
+        for i in 0..result.right_notes.len() {
+            let lb = format!("{nonce}LB{i}{nonce}");
+            assert!(body.contains(&lb), "missing label {i}");
+        }
+
+        // Pandoc round-trip of the chunk batch.
+        let chunk_refs: Vec<&str> = result.chunks.iter().map(|c| c.text.as_str()).collect();
+        let fn_bodies: Vec<&str> = result.footnotes.iter().map(|f| f.body_md.as_str()).collect();
+        let rn_bodies: Vec<&str> = result.right_notes.iter().map(|r| r.body_md.as_str()).collect();
+        let mut notes: Vec<&str> = fn_bodies;
+        notes.extend(rn_bodies);
+        let lemmas: Vec<&str> = result.lemma_excerpts.iter().map(|s| s.as_str()).collect();
+        let sentinel = format!("{nonce}SENT{nonce}");
+        let fm = "---\ntitle: E2E Critical Edition\n---";
+        let input = build_pandoc_input(Some(fm), &chunk_refs, &notes, &lemmas, &sentinel);
+
+        let mut child = Command::new(&pandoc)
+            .args(["-f", "markdown", "-t", "latex"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn pandoc");
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(input.as_bytes()).unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "pandoc failed: {}", String::from_utf8_lossy(&output.stderr));
+
+        let latex = String::from_utf8_lossy(&output.stdout).to_string();
+        let split = split_pandoc_output(
+            &latex,
+            &sentinel,
+            result.chunks.len(),
+            notes.len(),
+            lemmas.len(),
+        );
+        assert_eq!(split.paragraphs.len(), result.chunks.len());
+
+        let n_right = result.right_notes.len();
+        let left: Vec<(String, bool)> = split
+            .paragraphs
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let p = substitute_footnote_placeholders(
+                    p,
+                    nonce,
+                    &result.footnotes,
+                    &split.notes[..result.footnotes.len()],
+                );
+                let p = substitute_mark_placeholders(&p, nonce, &result.marks);
+                let p = substitute_label_placeholders(&p, nonce, n_right);
+                (p, result.chunks[i].para_start)
+            })
+            .collect();
+
+        let attached = attach_notes_to_chunks(&result.right_notes, &result.chunk_spans);
+        let right_notes_latex = &split.notes[result.footnotes.len()..];
+        let attached: Vec<AttachedNote> = attached
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut a)| {
+                if i < right_notes_latex.len() {
+                    a.body_latex = Some(right_notes_latex[i].clone());
+                }
+                if i < split.lemmas.len() && !split.lemmas[i].is_empty() {
+                    a.lemma_latex = Some(split.lemmas[i].clone());
+                }
+                a
+            })
+            .collect();
+
+        let right: Vec<String> = (0..left.len())
+            .map(|ci| {
+                let notes: Vec<_> = attached.iter().filter(|a| a.chunk_index == ci).cloned().collect();
+                render_right_page_notes(&notes, true)
+            })
+            .collect();
+
+        let preamble = build_preamble(&PreambleOptions {
+            line_numbers: true,
+            cjk_font: Some("PingFang SC".into()),
+            indic_preamble: None,
+            extra_preamble: None,
+        });
+        let tex = assemble_tex(&preamble, &left, &right, split.bibliography.as_deref());
+        assert_no_residual_nonce(&tex, nonce).unwrap();
+        assert_eq!(tex.matches("\\pstart").count(), left.len() * 2);
+        assert!(tex.contains("\\edlabel{lit:0}"));
+        assert!(tex.contains("\\edlineref{lit:0}"));
+
+        let tmp = std::env::temp_dir().join("lit_ce_e2e");
+        let _ = std::fs::create_dir_all(&tmp);
+        let tex_path = tmp.join("e2e.tex");
+        std::fs::write(&tex_path, &tex).unwrap();
+
+        if academic_export::find_in_path("latexmk").is_some() {
+            let status = Command::new("latexmk")
+                .args([
+                    "-xelatex",
+                    "-interaction=nonstopmode",
+                    "-cd",
+                    tex_path.to_str().unwrap(),
+                ])
+                .status()
+                .expect("run latexmk");
+            assert!(status.success(), "latexmk failed");
+        } else {
+            eprintln!("NOTE: latexmk not on PATH; wrote {} for manual inspection", tex_path.display());
+        }
     }
 
     #[test]
@@ -2386,8 +3371,8 @@ mod tests {
         );
         let scope = Some(ScopeRange { start: 0, end: 5 });
         let routing = [("n".to_string(), Route::Right)].into_iter().collect();
-        let result = transform_document(content, &[ann], &[scope], &routing);
-        assert!(!result.body.is_empty());
+        let result = transform_document(content, &[ann], &[scope], &routing, "en");
+        assert!(!result.body().is_empty());
 
         // Now test with actual CJK content where UTF-16 != byte offsets
         // "\u{4ec1}" is 3 bytes in UTF-8, 1 UTF-16 code unit
@@ -2403,8 +3388,8 @@ mod tests {
             None,
         );
         let scope = Some(ScopeRange { start: 0, end: 2 });
-        let result = transform_document(cjk_content, &[ann], &[scope], &routing);
-        assert!(!result.body.is_empty());
-        assert!(!result.body.contains("{.n"));
+        let result = transform_document(cjk_content, &[ann], &[scope], &routing, "en");
+        assert!(!result.body().is_empty());
+        assert!(!result.body().contains("{.n"));
     }
 }

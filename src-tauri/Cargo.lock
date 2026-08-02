@@ -3281,6 +3281,7 @@ dependencies = [
  "reqwest 0.12.28",
  "research-hub",
  "rusqlite",
+ "sentencex",
  "serde",
  "serde_json",
  "serde_yaml",
