@@ -1,8 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::Read as IoRead;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::{Emitter, Manager};
 
 use crate::annotation::marks::{sorted_mark_codes, MarkConfigCache};
@@ -68,6 +66,7 @@ pub enum Route {
     AFootnote,
     BFootnote,
     Suppress,
+    Parent,
 }
 
 pub fn default_routing() -> HashMap<String, Route> {
@@ -80,6 +79,8 @@ pub fn default_routing() -> HashMap<String, Route> {
     m.insert("todo".into(), Route::Suppress);
     m.insert("llm".into(), Route::Suppress);
     m.insert("th".into(), Route::Suppress);
+    m.insert("bare".into(), Route::Right);
+    m.insert("sn".into(), Route::Parent);
     m
 }
 
@@ -94,6 +95,7 @@ pub fn resolve_routing(overrides: &HashMap<String, String>) -> HashMap<String, R
             "afootnote" => Route::AFootnote,
             "bfootnote" => Route::BFootnote,
             "suppress" => Route::Suppress,
+            "parent" => Route::Parent,
             _ => continue,
         };
         routing.insert(key.clone(), route);
@@ -257,8 +259,7 @@ pub fn transform_document(
 
     let paragraphs = split_paragraphs(content);
 
-    // Track footnote injection ranges for overlap detection
-    let mut fn_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut injection_ranges: Vec<(usize, usize)> = Vec::new();
 
     struct Injection {
         scope_start: usize,
@@ -276,21 +277,42 @@ pub fn transform_document(
     for (i, ann) in annotations.iter().enumerate() {
         deletions.push((ann.char_start, ann.char_end));
 
+        let rk = route_key(ann);
+
         let scope_range = match scopes.get(i) {
             Some(Some(sr)) => sr,
-            _ => continue,
+            _ => {
+                if ann.annotation_type != AnnotationType::Mark {
+                    let route = routing.get(&rk).copied();
+                    if route != Some(Route::Suppress) {
+                        let body_md = ann.body.clone().unwrap_or_default();
+                        right_notes.push(RightNote {
+                            annotation_type: rk,
+                            certainty: ann.certainty.clone(),
+                            body_md,
+                            scope_range: ScopeRange {
+                                start: ann.char_start,
+                                end: ann.char_start,
+                            },
+                        });
+                    }
+                }
+                continue;
+            }
         };
-
-        let rk = route_key(ann);
 
         if ann.annotation_type == AnnotationType::Mark {
             if let Some(code) = &ann.mark {
                 if !crosses_paragraph_boundary(scope_range, &paragraphs) {
+                    if has_partial_overlap(scope_range, &injection_ranges) {
+                        continue;
+                    }
                     let mi = marks.len();
                     marks.push(MarkEntry {
                         index: mi,
                         code: code.clone(),
                     });
+                    injection_ranges.push((scope_range.start, scope_range.end));
                     injections.push(Injection {
                         scope_start: scope_range.start,
                         scope_end: scope_range.end,
@@ -322,7 +344,7 @@ pub fn transform_document(
                 });
                 continue;
             }
-            if has_partial_overlap(scope_range, &fn_ranges) {
+            if has_partial_overlap(scope_range, &injection_ranges) {
                 right_notes.push(RightNote {
                     annotation_type: rk,
                     certainty: ann.certainty.clone(),
@@ -337,7 +359,7 @@ pub fn transform_document(
                 route,
                 body_md,
             });
-            fn_ranges.push((scope_range.start, scope_range.end));
+            injection_ranges.push((scope_range.start, scope_range.end));
             injections.push(Injection {
                 scope_start: scope_range.start,
                 scope_end: scope_range.end,
@@ -353,60 +375,111 @@ pub fn transform_document(
         }
     }
 
-    // Sort deletions by start ascending for offset calculation
     let mut sorted_deletions = deletions.clone();
     sorted_deletions.sort_by_key(|d| d.0);
 
-    // Build the result body: apply deletions first, then injections
-    let mut body = content.to_string();
-
-    // Apply deletions from back to front
-    deletions.sort_by(|a, b| b.0.cmp(&a.0));
-    for (start, end) in &deletions {
-        let s = *start;
-        let e = (*end).min(body.len());
-        body.replace_range(s..e, "");
-    }
-
-    // Adjust injection positions for deletions
-    let adjusted: Vec<(usize, usize, usize)> = injections
-        .iter()
-        .enumerate()
-        .map(|(idx, inj)| {
-            let adj_start = adjust_pos(inj.scope_start, &sorted_deletions);
-            let adj_end = adjust_pos(inj.scope_end, &sorted_deletions);
-            (adj_start, adj_end, idx)
-        })
-        .collect();
-
-    // Sort by adjusted start descending for back-to-front insertion
-    let mut sorted_adj = adjusted;
-    sorted_adj.sort_by(|a, b| b.0.cmp(&a.0));
-
-    for (adj_start, adj_end, idx) in &sorted_adj {
-        let s = *adj_start;
-        let e = (*adj_end).min(body.len());
-        match &injections[*idx].kind {
-            InjectionKind::Footnote { index } => {
-                let close = format!("{nonce}FC{index}{nonce}");
-                let open = format!("{nonce}FO{index}{nonce}");
-                body.insert_str(e, &close);
-                body.insert_str(s, &open);
+    // Build deletion-stripped body and track deleted ranges for position adjustment
+    let mut body_no_del = String::with_capacity(content.len());
+    {
+        let mut prev = 0;
+        let mut sorted_del_asc = deletions.clone();
+        sorted_del_asc.sort_by_key(|d| d.0);
+        for &(s, e) in &sorted_del_asc {
+            let s = s.min(content.len());
+            let e = e.min(content.len());
+            if s > prev {
+                body_no_del.push_str(&content[prev..s]);
             }
-            InjectionKind::Mark { index } => {
-                let close = format!("{nonce}MC{index}{nonce}");
-                let open = format!("{nonce}MO{index}{nonce}");
-                body.insert_str(e, &close);
-                body.insert_str(s, &open);
-            }
+            prev = e;
+        }
+        if prev < content.len() {
+            body_no_del.push_str(&content[prev..]);
         }
     }
+
+    // Collect open/close events at adjusted positions
+    struct Event {
+        pos: usize,
+        scope_start: usize,
+        scope_end: usize,
+        is_open: bool,
+        tag: String,
+    }
+
+    let mut events: Vec<Event> = Vec::new();
+    for inj in &injections {
+        let adj_start = adjust_pos(inj.scope_start, &sorted_deletions);
+        let adj_end = adjust_pos(inj.scope_end, &sorted_deletions);
+        let (open_tag, close_tag) = match &inj.kind {
+            InjectionKind::Footnote { index } => (
+                format!("{nonce}FO{index}{nonce}"),
+                format!("{nonce}FC{index}{nonce}"),
+            ),
+            InjectionKind::Mark { index } => (
+                format!("{nonce}MO{index}{nonce}"),
+                format!("{nonce}MC{index}{nonce}"),
+            ),
+        };
+        events.push(Event {
+            pos: adj_start,
+            scope_start: adj_start,
+            scope_end: adj_end,
+            is_open: true,
+            tag: open_tag,
+        });
+        events.push(Event {
+            pos: adj_end,
+            scope_start: adj_start,
+            scope_end: adj_end,
+            is_open: false,
+            tag: close_tag,
+        });
+    }
+
+    // Sort: by position, then closes before opens at same position,
+    // among closes at same pos: inner first (larger scope_start),
+    // among opens at same pos: outer first (larger scope_end)
+    events.sort_by(|a, b| {
+        a.pos.cmp(&b.pos)
+            .then_with(|| a.is_open.cmp(&b.is_open)) // false < true, so closes first
+            .then_with(|| {
+                if !a.is_open {
+                    b.scope_start.cmp(&a.scope_start) // inner close first (larger start)
+                } else {
+                    b.scope_end.cmp(&a.scope_end) // outer open first (larger end)
+                }
+            })
+    });
+
+    // Build body in one left-to-right pass
+    let mut body = String::with_capacity(body_no_del.len() * 2);
+    let mut cursor = 0;
+    for ev in &events {
+        let p = ev.pos.min(body_no_del.len());
+        if p > cursor {
+            body.push_str(&body_no_del[cursor..p]);
+        }
+        body.push_str(&ev.tag);
+        cursor = p;
+    }
+    if cursor < body_no_del.len() {
+        body.push_str(&body_no_del[cursor..]);
+    }
+
+    let adjusted_right_notes: Vec<RightNote> = right_notes
+        .into_iter()
+        .map(|mut rn| {
+            rn.scope_range.start = adjust_pos(rn.scope_range.start, &sorted_deletions);
+            rn.scope_range.end = adjust_pos(rn.scope_range.end, &sorted_deletions);
+            rn
+        })
+        .collect();
 
     TransformResult {
         body,
         footnotes,
         marks,
-        right_notes,
+        right_notes: adjusted_right_notes,
         nonce,
     }
 }
@@ -459,6 +532,7 @@ pub struct AttachedNote {
     pub annotation_type: String,
     pub certainty: Certainty,
     pub body_md: String,
+    pub body_latex: Option<String>,
 }
 
 pub fn attach_notes_to_paragraphs(
@@ -494,6 +568,7 @@ pub fn attach_notes_to_paragraphs(
                 annotation_type: note.annotation_type.clone(),
                 certainty: note.certainty.clone(),
                 body_md: note.body_md.clone(),
+                body_latex: None,
             })
         })
         .collect()
@@ -513,10 +588,11 @@ pub fn build_pandoc_input(
 
     if let Some(fm) = frontmatter {
         parts.push(fm.to_string());
+        parts.push("\n\n".to_string());
     }
 
     for (i, para) in paragraphs.iter().enumerate() {
-        if i > 0 || frontmatter.is_some() {
+        if i > 0 {
             parts.push(format!("\n\n{sentinel}\n\n"));
         }
         parts.push(para.to_string());
@@ -526,6 +602,8 @@ pub fn build_pandoc_input(
         parts.push(format!("\n\n{sentinel}\n\n"));
         parts.push(note.to_string());
     }
+
+    parts.push(format!("\n\n{sentinel}\n\n"));
 
     parts.join("")
 }
@@ -606,7 +684,7 @@ pub fn substitute_footnote_placeholders(
                         format!("\\edtext{{{lemma}}}{{\\Afootnote{{{note_body}}}}}")
                     }
                     Route::BFootnote => {
-                        format!("{lemma}\\Bfootnote{{{note_body}}}")
+                        format!("\\edtext{{{lemma}}}{{\\Bfootnote{{{note_body}}}}}")
                     }
                     _ => lemma.clone(),
                 };
@@ -630,7 +708,7 @@ pub fn mark_macro(code: &str) -> (&'static str, &'static str) {
         "st" | "del" => ("\\sout{", "}"),
         "sic" => ("\\uwave{", "}"),
         "sc" => ("\\textsc{", "}"),
-        "hi" => ("\\hl{", "}"),
+        "hi" => ("\\lithl{", "}"),
         "gloss" => ("{\\footnotesize ", "}"),
         "crux" => ("\\textsuperscript{\\dag}", ""),
         "lac" => ("[", "]"),
@@ -665,6 +743,21 @@ pub fn substitute_mark_placeholders(text: &str, nonce: &str, marks: &[MarkEntry]
 }
 
 // ---------------------------------------------------------------------------
+// Nonce survival guard
+// ---------------------------------------------------------------------------
+
+pub fn assert_no_residual_nonce(tex: &str, nonce: &str) -> Result<(), String> {
+    let count = tex.matches(nonce).count();
+    if count > 0 {
+        Err(format!(
+            "residual placeholder nonce found {count} time(s) in output - substitution incomplete"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Right-page note rendering (A13)
 // ---------------------------------------------------------------------------
 
@@ -686,7 +779,8 @@ pub fn render_right_page_notes(notes: &[AttachedNote]) -> String {
                 .as_ref()
                 .map(|p| format!("{p} "))
                 .unwrap_or_default();
-            format!("{prefix}{label}{certainty_suffix} {}", note.body_md)
+            let body = note.body_latex.as_deref().unwrap_or(&note.body_md);
+            format!("{prefix}{label}{certainty_suffix} {body}")
         })
         .collect::<Vec<_>>()
         .join("\n\n\\medskip\n\n")
@@ -700,6 +794,7 @@ pub struct PreambleOptions {
     pub line_numbers: bool,
     pub cjk_font: Option<String>,
     pub indic_preamble: Option<String>,
+    pub extra_preamble: Option<String>,
 }
 
 pub fn build_preamble(opts: &PreambleOptions) -> String {
@@ -718,14 +813,31 @@ pub fn build_preamble(opts: &PreambleOptions) -> String {
     }
 
     lines.push("\\usepackage{xcolor}".to_string());
-    lines.push("\\usepackage{soul}".to_string());
     lines.push("\\usepackage[normalem]{ulem}".to_string());
+    lines.push("\\newcommand{\\lithl}[1]{\\colorbox{yellow!30}{#1}}".to_string());
     lines.push("\\usepackage{reledmac}".to_string());
     lines.push("\\usepackage{reledpar}".to_string());
 
     if opts.line_numbers {
         lines.push("\\firstlinenum{5}".to_string());
         lines.push("\\linenumincrement{5}".to_string());
+    } else {
+        lines.push("\\firstlinenum{100000}".to_string());
+        lines.push("\\linenumincrement{100000}".to_string());
+    }
+
+    lines.push("\\firstlinenumR{100000}".to_string());
+    lines.push("\\linenumincrementR{100000}".to_string());
+
+    lines.push("\\providecommand{\\phantomsection}{}".to_string());
+    lines.push("\\newcommand{\\citeproctext}{}".to_string());
+    lines.push("\\newenvironment{CSLReferences}[2]{}{}".to_string());
+    lines.push("\\newcommand{\\CSLLeftMargin}[1]{\\noindent #1}".to_string());
+    lines.push("\\newcommand{\\CSLRightInline}[1]{#1}".to_string());
+    lines.push("\\newcommand{\\CSLIndent}[1]{\\hspace{1.5em}#1}".to_string());
+
+    if let Some(ref extra) = opts.extra_preamble {
+        lines.push(extra.clone());
     }
 
     lines.push(String::new());
@@ -840,13 +952,18 @@ pub async fn export_critical_edition(
         .map(|p| transform.body[p.start..p.end].to_string())
         .collect();
 
-    let original_paragraphs = split_paragraphs(&content);
-    let attached = attach_notes_to_paragraphs(&transform.right_notes, &original_paragraphs);
+    let attached = attach_notes_to_paragraphs(&transform.right_notes, &body_paragraphs);
 
     let fn_bodies: Vec<String> = transform
         .footnotes
         .iter()
         .map(|f| f.body_md.clone())
+        .collect();
+
+    let right_note_bodies: Vec<String> = transform
+        .right_notes
+        .iter()
+        .map(|rn| rn.body_md.clone())
         .collect();
 
     let sentinel = format!("{}SENT{}", transform.nonce, transform.nonce);
@@ -859,11 +976,14 @@ pub async fn export_critical_edition(
     };
 
     let para_refs: Vec<&str> = para_texts.iter().map(|s| s.as_str()).collect();
-    let fn_refs: Vec<&str> = fn_bodies.iter().map(|s| s.as_str()).collect();
+    let mut all_note_refs: Vec<&str> = fn_bodies.iter().map(|s| s.as_str()).collect();
+    for b in &right_note_bodies {
+        all_note_refs.push(b.as_str());
+    }
     let pandoc_input = build_pandoc_input(
         fm_owned.as_deref(),
         &para_refs,
-        &fn_refs,
+        &all_note_refs,
         &sentinel,
     );
 
@@ -901,6 +1021,23 @@ pub async fn export_critical_edition(
         }
     };
 
+    let note_dir = input_path.parent().unwrap_or(&workspace_root).to_path_buf();
+
+    let indic_lua_filter = {
+        let detected = academic_export::detect_indic_scripts(&content);
+        if !detected.is_empty() {
+            let fonts = academic_export::resolve_indic_fonts(
+                &detected,
+                frontmatter.indic_font.as_deref(),
+                &frontmatter.indic_fonts,
+                &prefs,
+            );
+            academic_export::build_indic_lua_filter(&fonts).ok()
+        } else {
+            None
+        }
+    };
+
     let win = window.clone();
     let req_output = request.output_path.clone();
     let line_numbers = request.line_numbers;
@@ -909,6 +1046,8 @@ pub async fn export_critical_edition(
     let marks = transform.marks.clone();
     let n_para_texts = para_texts.len();
     let n_fn_bodies = fn_bodies.len();
+    let n_right_note_bodies = right_note_bodies.len();
+    let n_all_notes = n_fn_bodies + n_right_note_bodies;
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _ = win.emit(
@@ -919,7 +1058,6 @@ pub async fn export_critical_edition(
             },
         );
 
-        // Run pandoc: stdin -> latex fragments
         let mut args = vec![
             "-f".to_string(),
             "markdown".to_string(),
@@ -936,69 +1074,27 @@ pub async fn export_critical_edition(
             args.push(format!("--lua-filter={}", f.to_string_lossy()));
         }
 
-        let mut child = Command::new(&pandoc_path)
-            .args(&args)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("failed to run pandoc: {e}"))?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            let _ = stdin.write_all(pandoc_input.as_bytes());
+        if let Some(ref lua) = indic_lua_filter {
+            args.push(format!("--lua-filter={}", lua.path().to_string_lossy()));
         }
 
-        let child_stdout = child.stdout.take();
-        let child_stderr = child.stderr.take();
+        let resource_path = format!("{}:{}",
+            note_dir.to_string_lossy(),
+            workspace_root.to_string_lossy());
+        args.push("--resource-path".to_string());
+        args.push(resource_path);
 
-        let stdout_thread = std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut pipe) = child_stdout {
-                let _ = pipe.read_to_end(&mut buf);
-            }
-            buf
-        });
-        let stderr_thread = std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut pipe) = child_stderr {
-                let _ = pipe.read_to_end(&mut buf);
-            }
-            buf
-        });
-
-        let timeout = std::time::Duration::from_secs(300);
-        let start = std::time::Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) => {
-                    if start.elapsed() >= timeout {
-                        let _ = child.kill();
-                        let _ = stdout_thread.join();
-                        let _ = stderr_thread.join();
-                        return Err("pandoc timed out after 5 minutes".to_string());
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-                Err(e) => {
-                    let _ = child.kill();
-                    let _ = stdout_thread.join();
-                    let _ = stderr_thread.join();
-                    return Err(format!("failed to wait on pandoc: {e}"));
-                }
-            }
-        }
-
-        let status = child
-            .wait()
-            .map_err(|e| format!("failed to collect pandoc exit status: {e}"))?;
-        let stdout_bytes = stdout_thread.join().unwrap_or_default();
-        let stderr_bytes = stderr_thread.join().unwrap_or_default();
+        let (status, stdout_bytes, stderr_bytes): (std::process::ExitStatus, Vec<u8>, Vec<u8>) =
+            academic_export::run_pandoc_with_timeout(
+                &pandoc_path,
+                &args,
+                Some(pandoc_input.as_bytes()),
+                std::time::Duration::from_secs(300),
+            )?;
         let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
 
         if !status.success() {
-            return Ok(ExportResult {
+            return Ok::<ExportResult, String>(ExportResult {
                 output_path: req_output,
                 success: false,
                 stderr,
@@ -1011,8 +1107,11 @@ pub async fn export_critical_edition(
             &latex_output,
             &sentinel,
             n_para_texts,
-            n_fn_bodies,
+            n_all_notes,
         );
+
+        let fn_notes_latex: Vec<String> = split.notes[..n_fn_bodies].to_vec();
+        let right_notes_latex: Vec<String> = split.notes[n_fn_bodies..].to_vec();
 
         let left_paragraphs: Vec<String> = split
             .paragraphs
@@ -1022,9 +1121,21 @@ pub async fn export_critical_edition(
                     p,
                     &nonce,
                     &footnotes,
-                    &split.notes,
+                    &fn_notes_latex,
                 );
                 substitute_mark_placeholders(&p, &nonce, &marks)
+            })
+            .collect();
+
+        // Populate body_latex on attached notes
+        let attached_with_latex: Vec<AttachedNote> = attached
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut a)| {
+                if i < right_notes_latex.len() {
+                    a.body_latex = Some(right_notes_latex[i].clone());
+                }
+                a
             })
             .collect();
 
@@ -1032,7 +1143,7 @@ pub async fn export_critical_edition(
         let n_paras = left_paragraphs.len();
         let mut right_paragraphs: Vec<String> = (0..n_paras)
             .map(|pi| {
-                let notes_for_para: Vec<AttachedNote> = attached
+                let notes_for_para: Vec<AttachedNote> = attached_with_latex
                     .iter()
                     .filter(|a| a.paragraph_index == pi)
                     .map(|a| AttachedNote {
@@ -1041,6 +1152,7 @@ pub async fn export_critical_edition(
                         annotation_type: a.annotation_type.clone(),
                         certainty: a.certainty.clone(),
                         body_md: a.body_md.clone(),
+                        body_latex: a.body_latex.clone(),
                     })
                     .collect();
                 render_right_page_notes(&notes_for_para)
@@ -1052,10 +1164,13 @@ pub async fn export_critical_edition(
             right_paragraphs.push("~".to_string());
         }
 
+        let extra_preamble = academic_export::resolve_preamble("latex", resource_dir.as_deref())
+            .and_then(|p| std::fs::read_to_string(&p).ok());
         let preamble = build_preamble(&PreambleOptions {
             line_numbers,
             cjk_font,
             indic_preamble,
+            extra_preamble,
         });
 
         let tex = assemble_tex(
@@ -1064,6 +1179,14 @@ pub async fn export_critical_edition(
             &right_paragraphs,
             split.bibliography.as_deref(),
         );
+
+        if let Err(msg) = assert_no_residual_nonce(&tex, &nonce) {
+            return Ok(ExportResult {
+                output_path: req_output,
+                success: false,
+                stderr: msg,
+            });
+        }
 
         std::fs::write(&req_output, &tex)
             .map_err(|e| format!("Failed to write output: {e}"))?;
@@ -1096,6 +1219,7 @@ pub async fn export_critical_edition(
 mod tests {
     use super::*;
     use crate::annotation::types::{AnnotationForm, Scope};
+    use std::process::Command;
 
     fn make_annotation(
         ann_type: AnnotationType,
@@ -1187,6 +1311,46 @@ mod tests {
         assert_eq!(r["cf"], Route::BFootnote);
     }
 
+    // --- Cycle 14: bare and sn routing ---
+
+    #[test]
+    fn default_routing_maps_bare_to_right() {
+        assert_eq!(default_routing()["bare"], Route::Right);
+    }
+
+    #[test]
+    fn default_routing_maps_sn_to_parent() {
+        assert_eq!(default_routing()["sn"], Route::Parent);
+    }
+
+    #[test]
+    fn resolve_routing_accepts_parent() {
+        let mut ov = HashMap::new();
+        ov.insert("sn".into(), "parent".into());
+        assert_eq!(resolve_routing(&ov)["sn"], Route::Parent);
+    }
+
+    #[test]
+    fn transform_bare_surfaces_as_right_note() {
+        let content = "Hello world. <!--- bare | Bare note. --->";
+        let ann_start = content.find("<!---").unwrap();
+        let ann_end = content.len();
+        let ann = make_annotation(
+            AnnotationType::Bare,
+            Certainty::Neutral,
+            Scope::Sentence(1),
+            Some("Bare note."),
+            ann_start,
+            ann_end,
+            None,
+        );
+        let scope = Some(ScopeRange { start: 0, end: 12 });
+        let result = transform_document(content, &[ann], &[scope], &default_routing());
+        assert_eq!(result.right_notes.len(), 1);
+        assert_eq!(result.right_notes[0].annotation_type, "bare");
+        assert_eq!(result.right_notes[0].body_md, "Bare note.");
+    }
+
     // --- Cycle A3: annotation stripping ---
 
     #[test]
@@ -1270,6 +1434,25 @@ mod tests {
         ];
         let result = transform_document(content, &[ann_outer, ann_inner], &scopes, &default_routing());
         assert_eq!(result.footnotes.len(), 2);
+
+        let nonce = &result.nonce;
+        let fo0 = format!("{nonce}FO0{nonce}");
+        let fc0 = format!("{nonce}FC0{nonce}");
+        let fo1 = format!("{nonce}FO1{nonce}");
+        let fc1 = format!("{nonce}FC1{nonce}");
+        // All four placeholders must appear intact in the body
+        assert!(result.body.contains(&fo0), "FO0 missing");
+        assert!(result.body.contains(&fc0), "FC0 missing");
+        assert!(result.body.contains(&fo1), "FO1 missing");
+        assert!(result.body.contains(&fc1), "FC1 missing");
+        // Nesting order: FO0 < FO1 < FC1 < FC0
+        let pos_fo0 = result.body.find(&fo0).unwrap();
+        let pos_fo1 = result.body.find(&fo1).unwrap();
+        let pos_fc1 = result.body.find(&fc1).unwrap();
+        let pos_fc0 = result.body.find(&fc0).unwrap();
+        assert!(pos_fo0 < pos_fo1, "FO0 should come before FO1");
+        assert!(pos_fo1 < pos_fc1, "FO1 should come before FC1");
+        assert!(pos_fc1 < pos_fc0, "FC1 should come before FC0");
     }
 
     #[test]
@@ -1304,6 +1487,79 @@ mod tests {
         let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing());
         assert_eq!(result.footnotes.len(), 1);
         assert_eq!(result.right_notes.len(), 1);
+    }
+
+    // --- Cycle 5: cross-kind partial overlap ---
+
+    #[test]
+    fn transform_mark_partially_overlapping_footnote_skipped() {
+        // footnote scope [0,4), mark scope [2,6) - partial overlap
+        let content = "ABCDEF. <!--- app | Foot. ---> <!--- hi _ --->";
+        let a1_start = content.find("<!--- app").unwrap();
+        let a1_end = content.find("Foot. --->").unwrap() + "Foot. --->".len();
+        let a2_start = content.find("<!--- hi").unwrap();
+        let a2_end = content.len();
+        let ann1 = make_annotation(
+            AnnotationType::Apparatus,
+            Certainty::Neutral,
+            Scope::Words(1),
+            Some("Foot."),
+            a1_start,
+            a1_end,
+            None,
+        );
+        let ann2 = make_annotation(
+            AnnotationType::Mark,
+            Certainty::Neutral,
+            Scope::Words(2),
+            None,
+            a2_start,
+            a2_end,
+            Some("hi"),
+        );
+        let scopes = vec![
+            Some(ScopeRange { start: 0, end: 4 }),
+            Some(ScopeRange { start: 2, end: 6 }),
+        ];
+        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing());
+        assert_eq!(result.footnotes.len(), 1, "footnote should stay");
+        assert!(result.marks.is_empty(), "mark should be skipped due to partial overlap");
+    }
+
+    #[test]
+    fn transform_footnote_partially_overlapping_mark_degrades() {
+        // mark scope [0,4), footnote scope [2,6) - partial overlap
+        let content = "ABCDEF. <!--- hi _ ---> <!--- app | Foot. --->";
+        let a1_start = content.find("<!--- hi").unwrap();
+        let a1_end = content.find("_ --->").unwrap() + "_ --->".len();
+        let a2_start = content.find("<!--- app").unwrap();
+        let a2_end = content.len();
+        let ann1 = make_annotation(
+            AnnotationType::Mark,
+            Certainty::Neutral,
+            Scope::Words(1),
+            None,
+            a1_start,
+            a1_end,
+            Some("hi"),
+        );
+        let ann2 = make_annotation(
+            AnnotationType::Apparatus,
+            Certainty::Neutral,
+            Scope::Words(2),
+            Some("Foot."),
+            a2_start,
+            a2_end,
+            None,
+        );
+        let scopes = vec![
+            Some(ScopeRange { start: 0, end: 4 }),
+            Some(ScopeRange { start: 2, end: 6 }),
+        ];
+        let result = transform_document(content, &[ann1, ann2], &scopes, &default_routing());
+        assert_eq!(result.marks.len(), 1, "mark should stay");
+        assert!(result.footnotes.is_empty(), "footnote should degrade");
+        assert_eq!(result.right_notes.len(), 1, "footnote degraded to right note");
     }
 
     // --- Cycle A6: cross-paragraph footnote degrades, mark skipped ---
@@ -1462,6 +1718,76 @@ mod tests {
         assert_eq!(attached[0].span_prefix.as_deref(), Some("(paras 1-2)"));
     }
 
+    // --- Cycle 13: scope-resolution failure fallback ---
+
+    #[test]
+    fn transform_none_scope_surfaces_as_right_note() {
+        let content = "Hello world. <!--- n | Orphan note. --->";
+        let ann_start = content.find("<!---").unwrap();
+        let ann_end = content.len();
+        let ann = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Sentence(1),
+            Some("Orphan note."),
+            ann_start,
+            ann_end,
+            None,
+        );
+        let scopes = vec![None]; // scope resolution failed
+        let result = transform_document(content, &[ann], &scopes, &default_routing());
+        assert_eq!(result.right_notes.len(), 1, "should surface as right note");
+        assert_eq!(result.right_notes[0].body_md, "Orphan note.");
+    }
+
+    // --- Cycle 12: paragraph attachment on transformed coordinates ---
+
+    #[test]
+    fn attach_notes_uses_transformed_coordinates() {
+        // A block-form annotation sits between two prose paragraphs, occupying
+        // its own paragraph in the original. After transform, it's deleted.
+        // A right note scoped to the 2nd prose paragraph (original index 2)
+        // must attach to transformed paragraph index 1.
+        let content = "First paragraph.\n\n<!--- n | Block note. --->\n\nSecond paragraph.";
+        let ann = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Paragraph(1),
+            Some("Block note."),
+            18, // start of <!---
+            47, // end of --->
+            None,
+        );
+        // Another note scoped to "Second paragraph" (original positions)
+        let ann2 = make_annotation(
+            AnnotationType::Note,
+            Certainty::Neutral,
+            Scope::Sentence(1),
+            Some("About second."),
+            49, // start of "Second"
+            49 + 17, // dummy end
+            None,
+        );
+        let scope1 = Some(ScopeRange { start: 0, end: 16 }); // "First paragraph."
+        let scope2 = Some(ScopeRange { start: 49, end: 66 }); // "Second paragraph."
+        let routing = default_routing();
+        let result = transform_document(content, &[ann, ann2], &[scope1, scope2], &routing);
+
+        // In the transformed body, annotation is deleted, so "Second paragraph."
+        // becomes paragraph index 1 (not 2)
+        let body_paras = split_paragraphs(&result.body);
+        assert_eq!(body_paras.len(), 2, "should have 2 paragraphs after stripping block annotation");
+
+        // Attach using transformed paragraphs
+        let attached = attach_notes_to_paragraphs(&result.right_notes, &body_paras);
+        assert!(!attached.is_empty(), "should have at least one attached note");
+        // The note about "Second paragraph" should be at transformed index 1
+        let second_note = attached.iter().find(|a| a.body_md == "About second.");
+        assert!(second_note.is_some(), "note about second paragraph should be attached");
+        assert_eq!(second_note.unwrap().paragraph_index, 1,
+            "note should attach to transformed paragraph index 1, not original index 2");
+    }
+
     // --- Cycle A10: sentinel batch build + split ---
 
     #[test]
@@ -1477,7 +1803,27 @@ mod tests {
         assert!(input.contains("Para one."));
         assert!(input.contains("Para two."));
         assert!(input.contains("Note body."));
+        // Sentinels: (n_paras - 1) between paras + n_notes + 1 trailing
+        // = 1 + 1 + 1 = 3. No sentinel between frontmatter and para 0.
         assert_eq!(input.matches(sentinel).count(), 3);
+        // Frontmatter followed by plain \n\n, NOT by sentinel
+        let fm_end = input.find("---\ntitle: T\n---").unwrap() + "---\ntitle: T\n---".len();
+        let after_fm = &input[fm_end..];
+        assert!(after_fm.starts_with("\n\n"), "fm should be followed by \\n\\n, not sentinel");
+        assert!(!after_fm.starts_with(&format!("\n\n{sentinel}")),
+            "no sentinel between frontmatter and first paragraph");
+        // Trailing sentinel exists (so bibliography gets its own piece)
+        assert!(input.ends_with(&format!("\n\n{sentinel}\n\n")),
+            "must end with trailing sentinel");
+    }
+
+    #[test]
+    fn build_pandoc_input_no_fm_has_trailing_sentinel() {
+        let sentinel = "%%S%%";
+        let input = build_pandoc_input(None, &["Only para."], &[], sentinel);
+        // 0 between-para sentinels + 0 note sentinels + 1 trailing = 1
+        assert_eq!(input.matches(sentinel).count(), 1);
+        assert!(input.ends_with(&format!("\n\n{sentinel}\n\n")));
     }
 
     #[test]
@@ -1494,8 +1840,20 @@ mod tests {
 
     #[test]
     fn split_pandoc_output_no_bibliography() {
-        let split = split_pandoc_output("p1%%S%%p2", "%%S%%", 2, 0);
+        let split = split_pandoc_output("p1%%S%%p2%%S%%", "%%S%%", 2, 0);
         assert_eq!(split.paragraphs.len(), 2);
+        assert!(split.bibliography.is_none());
+    }
+
+    #[test]
+    fn split_pandoc_output_fm_consumed_by_pandoc() {
+        // pandoc consumes frontmatter, so piece 0 is para 0 (not empty)
+        let sentinel = "%%S%%";
+        let latex = "para one%%S%%para two%%S%%note body%%S%%";
+        let split = split_pandoc_output(latex, sentinel, 2, 1);
+        assert_eq!(split.paragraphs[0], "para one");
+        assert_eq!(split.paragraphs[1], "para two");
+        assert_eq!(split.notes[0], "note body");
         assert!(split.bibliography.is_none());
     }
 
@@ -1527,8 +1885,24 @@ mod tests {
         }];
         let converted = vec!["conv".to_string()];
         let result = substitute_footnote_placeholders(&text, nonce, &footnotes, &converted);
-        assert!(result.contains("word\\Bfootnote{conv}"));
+        assert!(result.contains("\\edtext{word}{\\Bfootnote{conv}}"),
+            "B-footnote must be inside \\edtext, got: {result}");
         assert!(!result.contains(nonce));
+    }
+
+    // --- Cycle 6: nonce survival guard ---
+
+    #[test]
+    fn assert_no_residual_nonce_clean() {
+        assert!(assert_no_residual_nonce("clean text here", "XNONCE").is_ok());
+    }
+
+    #[test]
+    fn assert_no_residual_nonce_dirty() {
+        let result = assert_no_residual_nonce("some XNONCE leftover XNONCE text", "XNONCE");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("2"), "should report count of residuals");
     }
 
     // --- Cycle A12: mark macro substitution ---
@@ -1545,7 +1919,7 @@ mod tests {
         assert_eq!(mark_macro("del"), ("\\sout{", "}"));
         assert_eq!(mark_macro("sic"), ("\\uwave{", "}"));
         assert_eq!(mark_macro("sc"), ("\\textsc{", "}"));
-        assert_eq!(mark_macro("hi"), ("\\hl{", "}"));
+        assert_eq!(mark_macro("hi"), ("\\lithl{", "}"));
         assert_eq!(mark_macro("gloss"), ("{\\footnotesize ", "}"));
         assert_eq!(mark_macro("crux"), ("\\textsuperscript{\\dag}", ""));
         assert_eq!(mark_macro("lac"), ("[", "]"));
@@ -1567,7 +1941,7 @@ mod tests {
             code: "hi".into(),
         }];
         let result = substitute_mark_placeholders(&text, nonce, &marks);
-        assert_eq!(result, "\\hl{word}");
+        assert_eq!(result, "\\lithl{word}");
     }
 
     #[test]
@@ -1592,6 +1966,7 @@ mod tests {
             annotation_type: "n".into(),
             certainty: Certainty::Neutral,
             body_md: "A note body.".into(),
+            body_latex: None,
         }];
         let rendered = render_right_page_notes(&notes);
         assert!(rendered.contains("\\textsc{n}"));
@@ -1608,6 +1983,7 @@ mod tests {
             annotation_type: "tr".into(),
             certainty: Certainty::Tentative,
             body_md: "Translation.".into(),
+            body_latex: None,
         }];
         let rendered = render_right_page_notes(&notes);
         assert!(rendered.contains("\\textsc{tr}?"));
@@ -1621,6 +1997,7 @@ mod tests {
             annotation_type: "n".into(),
             certainty: Certainty::Neutral,
             body_md: "Multi-para.".into(),
+            body_latex: None,
         }];
         let rendered = render_right_page_notes(&notes);
         assert!(rendered.contains("(paras 1-3) \\textsc{n}"));
@@ -1635,6 +2012,7 @@ mod tests {
                 annotation_type: "n".into(),
                 certainty: Certainty::Neutral,
                 body_md: "First.".into(),
+                body_latex: None,
             },
             AttachedNote {
                 paragraph_index: 0,
@@ -1642,10 +2020,28 @@ mod tests {
                 annotation_type: "tr".into(),
                 certainty: Certainty::Firm,
                 body_md: "Second.".into(),
+                body_latex: None,
             },
         ];
         let rendered = render_right_page_notes(&notes);
         assert!(rendered.contains("\\medskip"));
+    }
+
+    #[test]
+    fn render_right_notes_uses_body_latex() {
+        let notes = vec![AttachedNote {
+            paragraph_index: 0,
+            span_prefix: None,
+            annotation_type: "n".into(),
+            certainty: Certainty::Neutral,
+            body_md: "raw % & _ markdown".into(),
+            body_latex: Some("converted \\% \\& \\_ latex".into()),
+        }];
+        let rendered = render_right_page_notes(&notes);
+        assert!(rendered.contains("converted \\% \\& \\_ latex"),
+            "should use body_latex when available");
+        assert!(!rendered.contains("raw % & _ markdown"),
+            "should NOT use body_md when body_latex is available");
     }
 
     #[test]
@@ -1661,6 +2057,7 @@ mod tests {
             line_numbers: false,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
         let mac = p.find("\\usepackage{reledmac}").unwrap();
         let par = p.find("\\usepackage{reledpar}").unwrap();
@@ -1673,6 +2070,7 @@ mod tests {
             line_numbers: false,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
         assert!(p.contains("twoside"));
     }
@@ -1683,8 +2081,12 @@ mod tests {
             line_numbers: false,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
         assert!(p.contains("[normalem]{ulem}"));
+        assert!(!p.contains("\\usepackage{soul}"), "soul hard-errors on CJK");
+        assert!(p.contains("\\newcommand{\\lithl}"), "must define \\lithl");
+        assert!(p.contains("\\colorbox"), "\\lithl should use \\colorbox");
     }
 
     #[test]
@@ -1693,6 +2095,7 @@ mod tests {
             line_numbers: true,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
         assert!(p.contains("\\firstlinenum{5}"));
         assert!(p.contains("\\linenumincrement{5}"));
@@ -1704,8 +2107,58 @@ mod tests {
             line_numbers: false,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
-        assert!(!p.contains("\\firstlinenum"));
+        // "off" means suppress to huge values (reledmac defaults 5/5, so omitting is a no-op)
+        assert!(p.contains("\\firstlinenum{100000}"), "must suppress left line numbers");
+        assert!(p.contains("\\linenumincrement{100000}"), "must suppress left line number increment");
+    }
+
+    #[test]
+    fn preamble_citeproc_macros() {
+        let p = build_preamble(&PreambleOptions {
+            line_numbers: true,
+            cjk_font: None,
+            indic_preamble: None,
+            extra_preamble: None,
+        });
+        assert!(p.contains("\\providecommand{\\phantomsection}{}"),
+            "must provide \\phantomsection");
+        assert!(p.contains("CSLReferences"), "must define CSLReferences env");
+        assert!(p.contains("\\citeproctext"), "must define \\citeproctext");
+    }
+
+    #[test]
+    fn preamble_extra_preamble_included() {
+        let p = build_preamble(&PreambleOptions {
+            line_numbers: true,
+            cjk_font: None,
+            indic_preamble: None,
+            extra_preamble: Some("\\usepackage{custom}\n\\setfoo{bar}".into()),
+        });
+        assert!(p.contains("\\usepackage{custom}"));
+        assert!(p.contains("\\setfoo{bar}"));
+    }
+
+    #[test]
+    fn preamble_right_side_numbers_always_suppressed() {
+        for line_numbers in [true, false] {
+            let p = build_preamble(&PreambleOptions {
+                line_numbers,
+                cjk_font: None,
+                indic_preamble: None,
+                extra_preamble: None,
+            });
+            assert!(p.contains("\\firstlinenumR{100000}"),
+                "right-side line numbers must always be suppressed (line_numbers={line_numbers})");
+            assert!(p.contains("\\linenumincrementR{100000}"),
+                "right-side line number increment must always be suppressed (line_numbers={line_numbers})");
+            // R commands must come after reledpar
+            let par_pos = p.find("\\usepackage{reledpar}").unwrap();
+            let r_pos = p.find("\\firstlinenumR{100000}").unwrap();
+            assert!(r_pos > par_pos,
+                "\\firstlinenumR must come after \\usepackage{{reledpar}}");
+        }
     }
 
     #[test]
@@ -1714,6 +2167,7 @@ mod tests {
             line_numbers: false,
             cjk_font: Some("PingFang SC".into()),
             indic_preamble: None,
+            extra_preamble: None,
         });
         assert!(p.contains("\\usepackage{xeCJK}"));
         assert!(p.contains("\\setCJKmainfont{PingFang SC}"));
@@ -1725,6 +2179,7 @@ mod tests {
             line_numbers: false,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
         assert!(!p.contains("xeCJK"));
     }
@@ -1737,6 +2192,7 @@ mod tests {
             line_numbers: true,
             cjk_font: None,
             indic_preamble: None,
+            extra_preamble: None,
         });
         let left = vec![
             "Body paragraph one.".to_string(),
@@ -1834,5 +2290,50 @@ mod tests {
         let result = validate_input(&input, &tmp.join("out.tex"));
         assert!(result.is_ok());
         std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    // --- Cycle 3: pandoc integration test (gated) ---
+
+    #[test]
+    fn pandoc_roundtrip_with_frontmatter_aligns_pieces() {
+        let pandoc = match academic_export::find_in_path("pandoc") {
+            Some(p) => p,
+            None => {
+                eprintln!("SKIP: pandoc not found on PATH");
+                return;
+            }
+        };
+
+        let sentinel = "XSENTINEL42XSENTINEL42";
+        let fm = "---\ntitle: Test\n---";
+        let paras = &["First paragraph.", "Second paragraph."];
+        let notes = &["A note body."];
+        let input = build_pandoc_input(Some(fm), paras, notes, sentinel);
+
+        let mut child = Command::new(&pandoc)
+            .args(["-f", "markdown", "-t", "latex"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn pandoc");
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(input.as_bytes()).unwrap();
+        }
+
+        let output = child.wait_with_output().expect("failed to wait on pandoc");
+        assert!(output.status.success(), "pandoc failed: {}", String::from_utf8_lossy(&output.stderr));
+
+        let latex = String::from_utf8_lossy(&output.stdout).to_string();
+        let split = split_pandoc_output(&latex, sentinel, 2, 1);
+
+        assert_eq!(split.paragraphs.len(), 2, "expected 2 paragraphs");
+        assert_eq!(split.notes.len(), 1, "expected 1 note");
+
+        assert!(!split.paragraphs[0].is_empty(), "para 0 should not be empty");
+        assert!(!split.paragraphs[1].is_empty(), "para 1 should not be empty");
+        assert!(!split.notes[0].is_empty(), "note 0 should not be empty");
     }
 }

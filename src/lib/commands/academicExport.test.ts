@@ -43,7 +43,7 @@ describe("initAcademicExportCommands", () => {
     initAcademicExportCommands();
     const commands = getAllCommands();
     const exportCmds = commands.filter((c) => c.id.startsWith("academic."));
-    expect(exportCmds).toHaveLength(3);
+    expect(exportCmds).toHaveLength(4);
   });
 
   it("hidden when no page selected", () => {

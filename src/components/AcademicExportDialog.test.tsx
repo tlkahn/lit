@@ -354,6 +354,8 @@ describe("AcademicExportDialog", () => {
       todo: "suppress",
       llm: "suppress",
       th: "suppress",
+      bare: "right",
+      sn: "parent",
     });
 
     const successMsg = container.querySelector("[data-testid='academic-export-success']");

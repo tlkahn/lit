@@ -48,7 +48,7 @@ import type { Annotation, ExportProgress, ExportSummary, PageContent, SplitPlan,
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { MergePreviewDialog } from "./components/MergePreviewDialog";
 import { SplitPreviewDialog } from "./components/SplitPreviewDialog";
-import { AcademicExportDialog } from "./components/AcademicExportDialog";
+import { AcademicExportDialog, type ExportFormat } from "./components/AcademicExportDialog";
 
 interface LitCliArgs {
   workspace: string | null;
@@ -173,7 +173,7 @@ function App() {
   const licensedTo = useLicenseStore((s) => s.licensedTo);
 
   const [academicExportOpen, setAcademicExportOpen] = useState(false);
-  const [academicExportFormat, setAcademicExportFormat] = useState<"latex" | "html" | "docx" | "reledmac">("latex");
+  const [academicExportFormat, setAcademicExportFormat] = useState<ExportFormat>("latex");
 
   const [mergePreviewOpen, setMergePreviewOpen] = useState(false);
   const [mergePreviewDocs, setMergePreviewDocs] = useState<PageContent[]>([]);
@@ -241,6 +241,13 @@ function App() {
       });
       if (cancelled) { unExportDocx(); return; }
       unlisteners.push(unExportDocx);
+
+      const unExportReledmac = await win.listen("menu://export-reledmac", () => {
+        setAcademicExportFormat("reledmac");
+        setAcademicExportOpen(true);
+      });
+      if (cancelled) { unExportReledmac(); return; }
+      unlisteners.push(unExportReledmac);
 
       const unExportLkg = await win.listen("menu://export-lkg", async () => {
         const { save } = await import("@tauri-apps/plugin-dialog");
@@ -481,7 +488,7 @@ function App() {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ format: "latex" | "html" | "docx" | "reledmac" }>).detail;
+      const detail = (e as CustomEvent<{ format: ExportFormat }>).detail;
       setAcademicExportFormat(detail?.format ?? "latex");
       setAcademicExportOpen(true);
     };

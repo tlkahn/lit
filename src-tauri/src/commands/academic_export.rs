@@ -833,6 +833,87 @@ pub fn validate_binary(
     find_in_path(fallback_name).ok_or_else(|| not_found_error(operation))
 }
 
+/// Run a command with stdin, stdout/stderr draining, and a timeout.
+/// Returns (ExitStatus, stdout_bytes, stderr_bytes) or an error string.
+pub fn run_pandoc_with_timeout(
+    path: &Path,
+    args: &[String],
+    stdin: Option<&[u8]>,
+    timeout: std::time::Duration,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let stdin_cfg = if stdin.is_some() {
+        std::process::Stdio::piped()
+    } else {
+        std::process::Stdio::null()
+    };
+
+    let mut child = Command::new(path)
+        .args(args)
+        .stdin(stdin_cfg)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run {}: {e}", path.display()))?;
+
+    if let Some(data) = stdin {
+        if let Some(mut pipe) = child.stdin.take() {
+            use std::io::Write as W;
+            if let Err(e) = pipe.write_all(data) {
+                let _ = child.kill();
+                return Err(format!("failed to write stdin: {e}"));
+            }
+        }
+    }
+
+    let child_stdout = child.stdout.take();
+    let child_stderr = child.stderr.take();
+
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = child_stdout {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = child_stderr {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(format!("{} timed out after {} seconds",
+                        path.display(), timeout.as_secs()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(format!("failed to wait on {}: {e}", path.display()));
+            }
+        }
+    }
+
+    let status = child.wait()
+        .map_err(|e| format!("failed to collect exit status: {e}"))?;
+    let stdout_bytes = stdout_thread.join().unwrap_or_default();
+    let stderr_bytes = stderr_thread.join().unwrap_or_default();
+
+    Ok((status, stdout_bytes, stderr_bytes))
+}
+
 /// Validate that pandoc is available, returning its path on success.
 ///
 /// Thin wrapper over [`validate_binary`] supplying the pandoc pref key, PATH
@@ -2752,5 +2833,31 @@ mod tests {
         let rp_val = &args[rp_idx + 1];
         assert!(rp_val.contains("/ws/notes"), "valid note dir must survive when a sibling path contains colons");
         assert!(!rp_val.is_empty(), "resource-path must not be empty");
+    }
+
+    #[test]
+    fn test_run_pandoc_with_timeout_echo() {
+        // Use /bin/cat as a stdin-echo binary
+        let result = run_pandoc_with_timeout(
+            Path::new("/bin/cat"),
+            &[],
+            Some(b"hello world"),
+            std::time::Duration::from_secs(5),
+        );
+        assert!(result.is_ok());
+        let (status, stdout, _stderr) = result.unwrap();
+        assert!(status.success());
+        assert_eq!(String::from_utf8_lossy(&stdout), "hello world");
+    }
+
+    #[test]
+    fn test_run_pandoc_with_timeout_bad_binary() {
+        let result = run_pandoc_with_timeout(
+            Path::new("/nonexistent/binary"),
+            &[],
+            None,
+            std::time::Duration::from_secs(5),
+        );
+        assert!(result.is_err());
     }
 }

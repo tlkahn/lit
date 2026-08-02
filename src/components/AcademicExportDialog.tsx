@@ -48,6 +48,8 @@ const ROUTE_OPTIONS = [
   { value: "suppress", label: "Suppress" },
 ];
 
+const PARENT_ROUTE_OPTION = { value: "parent", label: "With Parent" };
+
 const DEFAULT_ROUTING: Record<string, string> = {
   n: "right",
   tr: "right",
@@ -57,6 +59,8 @@ const DEFAULT_ROUTING: Record<string, string> = {
   todo: "suppress",
   llm: "suppress",
   th: "suppress",
+  bare: "right",
+  sn: "parent",
 };
 
 const ROUTING_LABELS: Record<string, string> = {
@@ -68,6 +72,8 @@ const ROUTING_LABELS: Record<string, string> = {
   todo: "Todo",
   llm: "LLM",
   th: "Thread (th)",
+  bare: "Bare",
+  sn: "Slip Note (sn)",
 };
 
 export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicExportDialogProps) {
@@ -96,8 +102,9 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
       setResult(null);
       setExporting(false);
 
-      setRouting({ ...DEFAULT_ROUTING });
-      setLineNumbers(true);
+      const storedRouting = prefs.reledmacRouting;
+      setRouting({ ...DEFAULT_ROUTING, ...storedRouting });
+      setLineNumbers(prefs.reledmacLineNumbers);
     }
   }, [open, initialFormat]);
 
@@ -140,9 +147,6 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
       let exportResult: ExportDocumentResult;
 
       if (format === "reledmac") {
-        setPreference("academic.reledmacRouting", routing).catch(() => {});
-        setPreference("academic.reledmacLineNumbers", lineNumbers).catch(() => {});
-
         exportResult = await exportCriticalEdition({
           relativePath,
           outputPath,
@@ -150,6 +154,10 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
           lineNumbers,
           routing,
         });
+        if (exportResult.success) {
+          setPreference("academic.reledmacRouting", routing).catch(console.error);
+          setPreference("academic.reledmacLineNumbers", lineNumbers).catch(console.error);
+        }
       } else {
         exportResult = await exportDocument({
           relativePath,
@@ -316,6 +324,9 @@ export function AcademicExportDialog({ open, onClose, initialFormat }: AcademicE
                         {ROUTE_OPTIONS.map((opt) => (
                           <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
+                        {key === "sn" && (
+                          <option value={PARENT_ROUTE_OPTION.value}>{PARENT_ROUTE_OPTION.label}</option>
+                        )}
                       </select>
                     </div>
                   ))}

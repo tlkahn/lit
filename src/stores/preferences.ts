@@ -49,6 +49,8 @@ export interface PreferencesState {
   academicPandocPath: string;
   academicCrossrefPath: string;
   academicDefaultCsl: string;
+  reledmacRouting: Record<string, string>;
+  reledmacLineNumbers: boolean;
   academicDefaultTemplate: string;
   academicDefaultReferenceDoc: string;
   academicIndicFont: string;
@@ -230,6 +232,8 @@ function mapPreferences(prefs: Preferences) {
     academicPandocPath: (prefs["academic.pandocPath"] as string) ?? "",
     academicCrossrefPath: (prefs["academic.crossrefFilterPath"] as string) ?? "",
     academicDefaultCsl: (prefs["academic.defaultCsl"] as string) ?? "",
+    reledmacRouting: (prefs["academic.reledmacRouting"] as Record<string, string>) ?? {},
+    reledmacLineNumbers: (prefs["academic.reledmacLineNumbers"] as boolean) ?? true,
     academicDefaultTemplate: (prefs["academic.defaultTemplate"] as string) ?? "",
     academicDefaultReferenceDoc: (prefs["academic.defaultReferenceDoc"] as string) ?? "",
     academicIndicFont: (prefs["academic.indicFont"] as string) ?? "",
@@ -372,6 +376,8 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
   academicPandocPath: "",
   academicCrossrefPath: "",
   academicDefaultCsl: "",
+  reledmacRouting: {},
+  reledmacLineNumbers: true,
   academicDefaultTemplate: "",
   academicDefaultReferenceDoc: "",
   academicIndicFont: "",
