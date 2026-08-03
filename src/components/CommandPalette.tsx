@@ -12,6 +12,7 @@ import { initAcademicExportCommands } from "../lib/commands/academicExport";
 import { initCompanionCommands } from "../lib/commands/companion";
 import { initOcrCommands } from "../lib/commands/ocr";
 import { initSidebarCommands } from "../lib/commands/sidebar";
+import { initCardboxHtmlExportCommands } from "../lib/commands/cardboxHtmlExport";
 import { recordAccess, sortByFrecency } from "../lib/frecency";
 
 const omniContentHintProvider: PaletteProvider = {
@@ -50,6 +51,7 @@ function ensureRegistered(): void {
   initCompanionCommands();
   initOcrCommands();
   initSidebarCommands();
+  initCardboxHtmlExportCommands();
 }
 
 export function _resetRegistration(): void {

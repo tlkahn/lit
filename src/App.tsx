@@ -242,6 +242,18 @@ function App() {
       if (cancelled) { unExportDocx(); return; }
       unlisteners.push(unExportDocx);
 
+      const unExportCardboxHtml = await win.listen("menu://export-cardbox-html", async () => {
+        const page = useWorkspaceStore.getState().currentPagePath;
+        if (!page) {
+          statusShow("Open a document first", "info");
+          return;
+        }
+        const { exportCardboxToHtml } = await import("./lib/cardboxHtmlExportFlow");
+        await exportCardboxToHtml(page);
+      });
+      if (cancelled) { unExportCardboxHtml(); return; }
+      unlisteners.push(unExportCardboxHtml);
+
       const unExportLkg = await win.listen("menu://export-lkg", async () => {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const dest = await save({

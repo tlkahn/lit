@@ -1555,4 +1555,170 @@ describe("App", () => {
       expect(screen.queryByTestId("status-bar-message")).not.toBeInTheDocument();
     });
   });
+
+  describe("Cardbox HTML export wiring", () => {
+    const mockedSave = save as unknown as ReturnType<typeof vi.fn>;
+
+    function defaultCardboxInvoke(cmd: string): unknown {
+      switch (cmd) {
+        case "get_app_info":
+          return { name: "Lit", version: "0.0.0" };
+        case "open_workspace":
+        case "list_pages":
+          return samplePages;
+        case "get_startup_context":
+          return { workspace: null, file: null, line: null, col: null };
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
+        case "has_api_key":
+          return false;
+        case "cancel_title_suggestion":
+          return undefined;
+        case "list_all_annotations":
+          return [
+            {
+              uuid: "u1",
+              annotation_type: "note",
+              certainty: "medium",
+              body: "test body",
+              date: null,
+              source_page_id: "notes/hello.md",
+              source_page_title: "Hello",
+              source_line: 1,
+              char_start: 0,
+              char_end: 10,
+              scope_kind: "word",
+              scope_value: "w",
+              original: "quoted",
+            },
+          ];
+        case "export_cardbox_html":
+          return "/out/cards.html";
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockListen();
+      mockWindowListen();
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        currentPagePath: "notes/hello.md",
+        pages: [],
+        graphReady: true,
+      });
+      useStatusMessageStore.setState({ message: null, variant: "success" });
+    });
+
+    it("menu://export-cardbox-html with currentPagePath calls save and export_cardbox_html", async () => {
+      let exportHtml = "";
+      mockInvoke((cmd, args) => {
+        if (cmd === "export_cardbox_html") {
+          exportHtml = (args as { html: string }).html;
+          return "/out/cards.html";
+        }
+        return defaultCardboxInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue("/out/cards.html");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-html", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedSave).toHaveBeenCalledWith({
+          defaultPath: "hello.html",
+          filters: [{ name: "HTML", extensions: ["html"] }],
+        });
+      });
+
+      await waitFor(() => {
+        expect(exportHtml).toMatch(/^<!DOCTYPE html>/);
+      });
+    });
+
+    it("save returning null does not call export_cardbox_html", async () => {
+      const invokedCmds: string[] = [];
+      mockInvoke((cmd) => {
+        invokedCmds.push(cmd);
+        return defaultCardboxInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue(null);
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-html", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedSave).toHaveBeenCalled();
+      });
+      expect(invokedCmds).not.toContain("export_cardbox_html");
+    });
+
+    it("no page shows info toast instead of exporting", async () => {
+      mockInvoke((cmd) => defaultCardboxInvoke(cmd));
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        currentPagePath: null,
+        pages: [],
+        graphReady: true,
+      });
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-html", {});
+      });
+
+      await waitFor(() => {
+        const state = useStatusMessageStore.getState();
+        expect(state.message).toBe("Open a document first");
+        expect(state.variant).toBe("info");
+      });
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+
+    it("global emit does NOT trigger window-scoped handler", async () => {
+      mockInvoke((cmd) => defaultCardboxInvoke(cmd));
+      mockedSave.mockResolvedValue("/out/cards.html");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-cardbox-html", {});
+      });
+
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+  });
 });

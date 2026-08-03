@@ -11,7 +11,7 @@ import {
   mockDialogOpen,
 } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
-import { useStatusMessageStore } from "../stores/statusMessage";
+import { useStatusMessageStore, type StatusVariant } from "../stores/statusMessage";
 import { ReferenceLibrary, findBibKeyForPage, findActiveLetter } from "./ReferenceLibrary";
 import { globalJumpTracker } from "../editor/jumpTracker";
 import { setCurrentEditorView } from "../lib/editorViewRef";
@@ -1875,7 +1875,7 @@ describe("ReferenceLibrary", () => {
       const toastMessages: string[] = [];
       const origShow = useStatusMessageStore.getState().show;
       useStatusMessageStore.setState({
-        show: (message: string, variant?: "success" | "error" | "progress") => {
+        show: (message: string, variant?: StatusVariant) => {
           toastMessages.push(message);
           origShow(message, variant);
         },

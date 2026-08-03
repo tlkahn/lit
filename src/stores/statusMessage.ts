@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type StatusVariant = "success" | "error" | "progress";
+export type StatusVariant = "success" | "error" | "progress" | "info";
 
 export interface StatusAction {
   label: string;
