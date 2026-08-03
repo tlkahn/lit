@@ -437,6 +437,7 @@ pub fn run() {
             commands::cardbox::batch_clear_card_color,
             commands::cardbox::batch_pin_cards,
             commands::cardbox::batch_unpin_cards,
+            commands::cardbox::html_export::export_cardbox_html,
             commands::cardbox::merge_to_draft::merge_cards_to_draft,
             commands::cardbox::slip_note::sync_slip_note_to_source,
             commands::cardbox::slip_note::migrate_cardbox_slip_notes,

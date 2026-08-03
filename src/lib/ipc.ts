@@ -1483,6 +1483,10 @@ export async function exportCardNote(uuid: string): Promise<string> {
   return invoke<string>("export_card_note", { uuid });
 }
 
+export async function exportCardboxHtml(destination: string, html: string): Promise<string> {
+  return invoke<string>("export_cardbox_html", { destination, html });
+}
+
 export async function setCardColor(uuid: string, color: string): Promise<void> {
   return invoke<void>("set_card_color", { uuid, color });
 }

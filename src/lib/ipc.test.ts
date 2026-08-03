@@ -144,6 +144,7 @@ import {
   syncSlipNoteToSource,
   migrateCardboxSlipNotes,
   exportCardNote,
+  exportCardboxHtml,
   mergeCardsToDraft,
   setCardColor,
   clearCardColor,
@@ -877,6 +878,8 @@ describe("ipc", () => {
           };
         case "export_card_note":
           return "Note on Test.md";
+        case "export_cardbox_html":
+          return (args as Record<string, unknown>)?.destination ?? "";
         case "merge_cards_to_draft":
           return "Drafts/Merged Draft.md";
         case "set_card_color":
@@ -2782,6 +2785,16 @@ describe("ipc", () => {
     expect(result).toBe("Note on Test.md");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_card_note", { uuid: "u1" });
+  });
+
+  it("exportCardboxHtml calls export_cardbox_html with destination and html", async () => {
+    const result = await exportCardboxHtml("/out/cards.html", "<html></html>");
+    expect(result).toBe("/out/cards.html");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_cardbox_html", {
+      destination: "/out/cards.html",
+      html: "<html></html>",
+    });
   });
 
   it("mergeCardsToDraft calls merge_cards_to_draft", async () => {
