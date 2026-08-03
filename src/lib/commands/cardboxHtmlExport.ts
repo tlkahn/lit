@@ -1,6 +1,5 @@
 import { registerOnce } from "../commandRegistry";
 import { useWorkspaceStore } from "../../stores/workspace";
-import { exportCardboxToHtml } from "../cardboxHtmlExportFlow";
 
 function hasPage(): boolean {
   const state = useWorkspaceStore.getState();
@@ -17,7 +16,9 @@ export function initCardboxHtmlExportCommands(): void {
       when: hasPage,
       action: () => {
         const page = useWorkspaceStore.getState().currentPagePath;
-        if (page) exportCardboxToHtml(page);
+        if (page) {
+          void import("../cardboxHtmlExportFlow").then((m) => m.exportCardboxToHtml(page));
+        }
       },
     },
   ]);

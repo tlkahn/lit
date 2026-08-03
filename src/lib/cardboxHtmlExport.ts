@@ -44,29 +44,23 @@ body {
 .card {
   position: relative;
   height: var(--card-h);
-  perspective: 800px;
 }
 
 .flip-toggle {
-  display: none;
+  opacity: 0;
+  position: absolute;
+  pointer-events: none;
 }
 
 .card-inner {
   position: relative;
   width: 100%;
   height: 100%;
-  transform-style: preserve-3d;
-  transition: transform 0.5s ease;
-}
-
-.flip-toggle:checked ~ .card-inner {
-  transform: rotateY(180deg);
 }
 
 .face {
   position: absolute;
   inset: 0;
-  backface-visibility: hidden;
   background: #fff;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
@@ -74,16 +68,41 @@ body {
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
+  transition: opacity .25s, visibility .25s;
 }
 
 .face--back {
-  transform: rotateY(180deg);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.flip-toggle:checked ~ .card-inner .face--front {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.flip-toggle:checked ~ .card-inner .face--back {
+  opacity: 1;
+  visibility: visible;
+}
+
+.flip-toggle:focus-visible ~ .flip-btn {
+  outline: 2px solid #4d90fe;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .face { transition: none; }
 }
 
 .face-scroll {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.card--flippable .face-scroll {
+  padding-bottom: 2.5rem;
 }
 
 .face-scroll p {
@@ -134,14 +153,10 @@ body {
   font-size: 16px;
   color: #666;
 }
-
-.card--single .face {
-  position: relative;
-}
 `;
 
 function renderCard(c: CardboxAnnotation, index: number): string {
-  const canFlip = Boolean(c.original);
+  const canFlip = Boolean(c.original?.trim());
   const frontHtml = renderMarkdown(c.body ?? "");
   const id = `c${index}`;
 
@@ -155,11 +170,12 @@ function renderCard(c: CardboxAnnotation, index: number): string {
 
   const backHtml = renderInlineMarkdown(c.original!);
   return `<section class="card card--flippable">
-  <input type="checkbox" id="${id}" class="flip-toggle" hidden>
+  <input type="checkbox" id="${id}" class="flip-toggle">
   <div class="card-inner">
-    <div class="face face--front"><div class="face-scroll">${frontHtml}</div><label class="flip-btn" for="${id}" aria-label="Flip card"></label></div>
-    <div class="face face--back"><div class="face-scroll">${backHtml}</div><label class="flip-btn" for="${id}" aria-label="Flip card"></label></div>
+    <div class="face face--front"><div class="face-scroll">${frontHtml}</div></div>
+    <div class="face face--back"><div class="face-scroll">${backHtml}</div></div>
   </div>
+  <label class="flip-btn" for="${id}" aria-label="Flip card"></label>
 </section>`;
 }
 

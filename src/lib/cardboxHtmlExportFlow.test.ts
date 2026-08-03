@@ -113,25 +113,32 @@ describe("exportCardboxToHtml", () => {
   });
 
   // E5: extension coercion
-  it("E5: appends .html if missing", async () => {
+  it("E5a: appends .html if missing", async () => {
     mockedSave.mockResolvedValue("/out/cards");
     const exportCardboxToHtml = await loadFlow();
     await exportCardboxToHtml("notes/a.md");
     expect(invokedExportArgs!.destination).toBe("/out/cards.html");
   });
 
-  it("E5: preserves .html extension", async () => {
+  it("E5b: preserves .html extension", async () => {
     mockedSave.mockResolvedValue("/out/cards.html");
     const exportCardboxToHtml = await loadFlow();
     await exportCardboxToHtml("notes/a.md");
     expect(invokedExportArgs!.destination).toBe("/out/cards.html");
   });
 
-  it("E5: preserves .HTML extension (case-insensitive)", async () => {
+  it("E5c: preserves .HTML extension (case-insensitive)", async () => {
     mockedSave.mockResolvedValue("/out/cards.HTML");
     const exportCardboxToHtml = await loadFlow();
     await exportCardboxToHtml("notes/a.md");
     expect(invokedExportArgs!.destination).toBe("/out/cards.HTML");
+  });
+
+  it("E5d: preserves .htm extension", async () => {
+    mockedSave.mockResolvedValue("/out/cards.htm");
+    const exportCardboxToHtml = await loadFlow();
+    await exportCardboxToHtml("notes/a.md");
+    expect(invokedExportArgs!.destination).toBe("/out/cards.htm");
   });
 
   // E6: progress + success toast
@@ -160,7 +167,7 @@ describe("exportCardboxToHtml", () => {
   });
 
   // E8: zero cards
-  it("E8: no matching cards shows info toast", async () => {
+  it("E8: no matching cards shows info toast with info variant", async () => {
     mockedSave.mockResolvedValue("/out/cards.html");
     const exportCardboxToHtml = await loadFlow();
     await exportCardboxToHtml("nonexistent.md");
@@ -168,6 +175,7 @@ describe("exportCardboxToHtml", () => {
     expect(invokedExportArgs).toBeNull();
     const state = useStatusMessageStore.getState();
     expect(state.message).toBe("No cards to export");
+    expect(state.variant).toBe("info");
   });
 
   // E9: title
@@ -199,12 +207,63 @@ describe("exportCardboxToHtml", () => {
     expect(invokedExportArgs!.html).toContain("a");
   });
 
-  // E10: KaTeX preload
-  it("E10: loadKatex is called before save", async () => {
+  // E10: dialog before loadKatex
+  it("E10a: cancel path does not call loadKatex", async () => {
     const { loadKatex } = await import("../editor/livePreview/katexLoader");
+    mockedSave.mockResolvedValue(null);
+    const exportCardboxToHtml = await loadFlow();
+    await exportCardboxToHtml("notes/a.md");
+    expect(mockedSave).toHaveBeenCalled();
+    expect(loadKatex).not.toHaveBeenCalled();
+  });
+
+  it("E10b: on success, save dialog is called before loadKatex", async () => {
+    const { loadKatex } = await import("../editor/livePreview/katexLoader");
+    const callOrder: string[] = [];
+    mockedSave.mockImplementation(async () => {
+      callOrder.push("save");
+      return "/out/cards.html";
+    });
+    vi.mocked(loadKatex).mockImplementation((async () => {
+      callOrder.push("loadKatex");
+    }) as unknown as typeof loadKatex);
+    const exportCardboxToHtml = await loadFlow();
+    await exportCardboxToHtml("notes/a.md");
+    expect(callOrder.indexOf("save")).toBeLessThan(callOrder.indexOf("loadKatex"));
+  });
+
+  // E11: error handling
+  it("E11a: list_all_annotations rejection shows error toast", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") throw new Error("DB locked");
+      throw new Error(`Unexpected: ${cmd}`);
+    });
+    const exportCardboxToHtml = await loadFlow();
+    await exportCardboxToHtml("notes/a.md");
+    const state = useStatusMessageStore.getState();
+    expect(state.message).toBe("DB locked");
+    expect(state.variant).toBe("error");
+    expect(mockedSave).not.toHaveBeenCalled();
+  });
+
+  it("E11b: loadKatex rejection shows error toast", async () => {
+    const { loadKatex } = await import("../editor/livePreview/katexLoader");
+    vi.mocked(loadKatex).mockRejectedValueOnce(new Error("KaTeX failed"));
     mockedSave.mockResolvedValue("/out/cards.html");
     const exportCardboxToHtml = await loadFlow();
     await exportCardboxToHtml("notes/a.md");
-    expect(loadKatex).toHaveBeenCalled();
+    const state = useStatusMessageStore.getState();
+    expect(state.message).toBe("KaTeX failed");
+    expect(state.variant).toBe("error");
+    expect(invokedExportArgs).toBeNull();
+  });
+
+  // E12: progress toast shown before render
+  it("E12: progress toast is shown", async () => {
+    mockedSave.mockResolvedValue("/out/cards.html");
+    const exportCardboxToHtml = await loadFlow();
+    await exportCardboxToHtml("notes/a.md");
+    const state = useStatusMessageStore.getState();
+    expect(state.message).toBe("Exported 3 cards");
   });
 });

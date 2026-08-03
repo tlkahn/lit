@@ -10,10 +10,8 @@ pub async fn export_cardbox_html(
     destination: String,
     html: String,
 ) -> Result<String, String> {
-    let dest = destination.clone();
-    let h = html.clone();
     tokio::task::spawn_blocking(move || {
-        do_export_cardbox_html(Path::new(&dest), &h)
+        do_export_cardbox_html(Path::new(&destination), &html)
     })
     .await
     .map_err(|e| e.to_string())?

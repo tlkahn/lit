@@ -245,7 +245,7 @@ function App() {
       const unExportCardboxHtml = await win.listen("menu://export-cardbox-html", async () => {
         const page = useWorkspaceStore.getState().currentPagePath;
         if (!page) {
-          statusShow("Open a document first");
+          statusShow("Open a document first", "info");
           return;
         }
         const { exportCardboxToHtml } = await import("./lib/cardboxHtmlExportFlow");

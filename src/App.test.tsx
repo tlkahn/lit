@@ -1681,6 +1681,31 @@ describe("App", () => {
       expect(invokedCmds).not.toContain("export_cardbox_html");
     });
 
+    it("no page shows info toast instead of exporting", async () => {
+      mockInvoke((cmd) => defaultCardboxInvoke(cmd));
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        currentPagePath: null,
+        pages: [],
+        graphReady: true,
+      });
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-html", {});
+      });
+
+      await waitFor(() => {
+        const state = useStatusMessageStore.getState();
+        expect(state.message).toBe("Open a document first");
+        expect(state.variant).toBe("info");
+      });
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+
     it("global emit does NOT trigger window-scoped handler", async () => {
       mockInvoke((cmd) => defaultCardboxInvoke(cmd));
       mockedSave.mockResolvedValue("/out/cards.html");

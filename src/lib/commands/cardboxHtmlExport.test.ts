@@ -80,10 +80,12 @@ describe("initCardboxHtmlExportCommands", () => {
     expect(visible.find((c) => c.id === "cardbox.exportHtml")).toBeDefined();
   });
 
-  it("action calls exportCardboxToHtml with currentPagePath", () => {
+  it("action calls exportCardboxToHtml with currentPagePath", async () => {
     initCardboxHtmlExportCommands();
     const cmd = getAllCommands().find((c) => c.id === "cardbox.exportHtml")!;
     cmd.action();
-    expect(mockExportCardboxToHtml).toHaveBeenCalledWith("hello.md");
+    await vi.waitFor(() => {
+      expect(mockExportCardboxToHtml).toHaveBeenCalledWith("hello.md");
+    });
   });
 });

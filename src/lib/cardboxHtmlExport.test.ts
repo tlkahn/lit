@@ -146,7 +146,7 @@ describe("renderCardboxHtml", () => {
 
   // B6: flip structure
   describe("B6: flip structure", () => {
-    it("has correct flip markup for card with original", () => {
+    it("has exactly one label.flip-btn as sibling of .card-inner", () => {
       const c = card({ original: "quoted *text*" });
       const doc = parse(renderCardboxHtml([c], { title: "T" }));
       const section = doc.querySelector("section.card")!;
@@ -155,21 +155,26 @@ describe("renderCardboxHtml", () => {
       const input = section.querySelector("input.flip-toggle")!;
       expect(input).not.toBeNull();
       expect(input.getAttribute("type")).toBe("checkbox");
-      expect(input.hasAttribute("hidden")).toBe(true);
+      expect(input.hasAttribute("hidden")).toBe(false);
 
       const cardInner = section.querySelector(".card-inner")!;
       expect(input).toBe(cardInner.previousElementSibling);
+
+      const labels = section.querySelectorAll("label.flip-btn");
+      expect(labels.length).toBe(1);
+      const label = labels[0]!;
+      expect(label.getAttribute("for")).toBe(input.id);
+      expect(label.getAttribute("aria-label")).toBe("Flip card");
+      expect(label.parentElement).toBe(section);
+      expect(label.previousElementSibling).toBe(cardInner);
+
+      expect(section.querySelector(".face--front label")).toBeNull();
+      expect(section.querySelector(".face--back label")).toBeNull();
 
       const backScroll = section.querySelector(
         ".face--back .face-scroll",
       )!;
       expect(backScroll.querySelector("em")).not.toBeNull();
-
-      const labels = section.querySelectorAll("label.flip-btn");
-      expect(labels.length).toBe(2);
-      for (const label of labels) {
-        expect(label.getAttribute("for")).toBe(input.id);
-      }
     });
   });
 
@@ -261,32 +266,73 @@ describe("renderCardboxHtml", () => {
 
   // B12: flip + scroll CSS invariants
   describe("B12: flip + scroll CSS invariants", () => {
-    it("style contains perspective", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain("perspective");
+    function css(): string {
+      return styleText(parse(renderCardboxHtml([card()], { title: "T" })));
+    }
+
+    it("does NOT contain 3D transform properties", () => {
+      const s = css();
+      expect(s).not.toContain("backface-visibility");
+      expect(s).not.toContain("preserve-3d");
+      expect(s).not.toContain("rotateY");
+      expect(s).not.toContain("perspective");
     });
 
-    it("style contains transform-style: preserve-3d", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain("transform-style: preserve-3d");
+    it("uses opacity/visibility swap for flip", () => {
+      const s = css();
+      expect(s).toContain(".face--back { opacity: 0; visibility: hidden");
+      expect(s).toContain(".flip-toggle:checked ~ .card-inner .face--front");
+      expect(s).toContain(".flip-toggle:checked ~ .card-inner .face--back");
+      expect(s).toContain("transition: opacity");
     });
 
-    it("style contains backface-visibility: hidden", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain("backface-visibility: hidden");
+    it("has prefers-reduced-motion rule", () => {
+      expect(css()).toContain("prefers-reduced-motion: reduce");
     });
 
-    it("style contains rotateY(180deg)", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain("rotateY(180deg)");
+    it("has focus-visible outline on flip-btn", () => {
+      expect(css()).toContain(".flip-toggle:focus-visible ~ .flip-btn");
     });
 
-    it("style contains .flip-toggle:checked ~ .card-inner", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain(".flip-toggle:checked ~ .card-inner");
+    it("flip-toggle is visually hidden but focusable (not display:none)", () => {
+      const s = css();
+      expect(s).not.toMatch(/\.flip-toggle\s*\{[^}]*display:\s*none/);
+      expect(s).toContain("opacity: 0");
+      expect(s).toContain("position: absolute");
     });
 
     it("style contains overflow-y: auto", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain("overflow-y: auto");
+      expect(css()).toContain("overflow-y: auto");
     });
 
     it("style contains --card-h", () => {
-      expect(styleText(parse(renderCardboxHtml([card()], { title: "T" })))).toContain("--card-h");
+      expect(css()).toContain("--card-h");
+    });
+
+    it("does NOT contain .card--single .face override", () => {
+      expect(css()).not.toContain(".card--single .face");
+    });
+  });
+
+  // B12b: scroll content clears flip control
+  describe("B12b: scroll padding", () => {
+    it("flippable face-scroll has padding-bottom", () => {
+      const s = styleText(parse(renderCardboxHtml([card()], { title: "T" })));
+      expect(s).toMatch(/\.card--flippable\s+\.face-scroll\s*\{[^}]*padding-bottom:\s*2\.5rem/);
+    });
+  });
+
+  // B7b: whitespace-only original is single-sided
+  describe("B7b: whitespace-only original", () => {
+    it("card with whitespace-only original is single-sided", () => {
+      const c = card({ original: "   " });
+      const doc = parse(renderCardboxHtml([c], { title: "T" }));
+      const section = doc.querySelector("section.card")!;
+      expect(section.classList.contains("card--single")).toBe(true);
+      expect(section.classList.contains("card--flippable")).toBe(false);
+      expect(section.querySelector("input")).toBeNull();
+      expect(section.querySelector("label")).toBeNull();
+      expect(section.querySelector(".face--back")).toBeNull();
     });
   });
 
