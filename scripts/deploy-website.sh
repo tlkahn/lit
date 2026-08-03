@@ -136,10 +136,11 @@ BUCKET=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='WebsiteBucketName'].OutputValue" \
   --output text)
 echo "==> Syncing to s3://$BUCKET"
-# releases/Lit*, releases/latest.json, and free-distribution/Lit* are
-# uploaded directly by release.sh, not produced by the Hugo build in
-# $WEBSITE_DIR/public/ — exclude them so --delete doesn't wipe them out.
-aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/Lit*" --exclude "releases/latest.json" --exclude "free-distribution/Lit*" --region "$AWS_REGION"
+# releases/Lit*, releases/latest.json, free-distribution/Lit*, and z/*
+# (published cardbox pages) are uploaded directly by release.sh or
+# publish-cards.sh, not produced by the Hugo build in $WEBSITE_DIR/public/
+# - exclude them so --delete doesn't wipe them out.
+aws s3 sync "$WEBSITE_DIR/public/" "s3://$BUCKET" --delete --exclude "releases/Lit*" --exclude "releases/latest.json" --exclude "free-distribution/Lit*" --exclude "z/*" --region "$AWS_REGION"
 
 DIST_ID=$(aws cloudfront list-distributions \
   --region "$AWS_REGION" \

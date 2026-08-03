@@ -76,6 +76,13 @@ bash scripts/release.sh --skip-website <tag>   # skip website deploy
 Required env vars: `LIT_LICENSE_VERIFYING_KEY_B64`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
 Optional: `APPLE_SIGNING_IDENTITY`, `ANTHROPIC_API_KEY`, `LLM_MODEL`.
 
+```bash
+bash scripts/publish-cards.sh <html_file> [slug]          # publish cardbox HTML to https://lit.solar/z/<slug>/
+bash scripts/publish-cards.sh --delete <slug>              # remove a published page
+```
+
+Pages are unlisted (link-shareable only, no `/z/` index).
+
 ## Roadmap
 
 See `doc/roadmap.md`.
