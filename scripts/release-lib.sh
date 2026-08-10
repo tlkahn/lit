@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Testable function library for release.sh — sourced, no side effects at load time.
+# Testable function library for release.sh - sourced, no side effects at load time.
+#
+# Single free release path: Cargo default features include free-distribution,
+# so builds auto-activate the embedded free key for unlicensed users. Artifacts
+# always land on releases/ and refresh releases/latest.json. Website deploy
+# always keeps freeDistribution = true with a versioned releases/ DMG URL.
 
 set -euo pipefail
 
@@ -9,13 +14,11 @@ release_parse_args() {
   TAG=""
   DRY_RUN=0
   SKIP_WEBSITE=0
-  FREE_DISTRIBUTION=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run)   DRY_RUN=1; shift ;;
       --skip-website) SKIP_WEBSITE=1; shift ;;
-      --free-distribution) FREE_DISTRIBUTION=1; shift ;;
       --*)
         echo "Error: unknown flag $1" >&2
         return 1
@@ -69,13 +72,37 @@ release_check_tools() {
 release_check_free_distribution_key() {
   local pem="$REPO_ROOT/src-tauri/keys/free_distribution.pem"
   if [[ ! -f "$pem" ]]; then
-    echo "Error: $pem not found. Generate a campaign key with:" >&2
-    echo "  cargo run -p keygen -- --name \"Free Distribution\" --email \"free@lit.solar\" --type free_distribution --id <campaign-id> --key <prod-signing-key> > src-tauri/keys/free_distribution.pem" >&2
+    echo "Error: $pem not found. Generate an embedded free key with:" >&2
+    echo "  cargo run -p keygen -- --name \"Free Distribution\" --email \"free@lit.solar\" --type free_distribution --id <license-id> --key <prod-signing-key> > src-tauri/keys/free_distribution.pem" >&2
     return 1
   fi
   if grep -q "PLACEHOLDER" "$pem"; then
-    echo "Error: $pem still contains the placeholder. Generate a real campaign key before building --free-distribution." >&2
+    echo "Error: $pem still contains the placeholder. Release builds require a real embedded free key." >&2
     return 1
+  fi
+  # The pem must cryptographically verify against the key the build embeds
+  # (debug: dev_license_verifying.bin; release: LIT_LICENSE_VERIFYING_KEY_B64).
+  # Without the release env var we can't prove it here, so only run the real
+  # check when it is set; release.sh's release_check_env fails the release one
+  # line later if the var is missing anyway.
+  if [[ -n "${LIT_LICENSE_VERIFYING_KEY_B64:-}" ]]; then
+    local tmp
+    tmp="$(mktemp)"
+    # base64 --decode is GNU; -D is BSD (macOS). Try both for portability.
+    if ! (echo "$LIT_LICENSE_VERIFYING_KEY_B64" | base64 --decode 2>/dev/null \
+        || echo "$LIT_LICENSE_VERIFYING_KEY_B64" | base64 -D 2>/dev/null) > "$tmp"; then
+      echo "Error: LIT_LICENSE_VERIFYING_KEY_B64 is not valid base64" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    if ! (cd "$REPO_ROOT/src-tauri" && cargo run -q -p keygen -- verify --pem "$pem" --verify-key "$tmp"); then
+      echo "Error: $pem does not verify against the embedded license verifying key (LIT_LICENSE_VERIFYING_KEY_B64)." >&2
+      echo "  Regenerate it with the prod signing key:" >&2
+      echo "  cargo run -p keygen -- --name \"Free Distribution\" --email \"free@lit.solar\" --type free_distribution --id <license-id> --key <prod-signing-key> > src-tauri/keys/free_distribution.pem" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    rm -f "$tmp"
   fi
 }
 
@@ -175,15 +202,9 @@ release_codesign_pdfium() {
 release_tauri_build() {
   echo "── Cleaning stale DMGs..."
   find "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin" -name '*.dmg' -type f -delete 2>/dev/null || true
-  local feature_args=()
-  if [[ "${FREE_DISTRIBUTION:-0}" -eq 1 ]]; then
-    echo "── Building Tauri app (free-distribution)..."
-    feature_args=(--features free-distribution)
-  else
-    echo "── Building Tauri app..."
-  fi
+  # free-distribution is a Cargo default feature - no --features flag needed.
+  echo "── Building Tauri app (free-by-default)..."
   bun tauri build --target aarch64-apple-darwin \
-    "${feature_args[@]}" \
     --config '{"build":{"beforeBuildCommand":"bun run build"}}'
 }
 
@@ -274,26 +295,6 @@ release_upload_dmg() {
   aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg" "s3://${S3_BUCKET}/releases/Lit_${tag}_aarch64.dmg"
 }
 
-# Free-distribution DMGs are a standalone artifact, deliberately kept out of
-# the releases/ prefix and latest.json: that manifest drives every installed
-# copy's auto-updater, and publishing a free-distribution build there would
-# hand free access to any unlicensed user who happens to update while it's
-# live, with no way to bound the giveaway to a campaign window. The website's
-# "Download Free" button should link directly to this fixed URL instead.
-release_upload_free_distribution_dmg() {
-  local tag="$1"
-  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-    echo "── [DRY RUN] Would upload Lit_${tag}_aarch64.dmg to S3 (free-distribution/)"
-    return 0
-  fi
-  echo "── Uploading free-distribution DMG to S3..."
-  aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg" "s3://${S3_BUCKET}/free-distribution/Lit_free_aarch64.dmg"
-  if [[ -f "$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256" ]]; then
-    aws s3 cp "$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256" "s3://${S3_BUCKET}/free-distribution/Lit_free_aarch64.dmg.sha256"
-  fi
-  echo "Free-distribution DMG: https://lit.solar/free-distribution/Lit_free_aarch64.dmg"
-}
-
 release_compute_checksums() {
   local tag="$1"
   local dmg="$REPO_ROOT/Lit_${tag}_aarch64.dmg"
@@ -339,12 +340,49 @@ release_inject_checksum() {
   echo "==> Injecting DMG checksum"
   sed "s|^download_sha256:.*|download_sha256: \"$RELEASE_DMG_SHA256\"|" "$index_file" > "$index_file.tmp" && mv "$index_file.tmp" "$index_file"
   if ! grep -q "download_sha256: \"$RELEASE_DMG_SHA256\"" "$index_file"; then
-    echo "Warning: download_sha256 placeholder not found in $index_file — checksum not injected" >&2
+    echo "Warning: download_sha256 placeholder not found in $index_file - checksum not injected" >&2
   fi
   sed "s|^  downloadSHA256 = .*|  downloadSHA256 = '$RELEASE_DMG_SHA256'|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
   if ! grep -q "downloadSHA256 = '$RELEASE_DMG_SHA256'" "$toml_file"; then
-    echo "Warning: downloadSHA256 placeholder not found in $toml_file — checksum not injected" >&2
+    echo "Warning: downloadSHA256 placeholder not found in $toml_file - checksum not injected" >&2
   fi
+}
+
+# Apply the tagged-path website updates to the given _index.md and hugo.toml:
+# versioned releases/ download URL + label, version, freeDistribution = true,
+# and the DMG checksum (C1-F5 contract). Extracted from deploy-website.sh so it
+# is testable without network (see release.bats Cycle 5).
+#
+# C2-F3: the checksum is REQUIRED here - if RELEASE_DMG_SHA256 is unset it is
+# resolved from the repo-root sidecar Lit_${TAG}_aarch64.dmg.sha256, and if that
+# is missing too the function fails loudly instead of silently shipping a
+# download button with an empty checksum.
+release_website_apply_tagged() {
+  local tag="$1"
+  local index_file="$2"
+  local toml_file="$3"
+  local version="${tag#v}"
+  local url="https://lit.solar/releases/Lit_${tag}_aarch64.dmg"
+  local label="Download ${tag} for Mac"
+
+  sed "s|^download_url:.*|download_url: \"$url\"|" "$index_file" > "$index_file.tmp" && mv "$index_file.tmp" "$index_file"
+  sed "s|^download_label:.*|download_label: \"$label\"|" "$index_file" > "$index_file.tmp" && mv "$index_file.tmp" "$index_file"
+  sed "s|^  downloadURL = .*|  downloadURL = '$url'|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+  sed "s|^  version = .*|  version = '$version'|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+  # Free is the permanent product default - never flip freeDistribution off.
+  sed "s|^  freeDistribution = .*|  freeDistribution = true|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+
+  if [[ -z "${RELEASE_DMG_SHA256:-}" ]]; then
+    local sidecar="$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256"
+    if [[ ! -f "$sidecar" ]]; then
+      echo "Error: RELEASE_DMG_SHA256 is unset and sidecar $sidecar not found - cannot inject the download checksum" >&2
+      echo "  Run release.sh (which computes the checksum) or set RELEASE_DMG_SHA256." >&2
+      return 1
+    fi
+    RELEASE_DMG_SHA256="$(awk '{print $1}' "$sidecar")"
+    export RELEASE_DMG_SHA256
+  fi
+  release_inject_checksum "$index_file" "$toml_file"
 }
 
 release_deploy_website() {
@@ -357,14 +395,8 @@ release_deploy_website() {
     echo "── Skipping website deploy (--skip-website)"
     return 0
   fi
-  local extra_args=()
-  if [[ "${FREE_DISTRIBUTION:-0}" -eq 1 ]]; then
-    echo "── Deploying website (free-distribution)..."
-    extra_args=(--free-distribution)
-  else
-    echo "── Deploying website..."
-  fi
-  bash "$REPO_ROOT/scripts/deploy-website.sh" "${extra_args[@]}" "$tag"
+  echo "── Deploying website..."
+  bash "$REPO_ROOT/scripts/deploy-website.sh" "$tag"
 }
 
 release_clean_artifacts() {

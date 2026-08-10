@@ -3263,6 +3263,7 @@ dependencies = [
  "grep-searcher",
  "image",
  "indexmap 2.14.0",
+ "keygen",
  "lit-annotation-core",
  "lit-cli",
  "llm-anthropic",

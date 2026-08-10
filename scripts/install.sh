@@ -1,11 +1,18 @@
 #!/bin/bash
+# Local install - builds a free-by-default release bundle (Cargo default feature
+# free-distribution) and installs it to /Applications. Matches shipping free
+# builds from scripts/release.sh.
 set -euo pipefail
 
 APP_NAME="Lit.app"
 INSTALL_DIR="/Applications"
 BUNDLE_DIR="src-tauri/target/release/bundle/macos"
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+export REPO_ROOT="${REPO_ROOT:-$(pwd)}"
+
+source "$SCRIPT_DIR/release-lib.sh"
 
 if [ -z "${LIT_LICENSE_VERIFYING_KEY_B64:-}" ]; then
     echo "ERROR: Release builds require LIT_LICENSE_VERIFYING_KEY_B64 env var."
@@ -13,6 +20,10 @@ if [ -z "${LIT_LICENSE_VERIFYING_KEY_B64:-}" ]; then
     echo "  Example: export LIT_LICENSE_VERIFYING_KEY_B64=\$(base64 < keys/dev_license_verifying.bin)"
     exit 1
 fi
+
+# Fail fast if the embedded free key is missing or still a placeholder -
+# same gate as release.sh so local installs cannot ship without free-grant.
+release_check_free_distribution_key
 
 echo "==> Installing dependencies"
 bun install
@@ -30,7 +41,7 @@ bash scripts/set-version.sh "${VERSION#v}"
 echo "==> Cleaning stale bundle"
 rm -rf "$BUNDLE_DIR"
 
-echo "==> Building release bundle"
+echo "==> Building release bundle (free-by-default)"
 bun tauri build
 
 echo "==> Installing $APP_NAME to $INSTALL_DIR"

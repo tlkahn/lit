@@ -1,6 +1,7 @@
 use std::{env, fs, path::Path, process::Command};
 
 fn main() {
+    verify_embedded_free_key();
     set_git_version();
     ensure_placeholders();
     build_tauri();
@@ -14,6 +15,63 @@ fn main() {
             "prod_license_verifying.bin",
         );
     }
+}
+
+/// Fail fast if the embedded free key does not verify against the key this
+/// build embeds. Guarded by CARGO_FEATURE_FREE_DISTRIBUTION (the Cargo default
+/// feature): builds with the feature off (paid QA path) skip the check.
+///
+/// If the pem is signed with a different key than the one embedded, the
+/// app's `ensure_free_grant` swallows the failure and ships an Unlicensed app
+/// with no in-app path to fix it - so this is a hard build error, not a warning.
+fn verify_embedded_free_key() {
+    if env::var("CARGO_FEATURE_FREE_DISTRIBUTION").is_err() {
+        return;
+    }
+
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let pem_path = manifest.join("keys").join("free_distribution.pem");
+    let pem = fs::read_to_string(&pem_path).unwrap_or_else(|e| {
+        panic!(
+            "free_distribution.pem does not verify: cannot read {}: {e}",
+            pem_path.display()
+        )
+    });
+
+    // Pick the same key bytes the build embeds: debug builds embed
+    // dev_license_verifying.bin, release builds embed LIT_LICENSE_VERIFYING_KEY_B64.
+    let profile = env::var("PROFILE").unwrap();
+    let vk_bytes: [u8; 32] = if profile == "debug" {
+        let vk_path = manifest.join("keys").join("dev_license_verifying.bin");
+        let bytes = fs::read(&vk_path).unwrap_or_else(|e| {
+            panic!(
+                "free_distribution.pem does not verify: cannot read {}: {e}",
+                vk_path.display()
+            )
+        });
+        bytes.try_into().unwrap_or_else(|v: Vec<u8>| {
+            panic!(
+                "free_distribution.pem does not verify: {} is {} bytes, expected 32",
+                vk_path.display(),
+                v.len()
+            )
+        })
+    } else {
+        let b64 = env::var("LIT_LICENSE_VERIFYING_KEY_B64")
+            .unwrap_or_else(|_| panic!("LIT_LICENSE_VERIFYING_KEY_B64 must be set for release builds"));
+        decode_key_b64(&b64, "LIT_LICENSE_VERIFYING_KEY_B64")
+    };
+
+    if let Err(e) = verify_free_distribution_pem(&pem, &vk_bytes) {
+        panic!(
+            "free_distribution.pem does not verify against the embedded license verifying key: {e} \
+             - regenerate with: cargo run -p keygen -- --name \"Free Distribution\" \
+             --email \"free@lit.solar\" --type free_distribution --id <license-id> --key <prod-signing-key>"
+        );
+    }
+
+    println!("cargo:rerun-if-changed=keys/free_distribution.pem");
+    println!("cargo:rerun-if-changed=keys/dev_license_verifying.bin");
 }
 
 fn build_tauri() {
@@ -163,6 +221,40 @@ where
 }
 // SYNC:end:git_rerun_paths
 
+/// Verify that `keys/free_distribution.pem` is genuinely signed by the key this
+/// build embeds (debug: `dev_license_verifying.bin`; release: the bytes decoded
+/// from `LIT_LICENSE_VERIFYING_KEY_B64`).
+///
+/// If the pem is signed with a different key than the one embedded,
+/// `ensure_free_grant` swallows the failure and ships an Unlicensed app with no
+/// in-app path to fix it - a silent blocker. This pure helper is mirrored in
+/// `tests/free_pem_verify.rs` (SYNC markers, enforced by release.bats).
+// SYNC:begin:verify_free_distribution_pem
+fn verify_free_distribution_pem(pem: &str, vk_bytes: &[u8; 32]) -> Result<(), String> {
+    use base64::Engine;
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let trimmed = pem.trim();
+    let inner = trimmed
+        .strip_prefix("-----BEGIN LICENSE KEY-----")
+        .and_then(|s| s.strip_suffix("-----END LICENSE KEY-----"))
+        .ok_or("invalid license key envelope")?;
+    let body: String = inner.lines().map(str::trim).collect();
+    let (payload_b64, sig_b64) = body.split_once('.').ok_or("missing dot separator")?;
+    if payload_b64.is_empty() || sig_b64.is_empty() {
+        return Err("empty payload or signature".into());
+    }
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(sig_b64)
+        .map_err(|e| format!("bad signature base64: {e}"))?;
+    let sig = Signature::from_slice(&sig_bytes).map_err(|_| "invalid signature length")?;
+    let vk =
+        VerifyingKey::from_bytes(vk_bytes).map_err(|e| format!("bad verifying key bytes: {e}"))?;
+    vk.verify(payload_b64.as_bytes(), &sig)
+        .map_err(|e| format!("signature verification failed: {e}"))
+}
+// SYNC:end:verify_free_distribution_pem
+
 fn ensure_placeholders() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
 
@@ -212,18 +304,26 @@ fn ensure_placeholders_in(base: &Path, _triple: &str) {
 fn embed_prod_key(env_var: &str, filename: &str) {
     let b64 = env::var(env_var)
         .unwrap_or_else(|_| panic!("{env_var} must be set for release builds"));
+    let bytes = decode_key_b64(&b64, env_var);
 
+    let out_dir = env::var("OUT_DIR").unwrap();
+    fs::write(Path::new(&out_dir).join(filename), &bytes).unwrap();
+}
+
+/// Decode a base64-encoded 32-byte key, panicking with a clear message naming
+/// the env var on invalid base64 or wrong length. Shared by `embed_prod_key`
+/// and `verify_embedded_free_key` so both always operate on the same bytes.
+fn decode_key_b64(b64: &str, env_var: &str) -> [u8; 32] {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&b64)
+        .decode(b64)
         .unwrap_or_else(|e| panic!("{env_var}: invalid base64: {e}"));
-
     assert!(
         bytes.len() == 32,
         "{env_var}: expected 32 bytes, got {}",
         bytes.len()
     );
-
-    let out_dir = env::var("OUT_DIR").unwrap();
-    fs::write(Path::new(&out_dir).join(filename), &bytes).unwrap();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    key
 }

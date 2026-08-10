@@ -76,6 +76,22 @@ pub fn verify_license_key(
     Ok(payload)
 }
 
+/// Verify a pem file against a 32-byte raw verifying key file. Backend for the
+/// `verify` CLI subcommand: read both files, decode the key, and round-trip
+/// through `verify_license_key` so the signature, envelope, and payload all
+/// check out.
+pub fn verify_pem_file(pem_path: &Path, vk_path: &Path) -> Result<LicensePayload, String> {
+    let pem = std::fs::read_to_string(pem_path)
+        .map_err(|e| format!("cannot read pem file {}: {e}", pem_path.display()))?;
+    let vk_bytes: [u8; 32] = std::fs::read(vk_path)
+        .map_err(|e| format!("cannot read verify key file {}: {e}", vk_path.display()))?
+        .try_into()
+        .map_err(|v: Vec<u8>| format!("expected 32-byte verifying key, got {} bytes", v.len()))?;
+    let vk = VerifyingKey::from_bytes(&vk_bytes)
+        .map_err(|e| format!("bad verifying key bytes: {e}"))?;
+    verify_license_key(&pem, &vk)
+}
+
 pub fn parse_duration(s: &str) -> Result<u64, String> {
     let (num_str, multiplier) = if let Some(n) = s.strip_suffix('d') {
         (n, 86400)
@@ -177,6 +193,23 @@ pub fn load_signing_key(path: &Path) -> Result<SigningKey, String> {
 }
 
 pub fn generate_key(args: &KeygenArgs, now: u64) -> Result<String, String> {
+    // C2-F6: the committed free_distribution.pem ended up dev-signed exactly
+    // because the default key_path is the dev seed. A free_distribution key
+    // must come from the prod signing key; refuse the default dev seed here so
+    // the footgun fails loudly instead of happily signing with the dev key.
+    if args.license_type == "free_distribution" {
+        let dev_seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../keys/dev_license_signing.bin");
+        let uses_default_dev_key = args.key_path == KeygenArgs::default().key_path
+            || (dev_seed.exists()
+                && std::fs::read(&args.key_path).ok() == std::fs::read(&dev_seed).ok());
+        if uses_default_dev_key {
+            return Err(
+                "refusing to sign a free_distribution key with the default dev key; \
+                 pass --key <prod-signing-key>"
+                    .into(),
+            );
+        }
+    }
     let signing_key = load_signing_key(Path::new(&args.key_path))?;
     let expires_at = parse_expires(args.expires.as_deref(), now)?;
     let license_id = args
@@ -217,6 +250,20 @@ mod tests {
     fn write_temp_key(key: &SigningKey) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(&key.to_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    fn write_temp_text(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    fn write_temp_bytes(bytes: &[u8]) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(bytes).unwrap();
         f.flush().unwrap();
         f
     }
@@ -528,5 +575,107 @@ mod tests {
         let payload = verify_license_key(&pem, &verifying_key).unwrap();
         assert_eq!(payload.name, "Integration Test");
         assert_eq!(payload.expires_at, Some(1700000000 + 86400));
+    }
+
+    // --- Cycle 9: verify_pem_file (verify subcommand backend) ---
+
+    #[test]
+    fn verify_pem_file_round_trips_through_verify_license_key() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let pem = sign_license_pem(&test_payload(), &sk);
+        let pem_file = write_temp_text(&pem);
+        let vk_file = write_temp_bytes(&vk.to_bytes());
+        let payload = verify_pem_file(pem_file.path(), vk_file.path()).unwrap();
+        assert_eq!(payload, test_payload());
+    }
+
+    #[test]
+    fn verify_pem_file_wrong_key_fails() {
+        let sk1 = SigningKey::generate(&mut OsRng);
+        let sk2 = SigningKey::generate(&mut OsRng);
+        let pem = sign_license_pem(&test_payload(), &sk1);
+        let pem_file = write_temp_text(&pem);
+        let vk_file = write_temp_bytes(&sk2.verifying_key().to_bytes());
+        assert!(verify_pem_file(pem_file.path(), vk_file.path()).is_err());
+    }
+
+    #[test]
+    fn verify_pem_file_missing_files_fail() {
+        assert!(
+            verify_pem_file(
+                Path::new("/nonexistent/license.pem"),
+                Path::new("/nonexistent/verify.bin"),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn verify_pem_file_bad_key_length_fails() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pem = sign_license_pem(&test_payload(), &sk);
+        let pem_file = write_temp_text(&pem);
+        let vk_file = write_temp_bytes(&[0u8; 16]);
+        assert!(verify_pem_file(pem_file.path(), vk_file.path()).is_err());
+    }
+
+    // --- Cycle 10 (C2-F6): refuse the default dev key for free_distribution ---
+    // The committed free_distribution.pem ended up dev-signed exactly because
+    // keygen's default key_path is the dev seed. A free_distribution key must
+    // come from the prod signing key, so generating one with the default dev
+    // key is a footgun that must fail loudly instead of happily signing.
+
+    #[test]
+    fn generate_key_free_distribution_with_default_dev_key_is_refused() {
+        let args = KeygenArgs {
+            license_type: "free_distribution".into(),
+            ..Default::default()
+        };
+        let err = generate_key(&args, 1000).unwrap_err();
+        assert!(
+            err.contains("dev key"),
+            "expected the error to name the dev key, got: {err}"
+        );
+        assert!(
+            err.contains("--key"),
+            "expected the error to point at --key <prod-signing-key>, got: {err}"
+        );
+    }
+
+    #[test]
+    fn generate_key_free_distribution_with_explicit_non_default_key_succeeds() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let f = write_temp_key(&sk);
+        let args = KeygenArgs {
+            license_type: "free_distribution".into(),
+            key_path: f.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let pem = generate_key(&args, 1000).unwrap();
+        let payload = verify_license_key(&pem, &vk).unwrap();
+        assert_eq!(payload.license_type, "free_distribution");
+    }
+
+    #[test]
+    fn generate_key_free_distribution_explicit_dev_path_by_file_bytes_is_refused() {
+        // Passing the dev seed under a different path string must still be
+        // refused: the check compares file bytes, not just the default path.
+        let dev_seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../keys/dev_license_signing.bin");
+        if !dev_seed.exists() {
+            eprintln!("Skipping generate_key_free_distribution_explicit_dev_path_by_file_bytes_is_refused: dev key not found");
+            return;
+        }
+        let args = KeygenArgs {
+            license_type: "free_distribution".into(),
+            key_path: dev_seed.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let err = generate_key(&args, 1000).unwrap_err();
+        assert!(
+            err.contains("dev key"),
+            "expected the error to name the dev key, got: {err}"
+        );
     }
 }
