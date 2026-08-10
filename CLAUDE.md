@@ -75,7 +75,18 @@ bash scripts/release.sh --skip-website <tag>   # skip website deploy
 
 Release and install builds are free-by-default (`free-distribution` is a Cargo default feature); there is no `--free-distribution` flag.
 
-Required env vars: `LIT_LICENSE_VERIFYING_KEY_B64`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
+License QA: the native Help menu's license items compile out under the default
+`free-distribution` feature; exercise the paid/license UI with feature-off
+builds (`cargo build --no-default-features`). `LIT_LICENSE_DEV=unlicensed`
+(also `licensed`/`expired`/`revoked`) still forces the matching splash in debug
+builds via the `get_license_status` debug override, which runs before the free
+grant - so license-state QA does not need a feature toggle.
+
+Website: the live site currently keeps `freeDistribution = false` from the last
+old-path deploy; the next TAGGED release flips it to `true`. The notes-only
+`deploy-website.sh` path intentionally never touches the parameter.
+
+Required env vars: `LIT_LICENSE_VERIFYING_KEY_B64`, `TAURI_SIGNING_PRIVATE_KEY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
 Optional: `APPLE_SIGNING_IDENTITY`, `ANTHROPIC_API_KEY`, `LLM_MODEL`.
 
 ```bash
