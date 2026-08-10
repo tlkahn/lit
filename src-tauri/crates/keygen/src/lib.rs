@@ -76,6 +76,22 @@ pub fn verify_license_key(
     Ok(payload)
 }
 
+/// Verify a pem file against a 32-byte raw verifying key file. Backend for the
+/// `verify` CLI subcommand: read both files, decode the key, and round-trip
+/// through `verify_license_key` so the signature, envelope, and payload all
+/// check out.
+pub fn verify_pem_file(pem_path: &Path, vk_path: &Path) -> Result<LicensePayload, String> {
+    let pem = std::fs::read_to_string(pem_path)
+        .map_err(|e| format!("cannot read pem file {}: {e}", pem_path.display()))?;
+    let vk_bytes: [u8; 32] = std::fs::read(vk_path)
+        .map_err(|e| format!("cannot read verify key file {}: {e}", vk_path.display()))?
+        .try_into()
+        .map_err(|v: Vec<u8>| format!("expected 32-byte verifying key, got {} bytes", v.len()))?;
+    let vk = VerifyingKey::from_bytes(&vk_bytes)
+        .map_err(|e| format!("bad verifying key bytes: {e}"))?;
+    verify_license_key(&pem, &vk)
+}
+
 pub fn parse_duration(s: &str) -> Result<u64, String> {
     let (num_str, multiplier) = if let Some(n) = s.strip_suffix('d') {
         (n, 86400)
@@ -217,6 +233,20 @@ mod tests {
     fn write_temp_key(key: &SigningKey) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         f.write_all(&key.to_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    fn write_temp_text(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    fn write_temp_bytes(bytes: &[u8]) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(bytes).unwrap();
         f.flush().unwrap();
         f
     }
@@ -528,5 +558,48 @@ mod tests {
         let payload = verify_license_key(&pem, &verifying_key).unwrap();
         assert_eq!(payload.name, "Integration Test");
         assert_eq!(payload.expires_at, Some(1700000000 + 86400));
+    }
+
+    // --- Cycle 9: verify_pem_file (verify subcommand backend) ---
+
+    #[test]
+    fn verify_pem_file_round_trips_through_verify_license_key() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let vk = sk.verifying_key();
+        let pem = sign_license_pem(&test_payload(), &sk);
+        let pem_file = write_temp_text(&pem);
+        let vk_file = write_temp_bytes(&vk.to_bytes());
+        let payload = verify_pem_file(pem_file.path(), vk_file.path()).unwrap();
+        assert_eq!(payload, test_payload());
+    }
+
+    #[test]
+    fn verify_pem_file_wrong_key_fails() {
+        let sk1 = SigningKey::generate(&mut OsRng);
+        let sk2 = SigningKey::generate(&mut OsRng);
+        let pem = sign_license_pem(&test_payload(), &sk1);
+        let pem_file = write_temp_text(&pem);
+        let vk_file = write_temp_bytes(&sk2.verifying_key().to_bytes());
+        assert!(verify_pem_file(pem_file.path(), vk_file.path()).is_err());
+    }
+
+    #[test]
+    fn verify_pem_file_missing_files_fail() {
+        assert!(
+            verify_pem_file(
+                Path::new("/nonexistent/license.pem"),
+                Path::new("/nonexistent/verify.bin"),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn verify_pem_file_bad_key_length_fails() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pem = sign_license_pem(&test_payload(), &sk);
+        let pem_file = write_temp_text(&pem);
+        let vk_file = write_temp_bytes(&[0u8; 16]);
+        assert!(verify_pem_file(pem_file.path(), vk_file.path()).is_err());
     }
 }

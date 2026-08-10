@@ -29,6 +29,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 base64 = "0.22"
+# Cryptographic verification of keys/free_distribution.pem against the key the
+# build embeds (see verify_free_distribution_pem). Already a runtime dep, so no
+# lockfile churn.
+ed25519-dalek = "2"
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -99,6 +103,9 @@ objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSURL", "NSS
 [dev-dependencies]
 async-trait = "0.1"
 serde_json = "1"
+# Used by tests/free_pem_verify.rs to sign pems in-test (mirror of build.rs's
+# verify_free_distribution_pem).
+keygen = { path = "crates/keygen" }
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -215,17 +215,41 @@ EOF
   [[ "$output" == *"placeholder"* ]]
 }
 
-@test "release_check_free_distribution_key: real-looking PEM passes" {
+@test "release_check_free_distribution_key: with LIT_LICENSE_VERIFYING_KEY_B64 set, verifies the pem via keygen" {
   source_lib
+  mock_command cargo 0 ""
   REPO_ROOT="$TEST_TEMP_DIR"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
-  cat > "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem" <<'EOF'
------BEGIN LICENSE KEY-----
-eyJsaWNlbnNlX2lkIjoiZnJlZS10ZXN0In0=.c2ln
------END LICENSE KEY-----
-EOF
+  cp "$SCRIPT_DIR/../src-tauri/keys/free_distribution.pem" "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem"
+  export LIT_LICENSE_VERIFYING_KEY_B64="$(base64 < "$SCRIPT_DIR/../src-tauri/keys/dev_license_verifying.bin" | tr -d '\n')"
   run release_check_free_distribution_key
   [ "$status" -eq 0 ]
+  # The gate invokes keygen verify with the pem and a decoded 32-byte key file.
+  grep -q "cargo run -q -p keygen -- verify --pem" "$MOCK_LOG"
+  grep -q -- "--verify-key" "$MOCK_LOG"
+}
+
+@test "release_check_free_distribution_key: fails when keygen verify exits 1" {
+  source_lib
+  mock_command cargo 1 ""
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
+  cp "$SCRIPT_DIR/../src-tauri/keys/free_distribution.pem" "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem"
+  export LIT_LICENSE_VERIFYING_KEY_B64="$(base64 < "$SCRIPT_DIR/../src-tauri/keys/dev_license_verifying.bin" | tr -d '\n')"
+  run release_check_free_distribution_key
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not verify"* ]]
+}
+
+@test "release_check_free_distribution_key: without LIT_LICENSE_VERIFYING_KEY_B64, only file/placeholder checks, no keygen" {
+  source_lib
+  unset LIT_LICENSE_VERIFYING_KEY_B64
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
+  cp "$SCRIPT_DIR/../src-tauri/keys/free_distribution.pem" "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem"
+  run release_check_free_distribution_key
+  [ "$status" -eq 0 ]
+  ! grep -q "keygen" "$MOCK_LOG"
 }
 
 # ── Cycle 5: Signing identity detection ─────────────────────────────────────
@@ -447,12 +471,13 @@ TOML
   local build_rs="$SCRIPT_DIR/../src-tauri/build.rs"
   local tests_dir="$SCRIPT_DIR/../src-tauri/tests"
 
-  local -a names=("resolve_dev_version" "resolve_git_path" "git_rerun_paths" "ensure_placeholders_in")
+  local -a names=("resolve_dev_version" "resolve_git_path" "git_rerun_paths" "ensure_placeholders_in" "verify_free_distribution_pem")
   local -a files=(
     "$tests_dir/resolve_dev_version.rs"
     "$tests_dir/git_rerun_paths.rs"
     "$tests_dir/git_rerun_paths.rs"
     "$tests_dir/ensure_placeholders.rs"
+    "$tests_dir/free_pem_verify.rs"
   )
 
   for i in "${!names[@]}"; do
@@ -472,6 +497,27 @@ TOML
       return 1
     fi
   done
+}
+
+# ── Cycle 1 (C2-F1): build.rs verifies free_distribution.pem at build time ──
+# The committed keys/free_distribution.pem must cryptographically verify against
+# the key the build embeds (debug: dev_license_verifying.bin; release:
+# LIT_LICENSE_VERIFYING_KEY_B64). build.rs must call verify_free_distribution_pem
+# and panic on failure, gated on CARGO_FEATURE_FREE_DISTRIBUTION (the Cargo
+# default feature). Without this, a prod != dev key ships a silent Unlicensed app.
+
+@test "build.rs: gates free_distribution.pem verification on CARGO_FEATURE_FREE_DISTRIBUTION" {
+  grep -q 'CARGO_FEATURE_FREE_DISTRIBUTION' "$SCRIPT_DIR/../src-tauri/build.rs"
+}
+
+@test "build.rs: panics with a verification message when free_distribution.pem is invalid" {
+  local build_rs="$SCRIPT_DIR/../src-tauri/build.rs"
+  # main() wires the check (call site, not just the pure helper definition).
+  grep -q 'verify_free_distribution_pem' "$build_rs"
+  # Panic message names the pem and says "does not verify".
+  grep -q 'free_distribution.pem does not verify' "$build_rs"
+  # Panic must mention the embedded license verifying key.
+  grep -q 'embedded license verifying key' "$build_rs"
 }
 
 # ── Cycle 7: Build helper functions ─────────────────────────────────────────

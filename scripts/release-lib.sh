@@ -80,6 +80,30 @@ release_check_free_distribution_key() {
     echo "Error: $pem still contains the placeholder. Release builds require a real embedded free key." >&2
     return 1
   fi
+  # The pem must cryptographically verify against the key the build embeds
+  # (debug: dev_license_verifying.bin; release: LIT_LICENSE_VERIFYING_KEY_B64).
+  # Without the release env var we can't prove it here, so only run the real
+  # check when it is set; release.sh's release_check_env fails the release one
+  # line later if the var is missing anyway.
+  if [[ -n "${LIT_LICENSE_VERIFYING_KEY_B64:-}" ]]; then
+    local tmp
+    tmp="$(mktemp)"
+    # base64 --decode is GNU; -D is BSD (macOS). Try both for portability.
+    if ! (echo "$LIT_LICENSE_VERIFYING_KEY_B64" | base64 --decode 2>/dev/null \
+        || echo "$LIT_LICENSE_VERIFYING_KEY_B64" | base64 -D 2>/dev/null) > "$tmp"; then
+      echo "Error: LIT_LICENSE_VERIFYING_KEY_B64 is not valid base64" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    if ! (cd "$REPO_ROOT/src-tauri" && cargo run -q -p keygen -- verify --pem "$pem" --verify-key "$tmp"); then
+      echo "Error: $pem does not verify against the embedded license verifying key (LIT_LICENSE_VERIFYING_KEY_B64)." >&2
+      echo "  Regenerate it with the prod signing key:" >&2
+      echo "  cargo run -p keygen -- --name \"Free Distribution\" --email \"free@lit.solar\" --type free_distribution --id <license-id> --key <prod-signing-key> > src-tauri/keys/free_distribution.pem" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    rm -f "$tmp"
+  fi
 }
 
 release_check_env() {
