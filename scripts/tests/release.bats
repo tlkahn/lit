@@ -11,7 +11,7 @@ load test_helper
   [ "$DRY_RUN" = "0" ]
   [ "$SKIP_WEBSITE" = "0" ]
   # free-distribution is no longer a release mode; the var must not be set.
-  [ -z "${FREE_DISTRIBUTION+x}" ] || [ -z "${FREE_DISTRIBUTION:-}" ]
+  [ -z "${FREE_DISTRIBUTION+x}" ]
 }
 
 @test "release_parse_args: --dry-run sets DRY_RUN=1" {
@@ -1079,7 +1079,6 @@ SECURITY_EOF
 EOF
   chmod +x "$MOCK_BIN/security"
 
-  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
   export TAURI_SIGNING_PRIVATE_KEY="test-key"
 
