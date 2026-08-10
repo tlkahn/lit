@@ -555,6 +555,14 @@ EOF
 
 # ── Cycle 10: Tauri build ───────────────────────────────────────────────────
 
+# C1-F1: the free-by-default contract needs a POSITIVE pin, not just the
+# negative "no --features flag" assertion below. If Cargo.toml ever drops
+# default = ["free-distribution"], every build silently stops embedding the
+# free key and ships Unlicensed.
+@test "Cargo.toml: default features include free-distribution (positive contract)" {
+  grep -q '^default = \["free-distribution"\]' "$SCRIPT_DIR/../src-tauri/Cargo.toml"
+}
+
 @test "release_tauri_build: calls bun tauri build with target and config override" {
   source_lib
   mock_command bun
