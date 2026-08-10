@@ -20,6 +20,7 @@ edition = "2021"
 default-run = "lit"
 
 [features]
+default = ["free-distribution"]
 free-distribution = []
 
 [lib]

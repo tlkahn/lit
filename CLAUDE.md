@@ -73,6 +73,8 @@ bash scripts/release.sh --dry-run <tag>        # build only, no upload
 bash scripts/release.sh --skip-website <tag>   # skip website deploy
 ```
 
+Release and install builds are free-by-default (`free-distribution` is a Cargo default feature); there is no `--free-distribution` flag.
+
 Required env vars: `LIT_LICENSE_VERIFYING_KEY_B64`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
 Optional: `APPLE_SIGNING_IDENTITY`, `ANTHROPIC_API_KEY`, `LLM_MODEL`.
 

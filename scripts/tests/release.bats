@@ -10,6 +10,8 @@ load test_helper
   [ "$TAG" = "v0.9.2" ]
   [ "$DRY_RUN" = "0" ]
   [ "$SKIP_WEBSITE" = "0" ]
+  # free-distribution is no longer a release mode; the var must not be set.
+  [ -z "${FREE_DISTRIBUTION+x}" ] || [ -z "${FREE_DISTRIBUTION:-}" ]
 }
 
 @test "release_parse_args: --dry-run sets DRY_RUN=1" {
@@ -45,6 +47,13 @@ load test_helper
   run release_parse_args --bogus v0.9.2
   [ "$status" -eq 1 ]
   [[ "$output" == *"--bogus"* ]]
+}
+
+@test "release_parse_args: --free-distribution is unknown flag" {
+  source_lib
+  run release_parse_args --free-distribution v0.9.2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--free-distribution"* ]]
 }
 
 # ── Cycle 2: Tag validation ──────────────────────────────────────────────────
@@ -117,16 +126,15 @@ load test_helper
 
 @test "release_check_env: license keys missing fails" {
   source_lib
-  unset LIT_TRIAL_SIGNING_KEY_B64
   unset LIT_LICENSE_VERIFYING_KEY_B64
+  unset TAURI_SIGNING_PRIVATE_KEY
   run release_check_env 0 1
   [ "$status" -eq 1 ]
-  [[ "$output" == *"LIT_TRIAL_SIGNING_KEY_B64"* ]]
+  [[ "$output" == *"LIT_LICENSE_VERIFYING_KEY_B64"* ]]
 }
 
 @test "release_check_env: license keys set passes in dry-run" {
   source_lib
-  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
   export TAURI_SIGNING_PRIVATE_KEY="test-key"
   run release_check_env 1 0
@@ -135,8 +143,8 @@ load test_helper
 
 @test "release_check_env: notarization vars missing in non-dry-run fails" {
   source_lib
-  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export TAURI_SIGNING_PRIVATE_KEY="test-key"
   unset APPLE_ID
   unset APPLE_PASSWORD
   unset APPLE_TEAM_ID
@@ -147,7 +155,6 @@ load test_helper
 
 @test "release_check_env: all required vars set passes" {
   source_lib
-  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
   export TAURI_SIGNING_PRIVATE_KEY="test-key"
   export APPLE_ID="test@example.com"
@@ -160,8 +167,8 @@ load test_helper
 
 @test "release_check_env: ANTHROPIC_API_KEY missing with website deploy fails" {
   source_lib
-  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
+  export TAURI_SIGNING_PRIVATE_KEY="test-key"
   export APPLE_ID="test@example.com"
   export APPLE_PASSWORD="test-password"
   export APPLE_TEAM_ID="TEAM123"
@@ -173,7 +180,6 @@ load test_helper
 
 @test "release_check_env: ANTHROPIC_API_KEY not required with --skip-website" {
   source_lib
-  export LIT_TRIAL_SIGNING_KEY_B64="test-key"
   export LIT_LICENSE_VERIFYING_KEY_B64="test-key"
   export TAURI_SIGNING_PRIVATE_KEY="test-key"
   export APPLE_ID="test@example.com"
@@ -181,6 +187,44 @@ load test_helper
   export APPLE_TEAM_ID="TEAM123"
   unset ANTHROPIC_API_KEY
   run release_check_env 0 1
+  [ "$status" -eq 0 ]
+}
+
+# ── Free-distribution key gate ─────────────────────────────────────────────
+
+@test "release_check_free_distribution_key: missing file fails" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
+  run release_check_free_distribution_key
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not found"* ]]
+}
+
+@test "release_check_free_distribution_key: placeholder PEM fails" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
+  cat > "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem" <<'EOF'
+-----BEGIN LICENSE KEY-----
+PLACEHOLDER
+-----END LICENSE KEY-----
+EOF
+  run release_check_free_distribution_key
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"placeholder"* ]]
+}
+
+@test "release_check_free_distribution_key: real-looking PEM passes" {
+  source_lib
+  REPO_ROOT="$TEST_TEMP_DIR"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
+  cat > "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem" <<'EOF'
+-----BEGIN LICENSE KEY-----
+eyJsaWNlbnNlX2lkIjoiZnJlZS10ZXN0In0=.c2ln
+-----END LICENSE KEY-----
+EOF
+  run release_check_free_distribution_key
   [ "$status" -eq 0 ]
 }
 
@@ -364,8 +408,8 @@ TOML
 
 # ── Cycle 6e: install.sh syncs version before build ────────────────────────
 # The local install path (bash scripts/install.sh) must derive the app version
-# from git the SAME way CI does — `git describe --tags --abbrev=0` (nearest tag,
-# no -N-gSHA suffix), falling back to v0.0.0 — strip the leading `v`, and call
+# from git the SAME way CI does - `git describe --tags --abbrev=0` (nearest tag,
+# no -N-gSHA suffix), falling back to v0.0.0 - strip the leading `v`, and call
 # scripts/set-version.sh BEFORE `bun tauri build`. Otherwise the built .app
 # bundle carries CFBundleShortVersionString = 0.0.0 while the About dialog shows
 # the correct git-derived LIT_GIT_VERSION, so Finder Get Info and update checks
@@ -383,6 +427,15 @@ TOML
   [ -n "$set_version_line" ]
   [ -n "$build_line" ]
   [ "$set_version_line" -lt "$build_line" ]
+}
+
+@test "install.sh: checks free_distribution key before bun tauri build" {
+  local key_check_line build_line
+  key_check_line="$(grep -n 'release_check_free_distribution_key' "$SCRIPT_DIR/install.sh" | head -1 | cut -d: -f1)"
+  build_line="$(grep -n 'bun tauri build' "$SCRIPT_DIR/install.sh" | head -1 | cut -d: -f1)"
+  [ -n "$key_check_line" ]
+  [ -n "$build_line" ]
+  [ "$key_check_line" -lt "$build_line" ]
 }
 
 # ── Cycle 6f: SYNC marker enforcement ─────────────────────────────────────
@@ -461,6 +514,8 @@ EOF
   mock_command bun
   release_tauri_build
   assert_mock_called_with 'bun tauri build --target aarch64-apple-darwin --config'
+  # free-distribution is a Cargo default feature - no --features flag.
+  ! grep -q -- '--features free-distribution' "$MOCK_LOG"
 }
 
 # ── Cycle 11: DMG copy ──────────────────────────────────────────────────────
@@ -600,6 +655,10 @@ EOF
   release_deploy_website v0.9.2
   [ -f "$TEST_TEMP_DIR/deploy_website.args" ]
   grep -q "v0.9.2" "$TEST_TEMP_DIR/deploy_website.args"
+  # No --free-distribution flag - free is the permanent product default.
+  ! grep -q -- '--free-distribution' "$TEST_TEMP_DIR/deploy_website.args"
+  # Args are just the tag.
+  [ "$(cat "$TEST_TEMP_DIR/deploy_website.args")" = "v0.9.2" ]
 }
 
 @test "release_deploy_website: skipped when SKIP_WEBSITE=1" {
@@ -884,9 +943,16 @@ EOF
   # Create directory structure the script expects
   export REPO_ROOT="$TEST_TEMP_DIR"
   mkdir -p "$TEST_TEMP_DIR/scripts"
+  mkdir -p "$TEST_TEMP_DIR/src-tauri/keys"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/libs"
   mkdir -p "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+  # Real-looking embedded free key (not PLACEHOLDER) so the unconditional key gate passes.
+  cat > "$TEST_TEMP_DIR/src-tauri/keys/free_distribution.pem" <<'EOF'
+-----BEGIN LICENSE KEY-----
+eyJsaWNlbnNlX2lkIjoiZnJlZS10ZXN0In0=.c2ln
+-----END LICENSE KEY-----
+EOF
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Lit_0.1.0_aarch64.dmg"
   touch "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lit.app.tar.gz"
   echo "SIGDATA" > "$TEST_TEMP_DIR/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lit.app.tar.gz.sig"
