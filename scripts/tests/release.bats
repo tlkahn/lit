@@ -1033,4 +1033,12 @@ TOML
   assert_mock_called_with "bun tauri build"
   [[ "$output" == *"Computing SHA-256"* ]]
   [[ "$output" == *"Would upload .sha256"* ]]
+  # C1-F4: pin the single release path - latest.json, releases/ uploads,
+  # no free-distribution side path, free-by-default build line.
+  [[ "$output" == *"Generating update manifest"* ]]
+  [[ "$output" == *"Would upload Lit_v0.9.2_aarch64.dmg to S3"* ]]
+  [[ "$output" == *"Would upload Lit_v0.9.2_aarch64.app.tar.gz and latest.json to S3"* ]]
+  [[ "$output" != *"free-distribution"* ]]
+  ! grep -q "free-distribution" "$MOCK_LOG"
+  [[ "$output" == *"Building Tauri app (free-by-default)"* ]]
 }
