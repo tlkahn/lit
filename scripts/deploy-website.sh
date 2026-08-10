@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/release-lib.sh"
 cd "$SCRIPT_DIR/.."
+export REPO_ROOT="${REPO_ROOT:-$(pwd)}"
 
 AWS_REGION="us-east-1"
 STACK_NAME="lit-production"
@@ -64,20 +65,12 @@ fi
 
 if [ -n "$TAG" ]; then
   echo "==> Updating download button for $TAG (free-by-default)"
-  VERSION="${TAG#v}"
-  URL="https://lit.solar/releases/Lit_${TAG}_aarch64.dmg"
-  LABEL="Download ${TAG} for Mac"
 
   INDEX="$WEBSITE_DIR/content/_index.md"
   TOML="$WEBSITE_DIR/hugo.toml"
-  sed "s|^download_url:.*|download_url: \"$URL\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
-  sed "s|^download_label:.*|download_label: \"$LABEL\"|" "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
-  sed "s|^  downloadURL = .*|  downloadURL = '$URL'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
-  sed "s|^  version = .*|  version = '$VERSION'|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
-  # Free is the permanent product default - never flip freeDistribution off.
-  sed "s|^  freeDistribution = .*|  freeDistribution = true|" "$TOML" > "$TOML.tmp" && mv "$TOML.tmp" "$TOML"
-
-  release_inject_checksum "$INDEX" "$TOML"
+  # Tagged deploys always keep freeDistribution = true with a versioned
+  # releases/ DMG URL, and REQUIRE the DMG checksum (env or repo-root sidecar).
+  release_website_apply_tagged "$TAG" "$INDEX" "$TOML"
 
   echo "==> Pushing content update to website repo"
   (cd "$WEBSITE_DIR" &&

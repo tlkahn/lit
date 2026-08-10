@@ -940,6 +940,95 @@ EOF
   [[ "$output" != *"Warning:"* ]]
 }
 
+# ── Cycle 5 (C1-F5 + C2-F3): tagged website deploy contract ───────────────
+# The tagged-path sed logic is extracted into release_website_apply_tagged so it
+# is testable without network. It must keep freeDistribution = true, point at the
+# versioned releases/ DMG, and fail loudly when no DMG checksum is available
+# (instead of silently shipping a download button with an empty checksum).
+
+@test "release_website_apply_tagged: sets freeDistribution=true, versioned URL, and injects the checksum" {
+  source_lib
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_url: "https://lit.solar/releases/Lit_v0.0.0_aarch64.dmg"
+download_label: "Download v0.0.0 for Mac"
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadURL = 'https://lit.solar/releases/Lit_v0.0.0_aarch64.dmg'
+  version = '0.0.0'
+  freeDistribution = false
+  downloadSHA256 = ''
+EOF
+  export RELEASE_DMG_SHA256="abc123def456"
+  run release_website_apply_tagged v0.9.2 "$INDEX" "$TOML"
+  [ "$status" -eq 0 ]
+  # Free is the permanent product default - never flip freeDistribution off.
+  grep -q "freeDistribution = true" "$TOML"
+  ! grep -q "freeDistribution = false" "$TOML"
+  grep -q "downloadURL = 'https://lit.solar/releases/Lit_v0.9.2_aarch64.dmg'" "$TOML"
+  grep -q "version = '0.9.2'" "$TOML"
+  grep -q 'download_url: "https://lit.solar/releases/Lit_v0.9.2_aarch64.dmg"' "$INDEX"
+  grep -q 'download_sha256: "abc123def456"' "$INDEX"
+  grep -q "downloadSHA256 = 'abc123def456'" "$TOML"
+}
+
+@test "release_website_apply_tagged: fails loudly when no checksum is available (C2-F3)" {
+  source_lib
+  unset RELEASE_DMG_SHA256
+  REPO_ROOT="$TEST_TEMP_DIR"
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_url: ""
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadSHA256 = ''
+EOF
+  run release_website_apply_tagged v0.9.2 "$INDEX" "$TOML"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Lit_v0.9.2_aarch64.dmg.sha256"* ]]
+}
+
+@test "release_website_apply_tagged: reads the repo-root sidecar when RELEASE_DMG_SHA256 is unset" {
+  source_lib
+  unset RELEASE_DMG_SHA256
+  REPO_ROOT="$TEST_TEMP_DIR"
+  echo "deadbeef  Lit_v0.9.2_aarch64.dmg" > "$TEST_TEMP_DIR/Lit_v0.9.2_aarch64.dmg.sha256"
+  local INDEX="$TEST_TEMP_DIR/_index.md"
+  local TOML="$TEST_TEMP_DIR/hugo.toml"
+  cat > "$INDEX" <<'EOF'
+---
+download_url: ""
+download_sha256: ""
+---
+EOF
+  cat > "$TOML" <<'EOF'
+[params]
+  downloadSHA256 = ''
+EOF
+  run release_website_apply_tagged v0.9.2 "$INDEX" "$TOML"
+  [ "$status" -eq 0 ]
+  grep -q 'download_sha256: "deadbeef"' "$INDEX"
+  grep -q "downloadSHA256 = 'deadbeef'" "$TOML"
+}
+
+@test "deploy-website.sh: --free-distribution is an unknown flag" {
+  # The arg parse block runs before any network/git work, so this is safe.
+  run bash "$SCRIPT_DIR/deploy-website.sh" --free-distribution
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown flag"* ]]
+  [[ "$output" == *"--free-distribution"* ]]
+}
+
 # ── Cycle 14: Orchestrator integration ───────────────────────────────────────
 
 @test "release.sh: dry-run calls stages in order" {

@@ -348,6 +348,43 @@ release_inject_checksum() {
   fi
 }
 
+# Apply the tagged-path website updates to the given _index.md and hugo.toml:
+# versioned releases/ download URL + label, version, freeDistribution = true,
+# and the DMG checksum (C1-F5 contract). Extracted from deploy-website.sh so it
+# is testable without network (see release.bats Cycle 5).
+#
+# C2-F3: the checksum is REQUIRED here - if RELEASE_DMG_SHA256 is unset it is
+# resolved from the repo-root sidecar Lit_${TAG}_aarch64.dmg.sha256, and if that
+# is missing too the function fails loudly instead of silently shipping a
+# download button with an empty checksum.
+release_website_apply_tagged() {
+  local tag="$1"
+  local index_file="$2"
+  local toml_file="$3"
+  local version="${tag#v}"
+  local url="https://lit.solar/releases/Lit_${tag}_aarch64.dmg"
+  local label="Download ${tag} for Mac"
+
+  sed "s|^download_url:.*|download_url: \"$url\"|" "$index_file" > "$index_file.tmp" && mv "$index_file.tmp" "$index_file"
+  sed "s|^download_label:.*|download_label: \"$label\"|" "$index_file" > "$index_file.tmp" && mv "$index_file.tmp" "$index_file"
+  sed "s|^  downloadURL = .*|  downloadURL = '$url'|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+  sed "s|^  version = .*|  version = '$version'|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+  # Free is the permanent product default - never flip freeDistribution off.
+  sed "s|^  freeDistribution = .*|  freeDistribution = true|" "$toml_file" > "$toml_file.tmp" && mv "$toml_file.tmp" "$toml_file"
+
+  if [[ -z "${RELEASE_DMG_SHA256:-}" ]]; then
+    local sidecar="$REPO_ROOT/Lit_${tag}_aarch64.dmg.sha256"
+    if [[ ! -f "$sidecar" ]]; then
+      echo "Error: RELEASE_DMG_SHA256 is unset and sidecar $sidecar not found - cannot inject the download checksum" >&2
+      echo "  Run release.sh (which computes the checksum) or set RELEASE_DMG_SHA256." >&2
+      return 1
+    fi
+    RELEASE_DMG_SHA256="$(awk '{print $1}' "$sidecar")"
+    export RELEASE_DMG_SHA256
+  fi
+  release_inject_checksum "$index_file" "$toml_file"
+}
+
 release_deploy_website() {
   local tag="$1"
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
