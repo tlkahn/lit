@@ -104,7 +104,13 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           return false;
         }
         if (node.name === "Escape") {
-          addEscapedDollarDecos(state, node.from, node.to, decos, cursorSensitiveLines);
+          // Escapes inside tables are dead decorations: the whole Table is
+          // block-replaced by EditableTableWidget (cell glyphs come from
+          // table.ts). Skip the widget and the cursorSensitiveLines entry so
+          // caret moves across table rows do not force needless rebuilds.
+          if (!hasAncestor(node.node, "Table")) {
+            addEscapedDollarDecos(state, node.from, node.to, decos, cursorSensitiveLines);
+          }
           return false;
         }
         if (node.name === "InlineComment") {
@@ -152,6 +158,18 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   return { decorations: result, cursorSensitiveLines };
 }
 
+function hasAncestor(
+  node: { name: string; parent: { name: string; parent: unknown } | null },
+  name: string,
+): boolean {
+  let cur = node.parent;
+  while (cur) {
+    if (cur.name === name) return true;
+    cur = cur.parent as { name: string; parent: unknown } | null;
+  }
+  return false;
+}
+
 function processInlineChildren(
   state: EditorState,
   node: ReturnType<typeof syntaxTree>["topNode"],
@@ -167,13 +185,15 @@ function processInlineChildren(
     } else if (child.name === "WikiLink") {
       addWikilinkDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "Link") {
-      addLinkDecos(state, child.from, child.to, child, decos);
+      addLinkDecos(state, child.from, child.to, child, decos, cursorSensitiveLines, footnoteMap);
     } else if (child.name === "InlineCode") {
       addInlineCodeDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "InlineMath") {
       addInlineMathDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "Escape") {
-      addEscapedDollarDecos(state, child.from, child.to, decos, cursorSensitiveLines);
+      if (!hasAncestor(child, "Table")) {
+        addEscapedDollarDecos(state, child.from, child.to, decos, cursorSensitiveLines);
+      }
     } else if (child.name === "Image") {
       addImageDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "InlineComment") {
@@ -437,6 +457,7 @@ function addLinkDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
   cursorSensitiveLines?: Set<number>,
+  footnoteMap?: FootnoteMap,
 ) {
   addPlainBracketDecos(state, from, to, node, getRefDefLabels(state), decos);
 
@@ -450,6 +471,17 @@ function addLinkDecos(
   }
 
   if (isCursorInRange(state, from, to)) return;
+
+  // Cursor is away: recurse into the label so nested inline content (\$
+  // escapes, emphasis, ...) still previews, including for reference links
+  // where the bracket-hide below bails (no URL node).
+  processInlineChildren(
+    state,
+    node,
+    decos,
+    cursorSensitiveLines ?? new Set<number>(),
+    footnoteMap,
+  );
 
   if (linkMarks.length < 4 || !urlNode) return;
 

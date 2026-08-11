@@ -285,6 +285,14 @@ describe("renderInlineMarkdown", () => {
     expect(result).toContain("cm-preview-math-inline");
     expect(result).toContain("\uFF04");
   });
+
+  it("resolves escaped dollars in link URLs to ASCII $, keeps glyph in link text", () => {
+    const result = renderInlineMarkdown("[pay \\$5](http://example.com/\\$5)");
+    expect(result).toBe(
+      '<a href="http://example.com/$5" class="cm-preview-link">pay \uFF045</a>',
+    );
+    expect(result).not.toContain("\\$");
+  });
 });
 
 describe("serializeTable", () => {

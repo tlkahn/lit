@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   ESCAPED_DOLLAR_GLYPH,
   ESCAPED_DOLLAR_HTML_CLASS,
+  ESCAPED_DOLLAR_PLACEHOLDER,
   replaceEscapedDollars,
-  replaceEscapedDollarsHtml,
+  maskEscapedDollars,
+  restoreEscapedDollarsInHtml,
 } from "./escapedDollar";
 
 describe("replaceEscapedDollars", () => {
@@ -49,29 +51,69 @@ describe("replaceEscapedDollars", () => {
   });
 });
 
-describe("replaceEscapedDollarsHtml", () => {
-  it("wraps the glyph in a span with the html class", () => {
-    expect(replaceEscapedDollarsHtml("\\$5")).toBe(
-      `<span class="${ESCAPED_DOLLAR_HTML_CLASS}">${ESCAPED_DOLLAR_GLYPH}</span>5`,
-    );
+describe("maskEscapedDollars", () => {
+  it("substitutes the placeholder for a single \\$ escape", () => {
+    expect(maskEscapedDollars("\\$5")).toBe(`${ESCAPED_DOLLAR_PLACEHOLDER}5`);
   });
 
-  it("preserves backslash runs before the replacement", () => {
-    expect(replaceEscapedDollarsHtml("\\\\\\$")).toBe(
-      `\\\\<span class="${ESCAPED_DOLLAR_HTML_CLASS}">${ESCAPED_DOLLAR_GLYPH}</span>`,
+  it("preserves backslash runs before the placeholder", () => {
+    expect(maskEscapedDollars("\\\\\\$")).toBe(
+      `\\\\${ESCAPED_DOLLAR_PLACEHOLDER}`,
     );
   });
 
   it("leaves \\\\$ (escaped backslash + bare dollar) unchanged", () => {
-    expect(replaceEscapedDollarsHtml("\\\\$")).toBe("\\\\$");
+    expect(maskEscapedDollars("\\\\$")).toBe("\\\\$");
   });
 
-  it("wraps multiple escaped dollars", () => {
-    const wrapped = `<span class="${ESCAPED_DOLLAR_HTML_CLASS}">${ESCAPED_DOLLAR_GLYPH}</span>`;
-    expect(replaceEscapedDollarsHtml("\\$a \\$b")).toBe(`${wrapped}a ${wrapped}b`);
+  it("leaves plain text and non-dollar escapes unchanged", () => {
+    expect(maskEscapedDollars("plain \\* \\[")).toBe("plain \\* \\[");
   });
 
-  it("leaves plain text unchanged", () => {
-    expect(replaceEscapedDollarsHtml("plain")).toBe("plain");
+  it("never emits a dollar or HTML in the placeholder", () => {
+    const masked = maskEscapedDollars("\\$5");
+    expect(masked).not.toContain("$");
+    expect(masked).not.toContain("<");
+    expect(masked).not.toContain(">");
   });
 });
+
+describe("restoreEscapedDollarsInHtml", () => {
+  it("wraps the glyph in a span in text nodes", () => {
+    const html = `<p>price ${ESCAPED_DOLLAR_PLACEHOLDER}5</p>`;
+    expect(restoreEscapedDollarsInHtml(html)).toBe(
+      `<p>price <span class="${ESCAPED_DOLLAR_HTML_CLASS}">${ESCAPED_DOLLAR_GLYPH}</span>5</p>`,
+    );
+  });
+
+  it("restores ASCII $ in attributes (raw placeholder form)", () => {
+    const html = `<span title="costs ${ESCAPED_DOLLAR_PLACEHOLDER}5">hi</span>`;
+    expect(restoreEscapedDollarsInHtml(html)).toBe(
+      `<span title="costs $5">hi</span>`,
+    );
+  });
+
+  it("restores ASCII $ in percent-encoded destinations (marked href form)", () => {
+    const encoded = encodeURIComponent(ESCAPED_DOLLAR_PLACEHOLDER);
+    const html = `<a href="http://e.com/${encoded}5">x</a>`;
+    expect(restoreEscapedDollarsInHtml(html)).toBe(
+      `<a href="http://e.com/$5">x</a>`,
+    );
+  });
+
+  it("leaves CODE/PRE text nodes untouched", () => {
+    const html = `<pre><code>\\$${ESCAPED_DOLLAR_PLACEHOLDER}5</code></pre>`;
+    expect(restoreEscapedDollarsInHtml(html)).toBe(html);
+  });
+
+  it("returns input unchanged when no placeholder is present", () => {
+    expect(restoreEscapedDollarsInHtml("<p>plain</p>")).toBe("<p>plain</p>");
+  });
+
+  it("handles multiple placeholders in one text node", () => {
+    const html = `<p>${ESCAPED_DOLLAR_PLACEHOLDER}a ${ESCAPED_DOLLAR_PLACEHOLDER}b</p>`;
+    const result = restoreEscapedDollarsInHtml(html);
+    expect(result.split(ESCAPED_DOLLAR_GLYPH)).toHaveLength(3);
+  });
+});
+

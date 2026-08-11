@@ -132,6 +132,11 @@ describe("escaped dollar theme spec", () => {
     expect(rule).not.toHaveProperty("margin");
     expect(rule).not.toHaveProperty("fontSize");
   });
+
+  it(".cm-preview-escaped-dollar locks color inherit as the neutral contract", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-escaped-dollar"] as Record<string, string>;
+    expect(rule.color).toBe("inherit");
+  });
 });
 
 describe("blockquote theme spec", () => {
