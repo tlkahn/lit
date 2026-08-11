@@ -5,7 +5,7 @@ import { isCursorOnLine, isCursorInRange } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget } from "./widgets";
 import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
-import { FootnoteRefWidget } from "./footnoteWidgets";
+import { FootnoteRefWidget, FootnoteDefMarkWidget } from "./footnoteWidgets";
 import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
@@ -138,6 +138,13 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
         if (node.name === "FootnoteRef") {
           addFootnoteRefDecos(state, node.from, node.to, node.node, footnoteMap, decos);
           return false;
+        }
+        if (node.name === "FootnoteDef") {
+          // Mark-only replace (single-line); the def body stays visible. The
+          // whole def stays cursor-sensitive via cursorSensitiveNodeNames, so
+          // entering any line reveals the raw marker and drops the line class.
+          addFootnoteDefDecos(state, node.from, node.to, node.node, footnoteMap, decos);
+          return false; // only FootnoteDefMark child today; nothing else to walk
         }
         if (node.name === "DisplayMath") {
           if (!state.doc.sliceString(node.from, node.to).includes("\n")) {
@@ -337,6 +344,49 @@ function addFootnoteRefDecos(
     to,
     deco: Decoration.replace({ widget: new FootnoteRefWidget(label, num, targetDefPos) }),
   });
+}
+
+function addFootnoteDefDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  footnoteMap: FootnoteMap,
+  decos: { from: number; to: number; deco: Decoration }[],
+) {
+  // Any line of a multi-line def reveals the raw marker and drops the line
+  // class (same proximity pattern as blockquotes / other cursor-sensitive
+  // nodes).
+  if (isCursorOnLine(state, from, to)) return;
+
+  const mark = node.getChild("FootnoteDefMark");
+  if (!mark) return;
+
+  const markText = state.doc.sliceString(mark.from, mark.to);
+  const m = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
+  const label = m?.[1];
+  const num = label ? (footnoteMap.labelToNumber.get(label) ?? 0) : 0;
+
+  // Marker only - body stays in place, readable.
+  decos.push({
+    from: mark.from,
+    to: mark.to,
+    deco: Decoration.replace({
+      widget: new FootnoteDefMarkWidget(num),
+    }),
+  });
+
+  // Modest line chrome on every line of the def.
+  const first = state.doc.lineAt(from);
+  const last = state.doc.lineAt(to);
+  for (let n = first.number; n <= last.number; n++) {
+    const line = state.doc.line(n);
+    decos.push({
+      from: line.from,
+      to: line.from,
+      deco: Decoration.line({ class: "cm-footnote-def" }),
+    });
+  }
 }
 
 function addBlockquoteDecos(
@@ -783,15 +833,6 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
             });
           }
         }
-      }
-      if (node.name === "FootnoteDef") {
-        if (!isCursorOnLine(state, node.from, node.to)) {
-          decos.push({ from: node.from, to: node.to, deco: Decoration.replace({}) });
-        }
-        cursorSensitiveRanges.push({
-          fromLine: state.doc.lineAt(node.from).number,
-          toLine: state.doc.lineAt(node.to).number,
-        });
       }
     },
   });

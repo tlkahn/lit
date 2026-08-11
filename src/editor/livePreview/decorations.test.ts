@@ -12,6 +12,7 @@ import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
 import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget } from "./widgets";
+import { FootnoteDefMarkWidget } from "./footnoteWidgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -51,7 +52,8 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   widgetVariant?: "short" | "full";
-  widgetKind?: "escaped-dollar";
+  widgetKind?: "escaped-dollar" | "footnote-def-mark";
+  footnoteDefNumber?: number;
   url?: string;
   style?: string;
 };
@@ -71,6 +73,10 @@ function collectDecos(view: EditorView): DecoInfo[] {
       info.widget = true;
       if (spec.widget instanceof HorizontalRuleWidget) info.widgetVariant = spec.widget.variant;
       if (spec.widget instanceof EscapedDollarWidget) info.widgetKind = "escaped-dollar";
+      if (spec.widget instanceof FootnoteDefMarkWidget) {
+        info.widgetKind = "footnote-def-mark";
+        info.footnoteDefNumber = spec.widget.number;
+      }
     }
     if (spec.class) info.class = spec.class;
     if (spec.attributes?.["data-url"]) info.url = spec.attributes["data-url"];
@@ -2343,88 +2349,124 @@ describe("buildDecorations — footnote references", () => {
   });
 });
 
-describe("buildBlockReplacements — footnote definitions", () => {
-  it("FootnoteDef block is hidden when cursor is elsewhere", () => {
+describe("buildDecorations — footnote definitions", () => {
+  it("replaces only the FootnoteDefMark with a numbered widget when caret is elsewhere", () => {
     const doc = "Text\n\n[^1]: Def text";
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: 2 },
-      extensions: [
-        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
-        calloutFoldField,
-      ],
-    });
-    const { decos } = buildBlockReplacements(state);
-    const iter = decos.iter();
-    const found: { from: number; to: number }[] = [];
-    while (iter.value) {
-      found.push({ from: iter.from, to: iter.to });
-      iter.next();
-    }
-    const defReplace = found.find((d) => d.from === 6 && d.to === doc.length);
-    expect(defReplace).toBeDefined();
+    const view = makeView(doc, 2); // caret on "Text", away from the def
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    // Only the "[^1]:" mark range (6..11) is replaced, not the whole def.
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(11);
+    // No empty replace covering the body: nothing blanking mark.end..def.end.
+    const blankBody = decos.find(
+      (d) => d.type === "replace" && !d.widget && d.from >= 11,
+    );
+    expect(blankBody).toBeUndefined();
+    // Line class on the def line while caret is outside.
+    const lineDeco = decos.find((d) => d.class === "cm-footnote-def");
+    expect(lineDeco).toBeDefined();
+    expect(lineDeco!.from).toBe(6);
+    expect(lineDeco!.to).toBe(6); // line decoration: from === to
+    view.destroy();
   });
 
-  it("FootnoteDef block shown raw when cursor is on that line", () => {
+  it("shows raw marker and no line class when caret is on the def line", () => {
     const doc = "Text\n\n[^1]: Def text";
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: 10 },
-      extensions: [
-        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
-        calloutFoldField,
-      ],
-    });
-    const { decos } = buildBlockReplacements(state);
-    const iter = decos.iter();
-    const found: { from: number; to: number }[] = [];
-    while (iter.value) {
-      found.push({ from: iter.from, to: iter.to });
-      iter.next();
-    }
-    const defReplace = found.find((d) => d.from === 6);
-    expect(defReplace).toBeUndefined();
+    const view = makeView(doc, 10); // caret on the def line
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "footnote-def-mark")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-footnote-def")).toBe(false);
+    view.destroy();
   });
 
-  it("multi-line definition hidden as single block", () => {
+  it("multi-line def: mark-only replace on first line, line class on each def line", () => {
     const doc = "Text\n\n[^1]: First line\n    Continuation";
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: 2 },
-      extensions: [
-        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
-        calloutFoldField,
-      ],
-    });
-    const { decos } = buildBlockReplacements(state);
-    const iter = decos.iter();
-    const found: { from: number; to: number }[] = [];
-    while (iter.value) {
-      found.push({ from: iter.from, to: iter.to });
-      iter.next();
-    }
-    const defReplace = found.find((d) => d.from === 6 && d.to === doc.length);
-    expect(defReplace).toBeDefined();
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(11);
+    // Body and continuation are not blanked.
+    const blankBody = decos.find(
+      (d) => d.type === "replace" && !d.widget && d.from >= 11,
+    );
+    expect(blankBody).toBeUndefined();
+    // One line class per def line (line 3 and line 4).
+    const lineDecos = decos.filter((d) => d.class === "cm-footnote-def");
+    expect(lineDecos).toHaveLength(2);
+    expect(lineDecos[0]!.from).toBe(6);
+    expect(lineDecos[1]!.from).toBe(23);
+    view.destroy();
   });
 
-  it("multiple consecutive defs each hidden independently", () => {
+  it("raw marker revealed when caret is on a continuation line of a multi-line def", () => {
+    const doc = "Text\n\n[^1]: First line\n    Continuation";
+    const view = makeView(doc, 30); // caret on the continuation line
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "footnote-def-mark")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-footnote-def")).toBe(false);
+    view.destroy();
+  });
+
+  it("multiple consecutive defs each get their own mark widget", () => {
     const doc = "Text\n\n[^1]: First\n[^2]: Second";
-    const state = EditorState.create({
-      doc,
-      selection: { anchor: 2 },
-      extensions: [
-        markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] }),
-        calloutFoldField,
-      ],
-    });
-    const { decos } = buildBlockReplacements(state);
-    const iter = decos.iter();
-    const found: { from: number; to: number }[] = [];
-    while (iter.value) {
-      found.push({ from: iter.from, to: iter.to });
-      iter.next();
-    }
-    const defReplaces = found.filter((d) => d.from >= 6);
-    expect(defReplaces.length).toBeGreaterThanOrEqual(2);
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0]!.from).toBe(6);
+    expect(marks[0]!.to).toBe(11);
+    expect(marks[1]!.from).toBe(18);
+    expect(marks[1]!.to).toBe(23);
+    view.destroy();
+  });
+
+  it("def marker numbers match first-reference order (same map as refs)", () => {
+    const doc = "See [^b] and [^a].\n\n[^a]: A\n[^b]: B";
+    const view = makeView(doc, 0);
+    const decos = collectDecos(view);
+    const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(2);
+    // [^b] is the first ref (number 1); [^a] is the second (number 2).
+    const aMark = marks.find((d) => d.from === 20); // "[^a]:" at 20..25
+    const bMark = marks.find((d) => d.from === 28); // "[^b]:" at 28..33
+    expect(aMark!.footnoteDefNumber).toBe(2);
+    expect(bMark!.footnoteDefNumber).toBe(1);
+    view.destroy();
+  });
+
+  it("orphan def (no ref) still gets a number from the map tail", () => {
+    const doc = "See [^a].\n\n[^a]: A\n[^b]: B";
+    const view = makeView(doc, 0);
+    const decos = collectDecos(view);
+    const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(2);
+    const bMark = marks.find((d) => d.from === 19); // "[^b]:" at 19..24
+    expect(bMark!.footnoteDefNumber).toBe(2);
+    view.destroy();
+  });
+
+  it("buildBlockReplacements emits nothing for footnote defs (no full-block blank)", () => {
+    const doc = "Text\n\n[^1]: Def text";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
+    expect(blockDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("keeps ref widget and tooltip-relevant body intact (smoke)", () => {
+    const doc = "See [^1] here.\n\n[^1]: Def text";
+    const view = makeView(doc, 0); // caret on first line, away from def
+    const decos = collectDecos(view);
+    const ref = decos.find((d) => d.widget && d.from === 4 && d.to === 8);
+    expect(ref).toBeDefined();
+    const defMark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(defMark).toBeDefined();
+    expect(defMark!.from).toBe(16);
+    expect(defMark!.to).toBe(21);
+    view.destroy();
   });
 });

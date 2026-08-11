@@ -139,6 +139,32 @@ describe("escaped dollar theme spec", () => {
   });
 });
 
+describe("footnote definition theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-footnote-def key", () => {
+    expect(livePreviewThemeSpec[".cm-footnote-def"]).toBeDefined();
+  });
+
+  it(".cm-footnote-def uses border-inline-start and padding only (no margin, no color)", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-def"] as Record<string, string>;
+    expect(rule.borderInlineStart).toContain("var(--text-faint)");
+    expect(rule.paddingLeft).toBe("8px");
+    expect(rule).not.toHaveProperty("margin");
+    expect(rule).not.toHaveProperty("color");
+  });
+
+  it("livePreviewThemeSpec contains .cm-footnote-def-mark key", () => {
+    expect(livePreviewThemeSpec[".cm-footnote-def-mark"]).toBeDefined();
+  });
+
+  it(".cm-footnote-def-mark is accent, semibold, padding-right only (no margin)", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-def-mark"] as Record<string, string>;
+    expect(rule.color).toBe("var(--text-accent)");
+    expect(rule.fontWeight).toBe("600");
+    expect(rule.paddingRight).toBe("0.35em");
+    expect(rule).not.toHaveProperty("margin");
+  });
+});
+
 describe("blockquote theme spec", () => {
   it("livePreviewThemeSpec contains .cm-blockquote key", () => {
     expect(livePreviewThemeSpec[".cm-blockquote"]).toBeDefined();

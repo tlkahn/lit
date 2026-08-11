@@ -52,3 +52,36 @@ export class FootnoteRefWidget extends WidgetType {
     return 16;
   }
 }
+
+/**
+ * Stand-in for a footnote definition's `[^label]:` marker in live preview
+ * while the caret is outside the definition. Shows the same `N.` numbering
+ * as the superscript refs (from `buildFootnoteMap`). Not clickable: defs are
+ * the jump target, not the source.
+ */
+export class FootnoteDefMarkWidget extends WidgetType {
+  constructor(readonly number: number) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-footnote-def-mark";
+    span.textContent = `${this.number}.`;
+    return span;
+  }
+
+  eq(other: FootnoteDefMarkWidget): boolean {
+    return this.number === other.number;
+  }
+
+  // Allow caret placement near the marker via normal clicks; do not swallow
+  // the event the way the ref superscripts do.
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  get estimatedHeight(): number {
+    return 16;
+  }
+}
