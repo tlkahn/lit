@@ -122,6 +122,18 @@ describe("strikethrough theme spec", () => {
   });
 });
 
+describe("escaped dollar theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-preview-escaped-dollar key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-escaped-dollar"]).toBeDefined();
+  });
+
+  it(".cm-preview-escaped-dollar has no margin or fontSize (no layout jump on reveal)", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-escaped-dollar"] as Record<string, string>;
+    expect(rule).not.toHaveProperty("margin");
+    expect(rule).not.toHaveProperty("fontSize");
+  });
+});
+
 describe("blockquote theme spec", () => {
   it("livePreviewThemeSpec contains .cm-blockquote key", () => {
     expect(livePreviewThemeSpec[".cm-blockquote"]).toBeDefined();

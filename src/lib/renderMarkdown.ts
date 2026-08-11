@@ -2,6 +2,7 @@ import { marked, Marked } from "marked";
 import DOMPurify from "dompurify";
 import { renderMathToHtml, replaceInlineMath } from "./renderMath";
 import { litFootnoteExtension } from "./markedFootnote";
+import { replaceEscapedDollarsHtml } from "./escapedDollar";
 
 // Dedicated instance so the footnote extension never leaks into other callers
 // of the global `marked` (e.g. table cell rendering).
@@ -85,6 +86,12 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
   // Must run while code spans are still masked so `[^1]` inside inline code
   // stays untouched.
   if (stripFootnotes) working = footnotesToInlineMarkers(working);
+
+  // Rewrite CommonMark dollar-escapes to the fullwidth stand-in. Runs after
+  // code masking + math extraction so `` `\$` `` / fenced `\$` and math keep
+  // their source, and before marked so it never resolves those `\$` to ASCII
+  // `$`. Backslash runs before the escape (`\\$`) are preserved.
+  working = replaceEscapedDollarsHtml(working);
 
   working = working.replace(/￰CODEPH(\d+)￰/g, (_, idx) => codePlaceholders[Number(idx)]!);
 

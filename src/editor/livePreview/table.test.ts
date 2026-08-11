@@ -255,6 +255,36 @@ describe("renderInlineMarkdown", () => {
     const result = renderInlineMarkdown("\\$x\\$");
     expect(result).not.toContain("cm-preview-math");
   });
+
+  it("renders escaped dollars as the fullwidth glyph", () => {
+    const result = renderInlineMarkdown("The price is \\$5.");
+    expect(result).toContain("\uFF04");
+    expect(result).not.toContain("\\$");
+    expect(result).not.toContain("cm-preview-math");
+  });
+
+  it("renders multiple escaped dollars in a cell", () => {
+    const result = renderInlineMarkdown("\\$a and \\$b");
+    expect(result.split("\uFF04")).toHaveLength(3);
+  });
+
+  it("does not turn \\\\$ (escaped backslash + bare dollar) into the stand-in", () => {
+    const result = renderInlineMarkdown("\\\\$");
+    expect(result).not.toContain("\uFF04");
+    expect(result).toContain("$");
+  });
+
+  it("keeps \\$ literal inside code spans", () => {
+    const result = renderInlineMarkdown("`\\$` code");
+    expect(result).toContain("<code>\\$</code>");
+    expect(result).not.toContain("\uFF04");
+  });
+
+  it("escaped dollar coexists with math in the same cell", () => {
+    const result = renderInlineMarkdown("$E=mc^2$ costs \\$5");
+    expect(result).toContain("cm-preview-math-inline");
+    expect(result).toContain("\uFF04");
+  });
 });
 
 describe("serializeTable", () => {

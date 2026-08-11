@@ -43,6 +43,13 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     textDecoration: "line-through",
   },
 
+  // Escaped dollar stand-in (cm-preview-escaped-dollar). Glyph is the
+  // differentiator; keep styling neutral. No margin, no fontSize change
+  // (avoids caret/layout jump on reveal).
+  ".cm-preview-escaped-dollar": {
+    color: "inherit",
+  },
+
   ".cm-preview-wikilink": {
     color: "var(--color-purple, var(--text-accent))",
     textDecoration: "underline",

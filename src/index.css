@@ -474,6 +474,12 @@ section.footnotes a[data-footnote-backref]:hover {
 
 /* === hr variants in rendered markdown (annotation widgets, cards, previews) === */
 
+/* Escaped-dollar stand-in (U+FF04) in rendered HTML (renderMarkdown). Glyph
+   carries the meaning; keep styling neutral. */
+.md-escaped-dollar {
+  /* neutral */
+}
+
 hr.md-hr {
   border: none;
   border-top: 1px solid var(--text-faint);

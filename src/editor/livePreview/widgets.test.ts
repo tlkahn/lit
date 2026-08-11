@@ -11,6 +11,7 @@ import {
   MermaidWidget,
   HorizontalRuleWidget,
   PageBreakWidget,
+  EscapedDollarWidget,
   clearFailedImageCache,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
@@ -42,6 +43,39 @@ vi.mock("./mermaid", () => ({
 vi.mock("./lightbox", () => ({
   showMediaLightbox: vi.fn(),
 }));
+
+describe("EscapedDollarWidget", () => {
+  it("toDOM returns a span with cm-preview-escaped-dollar class", () => {
+    const widget = new EscapedDollarWidget();
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("SPAN");
+    expect(el.className).toBe("cm-preview-escaped-dollar");
+  });
+
+  it("textContent is the fullwidth dollar glyph U+FF04", () => {
+    const widget = new EscapedDollarWidget();
+    const el = widget.toDOM();
+    expect(el.textContent).toBe("\uFF04");
+    expect(el.textContent).not.toBe("$");
+  });
+
+  it("eq returns true for another EscapedDollarWidget", () => {
+    const a = new EscapedDollarWidget();
+    const b = new EscapedDollarWidget();
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for a different widget type", () => {
+    const a = new EscapedDollarWidget();
+    const b = new InlineMathWidget("x");
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("estimatedHeight is -1 (inherits line height)", () => {
+    const widget = new EscapedDollarWidget();
+    expect(widget.estimatedHeight).toBe(-1);
+  });
+});
 
 describe("ImageWidget", () => {
   it("toDOM returns an img element with correct src and alt", () => {

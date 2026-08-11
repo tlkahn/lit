@@ -1,5 +1,6 @@
 import { escapeHtml } from "../../lib/escapeHtml";
 import { renderMathToHtml, replaceInlineMath } from "../../lib/renderMath";
+import { replaceEscapedDollars } from "../../lib/escapedDollar";
 
 export type Alignment = "left" | "right" | "center" | "default";
 
@@ -98,6 +99,12 @@ export function renderInlineMarkdown(text: string): string {
     placeholders.push(renderMathToHtml(latex, false));
     return `￰TBLPH${idx}￰`;
   });
+
+  // Rewrite CommonMark dollar-escapes to the fullwidth stand-in (raw glyph,
+  // no span: this path HTML-escapes non-placeholder segments afterwards, and
+  // inserting tags here would fight escapeSegments). Code and math are already
+  // masked, so `` `\$` `` and `$...$` keep their source.
+  working = replaceEscapedDollars(working);
 
   // Pass 2: HTML-escape text segments between placeholders
   working = escapeSegments(working);
