@@ -367,10 +367,18 @@ function addFootnoteDefDecos(
   const label = m?.[1];
   const num = label ? (footnoteMap.labelToNumber.get(label) ?? 0) : 0;
 
+  // Marker + one trailing separator (never the body) - same convention as
+  // headings, which swallow a single space after the HeaderMark.
+  let replaceTo = mark.to;
+  if (replaceTo < to) {
+    const next = state.doc.sliceString(replaceTo, replaceTo + 1);
+    if (next === " " || next === "\t") replaceTo += 1;
+  }
+
   // Marker only - body stays in place, readable.
   decos.push({
     from: mark.from,
-    to: mark.to,
+    to: replaceTo,
     deco: Decoration.replace({
       widget: new FootnoteDefMarkWidget(num),
     }),

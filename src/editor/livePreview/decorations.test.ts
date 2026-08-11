@@ -2356,12 +2356,12 @@ describe("buildDecorations — footnote definitions", () => {
     const decos = collectDecos(view);
     const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
     expect(mark).toBeDefined();
-    // Only the "[^1]:" mark range (6..11) is replaced, not the whole def.
+    // Mark + one trailing separator (6..12) is replaced, never the body.
     expect(mark!.from).toBe(6);
-    expect(mark!.to).toBe(11);
+    expect(mark!.to).toBe(12);
     // No empty replace covering the body: nothing blanking mark.end..def.end.
     const blankBody = decos.find(
-      (d) => d.type === "replace" && !d.widget && d.from >= 11,
+      (d) => d.type === "replace" && !d.widget && d.from >= 12,
     );
     expect(blankBody).toBeUndefined();
     // Line class on the def line while caret is outside.
@@ -2369,6 +2369,58 @@ describe("buildDecorations — footnote definitions", () => {
     expect(lineDeco).toBeDefined();
     expect(lineDeco!.from).toBe(6);
     expect(lineDeco!.to).toBe(6); // line decoration: from === to
+    view.destroy();
+  });
+
+  it("extends mark replace through one trailing space after the colon (never the body)", () => {
+    const doc = "Text\n\n[^1]: Def text";
+    const view = makeView(doc, 2); // caret on "Text", away from the def
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    // GFM source is "[^1]:<space>body"; the separator is chrome, like the
+    // heading/blockquote trailing space. Replace [6..12) = "[^1]: " only.
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(12);
+    // Body still untouched: nothing blanking from the body start onward.
+    const blankBody = decos.find(
+      (d) => d.type === "replace" && !d.widget && d.from >= 12,
+    );
+    expect(blankBody).toBeUndefined();
+    view.destroy();
+  });
+
+  it("no separator: [^1]:body keeps the body abutting the colon", () => {
+    const doc = "Text\n\n[^1]:body";
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    // "b" at 11 is body text: replace must end at the mark end, not eat it.
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(11);
+    view.destroy();
+  });
+
+  it("empty body at EOL: replace ends at mark end, does not swallow the newline", () => {
+    const doc = "Text\n\n[^1]:";
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(11);
+    view.destroy();
+  });
+
+  it("tab separator: consumes exactly one tab after the colon", () => {
+    const doc = "Text\n\n[^1]:\tTabbed";
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(12); // "[^1]:" + one tab; "Tabbed" stays body
     view.destroy();
   });
 
@@ -2388,10 +2440,10 @@ describe("buildDecorations — footnote definitions", () => {
     const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
     expect(mark).toBeDefined();
     expect(mark!.from).toBe(6);
-    expect(mark!.to).toBe(11);
+    expect(mark!.to).toBe(12);
     // Body and continuation are not blanked.
     const blankBody = decos.find(
-      (d) => d.type === "replace" && !d.widget && d.from >= 11,
+      (d) => d.type === "replace" && !d.widget && d.from >= 12,
     );
     expect(blankBody).toBeUndefined();
     // One line class per def line (line 3 and line 4).
@@ -2418,9 +2470,9 @@ describe("buildDecorations — footnote definitions", () => {
     const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
     expect(marks).toHaveLength(2);
     expect(marks[0]!.from).toBe(6);
-    expect(marks[0]!.to).toBe(11);
+    expect(marks[0]!.to).toBe(12);
     expect(marks[1]!.from).toBe(18);
-    expect(marks[1]!.to).toBe(23);
+    expect(marks[1]!.to).toBe(24);
     view.destroy();
   });
 
@@ -2466,7 +2518,7 @@ describe("buildDecorations — footnote definitions", () => {
     const defMark = decos.find((d) => d.widgetKind === "footnote-def-mark");
     expect(defMark).toBeDefined();
     expect(defMark!.from).toBe(16);
-    expect(defMark!.to).toBe(21);
+    expect(defMark!.to).toBe(22);
     view.destroy();
   });
 });

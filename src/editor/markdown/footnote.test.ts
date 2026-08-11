@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
+import { getStyleTags, tags } from "@lezer/highlight";
 import { Footnote } from "./footnote";
 
 function parseNodes(doc: string) {
@@ -187,5 +188,47 @@ describe("Footnote block parser — FootnoteDef", () => {
     expect(link).toBeDefined();
     const def = nodes.find((n) => n.name === "FootnoteDef");
     expect(def).toBeDefined();
+  });
+});
+
+describe("Footnote highlight tags", () => {
+  // Regression lock for #1001: FootnoteDef must NOT paint as .tok-link
+  // (accent + underline) when the raw source is revealed by the caret.
+  // The mark keeps chrome (processingInstruction) and refs keep tags.link.
+  // If `style: tags.link` is ever re-added to FootnoteDef in defineNodes,
+  // this suite fails.
+  function parseHighlightTags(
+    doc: string,
+  ): Map<string, ReturnType<typeof getStyleTags>> {
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: [Footnote] })],
+    });
+    const tagsByNode = new Map<string, ReturnType<typeof getStyleTags>>();
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        if (!tagsByNode.has(node.name)) {
+          tagsByNode.set(node.name, getStyleTags(node));
+        }
+      },
+    });
+    return tagsByNode;
+  }
+
+  it("FootnoteDef has no highlight rule (must not be tags.link)", () => {
+    const tagsByNode = parseHighlightTags("See [^1].\n\n[^1]: Def text");
+    // The key must exist (node parsed) and carry no style rule at all.
+    expect(tagsByNode.has("FootnoteDef")).toBe(true);
+    expect(tagsByNode.get("FootnoteDef")).toBeNull();
+  });
+
+  it("FootnoteRef keeps tags.link (positive control)", () => {
+    const tagsByNode = parseHighlightTags("See [^1].\n\n[^1]: Def text");
+    expect(tagsByNode.get("FootnoteRef")?.tags).toContain(tags.link);
+  });
+
+  it("FootnoteDefMark keeps tags.processingInstruction (chrome stays on the mark)", () => {
+    const tagsByNode = parseHighlightTags("See [^1].\n\n[^1]: Def text");
+    expect(tagsByNode.get("FootnoteDefMark")?.tags).toContain(tags.processingInstruction);
   });
 });
