@@ -5,7 +5,10 @@ export const Footnote: MarkdownConfig = {
   defineNodes: [
     { name: "FootnoteRef", style: tags.link },
     { name: "FootnoteRefMark", style: tags.processingInstruction },
-    { name: "FootnoteDef", block: true, style: tags.link },
+    // No style on FootnoteDef: the body must NOT paint as .tok-link
+    // (accent + underline) when the raw source is revealed by the caret.
+    // Only the FootnoteDefMark child carries chrome (processingInstruction).
+    { name: "FootnoteDef", block: true },
     { name: "FootnoteDefMark", style: tags.processingInstruction },
   ],
   parseInline: [

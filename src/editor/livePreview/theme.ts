@@ -429,6 +429,18 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   ".cm-footnote-ref:hover": {
     textDecoration: "underline",
   },
+  // Footnote definitions (live preview, caret outside). Padding only, never
+  // margin (CM6 height map). No whole-line color: the body must stay readable
+  // as normal text, not muted or link-styled.
+  ".cm-footnote-def": {
+    borderInlineStart: "2px solid var(--text-faint)",
+    paddingLeft: "8px",
+  },
+  ".cm-footnote-def-mark": {
+    color: "var(--text-accent)",
+    fontWeight: "600",
+    paddingRight: "0.35em",
+  },
   ".cm-footnote-tooltip": {
     backgroundColor: "var(--background-primary, #fff)",
     border: "1px solid var(--background-modifier-border, #e0e0e0)",

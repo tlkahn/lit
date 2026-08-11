@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { EditorView } from "@codemirror/view";
-import { FootnoteRefWidget } from "./footnoteWidgets";
+import { FootnoteRefWidget, FootnoteDefMarkWidget } from "./footnoteWidgets";
 
 vi.mock("katex", () => ({
   default: { render: vi.fn() },
@@ -73,6 +73,44 @@ describe("FootnoteRefWidget", () => {
 
   it("has estimatedHeight of 16", () => {
     const widget = new FootnoteRefWidget("1", 1, null);
+    expect(widget.estimatedHeight).toBe(16);
+  });
+});
+
+describe("FootnoteDefMarkWidget", () => {
+  it("toDOM returns span with class and N. text", () => {
+    const widget = new FootnoteDefMarkWidget(3);
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("SPAN");
+    expect(el.className).toBe("cm-footnote-def-mark");
+    expect(el.textContent).toBe("3.");
+  });
+
+  it("renders number 0 without crashing (unknown label fallback)", () => {
+    const widget = new FootnoteDefMarkWidget(0);
+    const el = widget.toDOM();
+    expect(el.textContent).toBe("0.");
+  });
+
+  it("eq returns true for same number", () => {
+    const a = new FootnoteDefMarkWidget(2);
+    const b = new FootnoteDefMarkWidget(2);
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("eq returns false for different number", () => {
+    const a = new FootnoteDefMarkWidget(2);
+    const b = new FootnoteDefMarkWidget(5);
+    expect(a.eq(b)).toBe(false);
+  });
+
+  it("ignoreEvent returns false (do not swallow caret placement clicks)", () => {
+    const widget = new FootnoteDefMarkWidget(1);
+    expect(widget.ignoreEvent()).toBe(false);
+  });
+
+  it("has estimatedHeight of 16", () => {
+    const widget = new FootnoteDefMarkWidget(1);
     expect(widget.estimatedHeight).toBe(16);
   });
 });
