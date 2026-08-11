@@ -6,6 +6,7 @@ import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
 import { widgetSync } from "./widgetSyncAnnotation";
 import { getKatexSync, loadKatex } from "./katexLoader";
+import { ESCAPED_DOLLAR_GLYPH } from "../../lib/escapedDollar";
 import { katexOptions } from "../../lib/latexCompat";
 import "katex/dist/katex.min.css";
 
@@ -333,6 +334,27 @@ export class InlineMathWidget extends WidgetType {
 
   eq(other: InlineMathWidget): boolean {
     return this.latex === other.latex;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  get estimatedHeight(): number {
+    return -1;
+  }
+}
+
+export class EscapedDollarWidget extends WidgetType {
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-preview-escaped-dollar";
+    span.textContent = ESCAPED_DOLLAR_GLYPH;
+    return span;
+  }
+
+  eq(other: EscapedDollarWidget): boolean {
+    return other instanceof EscapedDollarWidget;
   }
 
   ignoreEvent(): boolean {

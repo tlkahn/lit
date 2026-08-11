@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget } from "./widgets";
 import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
 import { FootnoteRefWidget } from "./footnoteWidgets";
@@ -53,19 +53,19 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
         }
         const cls = headingClass[node.name];
         if (cls) {
-          addHeadingDecos(state, node.from, node.to, cls, node.node, decos, footnoteMap);
+          addHeadingDecos(state, node.from, node.to, cls, node.node, decos, cursorSensitiveLines, footnoteMap);
           return false;
         }
         if (node.name === "StrongEmphasis") {
-          addEmphasisDecos(state, node.from, node.to, "cm-preview-bold", node.node, decos, footnoteMap);
+          addEmphasisDecos(state, node.from, node.to, "cm-preview-bold", node.node, decos, cursorSensitiveLines, footnoteMap);
           return false;
         }
         if (node.name === "Emphasis") {
-          addEmphasisDecos(state, node.from, node.to, "cm-preview-italic", node.node, decos, footnoteMap);
+          addEmphasisDecos(state, node.from, node.to, "cm-preview-italic", node.node, decos, cursorSensitiveLines, footnoteMap);
           return false;
         }
         if (node.name === "Strikethrough") {
-          addStrikethroughDecos(state, node.from, node.to, node.node, decos, footnoteMap);
+          addStrikethroughDecos(state, node.from, node.to, node.node, decos, cursorSensitiveLines, footnoteMap);
           return false;
         }
         if (node.name === "Image") {
@@ -101,6 +101,16 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
         }
         if (node.name === "InlineMath") {
           addInlineMathDecos(state, node.from, node.to, node.node, decos);
+          return false;
+        }
+        if (node.name === "Escape") {
+          // Escapes inside tables are dead decorations: the whole Table is
+          // block-replaced by EditableTableWidget (cell glyphs come from
+          // table.ts). Skip the widget and the cursorSensitiveLines entry so
+          // caret moves across table rows do not force needless rebuilds.
+          if (!hasAncestor(node.node, "Table")) {
+            addEscapedDollarDecos(state, node.from, node.to, decos, cursorSensitiveLines);
+          }
           return false;
         }
         if (node.name === "InlineComment") {
@@ -148,31 +158,48 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   return { decorations: result, cursorSensitiveLines };
 }
 
+function hasAncestor(
+  node: { name: string; parent: { name: string; parent: unknown } | null },
+  name: string,
+): boolean {
+  let cur = node.parent;
+  while (cur) {
+    if (cur.name === name) return true;
+    cur = cur.parent as { name: string; parent: unknown } | null;
+  }
+  return false;
+}
+
 function processInlineChildren(
   state: EditorState,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
   footnoteMap?: FootnoteMap,
 ) {
   for (let child = node.firstChild; child; child = child.nextSibling) {
     if (child.name === "Emphasis") {
-      addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos, footnoteMap);
+      addEmphasisDecos(state, child.from, child.to, "cm-preview-italic", child, decos, cursorSensitiveLines, footnoteMap);
     } else if (child.name === "StrongEmphasis") {
-      addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos, footnoteMap);
+      addEmphasisDecos(state, child.from, child.to, "cm-preview-bold", child, decos, cursorSensitiveLines, footnoteMap);
     } else if (child.name === "WikiLink") {
       addWikilinkDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "Link") {
-      addLinkDecos(state, child.from, child.to, child, decos);
+      addLinkDecos(state, child.from, child.to, child, decos, cursorSensitiveLines, footnoteMap);
     } else if (child.name === "InlineCode") {
       addInlineCodeDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "InlineMath") {
       addInlineMathDecos(state, child.from, child.to, child, decos);
+    } else if (child.name === "Escape") {
+      if (!hasAncestor(child, "Table")) {
+        addEscapedDollarDecos(state, child.from, child.to, decos, cursorSensitiveLines);
+      }
     } else if (child.name === "Image") {
       addImageDecos(state, child.from, child.to, child, decos);
     } else if (child.name === "InlineComment") {
       addInlineCommentDecos(state, child.from, child.to, decos);
     } else if (child.name === "Strikethrough") {
-      addStrikethroughDecos(state, child.from, child.to, child, decos, footnoteMap);
+      addStrikethroughDecos(state, child.from, child.to, child, decos, cursorSensitiveLines, footnoteMap);
     } else if (child.name === "FootnoteRef" && footnoteMap) {
       addFootnoteRefDecos(state, child.from, child.to, child, footnoteMap, decos);
     }
@@ -186,6 +213,7 @@ function addHeadingDecos(
   cls: string,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
   footnoteMap?: FootnoteMap,
 ) {
   if (isCursorOnLine(state, from, to)) return;
@@ -205,7 +233,24 @@ function addHeadingDecos(
     decos.push({ from: contentFrom, to, deco: Decoration.mark({ class: cls }) });
   }
 
-  processInlineChildren(state, node, decos, footnoteMap);
+  processInlineChildren(state, node, decos, cursorSensitiveLines, footnoteMap);
+}
+
+function addEscapedDollarDecos(
+  state: EditorState,
+  from: number,
+  to: number,
+  decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
+) {
+  if (state.doc.sliceString(from, to) !== "\\$") return;
+  cursorSensitiveLines.add(state.doc.lineAt(from).number);
+  if (isCursorInRange(state, from, to)) return;
+  decos.push({
+    from,
+    to,
+    deco: Decoration.replace({ widget: new EscapedDollarWidget() }),
+  });
 }
 
 function addEmphasisDecos(
@@ -215,6 +260,7 @@ function addEmphasisDecos(
   cls: string,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
   footnoteMap?: FootnoteMap,
 ) {
   if (isCursorInRange(state, from, to)) return;
@@ -235,7 +281,7 @@ function addEmphasisDecos(
     decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: cls }) });
   }
 
-  processInlineChildren(state, node, decos, footnoteMap);
+  processInlineChildren(state, node, decos, cursorSensitiveLines, footnoteMap);
 }
 
 function addStrikethroughDecos(
@@ -244,6 +290,7 @@ function addStrikethroughDecos(
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
   footnoteMap?: FootnoteMap,
 ) {
   if (isCursorInRange(state, from, to)) return;
@@ -264,7 +311,7 @@ function addStrikethroughDecos(
     decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: "cm-preview-strikethrough" }) });
   }
 
-  processInlineChildren(state, node, decos, footnoteMap);
+  processInlineChildren(state, node, decos, cursorSensitiveLines, footnoteMap);
 }
 
 function addFootnoteRefDecos(
@@ -410,6 +457,7 @@ function addLinkDecos(
   node: ReturnType<typeof syntaxTree>["topNode"],
   decos: { from: number; to: number; deco: Decoration }[],
   cursorSensitiveLines?: Set<number>,
+  footnoteMap?: FootnoteMap,
 ) {
   addPlainBracketDecos(state, from, to, node, getRefDefLabels(state), decos);
 
@@ -423,6 +471,17 @@ function addLinkDecos(
   }
 
   if (isCursorInRange(state, from, to)) return;
+
+  // Cursor is away: recurse into the label so nested inline content (\$
+  // escapes, emphasis, ...) still previews, including for reference links
+  // where the bracket-hide below bails (no URL node).
+  processInlineChildren(
+    state,
+    node,
+    decos,
+    cursorSensitiveLines ?? new Set<number>(),
+    footnoteMap,
+  );
 
   if (linkMarks.length < 4 || !urlNode) return;
 

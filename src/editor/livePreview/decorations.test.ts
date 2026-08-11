@@ -11,7 +11,7 @@ import { Footnote } from "../markdown/footnote";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
-import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget } from "./widgets";
+import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget } from "./widgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -51,6 +51,7 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   widgetVariant?: "short" | "full";
+  widgetKind?: "escaped-dollar";
   url?: string;
   style?: string;
 };
@@ -69,6 +70,7 @@ function collectDecos(view: EditorView): DecoInfo[] {
     if (spec.widget) {
       info.widget = true;
       if (spec.widget instanceof HorizontalRuleWidget) info.widgetVariant = spec.widget.variant;
+      if (spec.widget instanceof EscapedDollarWidget) info.widgetKind = "escaped-dollar";
     }
     if (spec.class) info.class = spec.class;
     if (spec.attributes?.["data-url"]) info.url = spec.attributes["data-url"];
@@ -913,6 +915,161 @@ describe("buildDecorations — inline math", () => {
     const view = makeView("$E=mc^2$", 3);
     const decos = collectDecos(view);
     expect(decos).toHaveLength(0);
+    view.destroy();
+  });
+});
+
+describe("buildDecorations — escaped dollar", () => {
+  it("replaces \\$ with EscapedDollarWidget when caret is away", () => {
+    const doc = "The price is \\$5.";
+    const view = makeView(doc, doc.length); // cursor at end, away from the escape
+    const decos = collectDecos(view);
+    const escape = view.state.doc.line(1).text.indexOf("\\$");
+    const widget = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(widget).toBeDefined();
+    expect(widget!.from).toBe(escape);
+    expect(widget!.to).toBe(escape + 2);
+    view.destroy();
+  });
+
+  it("reveals raw \\$ when caret is inside the escape", () => {
+    const doc = "The price is \\$5.";
+    const escape = doc.indexOf("\\$");
+    const view = makeView(doc, escape + 1); // caret inside the two-char escape
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    view.destroy();
+  });
+
+  it("keeps inline math as math (no escaped-dollar widget)", () => {
+    const doc = "$E=mc^2$ and \\$5";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const math = decos.find((d) => d.widget && d.from === 0 && d.to === 8);
+    expect(math).toBeDefined();
+    const escaped = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(escaped).toBeDefined(); // the \\$ still gets the widget
+    expect(escaped!.from).toBe(13);
+    view.destroy();
+  });
+
+  it("does not substitute for \\\\$ (escaped backslash + bare dollar)", () => {
+    const doc = "\\\\$";
+    const view = makeView(doc, doc.length); // caret away
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    view.destroy();
+  });
+
+  it("does not substitute for non-dollar escapes like \\*", () => {
+    const doc = "\\* star\n\nother";
+    const view = makeView(doc, doc.length); // caret away
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    view.destroy();
+  });
+
+  it("does not substitute inside inline code", () => {
+    const doc = "`\\$` text";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    view.destroy();
+  });
+
+  it("does not substitute inside fenced code", () => {
+    const doc = "```\n\\$5\n```\n\nother";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    view.destroy();
+  });
+
+  it("nested: replaces \\$ inside bold", () => {
+    const doc = "**cost \\$5**\n\nother";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(widget).toBeDefined();
+    expect(widget!.from).toBe(7);
+    expect(widget!.to).toBe(9);
+    // bold mark is present on the content
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    view.destroy();
+  });
+
+  it("nested: replaces \\$ inside link labels when caret is away", () => {
+    const doc = "[costs \\$5](http://x.com)\n\nother";
+    const view = makeView(doc, doc.length); // caret on "other"
+    const decos = collectDecos(view);
+    const escape = view.state.doc.line(1).text.indexOf("\\$");
+    const widget = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(widget).toBeDefined();
+    expect(widget!.from).toBe(escape);
+    expect(widget!.to).toBe(escape + 2);
+    // link mark still applied to the label
+    expect(decos.find((d) => d.class === "cm-preview-link")).toBeDefined();
+    view.destroy();
+  });
+
+  it("reveals raw \\$ inside link labels when caret is inside the link", () => {
+    const doc = "[costs \\$5](http://x.com)\n\nother";
+    const escape = doc.indexOf("\\$");
+    const view = makeView(doc, escape + 1); // caret inside the escape
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    view.destroy();
+  });
+
+  it("nested: replaces \\$ inside bold link label when caret is away", () => {
+    const doc = "[*costs \\$5*](http://x.com)\n\nother";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(widget).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-link")).toBeDefined();
+    view.destroy();
+  });
+
+  it("nested: replaces \\$ inside reference link labels when caret is away", () => {
+    const doc = "[costs \\$5][ref]\n\n[ref]: http://x.com\n\nother";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(widget).toBeDefined();
+    view.destroy();
+  });
+
+  it("nested: replaces \\$ inside a heading", () => {
+    const doc = "## cost \\$5\n\nother";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const widget = decos.find((d) => d.widgetKind === "escaped-dollar");
+    expect(widget).toBeDefined();
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    view.destroy();
+  });
+
+  it("adds only \\$ escape lines to cursorSensitiveLines", () => {
+    const doc = "plain\nThe price is \\$5.\nmore\n\\*other escape\\* not sensitive";
+    const view = makeView(doc, 0);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(2)).toBe(true); // \\$ line
+    expect(cursorSensitiveLines.has(1)).toBe(false); // plain line
+    expect(cursorSensitiveLines.has(3)).toBe(false); // plain line
+    expect(cursorSensitiveLines.has(4)).toBe(false); // \\* escapes are not \\$
+    view.destroy();
+  });
+
+  it("does not emit EscapedDollarWidget or cursor sensitivity for \\$ inside table cells", () => {
+    const doc = "| a |\n|---|\n| \\$5 |\n\nother";
+    const view = makeView(doc, doc.length); // caret on "other"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "escaped-dollar")).toBe(false);
+    // table body line (3) is not sensitivity-polluted solely by the \\$
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(3)).toBe(false);
     view.destroy();
   });
 });

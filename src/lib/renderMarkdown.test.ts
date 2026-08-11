@@ -228,6 +228,148 @@ describe("renderMarkdown", () => {
     expect(result).not.toContain("cm-preview-math");
   });
 
+  describe("escaped dollar → fullwidth glyph", () => {
+    it("renders \\$ as the fullwidth glyph wrapped in a span", () => {
+      const result = renderMarkdown("The price is \\$5.");
+      expect(result).toContain("\uFF04");
+      expect(result).toContain('class="md-escaped-dollar"');
+      expect(result).not.toContain("cm-preview-math");
+    });
+
+    it("does not leave a visible \\$ pair for the escape", () => {
+      const result = renderMarkdown("The price is \\$5.");
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      expect(div.textContent).toContain("\uFF04");
+      expect(div.textContent).not.toContain("\\$");
+    });
+
+    it("renders multiple escaped dollars", () => {
+      const result = renderMarkdown("\\$a and \\$b");
+      expect(result.split("\uFF04")).toHaveLength(3);
+    });
+
+    it("3-backslash escaped dollar keeps the backslash and glyph", () => {
+      const result = renderMarkdown(String.raw`\\\$5`);
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      // marked collapses the escaped backslash to a single backslash
+      expect(div.textContent).toContain("\\");
+      expect(div.textContent).toContain("\uFF04");
+      expect(div.textContent).not.toContain("\\$");
+    });
+
+    it("2-backslash + bare dollar does not become a lone fullwidth glyph", () => {
+      const result = renderMarkdown(String.raw`\\$`);
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      expect(div.textContent).toContain("\\$");
+      expect(div.textContent).not.toContain("\uFF04");
+    });
+
+    it("keeps math delimiters working ($E=mc^2$ is still math)", () => {
+      const result = renderMarkdown("$E=mc^2$ and \\$5");
+      expect(result).toContain("cm-preview-math-inline");
+      expect(result).toContain("\uFF04");
+    });
+
+    it("preserves \\$ inside inline code spans", () => {
+      const result = renderMarkdown("`\\$` code");
+      expect(result).toContain("<code>\\$</code>");
+      expect(result).not.toContain("\uFF04");
+    });
+
+    it("preserves \\$ inside fenced code blocks", () => {
+      const result = renderMarkdown("```\n\\$5\n```");
+      expect(result).toContain("<code>");
+      expect(result).toContain("\\$");
+      expect(result).not.toContain("\uFF04");
+    });
+  });
+
+  describe("escaped dollar - non-text HTML contexts", () => {
+    it("keeps \\$ in link destinations as ASCII $ without breaking the link", () => {
+      const result = renderMarkdown("[x](http://e.com/\\$5)");
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const a = div.querySelector("a");
+      expect(a).not.toBeNull();
+      expect(a!.getAttribute("href")).toBe("http://e.com/$5");
+      expect(a!.textContent).toBe("x");
+      expect(div.textContent).not.toContain("[x](");
+      expect(div.textContent).not.toContain("\uFF04");
+      expect(div.innerHTML).not.toContain("md-escaped-dollar");
+    });
+
+    it("resolves \\$ in reference link definitions without leaking the def", () => {
+      const result = renderMarkdown("[x][1]\n\n[1]: http://e.com/\\$5");
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const a = div.querySelector("a");
+      expect(a).not.toBeNull();
+      expect(a!.getAttribute("href")).toBe("http://e.com/$5");
+      expect(a!.textContent).toBe("x");
+      expect(div.textContent).not.toContain("[1]:");
+    });
+
+    it("keeps \\$ in link titles as ASCII $ without breaking the link", () => {
+      const result = renderMarkdown('[x](http://e.com "costs \\$5")');
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const a = div.querySelector("a");
+      expect(a).not.toBeNull();
+      expect(a!.getAttribute("title")).toBe("costs $5");
+      expect(div.innerHTML).not.toContain("md-escaped-dollar");
+    });
+
+    it("does not mangle \\$ inside autolinks", () => {
+      const result = renderMarkdown("<http://e.com/\\$5>");
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const a = div.querySelector("a");
+      expect(a).not.toBeNull();
+      expect(a!.getAttribute("href")).toContain("$5");
+      // single anchor, no stray literal fragments
+      expect(div.querySelectorAll("a")).toHaveLength(1);
+      expect(div.textContent).not.toContain("<");
+      expect(div.textContent).not.toContain(">");
+    });
+
+    it("resolves \\$ in image alt text to ASCII $ without markup leak", () => {
+      const result = renderMarkdown("![a \\$5 b](u.png)");
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const img = div.querySelector("img");
+      expect(img).not.toBeNull();
+      expect(img!.getAttribute("alt")).toBe("a $5 b");
+      expect(div.innerHTML).not.toContain("md-escaped-dollar");
+    });
+
+    it("leaves \\$ in raw HTML attributes intact without span injection", () => {
+      const result = renderMarkdown('<span title="\\$5">hi</span>');
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const span = div.querySelector("span");
+      expect(span).not.toBeNull();
+      expect(span!.getAttribute("title")).toBe("$5");
+      expect(span!.textContent).toBe("hi");
+      expect(div.innerHTML).not.toContain("md-escaped-dollar");
+    });
+
+    it("still shows the glyph in visible text contexts (link text, emphasis)", () => {
+      const result = renderMarkdown("[costs \\$5](http://x.com) and *a \\$6 b*");
+      const div = document.createElement("div");
+      div.innerHTML = result;
+      const a = div.querySelector("a");
+      expect(a).not.toBeNull();
+      expect(a!.textContent).toContain("\uFF04");
+      expect(a!.getAttribute("href")).toBe("http://x.com");
+      const em = div.querySelector("em");
+      expect(em).not.toBeNull();
+      expect(em!.textContent).toContain("\uFF04");
+    });
+  });
+
   it("renders display math containing dollar signs", () => {
     const result = renderMarkdown("$$\\text{costs \\$5}$$");
     expect(result).toContain("cm-preview-math-display");

@@ -1,5 +1,6 @@
 import { escapeHtml } from "../../lib/escapeHtml";
 import { renderMathToHtml, replaceInlineMath } from "../../lib/renderMath";
+import { replaceEscapedDollars, ESCAPED_DOLLAR_GLYPH } from "../../lib/escapedDollar";
 
 export type Alignment = "left" | "right" | "center" | "default";
 
@@ -99,6 +100,12 @@ export function renderInlineMarkdown(text: string): string {
     return `￰TBLPH${idx}￰`;
   });
 
+  // Rewrite CommonMark dollar-escapes to the fullwidth stand-in (raw glyph,
+  // no span: this path HTML-escapes non-placeholder segments afterwards, and
+  // inserting tags here would fight escapeSegments). Code and math are already
+  // masked, so `` `\$` `` and `$...$` keep their source.
+  working = replaceEscapedDollars(working);
+
   // Pass 2: HTML-escape text segments between placeholders
   working = escapeSegments(working);
 
@@ -127,11 +134,14 @@ export function renderInlineMarkdown(text: string): string {
     },
   );
 
-  // Links: [text](url)
+  // Links: [text](url). Escaped dollars were already rewritten to the glyph
+  // above, but a URL must not carry U+FF04: resolve the glyph back to ASCII `$`
+  // in the href only (CommonMark escape semantics), keeping the glyph in the
+  // link text.
   working = working.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
     (_, linkText, url) =>
-      `<a href="${url}" class="cm-preview-link">${linkText}</a>`,
+      `<a href="${url.replaceAll(ESCAPED_DOLLAR_GLYPH, "$")}" class="cm-preview-link">${linkText}</a>`,
   );
 
   // Bold: **text** or __text__

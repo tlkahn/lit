@@ -2,6 +2,7 @@ import { marked, Marked } from "marked";
 import DOMPurify from "dompurify";
 import { renderMathToHtml, replaceInlineMath } from "./renderMath";
 import { litFootnoteExtension } from "./markedFootnote";
+import { maskEscapedDollars, restoreEscapedDollarsInHtml } from "./escapedDollar";
 
 // Dedicated instance so the footnote extension never leaks into other callers
 // of the global `marked` (e.g. table cell rendering).
@@ -86,6 +87,15 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
   // stays untouched.
   if (stripFootnotes) working = footnotesToInlineMarkers(working);
 
+  // Rewrite CommonMark dollar-escapes to an inert placeholder. Runs after
+  // code masking + math extraction so `` `\$` `` / fenced `\$` and math keep
+  // their source, and before marked so it never resolves those `\$` to ASCII
+  // `$`. Backslash runs before the escape (`\\$`) are preserved. The
+  // placeholder (never a dollar, never HTML) is inert in URLs, titles, alt
+  // text and raw HTML attributes; `restoreEscapedDollarsInHtml` turns it into
+  // the glyph span (text) or ASCII `$` (attributes) after sanitization.
+  working = maskEscapedDollars(working);
+
   working = working.replace(/￰CODEPH(\d+)￰/g, (_, idx) => codePlaceholders[Number(idx)]!);
 
   return { processed: working, placeholders };
@@ -117,7 +127,10 @@ export function renderMarkdown(text: string): string {
   const { processed, placeholders } = extractAndRenderMath(text);
   const html = litMarked.parse(processed, { async: false }) as string;
   const sanitized = DOMPurify.sanitize(html, { ADD_ATTR: ["target"] });
-  return restorePlaceholders(sanitized, placeholders);
+  // Restore escaped dollars while math placeholders are still plain text
+  // sentinels, so math HTML is never walked as untrusted structure.
+  const withDollars = restoreEscapedDollarsInHtml(sanitized);
+  return restorePlaceholders(withDollars, placeholders);
 }
 
 export function renderInlineMarkdown(text: string): string {
@@ -125,5 +138,6 @@ export function renderInlineMarkdown(text: string): string {
   const { processed, placeholders } = extractAndRenderMath(text, true);
   const html = marked.parseInline(processed, { async: false }) as string;
   const sanitized = DOMPurify.sanitize(html);
-  return restorePlaceholders(sanitized, placeholders);
+  const withDollars = restoreEscapedDollarsInHtml(sanitized);
+  return restorePlaceholders(withDollars, placeholders);
 }
