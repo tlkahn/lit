@@ -150,14 +150,19 @@ if os.path.isdir(nm):
 # ── Bundled fonts ─────────────────────────────────────────────────
 fonts = [
     {
-        'name': 'Junicode',
+        'name': 'IBM Plex Sans',
         'license': 'OFL-1.1',
-        'url': 'https://github.com/psb1558/Junicode-font',
+        'url': 'https://github.com/IBM/plex',
     },
     {
-        'name': 'Source Sans 3',
+        'name': 'IBM Plex Serif',
         'license': 'OFL-1.1',
-        'url': 'https://github.com/adobe-fonts/source-sans',
+        'url': 'https://github.com/IBM/plex',
+    },
+    {
+        'name': 'IBM Plex Mono',
+        'license': 'OFL-1.1',
+        'url': 'https://github.com/IBM/plex',
     },
 ]
 
