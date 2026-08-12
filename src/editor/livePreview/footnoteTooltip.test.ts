@@ -2,10 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
-import { ensureSyntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { Footnote } from "../markdown/footnote";
 import { buildFootnoteMap } from "./footnoteNumbering";
-import { getFootnoteDefBody, renderFootnoteBody, footnoteTooltipSource } from "./footnoteTooltip";
+import { getFootnoteDefBody, getFootnoteDefBodyInfo, renderFootnoteBody, footnoteTooltipSource } from "./footnoteTooltip";
 
 vi.mock("katex", () => ({
   default: { render: vi.fn() },
@@ -57,6 +57,65 @@ describe("getFootnoteDefBody", () => {
     const map = buildFootnoteMap(state);
     const body = getFootnoteDefBody(state, "1", map);
     expect(body).toBeNull();
+  });
+});
+
+describe("getFootnoteDefBodyInfo", () => {
+  function defInfo(doc: string, label = "1") {
+    const state = makeState(doc);
+    const map = buildFootnoteMap(state);
+    const defRange = map.defPositions.get(label);
+    expect(defRange).toBeDefined();
+    const tree = syntaxTree(state);
+    let cur: ReturnType<typeof syntaxTree>["topNode"] | null = tree.resolveInner(defRange!.from, 1);
+    while (cur && cur.name !== "FootnoteDef") cur = cur.parent;
+    expect(cur).not.toBeNull();
+    return getFootnoteDefBodyInfo(state, cur!);
+  }
+
+  it("single-line def: bodyFrom after mark + one sep, bodyTo at doc end", () => {
+    const doc = "[^1]: Definition text";
+    const info = defInfo(doc);
+    expect(info).not.toBeNull();
+    expect(info!.bodyText).toBe("Definition text");
+    expect(info!.bodyFrom).toBe(doc.indexOf("Definition"));
+    expect(info!.bodyTo).toBe(doc.length);
+  });
+
+  it("no separator: bodyFrom immediately after the colon", () => {
+    const doc = "[^1]:body";
+    const info = defInfo(doc);
+    expect(info).not.toBeNull();
+    expect(info!.bodyText).toBe("body");
+    expect(info!.bodyFrom).toBe(5); // "[^1]:" is 5 chars
+  });
+
+  it("empty body: bodyFrom >= bodyTo and bodyText empty", () => {
+    const info = defInfo("[^1]:");
+    expect(info).not.toBeNull();
+    expect(info!.bodyText).toBe("");
+    expect(info!.bodyFrom).toBeGreaterThanOrEqual(info!.bodyTo);
+  });
+
+  it("multi-line def: strips one leading 4-space indent from continuation, raw range includes it", () => {
+    const doc = "[^1]: First\n    Second";
+    const info = defInfo(doc);
+    expect(info).not.toBeNull();
+    expect(info!.bodyText).toBe("First\nSecond");
+    expect(info!.bodyFrom).toBe(6); // "[^1]:" + one space
+    expect(info!.bodyTo).toBe(doc.length);
+  });
+
+  it("multi-line def: strips one leading tab from continuation", () => {
+    const info = defInfo("[^1]: First\n\tSecond");
+    expect(info).not.toBeNull();
+    expect(info!.bodyText).toBe("First\nSecond");
+  });
+
+  it("returns null when node has no FootnoteDefMark child", () => {
+    const state = makeState("plain text");
+    const top = syntaxTree(state).topNode;
+    expect(getFootnoteDefBodyInfo(state, top)).toBeNull();
   });
 });
 

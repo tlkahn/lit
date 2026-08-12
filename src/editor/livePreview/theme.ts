@@ -441,6 +441,25 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     fontWeight: "600",
     paddingRight: "0.35em",
   },
+  // Rendered def body (caret outside). Padding only, never margin (CM6
+  // height map). Paragraphs and headings use padding separation too so the
+  // widget's estimatedHeight stays honest.
+  ".cm-footnote-def-body": {
+    paddingTop: "0.15em",
+    paddingBottom: "0.15em",
+    display: "block",
+  },
+  ".cm-footnote-def-body p": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body p + p": {
+    paddingTop: "0.5em",
+  },
+  ".cm-footnote-def-body h1, .cm-footnote-def-body h2, .cm-footnote-def-body h3, .cm-footnote-def-body h4, .cm-footnote-def-body h5, .cm-footnote-def-body h6": {
+    fontWeight: "600",
+    paddingTop: "0.35em",
+    paddingBottom: "0.15em",
+  },
   ".cm-footnote-tooltip": {
     backgroundColor: "var(--background-primary, #fff)",
     border: "1px solid var(--background-modifier-border, #e0e0e0)",

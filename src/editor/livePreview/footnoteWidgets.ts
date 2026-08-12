@@ -1,6 +1,7 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { recordDeparture, highlightLine } from "./crossrefWidgets";
 import { isJumpNavigation } from "../jumpHistory";
+import { renderFootnoteBody } from "./footnoteTooltip";
 
 export class FootnoteRefWidget extends WidgetType {
   constructor(
@@ -81,5 +82,41 @@ export class FootnoteDefMarkWidget extends WidgetType {
 
   get estimatedHeight(): number {
     return 16;
+  }
+}
+
+/**
+ * Rendered preview of a footnote definition's body while the caret is
+ * outside the def (single- and multi-line share this one widget path). The
+ * HTML comes from the same `renderFootnoteBody` used by the hover tooltip,
+ * so the in-buffer preview and the tooltip cannot drift. Clicking the body
+ * is not swallowed: it places the caret into the def so proximity reveals
+ * the raw source for in-place editing.
+ */
+export class FootnoteDefBodyWidget extends WidgetType {
+  constructor(readonly bodyText: string) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const div = document.createElement("div");
+    div.className = "cm-footnote-def-body";
+    div.innerHTML = renderFootnoteBody(this.bodyText);
+    return div;
+  }
+
+  eq(other: FootnoteDefBodyWidget): boolean {
+    return this.bodyText === other.bodyText;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  // Padding/heights are in CSS; margin is forbidden (CM6 height map).
+  get estimatedHeight(): number {
+    const lines = Math.max(1, this.bodyText.split("\n").length);
+    const displayFences = (this.bodyText.match(/\$\$|\\\[/g) ?? []).length;
+    return Math.max(16, lines * 22 + displayFences * 36);
   }
 }
