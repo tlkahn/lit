@@ -37,11 +37,16 @@ describe("annotationConstants", () => {
     expect(baseRule).toContain("rgba(171, 71, 188");
   });
 
-  it("annotation.css defines .cm-annotation-spinner-passive with cursor: default", () => {
+  it("annotation.css has no fire spinner / stop-icon rules", () => {
     const css = readFileSync(resolve(__dirname, "annotation.css"), "utf8");
-    const rule = css.match(/\.cm-annotation-spinner-passive\s*\{[^}]*\}/)?.[0];
-    expect(rule).toBeDefined();
-    expect(rule).toMatch(/cursor:\s*default/);
+    for (const selector of [
+      ".cm-annotation-spinner",
+      ".cm-annotation-spinner-passive",
+      ".cm-annotation-stop-icon",
+    ]) {
+      expect(css).not.toMatch(new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").concat("\\s*\\{")));
+    }
+    expect(css).not.toMatch(/@keyframes\s+cm-annotation-spin/);
   });
 
   // #972 Cycle 6: enlarge the glyph hit target after pill unification made

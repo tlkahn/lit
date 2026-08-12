@@ -373,7 +373,6 @@ select:disabled {
 [data-testid="cardbox-card"][data-annotation-type="crossref"]    { --ann-color: 156, 39, 176; }
 [data-testid="cardbox-card"][data-annotation-type="apparatus"]   { --ann-color: 233, 30, 99; }
 [data-testid="cardbox-card"][data-annotation-type="translation"] { --ann-color: 0, 188, 212; }
-[data-testid="cardbox-card"][data-annotation-type="llm"]         { --ann-color: 255, 193, 7; }
 [data-testid="cardbox-card"][data-annotation-type="thread"]      { --ann-color: 171, 71, 188; }
 [data-testid="cardbox-card"][data-annotation-type="slipnote"]   { --ann-color: 38, 166, 154; }
 [data-testid="cardbox-card"][data-annotation-type="mark"]        { --ann-color: 120, 120, 120; }

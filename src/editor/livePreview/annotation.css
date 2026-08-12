@@ -253,48 +253,6 @@
   opacity: 1;
 }
 
-/* Spinner (firing state) */
-@keyframes cm-annotation-spin {
-  to { transform: rotate(360deg); }
-}
-
-.cm-annotation-spinner {
-  pointer-events: auto;
-  cursor: pointer;
-  position: relative;
-}
-
-.cm-annotation-spinner-passive {
-  cursor: default;
-}
-
-.cm-annotation-spinner::after {
-  content: "";
-  display: inline-block;
-  width: 0.6em;
-  height: 0.6em;
-  border: 1.5px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: cm-annotation-spin 0.6s linear infinite;
-}
-
-.cm-annotation-stop-icon {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 0.35em;
-  line-height: 1;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-}
-
-.cm-annotation-spinner:hover .cm-annotation-stop-icon {
-  opacity: 1;
-}
-
 /* Slipnote type colors */
 .cm-annotation-pill[data-annotation-type="slipnote"] {
   background: rgba(38, 166, 154, 0.15);
