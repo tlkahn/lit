@@ -216,7 +216,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     });
     // Reconcile paper-search API key flags against the credential store.
     const searchKeyChecks = SETTINGS_REGISTRY
-      .filter((e): e is PasswordEntry => e.controlType === "password" && e.category === "Paper Search")
+      .filter((e): e is PasswordEntry => e.controlType === "password")
       .map(e => ({ provider: e.provider, field: e.storeField as keyof PreferencesState }));
     for (const { provider, field } of searchKeyChecks) {
       hasApiKey(provider).then((has) => {
@@ -245,7 +245,8 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     const groups = new Map<FormCategory, FilteredSetting[]>();
     for (const cat of FORM_CATEGORIES) groups.set(cat, []);
     for (const result of filteredResults) {
-      groups.get(result.entry.category as FormCategory)!.push(result);
+      const bucket = groups.get(result.entry.category as FormCategory);
+      if (bucket) bucket.push(result);
     }
     return groups;
   }, [filteredResults]);
@@ -488,7 +489,9 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                           <div className="space-y-3">
                             {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, ensureUnlocked, dynamicOptions }))}
                           </div>
-                          {cat === "Appearance" && (
+                          {cat === "Appearance" &&
+                            (!isSearching ||
+                              results.some((r) => r.entry.storeField === "fontInterfaceList")) && (
                             <div className="mt-3">
                               <FontSettings />
                             </div>

@@ -111,6 +111,7 @@ describe("CATEGORIES", () => {
       "Annotations",
       "LLM",
       "Paper Search",
+      "Credentials",
       "Academic Export",
       "Experimental",
       "Keyboard Shortcuts",
@@ -119,19 +120,49 @@ describe("CATEGORIES", () => {
 });
 
 describe("FORM_SETTINGS_REGISTRY", () => {
-  it("contains exactly the three productized appearance entries", () => {
-    expect(FORM_SETTINGS_REGISTRY).toHaveLength(3);
+  it("contains exactly the productized appearance and credentials entries", () => {
+    expect(FORM_SETTINGS_REGISTRY).toHaveLength(8);
     expect(FORM_SETTINGS_REGISTRY.map((e) => e.storeField).sort()).toEqual([
       "colorTheme",
       "darkMode",
       "fontInterfaceList",
+      "searchBaseApiKeySet",
+      "searchCoreApiKeySet",
+      "searchGoogleBooksApiKeySet",
+      "searchPubmedApiKeySet",
+      "searchS2ApiKeySet",
     ]);
   });
 
-  it("every form-visible entry is in the Appearance category", () => {
+  it("every form-visible entry category is in FORM_CATEGORIES", () => {
     for (const entry of FORM_SETTINGS_REGISTRY) {
-      expect(entry.category).toBe("Appearance");
       expect(entry.formVisible).toBe(true);
+      expect(FORM_CATEGORIES, entry.storeField).toContain(entry.category);
+    }
+  });
+
+  it("the five paper-search API key entries are form-visible Credentials", () => {
+    for (const field of [
+      "searchS2ApiKeySet",
+      "searchCoreApiKeySet",
+      "searchPubmedApiKeySet",
+      "searchGoogleBooksApiKeySet",
+      "searchBaseApiKeySet",
+    ]) {
+      const entry = SETTINGS_REGISTRY.find((e) => e.storeField === field);
+      expect(entry, `missing ${field}`).toBeDefined();
+      expect(entry!.category).toBe("Credentials");
+      expect(entry!.controlType).toBe("password");
+      expect(entry!.formVisible).toBe(true);
+    }
+  });
+
+  it("paper-search non-secret entries stay hidden on Paper Search", () => {
+    for (const field of ["searchEnabledProviders", "searchCrossrefEmail", "searchUnpaywallEmail", "searchProviderTimeout"]) {
+      const entry = SETTINGS_REGISTRY.find((e) => e.storeField === field);
+      expect(entry, `missing ${field}`).toBeDefined();
+      expect(entry!.category).toBe("Paper Search");
+      expect(entry!.formVisible).toBe(false);
     }
   });
 
@@ -153,7 +184,7 @@ describe("FORM_SETTINGS_REGISTRY", () => {
 
   it("every hidden entry sets formVisible false explicitly", () => {
     const hidden = SETTINGS_REGISTRY.filter((e) => !FORM_SETTINGS_REGISTRY.includes(e));
-    expect(hidden.length).toBe(SETTINGS_REGISTRY.length - 3);
+    expect(hidden.length).toBe(SETTINGS_REGISTRY.length - 8);
     for (const entry of hidden) {
       expect(entry.formVisible, `${entry.storeField} must be formVisible:false`).toBe(false);
     }
@@ -161,8 +192,8 @@ describe("FORM_SETTINGS_REGISTRY", () => {
 });
 
 describe("FORM_CATEGORIES", () => {
-  it("equals the slim sidebar list", () => {
-    expect(FORM_CATEGORIES).toEqual(["Appearance", "Keyboard Shortcuts"]);
+  it("equals the form sidebar list", () => {
+    expect(FORM_CATEGORIES).toEqual(["Appearance", "Credentials", "Keyboard Shortcuts"]);
   });
 
   it("is a subset of the full CATEGORIES taxonomy", () => {
@@ -173,15 +204,16 @@ describe("FORM_CATEGORIES", () => {
 });
 
 describe("groupByCategory", () => {
-  it("returns Map with 9 keys and correct counts", () => {
+  it("returns Map with 10 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
-    expect(grouped.size).toBe(9);
+    expect(grouped.size).toBe(10);
     expect(grouped.get("Appearance")).toHaveLength(9);
     expect(grouped.get("Editor")).toHaveLength(6);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
     expect(grouped.get("LLM")).toHaveLength(7);
-    expect(grouped.get("Paper Search")).toHaveLength(9);
+    expect(grouped.get("Paper Search")).toHaveLength(4);
+    expect(grouped.get("Credentials")).toHaveLength(5);
     expect(grouped.get("Academic Export")).toHaveLength(6);
     expect(grouped.get("Experimental")).toHaveLength(1);
     expect(grouped.get("Keyboard Shortcuts")).toHaveLength(0);
@@ -229,6 +261,22 @@ describe("filterSettings", () => {
 
   it("form subset: 'fold' is empty (hidden controls not surfaced by search)", () => {
     expect(filterSettings(FORM_SETTINGS_REGISTRY, "fold")).toEqual([]);
+  });
+
+  it("form subset: 'pubmed' hits the PubMed credential row", () => {
+    const results = filterSettings(FORM_SETTINGS_REGISTRY, "pubmed");
+    expect(results.map((r) => r.entry.storeField)).toEqual(["searchPubmedApiKeySet"]);
+  });
+
+  it("form subset: 'api key' hits all five credential rows", () => {
+    const results = filterSettings(FORM_SETTINGS_REGISTRY, "api key");
+    expect(results.map((r) => r.entry.storeField).sort()).toEqual([
+      "searchBaseApiKeySet",
+      "searchCoreApiKeySet",
+      "searchGoogleBooksApiKeySet",
+      "searchPubmedApiKeySet",
+      "searchS2ApiKeySet",
+    ]);
   });
 
   it("form subset: LLM/companion queries are empty even though full registry matches", () => {

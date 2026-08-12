@@ -134,10 +134,10 @@ describe("SettingsModal", () => {
 
   // --- Structural tests ---
 
-  it("renders only the Appearance section heading", () => {
+  it("renders Appearance and Credentials section headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance"]);
+    expect(headings).toEqual(["Appearance", "Credentials"]);
   });
 
   it("has a scrollable content area", () => {
@@ -327,11 +327,6 @@ describe("SettingsModal", () => {
       "settings-searchProviders",
       "settings-searchCrossrefEmail",
       "settings-searchUnpaywallEmail",
-      "settings-searchS2ApiKey",
-      "settings-searchCoreApiKey",
-      "settings-searchPubmedApiKey",
-      "settings-searchGoogleBooksApiKey",
-      "settings-searchBaseApiKey",
       "settings-searchProviderTimeout",
       "settings-experimentalUnlinkedReferences",
       "llm-provider-settings",
@@ -341,6 +336,42 @@ describe("SettingsModal", () => {
     for (const id of hiddenIds) {
       expect(container.querySelector(`[data-testid='${id}']`), `unexpected ${id}`).toBeNull();
     }
+  });
+
+  // --- Credentials section ---
+
+  it("Credentials section shows all five paper-search API key controls", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const ids = [
+      "settings-searchS2ApiKey",
+      "settings-searchCoreApiKey",
+      "settings-searchPubmedApiKey",
+      "settings-searchGoogleBooksApiKey",
+      "settings-searchBaseApiKey",
+    ];
+    for (const id of ids) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Appearance", "Credentials"]);
+  });
+
+  it("saving a paper-search API key calls set_api_key with its provider", async () => {
+    useSecretStoreStore.setState({ unlocked: true });
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
+    });
+    const input = container.querySelector("[data-testid='settings-searchS2ApiKey']")!;
+    const saveBtn = container.querySelector("[data-testid='settings-searchS2ApiKey-save']")!;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "s2-test-key" } });
+      fireEvent.click(saveBtn);
+    });
+    await vi.waitFor(() => {
+      expect(invokeCalls).toContainEqual({ cmd: "set_api_key", args: { provider: "semantic-scholar", key: "s2-test-key" } });
+    });
+    expect(usePreferencesStore.getState().searchS2ApiKeySet).toBe(true);
   });
 
   // --- IPC error rollback ---
@@ -511,6 +542,9 @@ describe("SettingsModal", () => {
 
     expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
     expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
+    expect(container.querySelector("[data-testid='font-settings']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-searchPubmedApiKey']")).toBeNull();
   });
 
   it("searching 'theme' keeps Color Theme", () => {
@@ -520,6 +554,29 @@ describe("SettingsModal", () => {
 
     expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeTruthy();
     expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeNull();
+    expect(container.querySelector("[data-testid='font-settings']")).toBeNull();
+  });
+
+  it("searching 'pubmed' surfaces the PubMed credential row only", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "pubmed" } });
+
+    expect(container.querySelector("[data-testid='settings-searchPubmedApiKey']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-no-results']")).toBeNull();
+  });
+
+  it("searching 'font' keeps FontSettings only", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "font" } });
+
+    expect(container.querySelector("[data-testid='font-settings']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeNull();
   });
 
   it("typing 'fold' shows no form results (hidden knobs stay hidden)", () => {
@@ -559,16 +616,18 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
     expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeTruthy();
     expect(container.querySelector("[data-testid='font-settings']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-searchPubmedApiKey']")).toBeTruthy();
   });
 
-  it("clearing search restores the Appearance heading", () => {
+  it("clearing search restores the Appearance and Credentials headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance"]);
+    expect(headings).toEqual(["Appearance", "Credentials"]);
   });
 
   // --- Sidebar match dimming ---
@@ -772,12 +831,16 @@ describe("SettingsModal", () => {
   });
 
   it("arrow navigation to Keyboard Shortcuts does not scroll (panel replaces sections)", () => {
-    const getScrollTarget = mockScrollIntoView();
+    let getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    // Appearance -> Keyboard Shortcuts (panel, no scroll)
+    // Appearance -> Credentials: section is mounted, so it scrolls
     buttons[0]!.focus();
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Credentials");
+    // Credentials -> Keyboard Shortcuts: panel replaces sections, no scroll
+    getScrollTarget = mockScrollIntoView();
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
     expect(getScrollTarget()).toBeNull();
     // Keyboard Shortcuts -> Appearance: the section is not mounted while the
@@ -868,6 +931,15 @@ describe("SettingsModal", () => {
     const buttons = Array.from(sidebar.querySelectorAll("button"));
     expect(buttons[0]!.getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
+  });
+
+  it("opens on Credentials when initialCategory is set", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} initialCategory="Credentials" />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const credentialsBtn = buttons.find((b) => b.textContent === "Credentials")!;
+    expect(credentialsBtn.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeTruthy();
   });
 
   // --- Edit JSON toggle button ---

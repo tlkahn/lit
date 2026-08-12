@@ -10,6 +10,7 @@ export const CATEGORIES = [
   "Annotations",
   "LLM",
   "Paper Search",
+  "Credentials",
   "Academic Export",
   "Experimental",
   "Keyboard Shortcuts",
@@ -27,7 +28,7 @@ interface SettingEntryBase {
    * hatch. Default: false for new entries unless intentionally productized in
    * the form. Set explicitly on every entry so the policy is grep-able.
    */
-  formVisible?: boolean;
+  formVisible: boolean;
   label: string;
   storeField: PreferenceField;
   jsonKey: string;
@@ -487,61 +488,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   {
     category: "Paper Search",
     formVisible: false,
-    label: "Semantic Scholar API Key",
-    storeField: "searchS2ApiKeySet",
-    jsonKey: "search.s2ApiKey",
-    controlType: "password",
-    testId: "settings-searchS2ApiKey",
-    provider: "semantic-scholar",
-    keywords: ["semantic scholar", "s2", "api key"],
-  },
-  {
-    category: "Paper Search",
-    formVisible: false,
-    label: "CORE API Key",
-    storeField: "searchCoreApiKeySet",
-    jsonKey: "search.coreApiKey",
-    controlType: "password",
-    testId: "settings-searchCoreApiKey",
-    provider: "core",
-    keywords: ["core", "api key", "core.ac.uk"],
-  },
-  {
-    category: "Paper Search",
-    formVisible: false,
-    label: "PubMed API Key",
-    storeField: "searchPubmedApiKeySet",
-    jsonKey: "search.pubmedApiKey",
-    controlType: "password",
-    testId: "settings-searchPubmedApiKey",
-    provider: "pubmed",
-    keywords: ["pubmed", "ncbi", "api key", "entrez"],
-  },
-  {
-    category: "Paper Search",
-    formVisible: false,
-    label: "Google Books API Key",
-    storeField: "searchGoogleBooksApiKeySet",
-    jsonKey: "search.googleBooksApiKey",
-    controlType: "password",
-    testId: "settings-searchGoogleBooksApiKey",
-    provider: "google-books",
-    keywords: ["google books", "api key", "books"],
-  },
-  {
-    category: "Paper Search",
-    formVisible: false,
-    label: "BASE API Key",
-    storeField: "searchBaseApiKeySet",
-    jsonKey: "search.baseApiKey",
-    controlType: "password",
-    testId: "settings-searchBaseApiKey",
-    provider: "base",
-    keywords: ["base", "bielefeld", "api key"],
-  },
-  {
-    category: "Paper Search",
-    formVisible: false,
     label: "Provider Timeout",
     storeField: "searchProviderTimeout",
     jsonKey: "search.providerTimeout",
@@ -551,6 +497,63 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     max: 60,
     step: 5,
     keywords: ["timeout", "seconds", "request"],
+  },
+  // Credentials - secret API keys only; stored in the encrypted credential
+  // store via set_api_key, never in preferences JSON.
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "Semantic Scholar API Key",
+    storeField: "searchS2ApiKeySet",
+    jsonKey: "search.s2ApiKey",
+    controlType: "password",
+    testId: "settings-searchS2ApiKey",
+    provider: "semantic-scholar",
+    keywords: ["semantic scholar", "s2", "api key"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "CORE API Key",
+    storeField: "searchCoreApiKeySet",
+    jsonKey: "search.coreApiKey",
+    controlType: "password",
+    testId: "settings-searchCoreApiKey",
+    provider: "core",
+    keywords: ["core", "api key", "core.ac.uk"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "PubMed API Key",
+    storeField: "searchPubmedApiKeySet",
+    jsonKey: "search.pubmedApiKey",
+    controlType: "password",
+    testId: "settings-searchPubmedApiKey",
+    provider: "pubmed",
+    keywords: ["pubmed", "ncbi", "api key", "entrez"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "Google Books API Key",
+    storeField: "searchGoogleBooksApiKeySet",
+    jsonKey: "search.googleBooksApiKey",
+    controlType: "password",
+    testId: "settings-searchGoogleBooksApiKey",
+    provider: "google-books",
+    keywords: ["google books", "api key", "books"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "BASE API Key",
+    storeField: "searchBaseApiKeySet",
+    jsonKey: "search.baseApiKey",
+    controlType: "password",
+    testId: "settings-searchBaseApiKey",
+    provider: "base",
+    keywords: ["base", "bielefeld", "api key"],
   },
   // Experimental
   {
@@ -571,6 +574,7 @@ export const FORM_SETTINGS_REGISTRY: SettingEntry[] =
 /** Sidebar tabs that still have a form surface (plus Keyboard Shortcuts). */
 export const FORM_CATEGORIES = [
   "Appearance",
+  "Credentials",
   "Keyboard Shortcuts",
 ] as const satisfies readonly Category[];
 
