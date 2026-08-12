@@ -10,6 +10,7 @@ export const CATEGORIES = [
   "Annotations",
   "LLM",
   "Paper Search",
+  "Credentials",
   "Academic Export",
   "Experimental",
   "Keyboard Shortcuts",
@@ -21,6 +22,13 @@ export type PreferenceField = Exclude<keyof PreferencesState, "loaded" | "loadPr
 
 interface SettingEntryBase {
   category: Category;
+  /**
+   * When false, the entry is omitted from the Settings form and search.
+   * Preference key/default/store wiring stays; Edit JSON remains the escape
+   * hatch. Default: false for new entries unless intentionally productized in
+   * the form. Set explicitly on every entry so the policy is grep-able.
+   */
+  formVisible: boolean;
   label: string;
   storeField: PreferenceField;
   jsonKey: string;
@@ -51,6 +59,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Appearance
   {
     category: "Appearance",
+    formVisible: true,
     label: "Dark Mode",
     storeField: "darkMode",
     jsonKey: "workbench.darkMode",
@@ -64,6 +73,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: true,
     label: "Color Theme",
     storeField: "colorTheme",
     jsonKey: "workbench.colorTheme",
@@ -73,6 +83,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: false,
     label: "Sidebar Visible",
     storeField: "sidebarVisible",
     jsonKey: "workbench.sideBar.visible",
@@ -81,6 +92,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: false,
     label: "Sidebar Location",
     storeField: "sidebarLocation",
     jsonKey: "workbench.sideBar.location",
@@ -93,6 +105,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: false,
     label: "Default View Mode",
     storeField: "defaultViewMode",
     jsonKey: "workbench.defaultViewMode",
@@ -107,6 +120,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: false,
     label: "Graph View",
     storeField: "graphViewEnabled",
     jsonKey: "workbench.graphView.enabled",
@@ -116,6 +130,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: false,
     label: "Auto-Reveal Active File in Sidebar",
     storeField: "autoRevealInSidebar",
     jsonKey: "workbench.autoRevealInSidebar",
@@ -125,6 +140,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: true,
     label: "Fonts",
     storeField: "fontInterfaceList",
     jsonKey: "appearance.interfaceFontList",
@@ -134,6 +150,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Appearance",
+    formVisible: false,
     label: "Bottom Panel Position",
     storeField: "bottomPanelPosition",
     jsonKey: "workbench.bottomPanel.position",
@@ -147,6 +164,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Editor
   {
     category: "Editor",
+    formVisible: false,
     label: "Folding",
     storeField: "foldingEnabled",
     jsonKey: "editor.folding.enabled",
@@ -155,6 +173,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Editor",
+    formVisible: false,
     label: "Folding Controls",
     storeField: "foldingShowControls",
     jsonKey: "editor.folding.showFoldingControls",
@@ -168,6 +187,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Editor",
+    formVisible: false,
     label: "Media Thumbnails",
     storeField: "mediaThumbnails",
     jsonKey: "editor.mediaThumbnails",
@@ -176,6 +196,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Editor",
+    formVisible: false,
     label: "Companion Search Paths",
     storeField: "companionSearchPath",
     jsonKey: "companion.searchPath",
@@ -185,6 +206,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Editor",
+    formVisible: false,
     label: "Citation Notes Directory",
     storeField: "citationNotesDir",
     jsonKey: "citation.notesDir",
@@ -194,6 +216,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Editor",
+    formVisible: false,
     label: "Default Image Directory",
     storeField: "defaultImageDir",
     jsonKey: "editor.defaultImageDir",
@@ -205,6 +228,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Cross-references
   {
     category: "Cross-references",
+    formVisible: false,
     label: "Enabled",
     storeField: "crossrefEnabled",
     jsonKey: "crossref.enabled",
@@ -213,6 +237,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Cross-references",
+    formVisible: false,
     label: "Live Rendering",
     storeField: "crossrefLiveRendering",
     jsonKey: "crossref.liveRendering",
@@ -221,6 +246,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Cross-references",
+    formVisible: false,
     label: "Enable Citeproc",
     storeField: "crossrefEnableCiteproc",
     jsonKey: "crossref.enableCiteproc",
@@ -230,6 +256,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Annotations
   {
     category: "Annotations",
+    formVisible: false,
     label: "Enabled",
     storeField: "annotationEnabled",
     jsonKey: "annotations.enabled",
@@ -238,6 +265,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Annotations",
+    formVisible: false,
     label: "Scope Highlight",
     storeField: "annotationScopeHighlight",
     jsonKey: "annotations.scopeHighlight",
@@ -246,6 +274,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Annotations",
+    formVisible: false,
     label: "Default Language",
     storeField: "annotationDefaultLang",
     jsonKey: "annotations.defaultLang",
@@ -256,6 +285,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Annotations",
+    formVisible: false,
     label: "Display Mode",
     storeField: "annotationDisplayMode",
     jsonKey: "annotations.displayMode",
@@ -268,6 +298,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Annotations",
+    formVisible: false,
     label: "Pre-fill last-used values in builder",
     storeField: "annotationPrefillLastUsed",
     jsonKey: "annotations.prefillLastUsed",
@@ -277,6 +308,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // LLM
   {
     category: "LLM",
+    formVisible: false,
     label: "LLM Provider",
     storeField: "llmProvider",
     jsonKey: "llm.provider",
@@ -286,6 +318,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    formVisible: false,
     label: "System Prompt",
     storeField: "llmSystemPrompt",
     jsonKey: "llm.systemPrompt",
@@ -294,6 +327,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    formVisible: false,
     label: "Temperature",
     storeField: "llmTemperature",
     jsonKey: "llm.temperature",
@@ -305,6 +339,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    formVisible: false,
     label: "Neighbor Context Depth",
     storeField: "neighborsDepth",
     jsonKey: "llm.neighborsDepth",
@@ -316,6 +351,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    formVisible: false,
     label: "LLM Prompt",
     storeField: "llmPromptLlm",
     jsonKey: "llm.prompts.llm",
@@ -325,6 +361,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    formVisible: false,
     label: "Translation Prompt",
     storeField: "llmPromptTr",
     jsonKey: "llm.prompts.tr",
@@ -334,6 +371,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "LLM",
+    formVisible: false,
     label: "Question Prompt",
     storeField: "llmPromptQ",
     jsonKey: "llm.prompts.q",
@@ -344,6 +382,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Academic Export
   {
     category: "Academic Export",
+    formVisible: false,
     label: "Pandoc Path",
     storeField: "academicPandocPath",
     jsonKey: "academic.pandocPath",
@@ -353,6 +392,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Academic Export",
+    formVisible: false,
     label: "Crossref Filter Path",
     storeField: "academicCrossrefPath",
     jsonKey: "academic.crossrefFilterPath",
@@ -362,6 +402,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Academic Export",
+    formVisible: false,
     label: "Default CSL Style",
     storeField: "academicDefaultCsl",
     jsonKey: "academic.defaultCsl",
@@ -382,6 +423,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Academic Export",
+    formVisible: false,
     label: "Default Template Path",
     storeField: "academicDefaultTemplate",
     jsonKey: "academic.defaultTemplate",
@@ -391,6 +433,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Academic Export",
+    formVisible: false,
     label: "Default Reference Doc Path",
     storeField: "academicDefaultReferenceDoc",
     jsonKey: "academic.defaultReferenceDoc",
@@ -400,6 +443,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Academic Export",
+    formVisible: false,
     label: "Indic Font",
     storeField: "academicIndicFont",
     jsonKey: "academic.indicFont",
@@ -413,6 +457,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   // Paper Search
   {
     category: "Paper Search",
+    formVisible: false,
     label: "Search Providers",
     storeField: "searchEnabledProviders",
     jsonKey: "search.enabledProviders",
@@ -422,6 +467,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Paper Search",
+    formVisible: false,
     label: "Crossref Email",
     storeField: "searchCrossrefEmail",
     jsonKey: "search.crossrefEmail",
@@ -431,6 +477,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Paper Search",
+    formVisible: false,
     label: "Unpaywall Email",
     storeField: "searchUnpaywallEmail",
     jsonKey: "search.unpaywallEmail",
@@ -440,56 +487,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
   },
   {
     category: "Paper Search",
-    label: "Semantic Scholar API Key",
-    storeField: "searchS2ApiKeySet",
-    jsonKey: "search.s2ApiKey",
-    controlType: "password",
-    testId: "settings-searchS2ApiKey",
-    provider: "semantic-scholar",
-    keywords: ["semantic scholar", "s2", "api key"],
-  },
-  {
-    category: "Paper Search",
-    label: "CORE API Key",
-    storeField: "searchCoreApiKeySet",
-    jsonKey: "search.coreApiKey",
-    controlType: "password",
-    testId: "settings-searchCoreApiKey",
-    provider: "core",
-    keywords: ["core", "api key", "core.ac.uk"],
-  },
-  {
-    category: "Paper Search",
-    label: "PubMed API Key",
-    storeField: "searchPubmedApiKeySet",
-    jsonKey: "search.pubmedApiKey",
-    controlType: "password",
-    testId: "settings-searchPubmedApiKey",
-    provider: "pubmed",
-    keywords: ["pubmed", "ncbi", "api key", "entrez"],
-  },
-  {
-    category: "Paper Search",
-    label: "Google Books API Key",
-    storeField: "searchGoogleBooksApiKeySet",
-    jsonKey: "search.googleBooksApiKey",
-    controlType: "password",
-    testId: "settings-searchGoogleBooksApiKey",
-    provider: "google-books",
-    keywords: ["google books", "api key", "books"],
-  },
-  {
-    category: "Paper Search",
-    label: "BASE API Key",
-    storeField: "searchBaseApiKeySet",
-    jsonKey: "search.baseApiKey",
-    controlType: "password",
-    testId: "settings-searchBaseApiKey",
-    provider: "base",
-    keywords: ["base", "bielefeld", "api key"],
-  },
-  {
-    category: "Paper Search",
+    formVisible: false,
     label: "Provider Timeout",
     storeField: "searchProviderTimeout",
     jsonKey: "search.providerTimeout",
@@ -500,9 +498,67 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     step: 5,
     keywords: ["timeout", "seconds", "request"],
   },
+  // Credentials - secret API keys only; stored in the encrypted credential
+  // store via set_api_key, never in preferences JSON.
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "Semantic Scholar API Key",
+    storeField: "searchS2ApiKeySet",
+    jsonKey: "search.s2ApiKey",
+    controlType: "password",
+    testId: "settings-searchS2ApiKey",
+    provider: "semantic-scholar",
+    keywords: ["semantic scholar", "s2", "api key"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "CORE API Key",
+    storeField: "searchCoreApiKeySet",
+    jsonKey: "search.coreApiKey",
+    controlType: "password",
+    testId: "settings-searchCoreApiKey",
+    provider: "core",
+    keywords: ["core", "api key", "core.ac.uk"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "PubMed API Key",
+    storeField: "searchPubmedApiKeySet",
+    jsonKey: "search.pubmedApiKey",
+    controlType: "password",
+    testId: "settings-searchPubmedApiKey",
+    provider: "pubmed",
+    keywords: ["pubmed", "ncbi", "api key", "entrez"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "Google Books API Key",
+    storeField: "searchGoogleBooksApiKeySet",
+    jsonKey: "search.googleBooksApiKey",
+    controlType: "password",
+    testId: "settings-searchGoogleBooksApiKey",
+    provider: "google-books",
+    keywords: ["google books", "api key", "books"],
+  },
+  {
+    category: "Credentials",
+    formVisible: true,
+    label: "BASE API Key",
+    storeField: "searchBaseApiKeySet",
+    jsonKey: "search.baseApiKey",
+    controlType: "password",
+    testId: "settings-searchBaseApiKey",
+    provider: "base",
+    keywords: ["base", "bielefeld", "api key"],
+  },
   // Experimental
   {
     category: "Experimental",
+    formVisible: false,
     label: "Unlinked References",
     storeField: "experimentalUnlinkedReferences",
     jsonKey: "experimental.unlinkedReferences",
@@ -510,6 +566,19 @@ export const SETTINGS_REGISTRY: SettingEntry[] = [
     testId: "settings-experimentalUnlinkedReferences",
   },
 ];
+
+/** Entries surfaced in the Settings form; everything else is Edit JSON only. */
+export const FORM_SETTINGS_REGISTRY: SettingEntry[] =
+  SETTINGS_REGISTRY.filter((e) => e.formVisible);
+
+/** Sidebar tabs that still have a form surface (plus Keyboard Shortcuts). */
+export const FORM_CATEGORIES = [
+  "Appearance",
+  "Credentials",
+  "Keyboard Shortcuts",
+] as const satisfies readonly Category[];
+
+export type FormCategory = (typeof FORM_CATEGORIES)[number];
 
 export const STORE_FIELDS: PreferenceField[] = SETTINGS_REGISTRY.map(e => e.storeField);
 
@@ -555,4 +624,9 @@ export function filterSettings(
   }
   results.sort((a, b) => b.score - a.score);
   return results.map(({ entry, indices }) => ({ entry, indices }));
+}
+
+/** Filter against the form-visible subset only (search never re-surfaces hidden knobs). */
+export function filterFormSettings(query: string): FilteredSetting[] {
+  return filterSettings(FORM_SETTINGS_REGISTRY, query);
 }

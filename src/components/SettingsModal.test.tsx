@@ -4,7 +4,7 @@ import { SettingsModal } from "./SettingsModal";
 import { mockInvoke } from "../test/tauri-mock";
 import { usePreferencesStore } from "../stores/preferences";
 import { useThemeStore } from "../stores/theme";
-import { CATEGORIES, SETTINGS_REGISTRY } from "../lib/settingsRegistry";
+import { FORM_CATEGORIES } from "../lib/settingsRegistry";
 import { useSecretStoreStore } from "../stores/secretStore";
 
 const defaults = {
@@ -74,7 +74,7 @@ function mockScrollIntoView() {
 }
 
 describe("SettingsModal", () => {
-  // --- Existing shell tests ---
+  // --- Shell ---
 
   it("renders nothing when open=false", () => {
     const { container } = render(<SettingsModal open={false} onClose={vi.fn()} />);
@@ -134,10 +134,10 @@ describe("SettingsModal", () => {
 
   // --- Structural tests ---
 
-  it("renders all eight section headings", () => {
+  it("renders Appearance and Credentials section headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Paper Search", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Credentials"]);
   });
 
   it("has a scrollable content area", () => {
@@ -276,614 +276,102 @@ describe("SettingsModal", () => {
     });
   });
 
-  // --- sidebarVisible (ToggleSwitch) ---
+  // --- Fonts (FontSettings under Appearance) ---
 
-  describe("sidebarVisible", () => {
-    it("reflects store value", () => {
+  describe("Fonts", () => {
+    it("renders FontSettings with manage buttons and size slider", () => {
       const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-sidebarVisible']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-sidebarVisible']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().sidebarVisible).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "workbench.sideBar.visible", value: false },
-        });
-      });
+      expect(container.querySelector("[data-testid='font-settings']")).toBeTruthy();
+      expect(container.querySelector("[data-testid='font-manage-interface']")).toBeTruthy();
+      expect(container.querySelector("[data-testid='font-manage-text']")).toBeTruthy();
+      expect(container.querySelector("[data-testid='font-manage-monospace']")).toBeTruthy();
+      expect(container.querySelector("[data-testid='font-size-slider']")).toBeTruthy();
     });
   });
 
-  // --- sidebarLocation (SegmentedControl) ---
+  // --- Hidden controls stay hidden ---
 
-  describe("sidebarLocation", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const leftBtn = container.querySelector("[data-testid='settings-sidebarLocation-left']")!;
-      expect(leftBtn.getAttribute("aria-pressed")).toBe("true");
-    });
-
-    it("clicking option calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const rightBtn = container.querySelector("[data-testid='settings-sidebarLocation-right']")!;
-      fireEvent.click(rightBtn);
-      expect(usePreferencesStore.getState().sidebarLocation).toBe("right");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "workbench.sideBar.location", value: "right" },
-        });
-      });
-    });
-  });
-
-  // --- bottomPanelPosition (SegmentedControl) ---
-
-  describe("bottomPanelPosition", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const bottomBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-bottom']")!;
-      expect(bottomBtn.getAttribute("aria-pressed")).toBe("true");
-    });
-
-    it("clicking option calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
-      fireEvent.click(sideBtn);
-      expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "workbench.bottomPanel.position", value: "side" },
-        });
-      });
-    });
-
-    it("renders both Bottom and Side segmented options", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const bottomBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-bottom']")!;
-      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
-      expect(bottomBtn).toBeTruthy();
-      expect(sideBtn).toBeTruthy();
-      expect(bottomBtn.textContent).toBe("Bottom");
-      expect(sideBtn.textContent).toBe("Side");
-    });
-
-    it("reflects store value 'side' when preference is pre-set", () => {
-      usePreferencesStore.setState({ bottomPanelPosition: "side" });
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
-      const bottomBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-bottom']")!;
-      expect(sideBtn.getAttribute("aria-pressed")).toBe("true");
-      expect(bottomBtn.getAttribute("aria-pressed")).toBe("false");
-    });
-
-    it("persists value round-trip: click Side, store updates, IPC fires", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      // Initial state
-      expect(usePreferencesStore.getState().bottomPanelPosition).toBe("bottom");
-      // Click Side
-      const sideBtn = container.querySelector("[data-testid='settings-bottomPanelPosition-side']")!;
-      fireEvent.click(sideBtn);
-      // Store updated
-      expect(usePreferencesStore.getState().bottomPanelPosition).toBe("side");
-      // IPC called for persistence
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "workbench.bottomPanel.position", value: "side" },
-        });
-      });
-      // UI reflects new selection
-      expect(sideBtn.getAttribute("aria-pressed")).toBe("true");
-    });
-  });
-
-  // --- foldingEnabled (ToggleSwitch) ---
-
-  describe("foldingEnabled", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-foldingEnabled']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-foldingEnabled']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().foldingEnabled).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "editor.folding.enabled", value: false },
-        });
-      });
-    });
-  });
-
-  // --- foldingShowControls (SegmentedControl) ---
-
-  describe("foldingShowControls", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const mouseoverBtn = container.querySelector("[data-testid='settings-foldingShowControls-mouseover']")!;
-      expect(mouseoverBtn.getAttribute("aria-pressed")).toBe("true");
-    });
-
-    it("clicking option calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const alwaysBtn = container.querySelector("[data-testid='settings-foldingShowControls-always']")!;
-      fireEvent.click(alwaysBtn);
-      expect(usePreferencesStore.getState().foldingShowControls).toBe("always");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "editor.folding.showFoldingControls", value: "always" },
-        });
-      });
-    });
-  });
-
-  // --- mediaThumbnails (ToggleSwitch) ---
-
-  describe("mediaThumbnails", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-mediaThumbnails']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-mediaThumbnails']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().mediaThumbnails).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "editor.mediaThumbnails", value: false },
-        });
-      });
-    });
-  });
-
-  // --- crossrefEnabled (ToggleSwitch) ---
-
-  describe("crossrefEnabled", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-crossrefEnabled']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-crossrefEnabled']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().crossrefEnabled).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "crossref.enabled", value: false },
-        });
-      });
-    });
-  });
-
-  // --- crossrefLiveRendering (ToggleSwitch) ---
-
-  describe("crossrefLiveRendering", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-crossrefLiveRendering']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-crossrefLiveRendering']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().crossrefLiveRendering).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "crossref.liveRendering", value: false },
-        });
-      });
-    });
-  });
-
-  // --- crossrefEnableCiteproc (ToggleSwitch) ---
-
-  describe("crossrefEnableCiteproc", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-crossrefEnableCiteproc']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-crossrefEnableCiteproc']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().crossrefEnableCiteproc).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "crossref.enableCiteproc", value: false },
-        });
-      });
-    });
-  });
-
-  // --- annotationEnabled (ToggleSwitch) ---
-
-  describe("annotationEnabled", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-annotationEnabled']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-annotationEnabled']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().annotationEnabled).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.enabled", value: false },
-        });
-      });
-    });
-  });
-
-  // --- annotationScopeHighlight (ToggleSwitch) ---
-
-  describe("annotationScopeHighlight", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-annotationScopeHighlight']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
-    });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-annotationScopeHighlight']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().annotationScopeHighlight).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.scopeHighlight", value: false },
-        });
-      });
-    });
-  });
-
-  // --- annotationDefaultLang (SettingsTextInput) ---
-
-  describe("annotationDefaultLang", () => {
-    it("shows current store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
-      expect(input.value).toBe("en");
-    });
-
-    it("commits on blur via setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "zh" } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("zh");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.defaultLang", value: "zh" },
-        });
-      });
-    });
-
-    it("commits en for whitespace-only input", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "  " } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("en");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.defaultLang", value: "en" },
-        });
-      });
-    });
-
-    it("normalizes a region-tagged value on commit", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "FR-fr" } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("fr");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.defaultLang", value: "fr" },
-        });
-      });
-    });
-
-    it("falls back to en for an unnormalizable value", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-annotationDefaultLang']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "garbage!" } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().annotationDefaultLang).toBe("en");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.defaultLang", value: "en" },
-        });
-      });
-    });
-
-    it("renders a hint below the Default Language input", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const hint = container.querySelector("[data-testid='settings-annotationDefaultLang-hint']");
-      expect(hint).not.toBeNull();
-      expect(hint!.textContent).toContain("Rebuild Index");
-    });
-  });
-
-  // --- annotationDisplayMode (SegmentedControl) ---
-
-  describe("annotationDisplayMode", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const pillBtn = container.querySelector("[data-testid='settings-annotationDisplayMode-pill']")!;
-      expect(pillBtn.getAttribute("aria-pressed")).toBe("true");
-    });
-
-    it("clicking option calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const footnoteBtn = container.querySelector("[data-testid='settings-annotationDisplayMode-footnote']")!;
-      fireEvent.click(footnoteBtn);
-      expect(usePreferencesStore.getState().annotationDisplayMode).toBe("footnote");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "annotations.displayMode", value: "footnote" },
-        });
-      });
-    });
-  });
-
-  // --- LLM Provider Settings ---
-
-  describe("LLM model selection", () => {
-    it("LLM Model dropdown reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-llmModel']") as HTMLSelectElement;
-      expect(select.value).toBe("claude-sonnet-4-6");
-    });
-
-    it("changing model calls setPreference with llm.provider", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-llmModel']")!;
-      fireEvent.change(select, { target: { value: "claude-opus-4-6" } });
-      expect(usePreferencesStore.getState().llmProvider.model).toBe("claude-opus-4-6");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "llm.provider", value: { providerId: "anthropic", model: "claude-opus-4-6", apiKeySet: false } },
-        });
-      });
-    });
-  });
-
-  // --- LLM API Key (via LlmProviderSettings) ---
-
-  describe("llmApiKey", () => {
-    it("API Key renders password input for provider that needs key", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-llmApiKey']");
-      expect(input).toBeTruthy();
-      expect(input!.getAttribute("type")).toBe("password");
-    });
-
-    it("saving key calls set_api_key IPC and updates llmProvider.apiKeySet", async () => {
-      useSecretStoreStore.setState({ unlocked: true });
-      let container!: HTMLElement;
-      await act(async () => {
-        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-      const input = container.querySelector("[data-testid='settings-llmApiKey']")!;
-      const saveBtn = container.querySelector("[data-testid='settings-llmApiKey-save']")!;
-      await act(async () => {
-        fireEvent.change(input, { target: { value: "sk-test" } });
-        fireEvent.click(saveBtn);
-      });
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({ cmd: "set_api_key", args: { provider: "anthropic", key: "sk-test" } });
-      });
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-    });
-
-    it("deleting key calls delete_api_key IPC and updates llmProvider.apiKeySet", async () => {
-      useSecretStoreStore.setState({ unlocked: true });
-      mockInvoke((cmd, args) => {
-        invokeCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "has_api_key") return true;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
-      let container!: HTMLElement;
-      await act(async () => {
-        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
-      await act(async () => {
-        fireEvent.click(clearBtn);
-      });
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({ cmd: "delete_api_key", args: { provider: "anthropic" } });
-      });
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
-    });
-  });
-
-  // --- System Prompt (SettingsTextArea) ---
-
-  describe("llmSystemPrompt", () => {
-    it("System Prompt renders textarea", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const ta = container.querySelector("[data-testid='settings-llmSystemPrompt']");
-      expect(ta).toBeTruthy();
-      expect(ta!.tagName).toBe("TEXTAREA");
-    });
-
-    it("commits on blur via setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const ta = container.querySelector("[data-testid='settings-llmSystemPrompt']") as HTMLTextAreaElement;
-      fireEvent.change(ta, { target: { value: "You are helpful" } });
-      fireEvent.blur(ta);
-      expect(usePreferencesStore.getState().llmSystemPrompt).toBe("You are helpful");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "llm.systemPrompt", value: "You are helpful" },
-        });
-      });
-    });
-  });
-
-  // --- Temperature (SettingsSlider) ---
-
-  describe("llmTemperature", () => {
-    it("Temperature renders slider", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-llmTemperature']");
-      expect(input).toBeTruthy();
-      expect(input!.getAttribute("type")).toBe("range");
-    });
-
-    it("displays current value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const readout = container.querySelector("[data-testid='settings-llmTemperature-value']");
-      expect(readout).toBeTruthy();
-      expect(readout!.textContent).toBe("0.7");
-    });
-
-    it("changing slider calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-llmTemperature']")!;
-      fireEvent.change(input, { target: { value: "1.2" } });
-      expect(usePreferencesStore.getState().llmTemperature).toBe(1.2);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "llm.temperature", value: 1.2 },
-        });
-      });
-    });
-  });
-
-  // --- neighborsDepth (SettingsSlider) ---
-
-  describe("neighborsDepth", () => {
-    it("renders slider", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-neighborsDepth']");
-      expect(input).toBeTruthy();
-      expect(input!.getAttribute("type")).toBe("range");
-    });
-
-    it("displays current value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const readout = container.querySelector("[data-testid='settings-neighborsDepth-value']");
-      expect(readout).toBeTruthy();
-      expect(readout!.textContent).toBe("1");
-    });
-
-    it("changing slider calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-neighborsDepth']")!;
-      fireEvent.change(input, { target: { value: "2" } });
-      expect(usePreferencesStore.getState().neighborsDepth).toBe(2);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "llm.neighborsDepth", value: 2 },
-        });
-      });
-    });
-  });
-
-  // --- LLM search ---
-
-  it("search 'system' includes LLM settings", () => {
+  it("does not render hidden preference controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "system" } });
-    expect(container.querySelector("[data-testid='settings-llmSystemPrompt']")).toBeTruthy();
+    const hiddenIds = [
+      "settings-sidebarVisible",
+      "settings-sidebarLocation-left",
+      "settings-defaultViewMode-editor",
+      "settings-graphViewEnabled",
+      "settings-autoRevealInSidebar",
+      "settings-bottomPanelPosition-bottom",
+      "settings-foldingEnabled",
+      "settings-foldingShowControls-mouseover",
+      "settings-mediaThumbnails",
+      "settings-companionSearchPath",
+      "settings-citationNotesDir",
+      "settings-defaultImageDir",
+      "settings-crossrefEnabled",
+      "settings-crossrefLiveRendering",
+      "settings-crossrefEnableCiteproc",
+      "settings-annotationEnabled",
+      "settings-annotationScopeHighlight",
+      "settings-annotationDefaultLang",
+      "settings-annotationDisplayMode-pill",
+      "settings-annotationPrefillLastUsed",
+      "settings-llmSystemPrompt",
+      "settings-llmTemperature",
+      "settings-neighborsDepth",
+      "settings-llmPromptLlm",
+      "settings-academicPandocPath",
+      "settings-academicCrossrefPath",
+      "settings-academicDefaultCsl",
+      "settings-academicDefaultTemplate",
+      "settings-academicDefaultReferenceDoc",
+      "settings-academicIndicFont",
+      "settings-searchProviders",
+      "settings-searchCrossrefEmail",
+      "settings-searchUnpaywallEmail",
+      "settings-searchProviderTimeout",
+      "settings-experimentalUnlinkedReferences",
+      "llm-provider-settings",
+      "search-provider-settings",
+      "companion-search-path-settings",
+    ];
+    for (const id of hiddenIds) {
+      expect(container.querySelector(`[data-testid='${id}']`), `unexpected ${id}`).toBeNull();
+    }
   });
 
-  it("search 'provider' keeps the LLM provider UI reachable", () => {
+  // --- Credentials section ---
+
+  it("Credentials section shows all five paper-search API key controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "provider" } });
-    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
+    const ids = [
+      "settings-searchS2ApiKey",
+      "settings-searchCoreApiKey",
+      "settings-searchPubmedApiKey",
+      "settings-searchGoogleBooksApiKey",
+      "settings-searchBaseApiKey",
+    ];
+    for (const id of ids) {
+      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
+    }
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Appearance", "Credentials"]);
   });
 
-  it("search 'model' keeps the LLM provider UI reachable", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "model" } });
-    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeTruthy();
-  });
-
-  // --- companion search path ---
-
-  it("renders the companion search-path settings under the Editor section", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    expect(container.querySelector("[data-testid='companion-search-path-settings']")).toBeTruthy();
-  });
-
-  it("search 'companion' keeps the companion search-path UI reachable", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "companion" } });
-    expect(container.querySelector("[data-testid='companion-search-path-settings']")).toBeTruthy();
-  });
-
-  // --- experimentalUnlinkedReferences (ToggleSwitch) ---
-
-  describe("experimentalUnlinkedReferences", () => {
-    it("reflects store value", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-experimentalUnlinkedReferences']")!;
-      expect(toggle.getAttribute("aria-checked")).toBe("true");
+  it("saving a paper-search API key calls set_api_key with its provider", async () => {
+    useSecretStoreStore.setState({ unlocked: true });
+    let container!: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
     });
-
-    it("clicking toggle calls setPreference", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const toggle = container.querySelector("[data-testid='settings-experimentalUnlinkedReferences']")!;
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().experimentalUnlinkedReferences).toBe(false);
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "experimental.unlinkedReferences", value: false },
-        });
-      });
+    const input = container.querySelector("[data-testid='settings-searchS2ApiKey']")!;
+    const saveBtn = container.querySelector("[data-testid='settings-searchS2ApiKey-save']")!;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "s2-test-key" } });
+      fireEvent.click(saveBtn);
     });
+    await vi.waitFor(() => {
+      expect(invokeCalls).toContainEqual({ cmd: "set_api_key", args: { provider: "semantic-scholar", key: "s2-test-key" } });
+    });
+    expect(usePreferencesStore.getState().searchS2ApiKeySet).toBe(true);
   });
 
   // --- IPC error rollback ---
@@ -893,13 +381,15 @@ describe("SettingsModal", () => {
       if (cmd === "set_preference") throw new Error("disk full");
     });
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const toggle = container.querySelector("[data-testid='settings-foldingEnabled']")!;
-    expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
+    const darkBtn = container.querySelector("[data-testid='settings-darkMode-dark']")!;
+    expect(usePreferencesStore.getState().darkMode).toBe("auto");
     await act(async () => {
-      fireEvent.click(toggle);
-      expect(usePreferencesStore.getState().foldingEnabled).toBe(false);
+      fireEvent.click(darkBtn);
+      expect(usePreferencesStore.getState().darkMode).toBe("dark");
     });
-    expect(usePreferencesStore.getState().foldingEnabled).toBe(true);
+    await vi.waitFor(() => {
+      expect(usePreferencesStore.getState().darkMode).toBe("auto");
+    });
   });
 
   // --- Focus trap ---
@@ -947,31 +437,40 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
   });
 
-  it("sidebar contains buttons matching CATEGORIES", () => {
+  it("sidebar contains buttons matching FORM_CATEGORIES", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    expect(buttons.map((b) => b.textContent)).toEqual([...CATEGORIES]);
+    expect(buttons.map((b) => b.textContent)).toEqual([...FORM_CATEGORIES]);
   });
 
-  it("clicking Editor updates aria-selected on sidebar buttons", () => {
+  it("clicking Keyboard Shortcuts updates aria-selected on sidebar buttons", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const editorBtn = buttons.find((b) => b.textContent === "Editor")!;
-    fireEvent.click(editorBtn);
-    expect(editorBtn.getAttribute("aria-selected")).toBe("true");
+    const shortcutsBtn = buttons.find((b) => b.textContent === "Keyboard Shortcuts")!;
+    fireEvent.click(shortcutsBtn);
+    expect(shortcutsBtn.getAttribute("aria-selected")).toBe("true");
     const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
     expect(appearanceBtn.getAttribute("aria-selected")).toBe("false");
   });
 
-  it("clicking Editor calls scrollIntoView on its section", () => {
+  it("clicking a category scrolls to its section", () => {
     const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
-    const editorBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Editor")!;
-    fireEvent.click(editorBtn);
-    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Editor");
+    const appearanceBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Appearance")!;
+    fireEvent.click(appearanceBtn);
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Appearance");
+  });
+
+  it("clicking Keyboard Shortcuts does not scroll (panel replaces sections)", () => {
+    const getScrollTarget = mockScrollIntoView();
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const shortcutsBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Keyboard Shortcuts")!;
+    fireEvent.click(shortcutsBtn);
+    expect(getScrollTarget()).toBeNull();
   });
 
   it("first category has aria-selected=true by default", () => {
@@ -986,46 +485,16 @@ describe("SettingsModal", () => {
 
   // --- Registry-driven rendering safety net ---
 
-  it("all 27 control data-testid values exist", () => {
+  it("renders the three form controls (Dark Mode, Color Theme, Fonts)", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const expectedIds = [
       "settings-darkMode-auto",
       "settings-colorTheme",
-      "settings-sidebarVisible",
-      "settings-sidebarLocation-left",
-      "settings-bottomPanelPosition-bottom",
-      "settings-foldingEnabled",
-      "settings-foldingShowControls-mouseover",
-      "settings-mediaThumbnails",
-      "settings-crossrefEnabled",
-      "settings-crossrefLiveRendering",
-      "settings-crossrefEnableCiteproc",
-      "settings-annotationEnabled",
-      "settings-annotationScopeHighlight",
-      "settings-annotationDefaultLang",
-      "settings-annotationDisplayMode-pill",
-      "settings-llmProvider",
-      "settings-llmModel",
-      "settings-llmApiKey",
-      "settings-llmSystemPrompt",
-      "settings-llmTemperature",
-      "settings-neighborsDepth",
-      "settings-academicPandocPath",
-      "settings-academicCrossrefPath",
-      "settings-academicDefaultCsl",
-      "settings-academicDefaultTemplate",
-      "settings-academicDefaultReferenceDoc",
-      "settings-experimentalUnlinkedReferences",
+      "font-settings",
     ];
     for (const id of expectedIds) {
       expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
     }
-  });
-
-  it("all 8 h3 headings render with correct text", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Paper Search", "Academic Export", "Experimental"]);
   });
 
   // --- Search input ---
@@ -1053,34 +522,80 @@ describe("SettingsModal", () => {
 
   it("reflects external store changes", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const toggle = container.querySelector("[data-testid='settings-sidebarVisible']")!;
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    const autoBtn = container.querySelector("[data-testid='settings-darkMode-auto']")!;
+    expect(autoBtn.getAttribute("aria-pressed")).toBe("true");
 
     act(() => {
-      usePreferencesStore.setState({ sidebarVisible: false });
+      usePreferencesStore.setState({ darkMode: "dark" });
     });
 
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const darkBtn = container.querySelector("[data-testid='settings-darkMode-dark']")!;
+    expect(darkBtn.getAttribute("aria-pressed")).toBe("true");
   });
 
-  // --- Phase 6: Search Filtering ---
+  // --- Search Filtering ---
 
-  // Cycle 6.1 — Typing filters settings to matches only
+  it("searching 'dark' filters to Dark Mode only", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "dark" } });
 
-  it("typing 'fold' shows only folding controls", () => {
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
+    expect(container.querySelector("[data-testid='font-settings']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-searchPubmedApiKey']")).toBeNull();
+  });
+
+  it("searching 'theme' keeps Color Theme", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "theme" } });
+
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeNull();
+    expect(container.querySelector("[data-testid='font-settings']")).toBeNull();
+  });
+
+  it("searching 'pubmed' surfaces the PubMed credential row only", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "pubmed" } });
+
+    expect(container.querySelector("[data-testid='settings-searchPubmedApiKey']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-no-results']")).toBeNull();
+  });
+
+  it("searching 'font' keeps FontSettings only", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "font" } });
+
+    expect(container.querySelector("[data-testid='font-settings']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeNull();
+  });
+
+  it("typing 'fold' shows no form results (hidden knobs stay hidden)", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
 
-    expect(container.querySelector("[data-testid='settings-foldingEnabled']")).toBeTruthy();
-    expect(container.querySelector("[data-testid^='settings-foldingShowControls']")).toBeTruthy();
-
+    expect(container.querySelector("[data-testid='settings-no-results']")).toBeTruthy();
     expect(container.querySelector("[data-testid^='settings-darkMode']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-sidebarVisible']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-mediaThumbnails']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-crossrefEnabled']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-annotationEnabled']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-experimentalUnlinkedReferences']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeNull();
+  });
+
+  it("typing 'openai' shows no form results", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "openai" } });
+
+    expect(container.querySelector("[data-testid='settings-no-results']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='llm-provider-settings']")).toBeNull();
   });
 
   it("typing 'xyzzy' shows no-results message", () => {
@@ -1092,89 +607,53 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-no-results']")!.textContent).toContain("No matching settings");
   });
 
-  it("empty search shows all 27 controls", () => {
+  it("clearing search restores all form controls", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
-    const expectedIds = [
-      "settings-darkMode-auto",
-      "settings-colorTheme",
-      "settings-sidebarVisible",
-      "settings-sidebarLocation-left",
-      "settings-bottomPanelPosition-bottom",
-      "settings-foldingEnabled",
-      "settings-foldingShowControls-mouseover",
-      "settings-mediaThumbnails",
-      "settings-crossrefEnabled",
-      "settings-crossrefLiveRendering",
-      "settings-crossrefEnableCiteproc",
-      "settings-annotationEnabled",
-      "settings-annotationScopeHighlight",
-      "settings-annotationDefaultLang",
-      "settings-annotationDisplayMode-pill",
-      "settings-llmProvider",
-      "settings-llmModel",
-      "settings-llmApiKey",
-      "settings-llmSystemPrompt",
-      "settings-llmTemperature",
-      "settings-neighborsDepth",
-      "settings-academicPandocPath",
-      "settings-academicCrossrefPath",
-      "settings-academicDefaultCsl",
-      "settings-academicDefaultTemplate",
-      "settings-academicDefaultReferenceDoc",
-      "settings-experimentalUnlinkedReferences",
-    ];
-    for (const id of expectedIds) {
-      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
-    }
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-colorTheme']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='font-settings']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='settings-searchPubmedApiKey']")).toBeTruthy();
   });
 
-  // Cycle 6.2 — Category headings hide when section is empty
-
-  it("searching 'fold' shows only Editor heading", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "fold" } });
-
-    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Editor"]);
-  });
-
-  it("searching 'enabled' shows Cross-references and Annotations headings", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "enabled" } });
-
-    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Cross-references", "Annotations"]);
-  });
-
-  it("clearing search restores all 8 headings", () => {
+  it("clearing search restores the Appearance and Credentials headings", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
     fireEvent.change(search, { target: { value: "" } });
 
     const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-    expect(headings).toEqual(["Appearance", "Editor", "Cross-references", "Annotations", "LLM", "Paper Search", "Academic Export", "Experimental"]);
+    expect(headings).toEqual(["Appearance", "Credentials"]);
   });
 
-  // Cycle 6.3 — Sidebar highlights categories with matches
+  // --- Sidebar match dimming ---
 
-  it("searching 'fold' marks Editor sidebar button with data-has-matches=true", () => {
+  it("searching 'dark' marks Appearance with data-has-matches=true", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "dark" } });
+
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
+    const shortcutsBtn = buttons.find((b) => b.textContent === "Keyboard Shortcuts")!;
+
+    expect(appearanceBtn.getAttribute("data-has-matches")).toBe("true");
+    // Keyboard Shortcuts is a documentation panel and stays match-neutral
+    expect(shortcutsBtn.hasAttribute("data-has-matches")).toBe(false);
+  });
+
+  it("searching 'fold' marks Appearance with data-has-matches=false", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "fold" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
-    const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const editorBtn = buttons.find((b) => b.textContent === "Editor")!;
-    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
-
-    expect(editorBtn.getAttribute("data-has-matches")).toBe("true");
+    const appearanceBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Appearance")!;
     expect(appearanceBtn.getAttribute("data-has-matches")).toBe("false");
   });
 
@@ -1191,9 +670,9 @@ describe("SettingsModal", () => {
     }
   });
 
-  // Cycle 6.4 — Sidebar click clears search when category has no matches
+  // --- Sidebar click vs search ---
 
-  it("clicking non-matching category clears search and scrolls", () => {
+  it("clicking a non-matching category clears search and scrolls", () => {
     const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
@@ -1206,64 +685,42 @@ describe("SettingsModal", () => {
     });
 
     expect(search.value).toBe("");
-
-    const expectedIds = [
-      "settings-darkMode-auto",
-      "settings-colorTheme",
-      "settings-sidebarVisible",
-      "settings-sidebarLocation-left",
-      "settings-bottomPanelPosition-bottom",
-      "settings-foldingEnabled",
-      "settings-foldingShowControls-mouseover",
-      "settings-mediaThumbnails",
-      "settings-crossrefEnabled",
-      "settings-crossrefLiveRendering",
-      "settings-crossrefEnableCiteproc",
-      "settings-annotationEnabled",
-      "settings-annotationScopeHighlight",
-      "settings-annotationDefaultLang",
-      "settings-annotationDisplayMode-pill",
-      "settings-llmProvider",
-      "settings-llmModel",
-      "settings-llmApiKey",
-      "settings-llmSystemPrompt",
-      "settings-llmTemperature",
-      "settings-neighborsDepth",
-      "settings-academicPandocPath",
-      "settings-academicCrossrefPath",
-      "settings-academicDefaultCsl",
-      "settings-academicDefaultTemplate",
-      "settings-academicDefaultReferenceDoc",
-      "settings-experimentalUnlinkedReferences",
-    ];
-    for (const id of expectedIds) {
-      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
-    }
-
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
     expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Appearance");
   });
 
-  it("clicking matching category while searching preserves search and scrolls", () => {
+  it("clicking a matching category while searching preserves search and scrolls", () => {
     const getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "fold" } });
+    fireEvent.change(search, { target: { value: "dark" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
-    const editorBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Editor")!;
-    fireEvent.click(editorBtn);
+    const appearanceBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Appearance")!;
+    fireEvent.click(appearanceBtn);
 
-    expect(search.value).toBe("fold");
-    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Editor");
-
-    expect(container.querySelector("[data-testid='settings-foldingEnabled']")).toBeTruthy();
-    expect(container.querySelector("[data-testid^='settings-foldingShowControls']")).toBeTruthy();
-    expect(container.querySelector("[data-testid^='settings-darkMode']")).toBeNull();
+    expect(search.value).toBe("dark");
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Appearance");
   });
 
-  // --- Phase 7: Highlighted Match Text in Labels ---
+  it("clicking Keyboard Shortcuts while searching preserves search", async () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "dark" } });
 
-  // Cycle 7.1 — Matched characters highlighted during search
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const shortcutsBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Keyboard Shortcuts")!;
+    await act(async () => {
+      fireEvent.click(shortcutsBtn);
+    });
+
+    expect(search.value).toBe("dark");
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-testid='keyboard-shortcuts-panel']")).toBeTruthy();
+    });
+  });
+
+  // --- Highlighted Match Text in Labels ---
 
   it("searching 'dark' highlights matched characters in Dark Mode label", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
@@ -1286,9 +743,7 @@ describe("SettingsModal", () => {
     expect(marks.length).toBe(0);
   });
 
-  // --- Phase 8: Keyboard Accessibility ---
-
-  // Cycle 8.1 — Escape in search clears query first
+  // --- Keyboard Accessibility ---
 
   it("Escape with non-empty search clears query, modal stays open", () => {
     const onClose = vi.fn();
@@ -1312,8 +767,6 @@ describe("SettingsModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  // Cycle 8.2 — Cmd/Ctrl+F focuses search input
-
   it("Cmd+F focuses the search input", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
@@ -1335,8 +788,6 @@ describe("SettingsModal", () => {
     fireEvent.keyDown(document, { key: "f", ctrlKey: true });
     expect(document.activeElement).toBe(search);
   });
-
-  // Cycle 8.3 — Arrow keys navigate sidebar
 
   it("ArrowDown on focused sidebar button selects next category and focuses it", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
@@ -1379,53 +830,54 @@ describe("SettingsModal", () => {
     expect(document.activeElement).toBe(last);
   });
 
-  it("arrow navigation calls scrollIntoView on the target section", () => {
-    const getScrollTarget = mockScrollIntoView();
+  it("arrow navigation to Keyboard Shortcuts does not scroll (panel replaces sections)", () => {
+    let getScrollTarget = mockScrollIntoView();
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    // Appearance -> Credentials: section is mounted, so it scrolls
+    buttons[0]!.focus();
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Credentials");
+    // Credentials -> Keyboard Shortcuts: panel replaces sections, no scroll
+    getScrollTarget = mockScrollIntoView();
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect(getScrollTarget()).toBeNull();
+    // Keyboard Shortcuts -> Appearance: the section is not mounted while the
+    // panel is shown, so navigating back cannot scroll either
+    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
+    expect(getScrollTarget()).toBeNull();
+  });
+
+  it("arrow navigation reaches Keyboard Shortcuts during a non-matching search", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "fold" } });
+
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
     buttons[0]!.focus();
 
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
-    expect((getScrollTarget() as HTMLElement)?.id).toBe("settings-section-Editor");
-  });
-
-  it("arrow navigation skips categories with no matches during search", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    // "mode" matches Appearance (Dark Mode) and Annotations (Display Mode) — not adjacent
-    fireEvent.change(search, { target: { value: "mode" } });
-
-    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
-    const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
-
-    fireEvent.click(appearanceBtn);
-    appearanceBtn.focus();
-
-    // ArrowDown should skip Editor and Cross-references, land on Annotations
-    fireEvent.keyDown(sidebar, { key: "ArrowDown" });
-    const annotationsBtn = buttons.find((b) => b.textContent === "Annotations")!;
-    expect(annotationsBtn.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(annotationsBtn);
+    const shortcutsBtn = buttons.find((b) => b.textContent === "Keyboard Shortcuts")!;
+    expect(shortcutsBtn.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(shortcutsBtn);
   });
 
   it("arrow navigation wraps through matching categories during search", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
     const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    // "mode" matches Appearance (Dark Mode, Default View Mode), Annotations
-    // (Display Mode), and LLM (via the "model" search keyword).
-    fireEvent.change(search, { target: { value: "mode" } });
+    fireEvent.change(search, { target: { value: "dark" } });
 
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
-    const llmBtn = buttons.find((b) => b.textContent === "LLM")!;
+    const shortcutsBtn = buttons.find((b) => b.textContent === "Keyboard Shortcuts")!;
 
-    // Start at LLM (last matching category)
-    fireEvent.click(llmBtn);
-    llmBtn.focus();
+    // Start at Keyboard Shortcuts (last category)
+    fireEvent.click(shortcutsBtn);
+    shortcutsBtn.focus();
 
-    // ArrowDown should wrap past remaining non-matching categories to Appearance (first match)
+    // ArrowDown wraps to Appearance (first category, has matches)
     fireEvent.keyDown(sidebar, { key: "ArrowDown" });
     const appearanceBtn = buttons.find((b) => b.textContent === "Appearance")!;
     expect(appearanceBtn.getAttribute("aria-selected")).toBe("true");
@@ -1439,7 +891,58 @@ describe("SettingsModal", () => {
     expect(sidebar.getAttribute("aria-orientation")).toBe("vertical");
   });
 
-  // --- Cycle 9: "Edit JSON" toggle button ---
+  // --- Keyboard Shortcuts panel ---
+
+  it("Keyboard Shortcuts tab shows the KeyboardShortcutsPanel", async () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const shortcutsBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Keyboard Shortcuts")!;
+    await act(async () => {
+      fireEvent.click(shortcutsBtn);
+    });
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-testid='keyboard-shortcuts-panel']")).toBeTruthy();
+    });
+  });
+
+  it("Keyboard Shortcuts tab hides the search bar", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const shortcutsBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Keyboard Shortcuts")!;
+    fireEvent.click(shortcutsBtn);
+    expect(container.querySelector("[data-testid='settings-search']")).toBeNull();
+  });
+
+  // --- initialCategory ---
+
+  it("opens on Keyboard Shortcuts when initialCategory is set", async () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} initialCategory="Keyboard Shortcuts" />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const shortcutsBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Keyboard Shortcuts")!;
+    expect(shortcutsBtn.getAttribute("aria-selected")).toBe("true");
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-testid='keyboard-shortcuts-panel']")).toBeTruthy();
+    });
+  });
+
+  it("clamps a non-form initialCategory to Appearance", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} initialCategory="LLM" />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    expect(buttons[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-testid='settings-darkMode-auto']")).toBeTruthy();
+  });
+
+  it("opens on Credentials when initialCategory is set", () => {
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} initialCategory="Credentials" />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar.querySelectorAll("button"));
+    const credentialsBtn = buttons.find((b) => b.textContent === "Credentials")!;
+    expect(credentialsBtn.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-testid='settings-searchS2ApiKey']")).toBeTruthy();
+  });
+
+  // --- Edit JSON toggle button ---
 
   it("renders 'Edit JSON' button with data-testid='settings-edit-json-btn'", () => {
     const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
@@ -1461,7 +964,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
   });
 
-  // --- Cycle 10: Toggle between form and JSON editor views ---
+  // --- Toggle between form and JSON editor views ---
 
   it("clicking 'Edit JSON' hides form and shows JSON editor", async () => {
     mockInvoke((cmd) => {
@@ -1522,7 +1025,7 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-search']")).toBeNull();
   });
 
-  // --- Cycle 11: JSON save triggers IPC + error handling ---
+  // --- JSON save triggers IPC + error handling ---
 
   it("saving valid JSON calls set_preferences_raw IPC", async () => {
     const ipcCalls: { cmd: string; args: Record<string, unknown> }[] = [];
@@ -1568,7 +1071,7 @@ describe("SettingsModal", () => {
     });
   });
 
-  // --- Cycle 12: Form view refreshes after JSON edits ---
+  // --- Form view refreshes after JSON edits ---
 
   it("switching from JSON back to form reflects changes made in JSON", async () => {
     mockInvoke((cmd) => {
@@ -1593,6 +1096,55 @@ describe("SettingsModal", () => {
     expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
     const darkBtn = container.querySelector("[data-testid='settings-darkMode-dark']")!;
     expect(darkBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // --- Reopen resets state ---
+
+  it("re-opening modal resets to form view", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "get_preferences_raw") return "{}";
+      return undefined;
+    });
+    const { container, rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeTruthy();
+
+    rerender(<SettingsModal open={false} onClose={vi.fn()} />);
+    rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+
+    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
+    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
+  });
+
+  it("re-opening modal resets the search query", () => {
+    const { container, rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "dark" } });
+    expect(search.value).toBe("dark");
+
+    rerender(<SettingsModal open={false} onClose={vi.fn()} />);
+    rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+
+    const search2 = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
+    expect(search2.value).toBe("");
+  });
+
+  it("re-opening modal resets the active category to Appearance", () => {
+    const { container, rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />);
+    const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
+    const shortcutsBtn = Array.from(sidebar.querySelectorAll("button")).find((b) => b.textContent === "Keyboard Shortcuts")!;
+    fireEvent.click(shortcutsBtn);
+    expect(shortcutsBtn.getAttribute("aria-selected")).toBe("true");
+
+    rerender(<SettingsModal open={false} onClose={vi.fn()} />);
+    rerender(<SettingsModal open={true} onClose={vi.fn()} />);
+
+    const sidebar2 = container.querySelector("[data-testid='settings-sidebar']")!;
+    const buttons = Array.from(sidebar2.querySelectorAll("button"));
+    expect(buttons[0]!.getAttribute("aria-selected")).toBe("true");
   });
 
   // --- hasApiKey effect ---
@@ -1661,292 +1213,10 @@ describe("SettingsModal", () => {
     });
   });
 
-  // --- Password save/delete error rollback ---
-
-  it("password save optimistically updates store and rolls back on IPC failure", async () => {
-    useSecretStoreStore.setState({ unlocked: true });
-    const setApiKeyCalled = vi.fn();
-    mockInvoke((cmd) => {
-      if (cmd === "set_api_key") { setApiKeyCalled(); throw new Error("keychain locked"); }
-      if (cmd === "has_api_key") return false;
-      if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-      return undefined;
-    });
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const input = container.querySelector("[data-testid='settings-llmApiKey']")!;
-    const saveBtn = container.querySelector("[data-testid='settings-llmApiKey-save']")!;
-    fireEvent.change(input, { target: { value: "sk-test" } });
-    await act(async () => {
-      fireEvent.click(saveBtn);
-    });
-    await vi.waitFor(() => {
-      expect(setApiKeyCalled).toHaveBeenCalled();
-    });
-    await vi.waitFor(() => {
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
-    });
-  });
-
-  it("password delete optimistically updates store and rolls back on IPC failure", async () => {
-    useSecretStoreStore.setState({ unlocked: true });
-    mockInvoke((cmd) => {
-      if (cmd === "delete_api_key") throw new Error("keychain locked");
-      if (cmd === "has_api_key") return true;
-      if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-      return undefined;
-    });
-    usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
-    let container!: HTMLElement;
-    await act(async () => {
-      ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-    });
-    const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
-    await act(async () => {
-      fireEvent.click(clearBtn);
-    });
-    await vi.waitFor(() => {
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-    });
-  });
-
-  // --- Textarea whitespace preservation ---
-
-  it("textarea preserves leading/trailing whitespace on commit", async () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const ta = container.querySelector("[data-testid='settings-llmSystemPrompt']") as HTMLTextAreaElement;
-    fireEvent.change(ta, { target: { value: "\n  Hello World  \n" } });
-    fireEvent.blur(ta);
-    expect(usePreferencesStore.getState().llmSystemPrompt).toBe("\n  Hello World  \n");
-    await vi.waitFor(() => {
-      expect(invokeCalls).toContainEqual({
-        cmd: "set_preference",
-        args: { key: "llm.systemPrompt", value: "\n  Hello World  \n" },
-      });
-    });
-  });
-
-  // --- Cycle B1: TestConnectionButton receives correct provider-specific base URL ---
-
-  it("Test Connection uses Anthropic base URL for claude model", async () => {
-    usePreferencesStore.setState({
-      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com", apiKeySet: false },
-    });
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const btn = container.querySelector("[data-testid='test-connection-btn']")!;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-    await vi.waitFor(() => {
-      expect(invokeCalls).toContainEqual({
-        cmd: "llm_test_connection",
-        args: { model: "claude-sonnet-4-6", baseUrl: "https://anthropic.example.com", provider: "anthropic" },
-      });
-    });
-  });
-
-  it("Test Connection uses OpenAI base URL for gpt model", async () => {
-    usePreferencesStore.setState({
-      llmProvider: { providerId: "openai", model: "gpt-4o", baseUrl: "https://openai.example.com", apiKeySet: false },
-    });
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const btn = container.querySelector("[data-testid='test-connection-btn']")!;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-    await vi.waitFor(() => {
-      expect(invokeCalls).toContainEqual({
-        cmd: "llm_test_connection",
-        args: { model: "gpt-4o", baseUrl: "https://openai.example.com", provider: "openai" },
-      });
-    });
-  });
-
-  it("Test Connection passes null when provider base URL is empty", async () => {
-    usePreferencesStore.setState({
-      llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
-    });
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const btn = container.querySelector("[data-testid='test-connection-btn']")!;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-    await vi.waitFor(() => {
-      expect(invokeCalls).toContainEqual({
-        cmd: "llm_test_connection",
-        args: { model: "claude-sonnet-4-6", baseUrl: null, provider: "anthropic" },
-      });
-    });
-  });
-
-  // --- Advanced group (collapsible per-type prompts) ---
-
-  it("prompt entries have group 'Advanced' in registry", () => {
-    const promptFields = ["llmPromptLlm", "llmPromptTr", "llmPromptQ"];
-    for (const field of promptFields) {
-      const entry = SETTINGS_REGISTRY.find(e => e.storeField === field);
-      expect(entry).toBeTruthy();
-      expect(entry!.group).toBe("Advanced");
-    }
-  });
-
-  it("LLM category has a collapsed Advanced section", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const advanced = container.querySelector("[data-testid='settings-group-Advanced']");
-    expect(advanced).toBeTruthy();
-    expect(container.querySelector("[data-testid='settings-llmPromptLlm']")).toBeNull();
-  });
-
-  it("clicking Advanced header reveals prompt textareas", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    expect(container.querySelector("[data-testid='settings-llmPromptLlm']")).toBeNull();
-
-    const header = container.querySelector("[data-testid='settings-group-Advanced'] button")!;
-    fireEvent.click(header);
-
-    const promptTestIds = [
-      "settings-llmPromptLlm",
-      "settings-llmPromptTr",
-      "settings-llmPromptQ",
-    ];
-    for (const id of promptTestIds) {
-      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
-    }
-  });
-
-  it("searching 'Translation' shows prompt textarea without expanding Advanced", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const search = container.querySelector("[data-testid='settings-search']") as HTMLInputElement;
-    fireEvent.change(search, { target: { value: "Translation" } });
-
-    expect(container.querySelector("[data-testid='settings-llmPromptTr']")).toBeTruthy();
-    expect(container.querySelector("[data-testid='settings-group-Advanced']")).toBeNull();
-  });
-
-  it("all 3 prompt textareas appear after expanding Advanced", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const header = container.querySelector("[data-testid='settings-group-Advanced'] button")!;
-    fireEvent.click(header);
-
-    const promptTestIds = [
-      "settings-llmPromptLlm",
-      "settings-llmPromptTr",
-      "settings-llmPromptQ",
-    ];
-    for (const id of promptTestIds) {
-      expect(container.querySelector(`[data-testid='${id}']`), `missing ${id}`).toBeTruthy();
-    }
-  });
-
-  it("re-opening modal resets to form view", async () => {
-    mockInvoke((cmd) => {
-      if (cmd === "get_preferences_raw") return "{}";
-      return undefined;
-    });
-    const { container, rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-    const btn = container.querySelector("[data-testid='settings-edit-json-btn']")!;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeTruthy();
-
-    rerender(<SettingsModal open={false} onClose={vi.fn()} />);
-    rerender(<SettingsModal open={true} onClose={vi.fn()} />);
-
-    expect(container.querySelector("[data-testid='settings-json-editor']")).toBeNull();
-    expect(container.querySelector("[data-testid='settings-sidebar']")).toBeTruthy();
-  });
-
-  // --- Academic Export settings ---
-
-  describe("Academic Export category", () => {
-    it("renders Academic Export section heading", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-      expect(headings).toContain("Academic Export");
-    });
-
-    it("Academic Export appears before Experimental in headings", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
-      const academicIdx = headings.indexOf("Academic Export");
-      const experimentalIdx = headings.indexOf("Experimental");
-      expect(academicIdx).toBeGreaterThan(-1);
-      expect(experimentalIdx).toBeGreaterThan(-1);
-      expect(academicIdx).toBeLessThan(experimentalIdx);
-    });
-
-    it("renders Pandoc Path text input", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-academicPandocPath']");
-      expect(input).toBeTruthy();
-      expect(input!.tagName).toBe("INPUT");
-    });
-
-    it("renders Crossref Filter Path text input", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-academicCrossrefPath']");
-      expect(input).toBeTruthy();
-      expect(input!.tagName).toBe("INPUT");
-    });
-
-    it("renders Default CSL Style dropdown", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-academicDefaultCsl']");
-      expect(select).toBeTruthy();
-      expect(select!.tagName).toBe("SELECT");
-    });
-
-    it("Default CSL dropdown has expected styles", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const select = container.querySelector("[data-testid='settings-academicDefaultCsl']")!;
-      const opts = Array.from(select.querySelectorAll("option")).map((o) => o.value);
-      expect(opts).toContain("apa");
-      expect(opts).toContain("ieee");
-      expect(opts).toContain("chicago-author-date");
-    });
-
-    it("renders Default Template text input", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-academicDefaultTemplate']");
-      expect(input).toBeTruthy();
-      expect(input!.tagName).toBe("INPUT");
-    });
-
-    it("renders Default Reference Doc text input", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-academicDefaultReferenceDoc']");
-      expect(input).toBeTruthy();
-      expect(input!.tagName).toBe("INPUT");
-    });
-
-    it("Pandoc Path commits on blur", async () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-academicPandocPath']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "/opt/pandoc" } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().academicPandocPath).toBe("/opt/pandoc");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "academic.pandocPath", value: "/opt/pandoc" },
-        });
-      });
-    });
-
-    it("Academic Export appears in sidebar", () => {
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
-      const buttons = Array.from(sidebar.querySelectorAll("button")).map((b) => b.textContent);
-      expect(buttons).toContain("Academic Export");
-    });
-  });
-
-  // --- Secret store integration ---
+  // --- Secret store integration (hasApiKey gating only) ---
 
   describe("secret store integration", () => {
-    // Reset secret store state before each test in this block
     beforeEach(() => {
-
       useSecretStoreStore.getState()._resetSettler();
       useSecretStoreStore.setState({
         exists: false,
@@ -1957,7 +1227,6 @@ describe("SettingsModal", () => {
     });
 
     it("calls hasApiKey when store is unlocked", async () => {
-
       useSecretStoreStore.setState({ exists: true, unlocked: true });
 
       const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
@@ -1977,7 +1246,6 @@ describe("SettingsModal", () => {
     });
 
     it("calls hasApiKey when store does not exist yet", async () => {
-
       useSecretStoreStore.setState({ exists: false, unlocked: false });
 
       const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
@@ -2043,135 +1311,6 @@ describe("SettingsModal", () => {
 
       await vi.waitFor(() => {
         expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-      });
-    });
-
-    it("password save calls ensureUnlocked before setApiKey", async () => {
-
-      useSecretStoreStore.setState({ exists: true, unlocked: true });
-
-      const localCalls: string[] = [];
-      mockInvoke((cmd) => {
-        localCalls.push(cmd);
-        if (cmd === "has_api_key") return false;
-        if (cmd === "set_api_key") return undefined;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      let container!: HTMLElement;
-      await act(async () => {
-        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-      const input = container.querySelector("[data-testid='settings-llmApiKey']")!;
-      const saveBtn = container.querySelector("[data-testid='settings-llmApiKey-save']")!;
-      await act(async () => {
-        fireEvent.change(input, { target: { value: "sk-test" } });
-        fireEvent.click(saveBtn);
-      });
-      await vi.waitFor(() => {
-        expect(localCalls).toContain("set_api_key");
-      });
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-    });
-
-    it("password delete calls ensureUnlocked before deleteApiKey", async () => {
-      useSecretStoreStore.setState({ exists: true, unlocked: true });
-
-      const localCalls: string[] = [];
-      mockInvoke((cmd) => {
-        localCalls.push(cmd);
-        if (cmd === "has_api_key") return true;
-        if (cmd === "delete_api_key") return undefined;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
-      let container!: HTMLElement;
-      await act(async () => {
-        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
-      await act(async () => {
-        fireEvent.click(clearBtn);
-      });
-      await vi.waitFor(() => {
-        expect(localCalls).toContain("delete_api_key");
-      });
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
-    });
-
-    it("password delete does not call deleteApiKey when store is locked and passphrase is not provided", async () => {
-      useSecretStoreStore.setState({ exists: true, unlocked: false });
-
-      const localCalls: string[] = [];
-      mockInvoke((cmd) => {
-        localCalls.push(cmd);
-        if (cmd === "has_api_key") return true;
-        if (cmd === "delete_api_key") return undefined;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
-      let container!: HTMLElement;
-      await act(async () => {
-        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
-      await act(async () => {
-        fireEvent.click(clearBtn);
-      });
-
-      expect(localCalls).not.toContain("delete_api_key");
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-    });
-
-    it("password delete aborts when user cancels passphrase entry", async () => {
-      useSecretStoreStore.setState({ exists: true, unlocked: false });
-
-      const localCalls: string[] = [];
-      mockInvoke((cmd) => {
-        localCalls.push(cmd);
-        if (cmd === "has_api_key") return true;
-        if (cmd === "delete_api_key") return undefined;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
-      let container!: HTMLElement;
-      await act(async () => {
-        ({ container } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-      const clearBtn = container.querySelector("[data-testid='settings-llmApiKey-clear']")!;
-      await act(async () => {
-        fireEvent.click(clearBtn);
-      });
-
-      await act(async () => {
-        useSecretStoreStore.getState().settleMigration(false);
-      });
-
-      expect(localCalls).not.toContain("delete_api_key");
-      expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-    });
-  });
-
-  describe("defaultImageDir normalization", () => {
-    it("committing empty Default Image Directory writes the default, not empty string", async () => {
-      usePreferencesStore.setState({ defaultImageDir: "custom/dir" });
-      const { container } = render(<SettingsModal open={true} onClose={vi.fn()} />);
-      const input = container.querySelector("[data-testid='settings-defaultImageDir']") as HTMLInputElement;
-      fireEvent.change(input, { target: { value: "" } });
-      fireEvent.blur(input);
-      expect(usePreferencesStore.getState().defaultImageDir).toBe("assets/images");
-      await vi.waitFor(() => {
-        expect(invokeCalls).toContainEqual({
-          cmd: "set_preference",
-          args: { key: "editor.defaultImageDir", value: "assets/images" },
-        });
       });
     });
   });
