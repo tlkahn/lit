@@ -151,12 +151,43 @@ describe("Footnote block parser — FootnoteDef", () => {
     expect(def!.to).toBe(16);
   });
 
-  it("stops at blank line", () => {
+  it("does not absorb trailing blanks before a non-indented paragraph", () => {
     const doc = "[^1]: Definition\n\nNext paragraph";
     const nodes = parseNodes(doc);
     const def = nodes.find((n) => n.name === "FootnoteDef");
     expect(def).toBeDefined();
+    // End of "Definition" - unchanged; the blank + paragraph stay outside.
     expect(def!.to).toBe(16);
+    expect(nodes.some((n) => n.name === "Paragraph" && doc.slice(n.from, n.to) === "Next paragraph")).toBe(true);
+  });
+
+  it("absorbs blank lines between the marker line and indented continuations", () => {
+    const doc = "[^1]: Title\n\n    Body after blank";
+    const nodes = parseNodes(doc);
+    const def = nodes.find((n) => n.name === "FootnoteDef");
+    expect(def).toBeDefined();
+    expect(def!.from).toBe(0);
+    expect(def!.to).toBe(doc.length);
+    expect(doc.slice(def!.from, def!.to)).toContain("Body after blank");
+  });
+
+  it("keeps multi-paragraph indented body with blanks inside one FootnoteDef", () => {
+    const doc = [
+      "[^1]: **Title**",
+      "",
+      "    First paragraph with $x$",
+      "",
+      "    ### Setup",
+      "",
+      "    $$",
+      "    E = mc^2",
+      "    $$",
+    ].join("\n");
+    const nodes = parseNodes(doc);
+    const def = nodes.find((n) => n.name === "FootnoteDef");
+    expect(def).toBeDefined();
+    expect(def!.to).toBe(doc.length);
+    expect(doc.slice(def!.from, def!.to)).toContain("### Setup");
   });
 
   it("parses two consecutive definitions as separate nodes", () => {

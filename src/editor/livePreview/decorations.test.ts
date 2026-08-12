@@ -12,7 +12,7 @@ import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
 import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget } from "./widgets";
-import { FootnoteRefWidget, FootnoteDefMarkWidget } from "./footnoteWidgets";
+import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -52,8 +52,9 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   widgetVariant?: "short" | "full";
-  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref";
+  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref" | "footnote-def-body";
   footnoteDisplayLabel?: string; // raw source label for ref sup and def mark
+  footnoteBodyText?: string;
   url?: string;
   style?: string;
 };
@@ -80,6 +81,10 @@ function collectDecos(view: EditorView): DecoInfo[] {
       if (spec.widget instanceof FootnoteDefMarkWidget) {
         info.widgetKind = "footnote-def-mark";
         info.footnoteDisplayLabel = spec.widget.label;
+      }
+      if (spec.widget instanceof FootnoteDefBodyWidget) {
+        info.widgetKind = "footnote-def-body";
+        info.footnoteBodyText = spec.widget.bodyText;
       }
     }
     if (spec.class) info.class = spec.class;
@@ -1296,7 +1301,19 @@ function collectBlockDecos(view: EditorView): DecoInfo[] {
       to: iter.to,
       type: spec.class ? "mark" : "replace",
     };
-    if (spec.widget) info.widget = true;
+    if (spec.widget) {
+      info.widget = true;
+      if (spec.widget instanceof HorizontalRuleWidget) info.widgetVariant = spec.widget.variant;
+      if (spec.widget instanceof EscapedDollarWidget) info.widgetKind = "escaped-dollar";
+      if (spec.widget instanceof FootnoteDefMarkWidget) {
+        info.widgetKind = "footnote-def-mark";
+        info.footnoteDisplayLabel = spec.widget.label;
+      }
+      if (spec.widget instanceof FootnoteDefBodyWidget) {
+        info.widgetKind = "footnote-def-body";
+        info.footnoteBodyText = spec.widget.bodyText;
+      }
+    }
     if (spec.class) info.class = spec.class;
     result.push(info);
     iter.next();
@@ -2541,11 +2558,135 @@ describe("buildDecorations — footnote definitions", () => {
     view.destroy();
   });
 
-  it("buildBlockReplacements emits nothing for footnote defs (no full-block blank)", () => {
+  it("buildBlockReplacements emits a body widget over the body span when caret is outside", () => {
     const doc = "Text\n\n[^1]: Def text";
     const view = makeView(doc, 2);
     const blockDecos = collectBlockDecos(view);
+    const bodies = blockDecos.filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    // Widget covers only the body span (12..22), never the mark/separator.
+    expect(bodies[0]!.from).toBe(12);
+    expect(bodies[0]!.to).toBe(doc.length);
+    expect(bodies[0]!.footnoteBodyText).toBe("Def text");
+    // No empty full-def blank: no replace whose range equals the whole def
+    // (6..22) and no widget-less replace blanking the body.
+    expect(
+      blockDecos.some(
+        (d) => d.type === "replace" && !d.widget && d.from === 6 && d.to === doc.length,
+      ),
+    ).toBe(false);
+    expect(blockDecos.some((d) => d.type === "replace" && !d.widget && d.from >= 12)).toBe(false);
+    view.destroy();
+  });
+
+  it("buildBlockReplacements emits no body widget when caret is on the def line", () => {
+    const doc = "Text\n\n[^1]: Def text";
+    const view = makeView(doc, 10); // caret on the def line
+    const blockDecos = collectBlockDecos(view);
+    expect(blockDecos.some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
+    view.destroy();
+  });
+
+  it("buildBlockReplacements emits nothing for an empty def body", () => {
+    const doc = "Text\n\n[^1]:";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
     expect(blockDecos).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("buildBlockReplacements emits no body widget for whitespace-only body", () => {
+    const doc = "Text\n\n[^1]:   ";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
+    expect(blockDecos.some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
+    view.destroy();
+  });
+
+  it("multi-line def: one body widget spanning both lines, raw indent kept in range", () => {
+    const doc = "Text\n\n[^1]: First line\n    Continuation";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
+    const bodies = blockDecos.filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.from).toBe(12); // after "[^1]: "
+    expect(bodies[0]!.to).toBe(doc.length); // through the continuation line
+    expect(bodies[0]!.footnoteBodyText).toBe("First line\nContinuation");
+    view.destroy();
+  });
+
+  it("multi-line def: no body widget when caret is on a continuation line", () => {
+    const doc = "Text\n\n[^1]: First line\n    Continuation";
+    const view = makeView(doc, 30); // caret on the continuation line
+    const blockDecos = collectBlockDecos(view);
+    expect(blockDecos.some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
+    view.destroy();
+  });
+
+  it("blank-separated continuation is covered by one body widget when caret outside", () => {
+    const doc = "Text\n\n[^1]: Title\n\n    Body with **x**";
+    const view = makeView(doc, 2);
+    const bodies = collectBlockDecos(view).filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.to).toBe(doc.length);
+    expect(bodies[0]!.footnoteBodyText).toContain("Body with **x**");
+    expect(bodies[0]!.footnoteBodyText).toContain("\n\n");
+    view.destroy();
+  });
+
+  it("caret on post-blank continuation reveals raw (no body widget)", () => {
+    const doc = "Text\n\n[^1]: Title\n\n    Body";
+    const bodyPos = doc.indexOf("Body");
+    const view = makeView(doc, bodyPos);
+    expect(collectBlockDecos(view).some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
+    view.destroy();
+  });
+
+  it("two consecutive defs each get their own body widget", () => {
+    const doc = "Text\n\n[^1]: First\n[^2]: Second";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
+    const bodies = blockDecos.filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]!.footnoteBodyText).toBe("First");
+    expect(bodies[1]!.footnoteBodyText).toBe("Second");
+    expect(bodies[0]!.from).toBe(12);
+    expect(bodies[1]!.from).toBe(24);
+    view.destroy();
+  });
+
+  it("block body widget coexists with the ViewPlugin mark widget and line class", () => {
+    const doc = "Text\n\n[^1]: Def text";
+    const view = makeView(doc, 2);
+    const decos = collectDecos(view);
+    const mark = decos.find((d) => d.widgetKind === "footnote-def-mark");
+    expect(mark).toBeDefined();
+    expect(mark!.from).toBe(6);
+    expect(mark!.to).toBe(12);
+    expect(decos.some((d) => d.class === "cm-footnote-def")).toBe(true);
+    const blockDecos = collectBlockDecos(view);
+    expect(blockDecos.some((d) => d.widgetKind === "footnote-def-body")).toBe(true);
+    view.destroy();
+  });
+
+  it("caret enter/leave rebuilds: cursorSensitiveRanges cover the full def span", () => {
+    const doc = "Text\n\n[^1]: First line\n    Continuation";
+    const view = makeView(doc, 2);
+    const blockState = buildBlockReplacements(view.state);
+    const ranges = blockState.cursorSensitiveRanges;
+    expect(
+      ranges.some((r) => r.fromLine === 3 && r.toLine === 4),
+    ).toBe(true);
+    view.destroy();
+  });
+
+  it("single-line def body is still emitted from the block field (StateField path)", () => {
+    const doc = "Text\n\n[^1]: **x** and $y$";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
+    const bodies = blockDecos.filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.footnoteBodyText).toBe("**x** and $y$");
     view.destroy();
   });
 

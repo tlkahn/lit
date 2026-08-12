@@ -5,7 +5,8 @@ import { isCursorOnLine, isCursorInRange } from "./proximity";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget } from "./widgets";
 import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
-import { FootnoteRefWidget, FootnoteDefMarkWidget } from "./footnoteWidgets";
+import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
+import { getFootnoteDefBodyInfo } from "./footnoteTooltip";
 import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
@@ -805,6 +806,9 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
           });
         }
       }
+      if (node.name === "FootnoteDef") {
+        addFootnoteDefBodyBlock(state, node.from, node.to, node.node, decos, cursorSensitiveRanges);
+      }
       if (node.name === "DisplayMath") {
         const text = state.doc.sliceString(node.from, node.to);
         if (text.includes("\n")) {
@@ -909,6 +913,43 @@ function addCollapsedCalloutBody(
       deco: Decoration.replace({}),
     });
   }
+}
+
+/**
+ * Body-widget replacement for a footnote def from the block StateField path
+ * (single- and multi-line defs share this path; multi-line replaces must
+ * come from a StateField per the CM6 line-break rule). Always registers the
+ * full def span as cursor-sensitive so entering/leaving any def line rebuilds
+ * the block decos even when the body is empty or the caret is inside.
+ */
+function addFootnoteDefBodyBlock(
+  state: EditorState,
+  from: number,
+  to: number,
+  node: ReturnType<typeof syntaxTree>["topNode"],
+  decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveRanges: Array<{ fromLine: number; toLine: number }>,
+) {
+  cursorSensitiveRanges.push({
+    fromLine: state.doc.lineAt(from).number,
+    toLine: state.doc.lineAt(to).number,
+  });
+
+  // Caret on any def line reveals raw source for in-place editing.
+  if (isCursorOnLine(state, from, to)) return;
+
+  const info = getFootnoteDefBodyInfo(state, node);
+  if (!info || info.bodyFrom >= info.bodyTo || info.bodyText.trim() === "") return;
+
+  // Body span only: abuts the mark replace ([mark.from, bodyFrom)) so the
+  // ViewPlugin mark widget and this body widget never overlap.
+  decos.push({
+    from: info.bodyFrom,
+    to: info.bodyTo,
+    deco: Decoration.replace({
+      widget: new FootnoteDefBodyWidget(info.bodyText),
+    }),
+  });
 }
 
 function addTableBlockReplacement(

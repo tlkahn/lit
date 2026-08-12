@@ -441,6 +441,44 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     fontWeight: "600",
     paddingRight: "0.35em",
   },
+  // Rendered def body (caret outside). Padding only, never margin (CM6
+  // height map). Paragraphs and headings use padding separation too so the
+  // widget's estimatedHeight stays honest.
+  ".cm-footnote-def-body": {
+    paddingTop: "0.15em",
+    paddingBottom: "0.15em",
+    display: "block",
+  },
+  ".cm-footnote-def-body p": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body p + p": {
+    paddingTop: "0.5em",
+  },
+  ".cm-footnote-def-body h1, .cm-footnote-def-body h2, .cm-footnote-def-body h3, .cm-footnote-def-body h4, .cm-footnote-def-body h5, .cm-footnote-def-body h6": {
+    fontWeight: "600",
+    paddingTop: "0.35em",
+    paddingBottom: "0.15em",
+  },
+  // Nested blocks inside the rendered body: zero margins only (house rule -
+  // no Tailwind .prose resets). UA margins on ul/ol/li/blockquote/pre/table
+  // inflate the widget's estimatedHeight and add density gaps; padding-based
+  // separation is left to the existing p/p+p rules where needed.
+  ".cm-footnote-def-body ul, .cm-footnote-def-body ol": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body li": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body blockquote": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body pre": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body table": {
+    margin: "0",
+  },
   ".cm-footnote-tooltip": {
     backgroundColor: "var(--background-primary, #fff)",
     border: "1px solid var(--background-modifier-border, #e0e0e0)",

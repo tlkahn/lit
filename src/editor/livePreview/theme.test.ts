@@ -163,6 +163,74 @@ describe("footnote definition theme spec", () => {
     expect(rule.paddingRight).toBe("0.35em");
     expect(rule).not.toHaveProperty("margin");
   });
+
+  it("livePreviewThemeSpec contains .cm-footnote-def-body key", () => {
+    expect(livePreviewThemeSpec[".cm-footnote-def-body"]).toBeDefined();
+  });
+
+  it(".cm-footnote-def-body is block with padding only (no margin)", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-def-body"] as Record<string, string>;
+    expect(rule.display).toBe("block");
+    expect(rule.paddingTop).toBeDefined();
+    expect(rule.paddingBottom).toBeDefined();
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it(".cm-footnote-def-body paragraphs use zero margin (padding separation)", () => {
+    const p = livePreviewThemeSpec[".cm-footnote-def-body p"] as Record<string, string>;
+    expect(p.margin).toBe("0");
+    const pPlusP = livePreviewThemeSpec[".cm-footnote-def-body p + p"] as Record<string, string>;
+    expect(pPlusP.paddingTop).toBeDefined();
+    expect(pPlusP).not.toHaveProperty("margin");
+  });
+
+  it(".cm-footnote-def-body headings are compact and use padding, not margin", () => {
+    const headings = livePreviewThemeSpec[".cm-footnote-def-body h1, .cm-footnote-def-body h2, .cm-footnote-def-body h3, .cm-footnote-def-body h4, .cm-footnote-def-body h5, .cm-footnote-def-body h6"] as Record<string, string>;
+    expect(headings.fontWeight).toBe("600");
+    expect(headings.paddingTop).toBeDefined();
+    expect(headings.paddingBottom).toBeDefined();
+    expect(headings).not.toHaveProperty("margin");
+  });
+
+  it(".cm-footnote-def-body lists use zero margin (UA margins would inflate estimatedHeight)", () => {
+    const key = ".cm-footnote-def-body ul, .cm-footnote-def-body ol";
+    const rule = livePreviewThemeSpec[key] as Record<string, string>;
+    expect(rule, key).toBeDefined();
+    expect(rule.margin).toBe("0");
+    expect(rule).not.toHaveProperty("marginTop");
+  });
+
+  it(".cm-footnote-def-body list items use zero margin", () => {
+    const key = ".cm-footnote-def-body li";
+    const rule = livePreviewThemeSpec[key] as Record<string, string>;
+    expect(rule, key).toBeDefined();
+    expect(rule.margin).toBe("0");
+    expect(rule).not.toHaveProperty("marginTop");
+  });
+
+  it(".cm-footnote-def-body blockquote uses zero margin", () => {
+    const key = ".cm-footnote-def-body blockquote";
+    const rule = livePreviewThemeSpec[key] as Record<string, string>;
+    expect(rule, key).toBeDefined();
+    expect(rule.margin).toBe("0");
+    expect(rule).not.toHaveProperty("marginTop");
+  });
+
+  it(".cm-footnote-def-body pre uses zero margin", () => {
+    const key = ".cm-footnote-def-body pre";
+    const rule = livePreviewThemeSpec[key] as Record<string, string>;
+    expect(rule, key).toBeDefined();
+    expect(rule.margin).toBe("0");
+    expect(rule).not.toHaveProperty("marginTop");
+  });
+
+  it(".cm-footnote-def-body table uses zero margin", () => {
+    const key = ".cm-footnote-def-body table";
+    const rule = livePreviewThemeSpec[key] as Record<string, string>;
+    expect(rule, key).toBeDefined();
+    expect(rule.margin).toBe("0");
+    expect(rule).not.toHaveProperty("marginTop");
+  });
 });
 
 describe("blockquote theme spec", () => {
