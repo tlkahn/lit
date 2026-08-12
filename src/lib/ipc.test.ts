@@ -543,10 +543,6 @@ describe("ipc", () => {
         }
         case "execute_split":
           return ["Alpha.md", "Beta.md"];
-        case "suggest_merge_title":
-          throw new Error("LLM not configured");
-        case "cancel_title_suggestion":
-          return undefined;
         case "merge_documents":
           return "notes/Merged.md";
         case "search_tags":
