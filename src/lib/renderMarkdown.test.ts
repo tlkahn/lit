@@ -507,14 +507,22 @@ describe("renderInlineMarkdown", () => {
     expect(renderInlineMarkdown("")).toBe("");
   });
 
-  it("replaces footnote refs with non-anchor sup markers", () => {
+  it("replaces footnote refs with source-label non-anchor sup markers", () => {
     const result = renderInlineMarkdown("see[^alpha] and[^beta] then[^alpha] again");
     const div = document.createElement("div");
     div.innerHTML = result;
     const sups = div.querySelectorAll("sup.footnote-ref");
     expect(sups).toHaveLength(3);
-    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["1", "2", "1"]);
+    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["alpha", "beta", "alpha"]);
     expect(div.querySelector("a")).toBeNull();
+  });
+
+  it("preserves out-of-order numeric labels in the inline strip path", () => {
+    const result = renderInlineMarkdown("A[^1], B[^3], C[^2].");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const sups = div.querySelectorAll("sup.footnote-ref");
+    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["1", "3", "2"]);
   });
 
   it("strips footnote definition lines including continuations", () => {

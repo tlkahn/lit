@@ -5,7 +5,6 @@ import { isJumpNavigation } from "../jumpHistory";
 export class FootnoteRefWidget extends WidgetType {
   constructor(
     readonly label: string,
-    readonly number: number,
     readonly targetDefPos: number | null,
   ) {
     super();
@@ -14,7 +13,7 @@ export class FootnoteRefWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const sup = document.createElement("sup");
     sup.className = "cm-footnote-ref";
-    sup.textContent = String(this.number);
+    sup.textContent = this.label;
 
     if (this.targetDefPos != null) {
       const targetPos = this.targetDefPos;
@@ -39,7 +38,6 @@ export class FootnoteRefWidget extends WidgetType {
   eq(other: FootnoteRefWidget): boolean {
     return (
       this.label === other.label &&
-      this.number === other.number &&
       this.targetDefPos === other.targetDefPos
     );
   }
@@ -55,24 +53,24 @@ export class FootnoteRefWidget extends WidgetType {
 
 /**
  * Stand-in for a footnote definition's `[^label]:` marker in live preview
- * while the caret is outside the definition. Shows the same `N.` numbering
- * as the superscript refs (from `buildFootnoteMap`). Not clickable: defs are
- * the jump target, not the source.
+ * while the caret is outside the definition. Shows the same source label
+ * as the superscript refs. Not clickable: defs are the jump target, not the
+ * source.
  */
 export class FootnoteDefMarkWidget extends WidgetType {
-  constructor(readonly number: number) {
+  constructor(readonly label: string) {
     super();
   }
 
   toDOM(): HTMLElement {
     const span = document.createElement("span");
     span.className = "cm-footnote-def-mark";
-    span.textContent = `${this.number}.`;
+    span.textContent = `${this.label}.`;
     return span;
   }
 
   eq(other: FootnoteDefMarkWidget): boolean {
-    return this.number === other.number;
+    return this.label === other.label;
   }
 
   // Allow caret placement near the marker via normal clicks; do not swallow

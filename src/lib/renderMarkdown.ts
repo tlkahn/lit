@@ -102,18 +102,12 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
 }
 
 // Pill-style footnote handling for inline rendering: drop definition lines
-// (with their indented continuations) and replace refs with plain numbered
-// superscript markers in first-appearance order.
+// (with their indented continuations) and replace refs with source-label
+// superscript markers; defs stripped.
 function footnotesToInlineMarkers(text: string): string {
   let working = text.replace(/^\[\^[^\]\n]+\]:[^\n]*(?:\n+(?:[ ]{4,}|\t)[^\n]*)*(?:\n|$)/gm, "");
-  const order = new Map<string, number>();
-  working = working.replace(/\[\^([^\]\n]+)\]/g, (_, label: string) => {
-    let n = order.get(label);
-    if (n === undefined) {
-      n = order.size + 1;
-      order.set(label, n);
-    }
-    return `<sup class="footnote-ref">${n}</sup>`;
+  working = working.replace(/\[\^([^\]\n]+)\]/g, (_m, label: string) => {
+    return `<sup class="footnote-ref">${label}</sup>`;
   });
   return working;
 }

@@ -1,19 +1,15 @@
 import type { EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 
+// Positions only; display uses source labels (see doc/plans/issue-1003.md).
 export interface FootnoteMap {
-  labelToNumber: Map<string, number>;
   refPositions: Map<string, number[]>;
   defPositions: Map<string, { from: number; to: number }>;
 }
 
 export function buildFootnoteMap(state: EditorState): FootnoteMap {
-  const labelToNumber = new Map<string, number>();
   const refPositions = new Map<string, number[]>();
   const defPositions = new Map<string, { from: number; to: number }>();
-
-  const refOrder: string[] = [];
-  const defLabels = new Set<string>();
 
   syntaxTree(state).iterate({
     enter: (node) => {
@@ -23,7 +19,6 @@ export function buildFootnoteMap(state: EditorState): FootnoteMap {
           const label = state.doc.sliceString(marks[0]!.to, marks[1]!.from);
           if (!refPositions.has(label)) {
             refPositions.set(label, []);
-            refOrder.push(label);
           }
           refPositions.get(label)!.push(node.from);
         }
@@ -35,7 +30,6 @@ export function buildFootnoteMap(state: EditorState): FootnoteMap {
           const match = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
           if (match) {
             const label = match[1]!;
-            defLabels.add(label);
             defPositions.set(label, { from: node.from, to: node.to });
           }
         }
@@ -43,17 +37,5 @@ export function buildFootnoteMap(state: EditorState): FootnoteMap {
     },
   });
 
-  let num = 1;
-  for (const label of refOrder) {
-    if (!labelToNumber.has(label)) {
-      labelToNumber.set(label, num++);
-    }
-  }
-  for (const label of defLabels) {
-    if (!labelToNumber.has(label)) {
-      labelToNumber.set(label, num++);
-    }
-  }
-
-  return { labelToNumber, refPositions, defPositions };
+  return { refPositions, defPositions };
 }
