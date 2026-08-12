@@ -87,8 +87,7 @@ const TYPE_KEYWORDS: Record<string, string> = {
   crossref: "cf",
   apparatus: "app",
   translation: "tr",
-  // Legacy `llm` keyword is intentionally absent: lit treats it as Note
-  // (normalizeLegacyAnnotationType) and nothing new emits `llm`.
+  llm: "n", // legacy alias: serialize-time compatibility only; never emit the letters "llm"
   thread: "th",
   slipnote: "sn",
 };

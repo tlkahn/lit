@@ -317,10 +317,10 @@ describe("generateDsl", () => {
       expect(generateDsl(fields({ type: "slipnote" }))).toBe("<!--- sn --->");
     });
 
-    it("llm emits no keyword (legacy type treated as note, #1010)", () => {
-      // Nothing new may emit the `llm` keyword; normalizeLegacyAnnotationType
-      // remaps it to note at the IPC boundary.
-      expect(generateDsl(fields({ type: "llm" }))).toBe("<!---  --->");
+    it("llm emits note keyword (legacy type serialized as note, #1010)", () => {
+      // The serializer must never emit the letters "llm"; raw legacy input
+      // serializes as Note (`n`), matching the product contract.
+      expect(generateDsl(fields({ type: "llm" }))).toBe("<!--- n --->");
     });
 
     it("slipnote with anchor scope and body", () => {
@@ -793,21 +793,24 @@ describe("annotationToFields", () => {
   });
 
   describe("llm type", () => {
-    it("never emits the llm keyword (compact)", () => {
+    it("serializes as note, never the llm keyword (compact)", () => {
       expect(generateDsl(fields({ type: "llm", body: "explain" }))).toBe(
-        "<!--- explain --->",
+        "<!--- n | explain --->",
       );
+      expect(generateDsl(fields({ type: "llm", body: "explain" }))).not.toMatch(/llm/);
     });
 
-    it("never emits the llm keyword with scope", () => {
+    it("serializes as note, never the llm keyword with scope", () => {
       expect(
         generateDsl(fields({ type: "llm", scope: { kind: "paragraph", value: 1 }, body: "summarize" })),
-      ).toBe("<!--- \\p | summarize --->");
+      ).toBe("<!--- n \\p | summarize --->");
+      expect(generateDsl(fields({ type: "llm", scope: { kind: "paragraph", value: 1 }, body: "summarize" }))).not.toMatch(/llm/);
     });
 
-    it("never emits the llm keyword (block form)", () => {
+    it("serializes as note, never the llm keyword (block form)", () => {
       const result = generateDsl(fields({ type: "llm", body: "line1\nline2" }));
-      expect(result).toBe("<!---\n---\nline1\nline2\n--->");
+      expect(result).toBe("<!---\nn\n---\nline1\nline2\n--->");
+      expect(result).not.toMatch(/llm/);
     });
   });
 
