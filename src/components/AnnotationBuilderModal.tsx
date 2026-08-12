@@ -239,7 +239,6 @@ export function AnnotationBuilderModal({
                 <option value="crossref">CrossRef (cf)</option>
                 <option value="apparatus">Apparatus (app)</option>
                 <option value="translation">Translation (tr)</option>
-                <option value="llm">LLM (⚡)</option>
               </select>
             )}
           </label>

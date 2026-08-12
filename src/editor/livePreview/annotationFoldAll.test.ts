@@ -14,8 +14,6 @@ import {
   toggleAnnotationFoldEffect,
   ThreadWidget,
   threadTurnField,
-  firingAnnotationsField,
-  llmLockedField,
 } from "./annotationWidgets";
 import { hasAnyFoldAllTarget, isFoldAllTarget, toggleAllBlockAnnotationFolds } from "./annotationFoldAll";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
@@ -64,8 +62,6 @@ function makeViewWithBlocks(anchor = 0) {
       displayModeField,
       annotationFoldField,
       threadTurnField,
-      firingAnnotationsField,
-      llmLockedField,
       annotationBlockDecorationField,
     ],
   });
@@ -215,8 +211,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -242,8 +236,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -277,8 +269,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -313,8 +303,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -366,8 +354,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -439,8 +425,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -486,8 +470,6 @@ describe("toggleAllBlockAnnotationFolds", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -556,8 +538,6 @@ describe("toggleAllBlockAnnotationFolds - parse frontier", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });

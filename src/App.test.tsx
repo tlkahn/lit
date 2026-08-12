@@ -160,8 +160,6 @@ describe("App", () => {
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
         case "has_api_key":
           return false;
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -208,8 +206,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -337,8 +333,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -373,8 +367,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -415,8 +407,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -509,8 +499,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -554,8 +542,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -597,8 +583,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -642,8 +626,6 @@ describe("App", () => {
           return null;
         case "get_license_status":
           return { state: "licensed", licensed_to: "Test User", source: "direct" };
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -1142,8 +1124,6 @@ describe("App", () => {
             return { state: "licensed", licensed_to: "Test User", source: "direct" };
           case "has_api_key":
             return false;
-          case "cancel_title_suggestion":
-            return undefined;
           case "allow_asset_scope":
             return undefined;
           default:
@@ -1298,8 +1278,6 @@ describe("App", () => {
           return { state: "trial", days_remaining: 12 };
         case "has_api_key":
           return false;
-        case "cancel_title_suggestion":
-          return undefined;
         case "export_lkg":
           return { exported_count: 3, destination: "/out/graph.lkg", graph_hash: HASH };
         case "import_lkg":
@@ -1588,8 +1566,6 @@ describe("App", () => {
           return { state: "trial", days_remaining: 12 };
         case "has_api_key":
           return false;
-        case "cancel_title_suggestion":
-          return undefined;
         case "list_all_annotations":
           return [
             {

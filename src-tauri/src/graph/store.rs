@@ -7,7 +7,7 @@ use tracing::{debug, info};
 use super::error::GraphError;
 use super::types::{extract_aliases, AnnotationSearchResult, BacklinkEntry, CardboxAnnotation, EdgeKind, FullAnnotationRecord, IndexableAnnotation, LinkEntry, Materialization, ParsedNode, Stats, TagPageResult, TagSearchResult};
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 25;
+pub const CURRENT_SCHEMA_VERSION: i64 = 26;
 
 fn map_annotation_row(row: &rusqlite::Row) -> Result<AnnotationSearchResult, rusqlite::Error> {
     Ok(AnnotationSearchResult {
@@ -731,6 +731,53 @@ impl Store {
                 "BEGIN;
                  UPDATE sync SET mtime = 0;
                  UPDATE meta SET value = '25' WHERE key = 'schema_version';
+                 COMMIT;"
+            )?;
+        }
+
+        if version < 26 {
+            // Legacy `<!--- llm ... --->` markers were always Notes; extract
+            // maps `AnnotationType::Llm => "note"`. Rewrite stored rows in
+            // place so unstamped legacy annotations keep their generated UUID
+            // identity under that type mapping: without this, the next reindex
+            // sees a type change (llm vs note) and match_annotations does
+            // DELETE + INSERT, churning Cardbox keys, colors/groups/links and
+            // slip-note anchors. The FTS mirror is rebuilt for the touched
+            // rows so its `annotation_type` stays consistent with the main
+            // table. No reindex is forced: rows stay canonical and later
+            // extract already emits "note".
+            info!(from = version, to = 26, "migrating schema: rewriting legacy llm annotation rows as notes");
+            let has_annotations: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotations')",
+                [],
+                |r| r.get(0),
+            )?;
+            let has_fts: bool = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotations_fts')",
+                [],
+                |r| r.get(0),
+            )?;
+            self.conn.execute_batch("BEGIN;")?;
+            if has_annotations {
+                if has_fts {
+                    self.conn.execute_batch(
+                        "CREATE TEMP TABLE legacy_llm_ids AS
+                             SELECT id FROM annotations WHERE annotation_type = 'llm';
+                         DELETE FROM annotations_fts WHERE rowid IN (SELECT id FROM legacy_llm_ids);
+                         UPDATE annotations SET annotation_type = 'note' WHERE annotation_type = 'llm';
+                         INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                             SELECT id, body, node_id, annotation_type FROM annotations
+                             WHERE id IN (SELECT id FROM legacy_llm_ids) AND body IS NOT NULL;
+                         DROP TABLE legacy_llm_ids;"
+                    )?;
+                } else {
+                    self.conn.execute_batch(
+                        "UPDATE annotations SET annotation_type = 'note' WHERE annotation_type = 'llm';"
+                    )?;
+                }
+            }
+            self.conn.execute_batch(
+                "UPDATE meta SET value = '26' WHERE key = 'schema_version';
                  COMMIT;"
             )?;
         }
@@ -3982,8 +4029,8 @@ mod tests {
     // --- Cycle 2: Schema v6 ---
 
     #[test]
-    fn schema_version_is_twenty_five() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+    fn schema_version_is_current() {
+        assert_eq!(CURRENT_SCHEMA_VERSION, 26);
     }
 
     #[test]
@@ -4130,7 +4177,7 @@ mod tests {
         let store = Store::open(&db_path).unwrap();
 
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
-        assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 26);
         let max_mtime: i64 = store.conn
             .query_row("SELECT MAX(mtime) FROM sync", [], |r| r.get(0))
             .unwrap();
@@ -4139,6 +4186,105 @@ mod tests {
             "sync mtimes should be reset so `original` rows are re-resolved under \
              the three-scope language precedence"
         );
+    }
+
+    #[test]
+    fn v25_to_v26_migrates_legacy_llm_annotations_preserving_identity_and_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let legacy_uuid = "11111111-2222-4333-8444-555555555555";
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes (
+                    id TEXT PRIMARY KEY, title TEXT, first_paragraph TEXT,
+                    frontmatter JSON, mtime INTEGER, is_stub INTEGER DEFAULT 0, tags_text TEXT DEFAULT '',
+                    materialization TEXT NOT NULL DEFAULT 'materialized'
+                );
+                 CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE annotations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     node_id TEXT NOT NULL, annotation_type TEXT NOT NULL,
+                     certainty TEXT NOT NULL, body TEXT, date TEXT,
+                     source_line INTEGER NOT NULL, char_start INTEGER NOT NULL, char_end INTEGER NOT NULL,
+                     scope_kind TEXT NOT NULL, scope_value TEXT NOT NULL,
+                     uuid TEXT NOT NULL,
+                     original TEXT
+                 );
+                 CREATE UNIQUE INDEX idx_annotations_uuid ON annotations(uuid);
+                 CREATE INDEX idx_annotations_node_id ON annotations(node_id);
+                 CREATE INDEX idx_annotations_type ON annotations(annotation_type);
+                 CREATE VIRTUAL TABLE annotations_fts USING fts5(
+                     body, node_id UNINDEXED, annotation_type UNINDEXED,
+                     tokenize = 'trigram case_sensitive 0'
+                 );
+                 INSERT INTO meta(key, value) VALUES ('schema_version', '25');
+                 INSERT INTO nodes(id, title, first_paragraph, frontmatter, mtime, is_stub, tags_text, materialization)
+                     VALUES ('a.md', 'Alpha', 'First paragraph of Alpha', '{}', 1, 0, '', 'materialized');
+                 INSERT INTO annotations(node_id, annotation_type, certainty, body, date, source_line, char_start, char_end, scope_kind, scope_value, uuid, original)
+                     VALUES ('a.md', 'llm', 'neutral', 'legacy llm note body', NULL, 1, 0, 10, 'words', '1', '11111111-2222-4333-8444-555555555555', 'legacy llm note body');
+                 INSERT INTO annotations_fts(rowid, body, node_id, annotation_type)
+                     VALUES (1, 'legacy llm note body', 'a.md', 'llm');",
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+
+        // In-place rewrite: same rowid, same generated UUID, stored type now "note".
+        let (rowid, uuid, ann_type): (i64, String, String) = store
+            .conn
+            .query_row(
+                "SELECT id, uuid, annotation_type FROM annotations WHERE node_id = 'a.md'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(rowid, 1);
+        assert_eq!(uuid, legacy_uuid);
+        assert_eq!(ann_type, "note");
+
+        // FTS mirror follows the main table (not stale "llm").
+        let fts_type: String = store
+            .conn
+            .query_row(
+                "SELECT annotation_type FROM annotations_fts WHERE rowid = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_type, "note");
+
+        // Note-filtered search hits the upgraded row.
+        let search = store.search_annotations("legacy", Some("note"), 10).unwrap();
+        assert_eq!(search.len(), 1);
+        assert_eq!(search[0].body.as_deref(), Some("legacy llm note body"));
+        assert_eq!(search[0].uuid, legacy_uuid);
+
+        // Note-filtered list returns the same UUID.
+        let list = store.list_annotations(Some("a.md"), Some("note"), 10).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].uuid, legacy_uuid);
+
+        // Next reindex: unstamped incoming note with the same body pairs in place,
+        // so the generated UUID (Cardbox key) and rowid survive.
+        store
+            .upsert_annotations("a.md", &[make_annotation("note", Some("legacy llm note body"))])
+            .unwrap();
+        let (rowid2, uuid2): (i64, String) = store
+            .conn
+            .query_row(
+                "SELECT id, uuid FROM annotations WHERE node_id = 'a.md'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rowid2, 1);
+        assert_eq!(uuid2, legacy_uuid);
     }
 
     #[test]

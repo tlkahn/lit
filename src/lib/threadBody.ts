@@ -16,7 +16,7 @@
  * Splitting is line-start only (`(^|\n)[q]: `), so a `[q]: ` appearing mid-line
  * inside a response is NOT treated as a delimiter.
  *
- * KNOWN LIMITATION: a legitimate LLM response that contains a line *starting*
+ * KNOWN LIMITATION: a legitimate response that contains a line *starting*
  * with `[q]: ` will be (mis)parsed as a new turn boundary. The wire format does
  * not escape this; callers that need round-trip fidelity for such content are
  * out of scope for this format.
@@ -25,12 +25,6 @@
 export interface ThreadTurn {
   question: string;
   response: string;
-}
-
-/** A single chat message in the shape consumed by `llmPromptStreaming`. */
-interface Message {
-  role: string;
-  content: string;
 }
 
 // Matches the turn delimiter only at the start of a line (or the very start of
@@ -121,33 +115,4 @@ export function serializeThreadBody(turns: ThreadTurn[]): string {
       return `[q]: ${turn.question}\n\n${turn.response}`;
     })
     .join("\n\n");
-}
-
-/**
- * Append a new turn to a body, normalizing the existing content by routing it
- * through parse → push → serialize.
- */
-export function appendTurn(body: string, question: string, response: string): string {
-  const turns = parseThreadBody(body);
-  turns.push({ question, response });
-  return serializeThreadBody(turns);
-}
-
-/**
- * Convert turns into the `messages[]` shape consumed by `llmPromptStreaming`.
- * Empty-content messages are skipped: an empty-question turn (no-prefix single
- * response) emits only the assistant message, and a final empty-response turn
- * (the follow-up being asked) emits only the user message.
- */
-export function turnsToMessages(turns: ThreadTurn[]): Message[] {
-  const messages: Message[] = [];
-  for (const turn of turns) {
-    if (turn.question !== "") {
-      messages.push({ role: "user", content: turn.question });
-    }
-    if (turn.response !== "") {
-      messages.push({ role: "assistant", content: turn.response });
-    }
-  }
-  return messages;
 }

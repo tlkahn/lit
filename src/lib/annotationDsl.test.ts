@@ -317,6 +317,12 @@ describe("generateDsl", () => {
       expect(generateDsl(fields({ type: "slipnote" }))).toBe("<!--- sn --->");
     });
 
+    it("llm emits note keyword (legacy type serialized as note, #1010)", () => {
+      // The serializer must never emit the letters "llm"; raw legacy input
+      // serializes as Note (`n`), matching the product contract.
+      expect(generateDsl(fields({ type: "llm" }))).toBe("<!--- n --->");
+    });
+
     it("slipnote with anchor scope and body", () => {
       const dsl = generateDsl(fields({
         type: "slipnote",
@@ -489,6 +495,11 @@ describe("annotationToFields", () => {
   it("translation annotation_type passes through", () => {
     const f = annotationToFields(makeAnnotation({ annotation_type: "translation" }));
     expect(f.type).toBe("translation");
+  });
+
+  it("legacy llm annotation_type opens as note (#1010)", () => {
+    const f = annotationToFields(makeAnnotation({ annotation_type: "llm" }));
+    expect(f.type).toBe("note");
   });
 
   it("slipnote annotation_type passes through", () => {
@@ -782,29 +793,32 @@ describe("annotationToFields", () => {
   });
 
   describe("llm type", () => {
-    it("generates llm compact form", () => {
+    it("serializes as note, never the llm keyword (compact)", () => {
       expect(generateDsl(fields({ type: "llm", body: "explain" }))).toBe(
-        "<!--- llm | explain --->",
+        "<!--- n | explain --->",
       );
+      expect(generateDsl(fields({ type: "llm", body: "explain" }))).not.toMatch(/llm/);
     });
 
-    it("generates llm with scope", () => {
+    it("serializes as note, never the llm keyword with scope", () => {
       expect(
         generateDsl(fields({ type: "llm", scope: { kind: "paragraph", value: 1 }, body: "summarize" })),
-      ).toBe("<!--- llm \\p | summarize --->");
+      ).toBe("<!--- n \\p | summarize --->");
+      expect(generateDsl(fields({ type: "llm", scope: { kind: "paragraph", value: 1 }, body: "summarize" }))).not.toMatch(/llm/);
     });
 
-    it("generates llm block form for multiline body", () => {
+    it("serializes as note, never the llm keyword (block form)", () => {
       const result = generateDsl(fields({ type: "llm", body: "line1\nline2" }));
-      expect(result).toBe("<!---\nllm\n---\nline1\nline2\n--->");
+      expect(result).toBe("<!---\nn\n---\nline1\nline2\n--->");
+      expect(result).not.toMatch(/llm/);
     });
   });
 
   describe("new scope serialization", () => {
     it("document scope serializes as \\d", () => {
       expect(
-        generateDsl(fields({ type: "llm", scope: { kind: "document", value: 0 }, body: "summarize all" })),
-      ).toBe("<!--- llm \\d | summarize all --->");
+        generateDsl(fields({ type: "note", scope: { kind: "document", value: 0 }, body: "summarize all" })),
+      ).toBe("<!--- n \\d | summarize all --->");
     });
 
     it("section scope serializes as \\h", () => {
@@ -817,36 +831,36 @@ describe("annotationToFields", () => {
       expect(
         generateDsl(
           fields({
-            type: "llm",
+            type: "note",
             scope: { kind: "asymmetric", value: { unit: "sentence", before: 2, after: 3 } },
             body: "context",
           }),
         ),
-      ).toBe("<!--- llm 2\\s3 | context --->");
+      ).toBe("<!--- n 2\\s3 | context --->");
     });
 
     it("asymmetric scope with paragraph unit", () => {
       expect(
         generateDsl(
           fields({
-            type: "llm",
+            type: "note",
             scope: { kind: "asymmetric", value: { unit: "paragraph", before: 1, after: 2 } },
             body: "test",
           }),
         ),
-      ).toBe("<!--- llm 1\\p2 | test --->");
+      ).toBe("<!--- n 1\\p2 | test --->");
     });
 
     it("asymmetric scope with word unit uses underscore", () => {
       expect(
         generateDsl(
           fields({
-            type: "llm",
+            type: "note",
             scope: { kind: "asymmetric", value: { unit: "word", before: 3, after: 1 } },
             body: "test",
           }),
         ),
-      ).toBe("<!--- llm 3_1 | test --->");
+      ).toBe("<!--- n 3_1 | test --->");
     });
   });
 

@@ -7,8 +7,6 @@ import { useStatusMessageStore } from "../stores/statusMessage";
 import { showGraphContextMenu, useGraphContextMenu } from "../lib/contextMenuIpc";
 import { useGraphSelectionStore } from "../stores/graphSelection";
 import { useGraphViewState } from "../stores/graphViewState";
-import { usePreferencesStore } from "../stores/preferences";
-import { providerNeedsApiKey } from "../lib/providerRegistry";
 import { GraphToolbar } from "./GraphToolbar";
 import { GraphSearch } from "./GraphSearch";
 import { MergePreviewDialog } from "./MergePreviewDialog";
@@ -60,10 +58,6 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
   const show = useStatusMessageStore((s) => s.show);
-  const llmEnabled = usePreferencesStore((s) =>
-    s.llmProvider.apiKeySet ||
-    !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
-  );
 
   const currentPageRef = useRef(currentPagePath ?? "");
   currentPageRef.current = currentPagePath ?? "";
@@ -279,7 +273,6 @@ export default function GraphView({ activePageId, onNavigate, onExit, onExportNe
         <MergePreviewDialog
           open={mergeDialogOpen}
           docs={mergeDialogDocs}
-          llmEnabled={llmEnabled}
           onConfirm={(plan, ordering) => {
             onMergeConfirmRef.current?.(plan, ordering, mergeDialogDocs);
             setMergeDialogOpen(false);

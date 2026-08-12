@@ -5,7 +5,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import type { Annotation } from "./ipc";
 import { useStatusMessageStore } from "../stores/statusMessage";
-import { firingAnnotationsField, threadTurnField } from "../editor/livePreview/annotationWidgets";
+import { threadTurnField } from "../editor/livePreview/annotationWidgets";
 import { scopeHighlightField, setScopeHighlight } from "../editor/livePreview/scopeHighlight";
 import { Decoration } from "@codemirror/view";
 import { Annotation as AnnotationGrammar } from "../editor/markdown/annotation";
@@ -27,7 +27,7 @@ function makeView(doc: string): EditorView {
   return new EditorView({
     state: EditorState.create({
       doc,
-      extensions: [firingAnnotationsField, threadTurnField],
+      extensions: [threadTurnField],
     }),
     parent: document.createElement("div"),
   });

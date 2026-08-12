@@ -15,15 +15,8 @@ export const CLS = {
   MARKER: "cm-annotation-marker",
   MARKER_WRAP: "cm-annotation-marker-wrap",
 
-  FIRE_BTN: "cm-annotation-fire-btn",
-  FIRE_DISABLED: "cm-annotation-fire-disabled",
-  FIRE_PROXIMITY: "cm-annotation-fire-proximity",
-
   CARDBOX_LINK: "cm-annotation-cardbox-link",
 
-  SPINNER: "cm-annotation-spinner",
-  SPINNER_PASSIVE: "cm-annotation-spinner-passive",
-  STOP_ICON: "cm-annotation-stop-icon",
   FOLD_ICON: "cm-annotation-fold-icon",
 
   TENTATIVE: "cm-annotation-tentative",
@@ -38,8 +31,6 @@ export const CLS = {
   THREAD_OVERFLOW: "cm-thread-overflow",
   THREAD_OVERFLOW_MENU: "cm-thread-overflow-menu",
   THREAD_OVERFLOW_ROW: "cm-thread-overflow-row",
-  THREAD_FOLLOWUP_TRIGGER: "cm-thread-followup-trigger",
-  THREAD_FOLLOWUP_INPUT: "cm-thread-followup-input",
 
   IS_COLLAPSED: "is-collapsed",
   IS_OPEN: "is-open",
@@ -53,6 +44,9 @@ export const TYPE_ICON: Record<AnnotationType, string> = {
   crossref: "→",
   apparatus: "⊕",
   translation: "译",
+  // Legacy `llm` icon kept only while the `AnnotationType` union still carries
+  // the member (normalizeLegacyAnnotationType maps it to note at the IPC
+  // boundary, so widgets never render this).
   llm: "⚡",
   thread: "◇",
   slipnote: "S",

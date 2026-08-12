@@ -23,8 +23,6 @@ import {
   annotationFoldField,
   toggleAnnotationFoldEffect,
   threadTurnField,
-  firingAnnotationsField,
-  llmLockedField,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
@@ -64,8 +62,6 @@ function makeView(doc: string, cursorPos: number): EditorView {
       annotationBlockDecorationField,
       annotationFoldField,
       threadTurnField,
-      firingAnnotationsField,
-      llmLockedField,
     ],
   });
   const view = new EditorView({ state, parent: document.createElement("div") });

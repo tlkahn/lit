@@ -169,8 +169,8 @@ function renderControl(params: RenderControlParams) {
         />
       );
     case "custom":
-      // A dedicated component (e.g. LlmProviderSettings) owns the real UI; this
-      // entry is a search-only anchor and renders nothing here.
+      // A dedicated component owns the real UI (e.g. FontSettings); this entry is
+      // a search-only anchor and renders nothing here.
       return null;
   }
 }
@@ -190,30 +190,9 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
   }), [availableThemes]);
 
   const ensureUnlocked = useSecretStoreStore((s) => s.ensureUnlocked);
-  const exists = useSecretStoreStore((s) => s.exists);
-  const unlocked = useSecretStoreStore((s) => s.unlocked);
 
   useEffect(() => {
     if (!open) return;
-    // A locked-but-existing store makes hasApiKey() return false for every
-    // provider, which would wrongly clobber the saved-key flags to "not saved".
-    // Skip the check until the store is unlocked (migration completed); the
-    // effect re-runs once `unlocked` flips. A non-existent store (exists=false)
-    // is a fresh user with no keys, so running the check is correct there.
-    if (exists && !unlocked) return;
-    const currentProvider = usePreferencesStore.getState().llmProvider;
-    hasApiKey(currentProvider.providerId).then((has) => {
-      usePreferencesStore.setState((prev) => {
-        // Guard against a stale result: if the user switched providers between
-        // when this check fired and when it resolved, don't clobber the new
-        // provider's flag with the old provider's `has` value.
-        if (prev.llmProvider.providerId !== currentProvider.providerId) return prev;
-        // No-op when the flag already matches - avoid fabricating a fresh
-        // llmProvider object (and a store update) per resolution.
-        if (prev.llmProvider.apiKeySet === has) return prev;
-        return { llmProvider: { ...prev.llmProvider, apiKeySet: has } };
-      });
-    });
     // Reconcile paper-search API key flags against the credential store.
     const searchKeyChecks = SETTINGS_REGISTRY
       .filter((e): e is PasswordEntry => e.controlType === "password")
@@ -223,7 +202,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
         usePreferencesStore.setState({ [field]: has } as Partial<PreferencesState>);
       }).catch(() => {});
     }
-  }, [open, exists, unlocked]);
+  }, [open]);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);

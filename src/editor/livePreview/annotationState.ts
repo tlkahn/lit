@@ -5,17 +5,14 @@ import { listen } from "@tauri-apps/api/event";
 import { parseAnnotations, listAnnotations, type Annotation } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
 import { isCursorOnLine } from "./proximity";
-import { PillWidget, MarkerWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, firingRangeField, llmLockedField, setLlmLockedEffect, setFiringAnnotation, clearFiringAnnotation, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, isEffectiveFoldAllEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, ThreadWidget, annotationFoldField, threadTurnField, setThreadTurnEffect, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, isEffectiveFoldAllEffect } from "./annotationWidgets";
 import { isPerfEnabled, perfMark, perfMeasure } from "./perf";
-import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { scopeHighlightExtension } from "./scopeHighlight";
 import { markDecorationExtension } from "./markDecorations";
 import { escapeAnnotationKeymap } from "./escapeAnnotation";
-import { fireAnnotation } from "../../lib/fireOrchestrator";
-import { threadFollowup } from "../../lib/threadFollowup";
 import { copyThreadExport, deleteThread } from "../../lib/threadExport";
-import type { ThreadFollowupEventDetail, ThreadExportEventDetail, ThreadDeleteEventDetail } from "./annotationWidgets";
+import type { ThreadExportEventDetail, ThreadDeleteEventDetail } from "./annotationWidgets";
 
 export const setDisplayMode = StateEffect.define<AnnotationDisplayMode>();
 
@@ -332,8 +329,6 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
   }
 
   const mode = state.field(displayModeField);
-  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
-  const llmLocked = state.field(llmLockedField, false) ?? false;
 
   const docLen = state.doc.length;
   const decos: { from: number; to: number; deco: Decoration }[] = [];
@@ -383,8 +378,7 @@ export function buildAnnotationDecorations(view: EditorView): BuildAnnotationDec
         // tracking above keeps these lines cursor-sensitive.
         if (node.name === "BlockAnnotation" && isMultiLine) return;
 
-        const isFiring = firingSet.has(nodeFrom);
-        const widget = mode === "footnote" ? new MarkerWidget(ann, isFiring, llmLocked) : new PillWidget(ann, isFiring, llmLocked);
+        const widget = mode === "footnote" ? new MarkerWidget(ann) : new PillWidget(ann);
         decos.push({
           from: nodeFrom,
           to: nodeTo,
@@ -496,12 +490,7 @@ export const annotationDecorationPlugin = ViewPlugin.fromClass(
 );
 
 function isSharedAnnotationEffect(e: StateEffect<unknown>): boolean {
-  return (
-    e.is(setAnnotationData) ||
-    e.is(setFiringAnnotation) ||
-    e.is(clearFiringAnnotation) ||
-    e.is(setLlmLockedEffect)
-  );
+  return e.is(setAnnotationData);
 }
 
 /**
@@ -568,16 +557,13 @@ function blockWidgetFor(
   pos: number,
   foldState: Map<number, boolean> | undefined,
   turnState: Map<number, number> | undefined,
-  firingSet: Set<number>,
-  llmLocked: boolean,
 ): PillWidget | ThreadWidget {
-  const isFiring = firingSet.has(pos);
   if (ann.annotation_type === "thread") {
     const isCollapsed = foldState?.get(pos) ?? false;
-    return new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos, isFiring);
+    return new ThreadWidget(ann, turnState?.get(pos) ?? 0, isCollapsed, pos);
   }
   // Non-thread blocks render as pills — fold state is thread-only and ignored.
-  return new PillWidget(ann, isFiring, llmLocked);
+  return new PillWidget(ann);
 }
 
 export function buildAnnotationBlockDecorations(state: EditorView["state"]): BlockDecorationState {
@@ -587,8 +573,6 @@ export function buildAnnotationBlockDecorations(state: EditorView["state"]): Blo
     return { decorations: Decoration.none, blockSensitiveLines };
   }
 
-  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
-  const llmLocked = state.field(llmLockedField, false) ?? false;
   const foldState = state.field(annotationFoldField, false);
   const turnState = state.field(threadTurnField, false);
 
@@ -626,7 +610,7 @@ export function buildAnnotationBlockDecorations(state: EditorView["state"]): Blo
 
     if (isCursorOnLine(state, from, to)) continue;
 
-    const widget = blockWidgetFor(ann, from, foldState, turnState, firingSet, llmLocked);
+    const widget = blockWidgetFor(ann, from, foldState, turnState);
     decos.push({ from, to, deco: Decoration.replace({ widget }) });
   }
 
@@ -689,8 +673,6 @@ function surgicallyUpdateBlockDecorations(
   const annotations = state.field(annotationDataField);
   const rangeMap = buildAnnotationRangeMap(annotations);
 
-  const firingSet = state.field(firingAnnotationsField, false) ?? new Set<number>();
-  const llmLocked = state.field(llmLockedField, false) ?? false;
   const foldState = state.field(annotationFoldField, false);
   const turnState = state.field(threadTurnField, false);
 
@@ -705,7 +687,7 @@ function surgicallyUpdateBlockDecorations(
 
     if (isCursorOnLine(state, pos, span)) continue;
 
-    const widget = blockWidgetFor(ann, pos, foldState, turnState, firingSet, llmLocked);
+    const widget = blockWidgetFor(ann, pos, foldState, turnState);
     newDecos.push({ from: pos, to: span, deco: Decoration.replace({ widget }) });
   }
 
@@ -792,57 +774,12 @@ export function findAnnotationAtCursor(
   return annotations.find((a) => pos >= a.char_start && pos < a.char_end);
 }
 
-const fireAnnotationPlugin = ViewPlugin.fromClass(
-  class {
-    private handler: (e: Event) => void;
-    private disposeFireCleanup: (() => void) | null = null;
-    constructor(private view: EditorView) {
-      this.handler = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (detail?.annotation) {
-          const result = fireAnnotation({ view: this.view, annotation: detail.annotation });
-          result.then((cleanup) => {
-            if (typeof cleanup === "function") this.disposeFireCleanup = cleanup;
-          }).catch((err) => {
-            console.warn("fireAnnotation failed:", err);
-          });
-        }
-      };
-      window.addEventListener("lit:fire-annotation", this.handler);
-    }
-    update(update: ViewUpdate) {
-      this.view = update.view;
-    }
-    destroy() {
-      window.removeEventListener("lit:fire-annotation", this.handler);
-      this.disposeFireCleanup?.();
-      this.disposeFireCleanup = null;
-    }
-  },
-);
-
-/**
- * Bridges the `lit:thread-*` window events emitted by `ThreadWidget` into editor
- * actions. Mirrors `fireAnnotationPlugin`: re-reads the live view in `update()`
- * and tears down all listeners in `destroy()`.
- *
- * Only the follow-up handler is implemented in this phase; export and delete are
- * wired as listener shells that Phase 6 (`threadExport`) fills in.
- */
 const threadEventsPlugin = ViewPlugin.fromClass(
   class {
-    private followupHandler: (e: Event) => void;
     private exportHandler: (e: Event) => void;
     private deleteHandler: (e: Event) => void;
 
     constructor(private view: EditorView) {
-      this.followupHandler = (e: Event) => {
-        const detail = (e as CustomEvent<ThreadFollowupEventDetail>).detail;
-        if (detail?.annotation && detail.question?.trim()) {
-          threadFollowup({ view: this.view, annotation: detail.annotation, question: detail.question })
-            .catch((err) => console.warn("threadFollowup failed:", err));
-        }
-      };
       this.exportHandler = (e: Event) => {
         const detail = (e as CustomEvent<ThreadExportEventDetail>).detail;
         if (detail?.annotation) {
@@ -855,7 +792,6 @@ const threadEventsPlugin = ViewPlugin.fromClass(
         const detail = (e as CustomEvent<ThreadDeleteEventDetail>).detail;
         if (detail?.annotation) deleteThread(this.view, detail.annotation, detail.range);
       };
-      window.addEventListener("lit:thread-followup", this.followupHandler);
       window.addEventListener("lit:thread-export", this.exportHandler);
       window.addEventListener("lit:thread-delete", this.deleteHandler);
     }
@@ -863,37 +799,8 @@ const threadEventsPlugin = ViewPlugin.fromClass(
       this.view = update.view;
     }
     destroy() {
-      window.removeEventListener("lit:thread-followup", this.followupHandler);
       window.removeEventListener("lit:thread-export", this.exportHandler);
       window.removeEventListener("lit:thread-delete", this.deleteHandler);
-    }
-  },
-);
-
-const llmLockBridgePlugin = ViewPlugin.fromClass(
-  class {
-    private unsub: () => void;
-    private destroyed = false;
-    constructor(private view: EditorView) {
-      const initial = useModalLockStore.getState().llmLocked;
-      if (initial) {
-        queueMicrotask(() => {
-          if (this.destroyed) return;
-          this.view.dispatch({ effects: setLlmLockedEffect.of(true) });
-        });
-      }
-      this.unsub = useModalLockStore.subscribe((s) => {
-        if (s.llmLocked !== this.view.state.field(llmLockedField)) {
-          this.view.dispatch({ effects: setLlmLockedEffect.of(s.llmLocked) });
-        }
-      });
-    }
-    update(update: ViewUpdate) {
-      this.view = update.view;
-    }
-    destroy() {
-      this.destroyed = true;
-      this.unsub();
     }
   },
 );
@@ -907,14 +814,9 @@ export function annotationExtension(): Extension {
     annotationBlockDecorationField,
     annotationFoldField,
     threadTurnField,
-    firingAnnotationsField,
-    firingRangeField,
-    llmLockedField,
-    llmLockBridgePlugin,
     scopeHighlightExtension(),
     markDecorationExtension(),
     keymap.of(escapeAnnotationKeymap),
-    fireAnnotationPlugin,
     threadEventsPlugin,
   ];
 }

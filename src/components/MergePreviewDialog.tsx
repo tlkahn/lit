@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { PageContent, MergePlan } from "../lib/ipc";
-import { previewMerge, suggestMergeTitle, cancelTitleSuggestion } from "../lib/ipc";
+import { previewMerge } from "../lib/ipc";
 import { detectFrontmatterConflicts } from "../lib/frontmatterConflicts";
 
 export function reorderArray<T>(arr: T[], fromIdx: number, toIdx: number): T[] {
@@ -31,7 +31,6 @@ interface MergePreviewDialogProps {
   docs: PageContent[];
   onConfirm: (plan: MergePlan, ordering: number[]) => void;
   onCancel: () => void;
-  llmEnabled?: boolean;
 }
 
 function SortableItem({ id, title }: { id: string; title: string }) {
@@ -61,12 +60,10 @@ export function MergePreviewDialog({
   docs,
   onConfirm,
   onCancel,
-  llmEnabled,
 }: MergePreviewDialogProps) {
   const [ordering, setOrdering] = useState<number[]>([]);
   const [title, setTitle] = useState("");
   const [titleManuallyEdited, setTitleManuallyEdited] = useState(false);
-  const [suggestingTitle, setSuggestingTitle] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
@@ -75,12 +72,8 @@ export function MergePreviewDialog({
       setOrdering(indices);
       setTitle(docs.map((d) => d.meta.title).join(" + "));
       setTitleManuallyEdited(false);
-      setSuggestingTitle(false);
       setConfirming(false);
     }
-    return () => {
-      cancelTitleSuggestion();
-    };
   }, [open, docs]);
 
   const handleKeyDown = useCallback(
@@ -132,21 +125,6 @@ export function MergePreviewDialog({
     }
   }
 
-  async function handleSuggestTitle() {
-    setSuggestingTitle(true);
-    try {
-      const sourceTitles = ordering.map((i) => docs[i]!.meta.title);
-      const mergedBody = ordering.map((i) => docs[i]!.body).join("\n\n");
-      const suggested = await suggestMergeTitle(sourceTitles, mergedBody);
-      if (suggested) {
-        setTitle(suggested);
-        setTitleManuallyEdited(true);
-      }
-    } finally {
-      setSuggestingTitle(false);
-    }
-  }
-
   if (!open) return null;
 
   const orderedDocs = ordering.map((i) => docs[i]!);
@@ -181,17 +159,6 @@ export function MergePreviewDialog({
           }}
           data-testid="merge-title-input"
         />
-
-        {llmEnabled && (
-          <button
-            className="mb-4 rounded border border-border-primary px-2 py-1 text-xs text-text-muted hover:bg-bg-secondary disabled:opacity-50"
-            onClick={handleSuggestTitle}
-            disabled={suggestingTitle}
-            data-testid="merge-suggest-title-btn"
-          >
-            {suggestingTitle ? "Suggesting..." : "Suggest title"}
-          </button>
-        )}
 
         <label className="mb-1 block text-xs text-text-muted">Document order</label>
         <div className="mb-4 flex flex-col gap-1" data-testid="merge-section-list">

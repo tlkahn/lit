@@ -12,8 +12,6 @@ import {
 } from "./annotationState";
 import {
   annotationFoldField,
-  firingAnnotationsField,
-  llmLockedField,
   toggleAnnotationFoldEffect,
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
@@ -67,8 +65,6 @@ const blockOnlyExtensions = [
   annotationDataField,
   displayModeField,
   annotationFoldField,
-  firingAnnotationsField,
-  llmLockedField,
   annotationBlockDecorationField,
 ];
 

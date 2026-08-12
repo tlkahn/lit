@@ -50,10 +50,6 @@ describe("MergePreviewDialog", () => {
             source_titles: docs.map((d) => d.title),
           };
         }
-        case "suggest_merge_title":
-          return "AI Suggested Title";
-        case "cancel_title_suggestion":
-          return undefined;
         default:
           throw new Error(`Unknown command: ${cmd}`);
       }
@@ -160,22 +156,19 @@ describe("MergePreviewDialog", () => {
     expect(conflicts[0]!.textContent).toContain("status");
   });
 
-  it("suggest title button visible only when llmEnabled=true", () => {
-    const { container: c1 } = render(
-      <MergePreviewDialog open={true} docs={makeDocs(["A", "B"])} onConfirm={vi.fn()} onCancel={vi.fn()} llmEnabled={false} />,
+  it("no AI title suggestion UI exists (#1010)", () => {
+    const { container } = render(
+      <MergePreviewDialog open={true} docs={makeDocs(["A", "B"])} onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
-    expect(c1.querySelector("[data-testid='merge-suggest-title-btn']")).toBeNull();
-
-    const { container: c2 } = render(
-      <MergePreviewDialog open={true} docs={makeDocs(["A", "B"])} onConfirm={vi.fn()} onCancel={vi.fn()} llmEnabled={true} />,
-    );
-    expect(c2.querySelector("[data-testid='merge-suggest-title-btn']")).toBeTruthy();
+    expect(container.querySelector("[data-testid='merge-suggest-title-btn']")).toBeNull();
+    // Title defaults to the deterministic join — no network needed.
+    const input = container.querySelector("[data-testid='merge-title-input']") as HTMLInputElement;
+    expect(input.value).toBe("A + B");
   });
 
   it("confirm does not throw when previewMerge rejects", async () => {
     mockInvoke((cmd) => {
       if (cmd === "preview_merge") throw new Error("IPC failure");
-      if (cmd === "cancel_title_suggestion") return undefined;
       throw new Error(`Unknown: ${cmd}`);
     });
 
@@ -191,34 +184,5 @@ describe("MergePreviewDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("suggest title button shows loading state while pending", async () => {
-    let resolveTitle: (v: string) => void;
-    mockInvoke((cmd) => {
-      if (cmd === "suggest_merge_title") {
-        return new Promise<string>((resolve) => { resolveTitle = resolve; });
-      }
-      if (cmd === "preview_merge") {
-        return { title: "A + B", body: "", frontmatter: {}, source_titles: ["A", "B"] };
-      }
-      if (cmd === "cancel_title_suggestion") {
-        return undefined;
-      }
-      throw new Error(`Unknown: ${cmd}`);
-    });
 
-    const { container } = render(
-      <MergePreviewDialog open={true} docs={makeDocs(["A", "B"])} onConfirm={vi.fn()} onCancel={vi.fn()} llmEnabled={true} />,
-    );
-    const btn = container.querySelector("[data-testid='merge-suggest-title-btn']")!;
-    expect(btn.textContent).toBe("Suggest title");
-
-    fireEvent.click(btn);
-    await waitFor(() => expect(btn.textContent).toBe("Suggesting..."));
-
-    resolveTitle!("New Title");
-    await waitFor(() => expect(btn.textContent).toBe("Suggest title"));
-
-    const input = container.querySelector("[data-testid='merge-title-input']") as HTMLInputElement;
-    expect(input.value).toBe("New Title");
-  });
 });

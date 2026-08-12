@@ -237,78 +237,6 @@ export async function secretStoreStatus(): Promise<SecretStoreStatus> {
   return invoke<SecretStoreStatus>("secret_store_status");
 }
 
-// LLM commands
-
-export interface LlmPromptStreamingArgs {
-  model: string;
-  text: string;
-  system?: string;
-  messages?: Array<{ role: string; content: string }>;
-  options?: Record<string, unknown>;
-  baseUrl?: string;
-  provider?: string;
-  contextWindow?: number;
-}
-
-export async function llmPromptStreaming(args: LlmPromptStreamingArgs): Promise<void> {
-  return invoke<void>("llm_prompt_streaming", {
-    args: {
-      model: args.model,
-      text: args.text,
-      system: args.system ?? null,
-      messages: args.messages ?? [],
-      options: args.options ?? {},
-      base_url: args.baseUrl ?? null,
-      provider: args.provider ?? "",
-      context_window: args.contextWindow ?? null,
-    },
-  });
-}
-
-export interface BuiltContext {
-  system: string;
-  messages: Array<{ role: string; content: string }>;
-  truncation: { original_tokens: number; kept_tokens: number } | null;
-}
-
-export async function llmBuildContext(args: {
-  nodeId: string;
-  systemPrompt?: string;
-  neighborsDepth: number;
-  model: string;
-  messages: Array<{ role: string; content: string }>;
-  provider?: string;
-  contextWindow?: number;
-}): Promise<BuiltContext> {
-  return invoke<BuiltContext>("llm_build_context", {
-    args: {
-      node_id: args.nodeId,
-      system_prompt: args.systemPrompt ?? "",
-      neighbors_depth: args.neighborsDepth,
-      model: args.model,
-      messages: args.messages,
-      provider: args.provider ?? "",
-      context_window: args.contextWindow ?? null,
-    },
-  });
-}
-
-export async function llmCancel(): Promise<void> {
-  return invoke<void>("llm_cancel");
-}
-
-export async function testLlmConnection(
-  model: string,
-  baseUrl?: string,
-  provider?: string,
-): Promise<void> {
-  return invoke<void>("llm_test_connection", {
-    model,
-    baseUrl: baseUrl ?? null,
-    provider: provider ?? null,
-  });
-}
-
 // Crossref commands
 
 export interface ResolvedCitation {
@@ -1160,6 +1088,19 @@ export type AnnotationType =
   | "mark"
   | "bare";
 
+/**
+ * Legacy `llm` annotations: the annotation grammar still parses the `llm`
+ * keyword as `AnnotationType::Llm` (lit-annotation-core pinned tag), but lit no
+ * longer productizes LLM annotations. Every annotation entering the frontend is
+ * normalized to `note` at the IPC boundary, so widgets, cardbox filters, and the
+ * DSL generator never see `"llm"` in production paths. On-disk `<!--- llm --->`
+ * markers stay until the user edits them through the builder (which re-emits
+ * the `n` keyword); there is no silent whole-vault migration.
+ */
+export function normalizeLegacyAnnotationType(type: AnnotationType): AnnotationType {
+  return type === "llm" ? "note" : type;
+}
+
 export type Certainty = "tentative" | "firm" | "neutral";
 
 export type AnnotationForm = "compact" | "block";
@@ -1201,7 +1142,11 @@ export interface ScopeRange {
 }
 
 export async function parseAnnotations(content: string): Promise<Annotation[]> {
-  return invoke<Annotation[]>("parse_annotations", { content });
+  const annotations = await invoke<Annotation[]>("parse_annotations", { content });
+  return annotations.map((a) => ({
+    ...a,
+    annotation_type: normalizeLegacyAnnotationType(a.annotation_type),
+  }));
 }
 
 export async function resolveAnnotationScope(
@@ -1301,11 +1246,15 @@ export async function searchAnnotations(
   annotationType?: AnnotationType,
   limit?: number,
 ): Promise<AnnotationSearchResult[]> {
-  return invoke<AnnotationSearchResult[]>("search_annotations", {
+  const results = await invoke<AnnotationSearchResult[]>("search_annotations", {
     query,
     annotationType: annotationType ?? null,
     limit: limit ?? null,
   });
+  return results.map((r) => ({
+    ...r,
+    annotation_type: normalizeLegacyAnnotationType(r.annotation_type),
+  }));
 }
 
 export async function listAnnotations(
@@ -1313,11 +1262,15 @@ export async function listAnnotations(
   annotationType?: AnnotationType,
   limit?: number,
 ): Promise<AnnotationSearchResult[]> {
-  return invoke<AnnotationSearchResult[]>("list_annotations", {
+  const results = await invoke<AnnotationSearchResult[]>("list_annotations", {
     nodeId: nodeId ?? null,
     annotationType: annotationType ?? null,
     limit: limit ?? null,
   });
+  return results.map((r) => ({
+    ...r,
+    annotation_type: normalizeLegacyAnnotationType(r.annotation_type),
+  }));
 }
 
 // Cardbox (annotation-centered view)
@@ -1343,7 +1296,11 @@ export interface CardboxAnnotation {
 }
 
 export async function listAllAnnotations(): Promise<CardboxAnnotation[]> {
-  return invoke<CardboxAnnotation[]>("list_all_annotations", {});
+  const annotations = await invoke<CardboxAnnotation[]>("list_all_annotations", {});
+  return annotations.map((a) => ({
+    ...a,
+    annotation_type: normalizeLegacyAnnotationType(a.annotation_type as AnnotationType),
+  }));
 }
 
 export interface GroupInfo {
@@ -1560,21 +1517,6 @@ export async function previewSplit(
 
 export async function executeSplit(relativePath: string): Promise<string[]> {
   return invoke<string[]>("execute_split", { relativePath });
-}
-
-export async function suggestMergeTitle(
-  sourceTitles: string[],
-  mergedBody: string,
-): Promise<string | null> {
-  try {
-    return await invoke<string>("suggest_merge_title", { sourceTitles, mergedBody });
-  } catch {
-    return null;
-  }
-}
-
-export async function cancelTitleSuggestion(): Promise<void> {
-  return invoke<void>("cancel_title_suggestion");
 }
 
 export async function mergeDocuments(

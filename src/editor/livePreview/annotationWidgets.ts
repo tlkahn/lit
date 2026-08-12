@@ -3,7 +3,6 @@ import { StateEffect, StateField, type Transaction } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { Annotation } from "../../lib/ipc";
 import type { AnnotationBuilderEventDetail } from "../../lib/annotationDsl";
-import { canFire } from "../../lib/fireClassification";
 import { renderMarkdown, renderInlineMarkdown } from "../../lib/renderMarkdown";
 import { handleAnnotationHover, handleAnnotationLeave } from "./annotationHover";
 import { CLS, TYPE_ICON, getMarkIcon, certaintyClass, certaintyMark, truncateBody } from "./annotationConstants";
@@ -12,129 +11,9 @@ import "./annotation.css";
 
 export { certaintyClass, certaintyMark };
 
-export interface FireAnnotationEventDetail {
-  annotation: Annotation;
-}
-
 export interface FocusCardboxCardEventDetail {
   uuid: string;
   highlightNote?: boolean;
-}
-
-// --- Firing annotations state (Cycle 11) ---
-
-export const setFiringAnnotation = StateEffect.define<number>();
-export const clearFiringAnnotation = StateEffect.define<number>();
-
-// --- Firing range state (live-remapping from/to for the active firing annotation) ---
-
-export const setFiringRange = StateEffect.define<{ from: number; to: number }>();
-export const clearFiringRange = StateEffect.define<void>();
-
-export const firingRangeField = StateField.define<{ from: number; to: number } | null>({
-  create() {
-    return null;
-  },
-  update(value, tr) {
-    let result = value;
-    if (tr.docChanged && result !== null) {
-      result = {
-        from: tr.changes.mapPos(result.from, 1),
-        to: tr.changes.mapPos(result.to, -1),
-      };
-    }
-    for (const effect of tr.effects) {
-      if (effect.is(setFiringRange)) {
-        result = effect.value;
-      } else if (effect.is(clearFiringRange)) {
-        result = null;
-      }
-    }
-    return result;
-  },
-});
-
-export const firingAnnotationsField = StateField.define<Set<number>>({
-  create() {
-    return new Set();
-  },
-  update(value, tr) {
-    let result = value;
-    if (tr.docChanged) {
-      result = new Set<number>();
-      for (const pos of value) {
-        result.add(tr.changes.mapPos(pos, 1));
-      }
-    }
-    for (const effect of tr.effects) {
-      if (effect.is(setFiringAnnotation)) {
-        if (result === value) result = new Set(value);
-        result.add(effect.value);
-      } else if (effect.is(clearFiringAnnotation)) {
-        if (result === value) result = new Set(value);
-        result.delete(effect.value);
-      }
-    }
-    return result;
-  },
-});
-
-// --- LLM locked state (reactive bridge) ---
-
-export const setLlmLockedEffect = StateEffect.define<boolean>();
-
-export const llmLockedField = StateField.define<boolean>({
-  create: () => false,
-  update(value, tr) {
-    for (const effect of tr.effects) {
-      if (effect.is(setLlmLockedEffect)) return effect.value;
-    }
-    return value;
-  },
-});
-
-// --- Fire button ---
-
-export function createFireButton(ann: Annotation, isFiring?: boolean, llmLocked?: boolean): HTMLSpanElement | null {
-  if (!canFire(ann.annotation_type)) return null;
-
-  const btn = document.createElement("span");
-  btn.className = CLS.FIRE_BTN;
-
-  if (isFiring) {
-    btn.classList.add(CLS.SPINNER);
-    const stop = document.createElement("span");
-    stop.className = CLS.STOP_ICON;
-    stop.textContent = "\u{f04d}"; // nerdfont nf-fa-stop
-    btn.appendChild(stop);
-    btn.onmousedown = (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      window.dispatchEvent(new CustomEvent("lit:cancel-fire"));
-    };
-    return btn;
-  }
-
-  if (llmLocked) {
-    btn.classList.add(CLS.FIRE_DISABLED);
-  }
-
-  if (!llmLocked) {
-    btn.classList.add(CLS.FIRE_PROXIMITY);
-  }
-
-  btn.textContent = "▶";
-  btn.onmousedown = (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (llmLocked) return;
-    window.dispatchEvent(
-      new CustomEvent<FireAnnotationEventDetail>("lit:fire-annotation", {
-        detail: { annotation: ann },
-      }),
-    );
-  };
-  return btn;
 }
 
 // --- Cardbox link button ---
@@ -243,8 +122,6 @@ function interceptFootnoteClicks(body: HTMLElement): void {
 export class PillWidget extends WidgetType {
   constructor(
     readonly annotation: Annotation,
-    readonly isFiring: boolean = false,
-    readonly llmLocked: boolean = false,
   ) {
     super();
   }
@@ -258,8 +135,6 @@ export class PillWidget extends WidgetType {
       e.preventDefault();
       dispatchEditEvent(this.annotation);
     };
-    const fireBtn = createFireButton(this.annotation, this.isFiring, this.llmLocked);
-    if (fireBtn) pill.appendChild(fireBtn);
     const cardboxLink = createCardboxLinkButton(this.annotation);
     if (cardboxLink) pill.appendChild(cardboxLink);
     return pill;
@@ -271,9 +146,7 @@ export class PillWidget extends WidgetType {
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
-      this.annotation.uuid === other.annotation.uuid &&
-      this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked
+      this.annotation.uuid === other.annotation.uuid
     );
   }
 
@@ -289,8 +162,6 @@ export class PillWidget extends WidgetType {
 export class MarkerWidget extends WidgetType {
   constructor(
     readonly annotation: Annotation,
-    readonly isFiring: boolean = false,
-    readonly llmLocked: boolean = false,
   ) {
     super();
   }
@@ -307,9 +178,8 @@ export class MarkerWidget extends WidgetType {
         ? getMarkIcon(ann.mark ?? "")
         : (TYPE_ICON[ann.annotation_type] ?? "…")) + certaintyMark(ann.certainty);
 
-    const fireBtn = createFireButton(ann, this.isFiring, this.llmLocked);
     const cardboxLink = createCardboxLinkButton(ann);
-    if (!fireBtn && !cardboxLink) {
+    if (!cardboxLink) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       sup.onmouseleave = () => handleAnnotationLeave(view);
       sup.onclick = (e) => {
@@ -328,13 +198,12 @@ export class MarkerWidget extends WidgetType {
     const wrap = document.createElement("span");
     wrap.className = CLS.MARKER_WRAP;
     wrap.appendChild(sup);
-    if (fireBtn) wrap.appendChild(fireBtn);
-    if (cardboxLink) wrap.appendChild(cardboxLink);
+    wrap.appendChild(cardboxLink);
 
     wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     wrap.onmouseleave = () => handleAnnotationLeave(view);
     wrap.onclick = (e) => {
-      if ((e.target as HTMLElement).closest(`.${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}`)) return;
+      if ((e.target as HTMLElement).closest(`.${CLS.CARDBOX_LINK}`)) return;
       e.preventDefault();
       if (e.metaKey || e.ctrlKey) {
         dispatchEditEvent(ann);
@@ -353,9 +222,7 @@ export class MarkerWidget extends WidgetType {
       this.annotation.char_start === other.annotation.char_start &&
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.mark === other.annotation.mark &&
-      this.annotation.uuid === other.annotation.uuid &&
-      this.isFiring === other.isFiring &&
-      this.llmLocked === other.llmLocked
+      this.annotation.uuid === other.annotation.uuid
     );
   }
 
@@ -464,11 +331,6 @@ function createFoldSvg(): SVGSVGElement {
 
 // --- Thread Widget ---
 
-export interface ThreadFollowupEventDetail {
-  annotation: Annotation;
-  question: string;
-}
-
 export interface ThreadExportEventDetail {
   annotation: Annotation;
   /** -1 exports the whole thread; otherwise the index of a single turn. */
@@ -496,7 +358,6 @@ export class ThreadWidget extends WidgetType {
     readonly turn: number,
     readonly isCollapsed: boolean,
     readonly pos: number,
-    readonly isFiring: boolean = false,
   ) {
     super();
   }
@@ -534,13 +395,6 @@ export class ThreadWidget extends WidgetType {
       const cardboxLink = createCardboxLinkButton(ann);
       if (cardboxLink) pill.appendChild(cardboxLink);
 
-      if (this.isFiring) {
-        const spinner = document.createElement("span");
-        spinner.className = CLS.SPINNER;
-        spinner.classList.add(CLS.SPINNER_PASSIVE);
-        pill.appendChild(spinner);
-      }
-
       const arrow = document.createElement("span");
       arrow.className = CLS.FOLD_ICON;
       arrow.classList.add(CLS.IS_COLLAPSED);
@@ -554,7 +408,7 @@ export class ThreadWidget extends WidgetType {
       pill.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
       pill.onmouseleave = () => handleAnnotationLeave(view);
       pill.onclick = (e) => {
-        if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}, .${CLS.SPINNER}`)) return;
+        if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}`)) return;
         e.preventDefault();
         dispatchEditEvent(ann);
       };
@@ -594,7 +448,7 @@ export class ThreadWidget extends WidgetType {
     header.onclick = (e) => {
       if (
         (e.target as HTMLElement).closest(
-          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.FIRE_BTN}, .${CLS.CARDBOX_LINK}, .${CLS.SPINNER}`,
+          `.${CLS.FOLD_ICON}, .${CLS.THREAD_NAV_ARROW}, .${CLS.THREAD_OVERFLOW}, .${CLS.THREAD_OVERFLOW_MENU}, .${CLS.CARDBOX_LINK}`,
         )
       )
         return;
@@ -646,13 +500,6 @@ export class ThreadWidget extends WidgetType {
       nav.appendChild(fwd);
 
       header.appendChild(nav);
-    }
-
-    if (this.isFiring) {
-      const spinner = document.createElement("span");
-      spinner.className = CLS.SPINNER;
-      spinner.classList.add(CLS.SPINNER_PASSIVE);
-      header.appendChild(spinner);
     }
 
     const cardboxLink = createCardboxLinkButton(ann);
@@ -773,39 +620,6 @@ export class ThreadWidget extends WidgetType {
     body.innerHTML = renderMarkdown(activeTurn?.response ?? "");
     interceptFootnoteClicks(body);
     container.appendChild(body);
-
-    if (!this.isFiring) {
-      const trigger = document.createElement("span");
-      trigger.className = `${CLS.THREAD_FOLLOWUP_TRIGGER} ${CLS.FIRE_PROXIMITY}`;
-      trigger.textContent = "⊕ Follow up";
-      trigger.onmousedown = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const textarea = document.createElement("textarea");
-        textarea.className = CLS.THREAD_FOLLOWUP_INPUT;
-        textarea.placeholder = "Ask a follow-up…";
-        textarea.onpaste = (pe) => {
-          pe.stopPropagation();
-        };
-        textarea.onkeydown = (ke) => {
-          ke.stopPropagation();
-          if (ke.key === "Enter" && (ke.metaKey || ke.ctrlKey)) {
-            ke.preventDefault();
-            window.dispatchEvent(
-              new CustomEvent<ThreadFollowupEventDetail>("lit:thread-followup", {
-                detail: { annotation: ann, question: textarea.value },
-              }),
-            );
-          } else if (ke.key === "Escape") {
-            ke.preventDefault();
-            textarea.replaceWith(trigger);
-          }
-        };
-        trigger.replaceWith(textarea);
-        textarea.focus();
-      };
-      container.appendChild(trigger);
-    }
   }
 
   eq(other: ThreadWidget): boolean {
@@ -815,8 +629,7 @@ export class ThreadWidget extends WidgetType {
       this.annotation.char_end === other.annotation.char_end &&
       this.annotation.uuid === other.annotation.uuid &&
       this.turn === other.turn &&
-      this.isCollapsed === other.isCollapsed &&
-      this.isFiring === other.isFiring
+      this.isCollapsed === other.isCollapsed
     );
   }
 
@@ -829,12 +642,7 @@ export class ThreadWidget extends WidgetType {
   }
 
   ignoreEvent(event: Event): boolean {
-    if (event.type === "mousedown") return true;
-    if (event.type === "keydown" || event.type === "paste") {
-      const t = event.target;
-      return t instanceof HTMLTextAreaElement && t.classList.contains(CLS.THREAD_FOLLOWUP_INPUT);
-    }
-    return false;
+    return event.type === "mousedown";
   }
 
   get estimatedHeight(): number {

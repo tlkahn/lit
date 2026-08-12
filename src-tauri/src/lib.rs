@@ -151,7 +151,6 @@ pub fn run() {
         .manage(BibCache::new())
         .manage(MarkConfigCache::new())
         .manage(commands::llm::LlmState::new())
-        .manage(commands::merge_split::TitleSuggestState::new())
         .manage(commands::lkg::LkgExportState::new())
         .manage(commands::cardbox::CardboxLock::new())
         .manage(context_menu::PendingContextMenu::default())
@@ -466,8 +465,6 @@ pub fn run() {
             commands::oplog::can_undo,
             commands::merge_split::preview_merge,
             commands::merge_split::preview_split,
-            commands::merge_split::suggest_merge_title,
-            commands::merge_split::cancel_title_suggestion,
             commands::merge_split::execute_split,
             commands::merge_split::merge_documents,
             commands::academic_export::detect_pandoc,
@@ -509,9 +506,6 @@ pub fn run() {
                 }
                 if let Some(llm_state) = window.try_state::<commands::llm::LlmState>() {
                     llm_state.cancel();
-                }
-                if let Some(title_state) = window.try_state::<commands::merge_split::TitleSuggestState>() {
-                    title_state.cancel();
                 }
             }
         })

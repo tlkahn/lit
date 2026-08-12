@@ -17,23 +17,9 @@ function getExplicitCompletions(doc: string, pos: number) {
 }
 
 describe("annotationCompletionSource", () => {
-  it("/llm triggers completion that inserts annotation DSL", () => {
+    it("/llm no longer offers a completion (#1010)", () => {
     const result = getCompletions("/llm", 4);
-    expect(result).not.toBeNull();
-    expect(result!.options).toHaveLength(1);
-    expect(result!.options[0]!.label).toBe("/llm");
-
-    const view = new EditorView({
-      state: EditorState.create({ doc: "/llm" }),
-      parent: document.createElement("div"),
-    });
-
-    const apply = result!.options[0]!.apply as (view: EditorView, completion: unknown, from: number, to: number) => void;
-    apply(view, null, 0, 4);
-
-    expect(view.state.doc.toString()).toBe("<!--- llm |  --->");
-    expect(view.state.selection.main.head).toBe(12);
-    view.destroy();
+    expect(result).toBeNull();
   });
 
   it("/todo triggers completion", () => {
@@ -85,7 +71,7 @@ describe("annotationCompletionSource", () => {
   it("bare / triggers all completions explicitly", () => {
     const result = getExplicitCompletions("/", 1);
     expect(result).not.toBeNull();
-    expect(result!.options.length).toBe(7);
+    expect(result!.options.length).toBe(6);
   });
 
   it("cursor position is between | and ---> after apply", () => {

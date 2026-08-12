@@ -3,7 +3,7 @@ import { useModalLockStore } from "./modalLock";
 
 describe("modalLock store", () => {
   beforeEach(() => {
-    useModalLockStore.setState({ openCount: 0, locked: false, llmLocked: false });
+    useModalLockStore.setState({ openCount: 0, locked: false });
   });
 
   it("starts with openCount 0 and locked false", () => {
@@ -55,38 +55,5 @@ describe("modalLock store", () => {
     expect(useModalLockStore.getState().locked).toBe(true);
     useModalLockStore.getState().decrement();
     expect(useModalLockStore.getState().locked).toBe(false);
-  });
-
-  describe("llmLocked", () => {
-    it("starts with llmLocked false", () => {
-      expect(useModalLockStore.getState().llmLocked).toBe(false);
-    });
-
-    it("setLlmLocked(true) sets llmLocked to true", () => {
-      useModalLockStore.getState().setLlmLocked(true);
-      expect(useModalLockStore.getState().llmLocked).toBe(true);
-    });
-
-    it("setLlmLocked(false) sets llmLocked back to false", () => {
-      useModalLockStore.getState().setLlmLocked(true);
-      useModalLockStore.getState().setLlmLocked(false);
-      expect(useModalLockStore.getState().llmLocked).toBe(false);
-    });
-
-    it("llmLocked is independent of modal locked", () => {
-      useModalLockStore.getState().increment();
-      expect(useModalLockStore.getState().locked).toBe(true);
-
-      useModalLockStore.getState().setLlmLocked(true);
-      expect(useModalLockStore.getState().llmLocked).toBe(true);
-
-      useModalLockStore.getState().decrement();
-      expect(useModalLockStore.getState().locked).toBe(false);
-      expect(useModalLockStore.getState().llmLocked).toBe(true);
-
-      useModalLockStore.getState().setLlmLocked(false);
-      expect(useModalLockStore.getState().llmLocked).toBe(false);
-      expect(useModalLockStore.getState().locked).toBe(false);
-    });
   });
 });
