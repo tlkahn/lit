@@ -8,8 +8,9 @@
 //!   4. markdown draft body / frontmatter construction.
 //!
 //! These building blocks are wired into the `merge_cards_to_draft` Tauri
-//! command below, which assembles selected cards into a merged markdown draft,
-//! asks the configured LLM for a title, and writes the file to disk.
+//! command below, which assembles selected cards into a merged markdown draft
+//! with a deterministic `source_titles.join(" + ")` title, and writes the file
+//! to disk.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -211,8 +212,8 @@ pub(crate) fn build_draft_frontmatter(
 /// topology (BFS over `layout.links`), pairs each with its slip note (from the
 /// sn-derived `notes` map) and citekey (from the pre-computed `citekey_map`,
 /// keyed by `source_page_id`), then renders the markdown body. Returns the body
-/// plus the deduplicated source titles in first-seen order (used for
-/// frontmatter and as the LLM-title fallback).
+/// plus the deduplicated source titles in first-seen order (used for the
+/// deterministic `source_titles.join(" + ")` frontmatter title).
 pub(crate) fn prepare_draft_content(
     uuids: &[String],
     all_annotations: &[CardboxAnnotation],
