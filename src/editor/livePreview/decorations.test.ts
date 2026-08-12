@@ -12,7 +12,7 @@ import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
 import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget } from "./widgets";
-import { FootnoteDefMarkWidget } from "./footnoteWidgets";
+import { FootnoteRefWidget, FootnoteDefMarkWidget } from "./footnoteWidgets";
 
 vi.mock("katex", () => ({
   default: {
@@ -52,8 +52,8 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   widgetVariant?: "short" | "full";
-  widgetKind?: "escaped-dollar" | "footnote-def-mark";
-  footnoteDefNumber?: number;
+  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref";
+  footnoteDisplayLabel?: string; // raw source label for ref sup and def mark
   url?: string;
   style?: string;
 };
@@ -73,9 +73,13 @@ function collectDecos(view: EditorView): DecoInfo[] {
       info.widget = true;
       if (spec.widget instanceof HorizontalRuleWidget) info.widgetVariant = spec.widget.variant;
       if (spec.widget instanceof EscapedDollarWidget) info.widgetKind = "escaped-dollar";
+      if (spec.widget instanceof FootnoteRefWidget) {
+        info.widgetKind = "footnote-ref";
+        info.footnoteDisplayLabel = spec.widget.label;
+      }
       if (spec.widget instanceof FootnoteDefMarkWidget) {
         info.widgetKind = "footnote-def-mark";
-        info.footnoteDefNumber = spec.widget.number;
+        info.footnoteDisplayLabel = spec.widget.label;
       }
     }
     if (spec.class) info.class = spec.class;
@@ -2321,12 +2325,36 @@ describe("buildDecorations — footnote references", () => {
     view.destroy();
   });
 
-  it("correct number from first-reference order", () => {
+  it("ref widgets show source labels in document order (out-of-order numbers)", () => {
+    const doc = "Claim A[^1], claim B[^3], claim C[^2].\n\n[^1]: First\n[^2]: Second\n[^3]: Third";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const refs = decos
+      .filter((d) => d.widgetKind === "footnote-ref")
+      .sort((a, b) => a.from - b.from);
+    expect(refs.map((r) => r.footnoteDisplayLabel)).toEqual(["1", "3", "2"]);
+    view.destroy();
+  });
+
+  it("ref widgets show source labels, not first-reference order ([^b] then [^a])", () => {
     const doc = "See [^b] and [^a].\n\n[^a]: A\n[^b]: B";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
-    const widgets = decos.filter((d) => d.widget && d.from < 20);
-    expect(widgets).toHaveLength(2);
+    const refs = decos
+      .filter((d) => d.widgetKind === "footnote-ref")
+      .sort((a, b) => a.from - b.from);
+    expect(refs).toHaveLength(2);
+    expect(refs.map((r) => r.footnoteDisplayLabel)).toEqual(["b", "a"]);
+    view.destroy();
+  });
+
+  it("named label displays as the label string", () => {
+    const doc = "See [^note].\n\n[^note]: Note body";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const refs = decos.filter((d) => d.widgetKind === "footnote-ref");
+    expect(refs).toHaveLength(1);
+    expect(refs[0]!.footnoteDisplayLabel).toBe("note");
     view.destroy();
   });
 
@@ -2339,18 +2367,21 @@ describe("buildDecorations — footnote references", () => {
     view.destroy();
   });
 
-  it("multiple refs to same label show same number", () => {
+  it("duplicate refs to one label both display the same label", () => {
     const doc = "See [^x] and [^x].\n\n[^x]: X def";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
-    const widgets = decos.filter((d) => d.widget && d.from < 20);
-    expect(widgets).toHaveLength(2);
+    const refs = decos
+      .filter((d) => d.widgetKind === "footnote-ref")
+      .sort((a, b) => a.from - b.from);
+    expect(refs).toHaveLength(2);
+    expect(refs.map((r) => r.footnoteDisplayLabel)).toEqual(["x", "x"]);
     view.destroy();
   });
 });
 
 describe("buildDecorations — footnote definitions", () => {
-  it("replaces only the FootnoteDefMark with a numbered widget when caret is elsewhere", () => {
+  it("replaces only the FootnoteDefMark with a label widget when caret is elsewhere", () => {
     const doc = "Text\n\n[^1]: Def text";
     const view = makeView(doc, 2); // caret on "Text", away from the def
     const decos = collectDecos(view);
@@ -2476,28 +2507,37 @@ describe("buildDecorations — footnote definitions", () => {
     view.destroy();
   });
 
-  it("def marker numbers match first-reference order (same map as refs)", () => {
+  it("def markers show source labels, not appearance order (same labels as refs)", () => {
     const doc = "See [^b] and [^a].\n\n[^a]: A\n[^b]: B";
     const view = makeView(doc, 0);
     const decos = collectDecos(view);
     const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
     expect(marks).toHaveLength(2);
-    // [^b] is the first ref (number 1); [^a] is the second (number 2).
     const aMark = marks.find((d) => d.from === 20); // "[^a]:" at 20..25
     const bMark = marks.find((d) => d.from === 28); // "[^b]:" at 28..33
-    expect(aMark!.footnoteDefNumber).toBe(2);
-    expect(bMark!.footnoteDefNumber).toBe(1);
+    expect(aMark!.footnoteDisplayLabel).toBe("a");
+    expect(bMark!.footnoteDisplayLabel).toBe("b");
     view.destroy();
   });
 
-  it("orphan def (no ref) still gets a number from the map tail", () => {
+  it("def marker for named label displays the label", () => {
+    const doc = "See [^note].\n\n[^note]: Note body";
+    const view = makeView(doc, 0);
+    const decos = collectDecos(view);
+    const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.footnoteDisplayLabel).toBe("note");
+    view.destroy();
+  });
+
+  it("orphan def (no ref) shows its source label, not a map-tail number", () => {
     const doc = "See [^a].\n\n[^a]: A\n[^b]: B";
     const view = makeView(doc, 0);
     const decos = collectDecos(view);
     const marks = decos.filter((d) => d.widgetKind === "footnote-def-mark");
     expect(marks).toHaveLength(2);
     const bMark = marks.find((d) => d.from === 19); // "[^b]:" at 19..24
-    expect(bMark!.footnoteDefNumber).toBe(2);
+    expect(bMark!.footnoteDisplayLabel).toBe("b");
     view.destroy();
   });
 

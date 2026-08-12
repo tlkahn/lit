@@ -507,14 +507,22 @@ describe("renderInlineMarkdown", () => {
     expect(renderInlineMarkdown("")).toBe("");
   });
 
-  it("replaces footnote refs with non-anchor sup markers", () => {
+  it("replaces footnote refs with source-label non-anchor sup markers", () => {
     const result = renderInlineMarkdown("see[^alpha] and[^beta] then[^alpha] again");
     const div = document.createElement("div");
     div.innerHTML = result;
     const sups = div.querySelectorAll("sup.footnote-ref");
     expect(sups).toHaveLength(3);
-    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["1", "2", "1"]);
+    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["alpha", "beta", "alpha"]);
     expect(div.querySelector("a")).toBeNull();
+  });
+
+  it("preserves out-of-order numeric labels in the inline strip path", () => {
+    const result = renderInlineMarkdown("A[^1], B[^3], C[^2].");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    const sups = div.querySelectorAll("sup.footnote-ref");
+    expect(Array.from(sups).map((s) => s.textContent)).toEqual(["1", "3", "2"]);
   });
 
   it("strips footnote definition lines including continuations", () => {
@@ -531,6 +539,32 @@ describe("renderInlineMarkdown", () => {
     const result = renderInlineMarkdown("`[^1]` code");
     expect(result).toContain("<code>[^1]</code>");
     expect(result).not.toContain("footnote-ref");
+  });
+
+  it("does not turn HTML-tainted footnote-like text into a marker", () => {
+    // `<`/`>` are outside the LP identifier charset, so `[^a<b>c]` is not a
+    // footnote ref in the strip path - it must stay literal source, not become
+    // a sup whose label content could parse as markup.
+    const result = renderInlineMarkdown("see[^a<b>c] end");
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    expect(div.querySelectorAll("sup.footnote-ref")).toHaveLength(0);
+    expect(div.querySelector("img")).toBeNull();
+  });
+
+  it("does not rewrite wide garbage footnote text into a sup element", () => {
+    // Review breakout: a label that closes the sup and injects an img. The
+    // strip path must not rewrite this into a footnote sup at all - the marker
+    // builder only handles LP identifier labels, and anything else stays
+    // literal source text (DOMPurify strips any raw handler attributes).
+    const result = renderInlineMarkdown(
+      "see[^foo</sup><img src=x onerror=alert(1)>bar] x",
+    );
+    const div = document.createElement("div");
+    div.innerHTML = result;
+    expect(div.querySelectorAll("sup.footnote-ref")).toHaveLength(0);
+    expect(div.querySelector("[onerror]")).toBeNull();
+    expect(div.textContent).toContain("[^foo");
   });
 });
 

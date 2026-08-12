@@ -143,7 +143,7 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           // Mark-only replace (single-line); the def body stays visible. The
           // whole def stays cursor-sensitive via cursorSensitiveNodeNames, so
           // entering any line reveals the raw marker and drops the line class.
-          addFootnoteDefDecos(state, node.from, node.to, node.node, footnoteMap, decos);
+          addFootnoteDefDecos(state, node.from, node.to, node.node, decos);
           return false; // only FootnoteDefMark child today; nothing else to walk
         }
         if (node.name === "DisplayMath") {
@@ -335,14 +335,13 @@ function addFootnoteRefDecos(
   if (marks.length < 2) return;
 
   const label = state.doc.sliceString(marks[0]!.to, marks[1]!.from);
-  const num = footnoteMap.labelToNumber.get(label) ?? 0;
   const defPos = footnoteMap.defPositions.get(label);
   const targetDefPos = defPos ? defPos.from : null;
 
   decos.push({
     from,
     to,
-    deco: Decoration.replace({ widget: new FootnoteRefWidget(label, num, targetDefPos) }),
+    deco: Decoration.replace({ widget: new FootnoteRefWidget(label, targetDefPos) }),
   });
 }
 
@@ -351,7 +350,6 @@ function addFootnoteDefDecos(
   from: number,
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
-  footnoteMap: FootnoteMap,
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
   // Any line of a multi-line def reveals the raw marker and drops the line
@@ -365,7 +363,8 @@ function addFootnoteDefDecos(
   const markText = state.doc.sliceString(mark.from, mark.to);
   const m = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
   const label = m?.[1];
-  const num = label ? (footnoteMap.labelToNumber.get(label) ?? 0) : 0;
+  // Unparsed mark text gets no widget (skip rather than inventing a fallback).
+  if (!label) return;
 
   // Marker + one trailing separator (never the body) - same convention as
   // headings, which swallow a single space after the HeaderMark.
@@ -380,7 +379,7 @@ function addFootnoteDefDecos(
     from: mark.from,
     to: replaceTo,
     deco: Decoration.replace({
-      widget: new FootnoteDefMarkWidget(num),
+      widget: new FootnoteDefMarkWidget(label),
     }),
   });
 

@@ -12,32 +12,13 @@ function makeState(doc: string): EditorState {
 }
 
 describe("buildFootnoteMap", () => {
-  it("assigns number 1 to single ref", () => {
-    const state = makeState("See [^1] here.");
-    const map = buildFootnoteMap(state);
-    expect(map.labelToNumber.get("1")).toBe(1);
-  });
-
-  it("assigns sequential numbers to multiple refs in order", () => {
-    const state = makeState("See [^a] and [^b] and [^c].");
-    const map = buildFootnoteMap(state);
-    expect(map.labelToNumber.get("a")).toBe(1);
-    expect(map.labelToNumber.get("b")).toBe(2);
-    expect(map.labelToNumber.get("c")).toBe(3);
-  });
-
-  it("assigns same number to duplicate ref", () => {
-    const state = makeState("See [^x] and again [^x].");
-    const map = buildFootnoteMap(state);
-    expect(map.labelToNumber.get("x")).toBe(1);
-    expect(map.refPositions.get("x")).toHaveLength(2);
-  });
-
-  it("assigns number after referenced ones for unreferenced definition", () => {
-    const state = makeState("See [^a].\n\n[^a]: Def A\n[^b]: Def B");
-    const map = buildFootnoteMap(state);
-    expect(map.labelToNumber.get("a")).toBe(1);
-    expect(map.labelToNumber.get("b")).toBe(2);
+  it("exposes only defPositions (no ref index, no labelToNumber)", () => {
+    const map = buildFootnoteMap(makeState("See [^a].\n\n[^a]: A"));
+    expect(map).toEqual({
+      defPositions: expect.any(Map),
+    });
+    expect(map).not.toHaveProperty("refPositions");
+    expect(map).not.toHaveProperty("labelToNumber");
   });
 
   it("records correct defPositions", () => {
@@ -50,27 +31,32 @@ describe("buildFootnoteMap", () => {
     expect(def!.to).toBe(doc.length);
   });
 
-  it("maps refPositions to array of from positions", () => {
-    const state = makeState("See [^a] and [^a] here.");
+  it("orphan def appears in defPositions without requiring a ref", () => {
+    const state = makeState("See [^a].\n\n[^a]: A\n[^b]: B");
     const map = buildFootnoteMap(state);
-    const positions = map.refPositions.get("a");
-    expect(positions).toBeDefined();
-    expect(positions).toHaveLength(2);
-    expect(positions![0]).toBe(4);
-    expect(positions![1]).toBe(13);
+    expect(map.defPositions.get("a")).toBeDefined();
+    expect(map.defPositions.get("b")).toBeDefined();
   });
 
   it("handles only definitions (no refs)", () => {
     const state = makeState("[^x]: Only a def");
     const map = buildFootnoteMap(state);
-    expect(map.labelToNumber.get("x")).toBe(1);
-    expect(map.refPositions.size).toBe(0);
+    expect(map.defPositions.get("x")).toBeDefined();
   });
 
-  it("handles only refs (no definitions)", () => {
+  it("handles only refs (no definitions): empty def map", () => {
     const state = makeState("See [^a] here.");
     const map = buildFootnoteMap(state);
-    expect(map.labelToNumber.get("a")).toBe(1);
     expect(map.defPositions.size).toBe(0);
+  });
+
+  it("out-of-order numeric labels: defs keyed by source label", () => {
+    const state = makeState(
+      "Claim A[^1], claim B[^3], claim C[^2].\n\n[^1]: First\n[^2]: Second\n[^3]: Third",
+    );
+    const map = buildFootnoteMap(state);
+    expect(map.defPositions.get("1")).toBeDefined();
+    expect(map.defPositions.get("2")).toBeDefined();
+    expect(map.defPositions.get("3")).toBeDefined();
   });
 });
