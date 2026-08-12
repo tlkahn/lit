@@ -291,7 +291,8 @@ pub(crate) fn write_draft_file(
 /// Three phases keep no `MutexGuard` across the `.await`:
 ///   1. sync collection — load the layout, fetch annotations + citekeys, build
 ///      the draft body via [`prepare_draft_content`];
-///   2. async LLM title — falls back to `source_titles.join(" + ")` on any error;
+///   2. deterministic title — `source_titles.join(" + ")` (no LLM call;
+///      product direction #1010);
 ///   3. sync write — guarded by [`CardboxLock`], records the write, reindexes,
 ///      and emits `workspace://file-created`.
 #[tauri::command]
@@ -303,7 +304,6 @@ pub async fn merge_cards_to_draft(
     lock: State<'_, CardboxLock>,
     registry: State<'_, Arc<crate::workspace::write_hash::WriteHashRegistry>>,
     app_handle: tauri::AppHandle,
-    credential_store: State<'_, Arc<dyn crate::commands::credential::CredentialStore>>,
 ) -> Result<String, String> {
     if uuids.is_empty() {
         return Err("No cards selected".to_string());
@@ -340,29 +340,8 @@ pub async fn merge_cards_to_draft(
         },
     )?;
 
-    // ── Phase 2: async LLM title (best-effort) ────────────────────────────
-    let prefs = crate::preferences::read_preferences(&app_handle);
-    let (provider_id, model, base_url, temperature) =
-        crate::commands::merge_split::resolve_llm_settings(&prefs);
-    let api_key = crate::llm::resolve_api_key(&provider_id, credential_store.as_ref());
-
-    let title = match crate::commands::merge_split::suggest_title_inner(
-        &provider_id,
-        &model,
-        api_key.as_deref(),
-        base_url.as_deref(),
-        &source_titles,
-        &body,
-        temperature,
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!("LLM title suggestion failed, using fallback: {e}");
-            source_titles.join(" + ")
-        }
-    };
+    // ── Phase 2: deterministic title (no LLM) ────────────────────────────
+    let title = source_titles.join(" + ");
 
     // ── Phase 3: sync file write ──────────────────────────────────────────
     let created = chrono::Utc::now().to_rfc3339();

@@ -112,19 +112,13 @@ import {
   getApiKey,
   hasApiKey,
   deleteApiKey,
-  llmPromptStreaming,
-  llmBuildContext,
-  llmCancel,
-  testLlmConnection,
-  undoLastOperation,
+    undoLastOperation,
   listUndoHistory,
   canUndo,
   rewriteVaultLinks,
   previewMerge,
   previewSplit,
   executeSplit,
-  suggestMergeTitle,
-  cancelTitleSuggestion,
   mergeDocuments,
   annotationFindUuid,
   detectPandoc,
@@ -492,21 +486,6 @@ describe("ipc", () => {
         case "has_api_key":
           return true;
         case "delete_api_key":
-          return null;
-        case "llm_build_context": {
-          const a = args as Record<string, unknown>;
-          const innerArgs = a?.args as Record<string, unknown>;
-          return {
-            system: innerArgs?.system_prompt || "assembled",
-            messages: innerArgs?.messages ?? [],
-            truncation: null,
-          };
-        }
-        case "llm_prompt_streaming":
-          return null;
-        case "llm_cancel":
-          return null;
-        case "llm_test_connection":
           return null;
         case "undo_last_operation":
           return "Create 'Test Page'";
@@ -1887,225 +1866,6 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("delete_api_key", { provider: "anthropic" });
   });
 
-  it("llmPromptStreaming invokes llm_prompt_streaming with args", async () => {
-    await llmPromptStreaming({ model: "claude-sonnet-4-6", text: "hello" });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
-      args: {
-        model: "claude-sonnet-4-6",
-        text: "hello",
-        system: null,
-        messages: [],
-        options: {},
-        base_url: null,
-        provider: "",
-        context_window: null,
-      },
-    });
-  });
-
-  it("llmPromptStreaming passes optional fields", async () => {
-    await llmPromptStreaming({
-      model: "gpt-4o",
-      text: "test",
-      system: "be helpful",
-      messages: [{ role: "user", content: "hi" }],
-      options: { temperature: 0.5 },
-      baseUrl: "https://api.example.com",
-    });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
-      args: {
-        model: "gpt-4o",
-        text: "test",
-        system: "be helpful",
-        messages: [{ role: "user", content: "hi" }],
-        options: { temperature: 0.5 },
-        base_url: "https://api.example.com",
-        provider: "",
-        context_window: null,
-      },
-    });
-  });
-
-  it("llmPromptStreaming sends provider field when specified", async () => {
-    await llmPromptStreaming({
-      model: "claude-sonnet-4-6",
-      text: "hello",
-      provider: "anthropic",
-    });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
-      args: {
-        model: "claude-sonnet-4-6",
-        text: "hello",
-        system: null,
-        messages: [],
-        options: {},
-        base_url: null,
-        provider: "anthropic",
-        context_window: null,
-      },
-    });
-  });
-
-  it("llmPromptStreaming passes context_window when contextWindow specified", async () => {
-    await llmPromptStreaming({ model: "vllm-model", text: "hello", contextWindow: 32000 });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_prompt_streaming", {
-      args: {
-        model: "vllm-model",
-        text: "hello",
-        system: null,
-        messages: [],
-        options: {},
-        base_url: null,
-        provider: "",
-        context_window: 32000,
-      },
-    });
-  });
-
-  it("llmCancel invokes llm_cancel", async () => {
-    await llmCancel();
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_cancel");
-  });
-
-  it("testLlmConnection invokes llm_test_connection with model and baseUrl", async () => {
-    await testLlmConnection("gpt-4o", "https://api.example.com");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
-      model: "gpt-4o",
-      baseUrl: "https://api.example.com",
-      provider: null,
-    });
-  });
-
-  it("testLlmConnection sends null baseUrl when omitted", async () => {
-    await testLlmConnection("claude-sonnet-4-6");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
-      model: "claude-sonnet-4-6",
-      baseUrl: null,
-      provider: null,
-    });
-  });
-
-  it("testLlmConnection sends provider parameter", async () => {
-    await testLlmConnection("gpt-4o", "https://api.example.com", "openai");
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_test_connection", {
-      model: "gpt-4o",
-      baseUrl: "https://api.example.com",
-      provider: "openai",
-    });
-  });
-
-  it("llmBuildContext invokes llm_build_context with args", async () => {
-    await llmBuildContext({
-      nodeId: "notes/a.md",
-      systemPrompt: "be helpful",
-      neighborsDepth: 2,
-      model: "claude-sonnet-4-6",
-      messages: [{ role: "user", content: "hi" }],
-    });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
-      args: {
-        node_id: "notes/a.md",
-        system_prompt: "be helpful",
-        neighbors_depth: 2,
-        model: "claude-sonnet-4-6",
-        messages: [{ role: "user", content: "hi" }],
-        provider: "",
-        context_window: null,
-      },
-    });
-  });
-
-  it("llmBuildContext defaults systemPrompt to empty string", async () => {
-    await llmBuildContext({
-      nodeId: "notes/a.md",
-      neighborsDepth: 0,
-      model: "claude-sonnet-4-6",
-      messages: [],
-    });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
-      args: {
-        node_id: "notes/a.md",
-        system_prompt: "",
-        neighbors_depth: 0,
-        model: "claude-sonnet-4-6",
-        messages: [],
-        provider: "",
-        context_window: null,
-      },
-    });
-  });
-
-  it("llmBuildContext sends provider field when specified", async () => {
-    await llmBuildContext({
-      nodeId: "notes/a.md",
-      neighborsDepth: 1,
-      model: "gpt-4o",
-      messages: [],
-      provider: "openai",
-    });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
-      args: {
-        node_id: "notes/a.md",
-        system_prompt: "",
-        neighbors_depth: 1,
-        model: "gpt-4o",
-        messages: [],
-        provider: "openai",
-        context_window: null,
-      },
-    });
-  });
-
-  it("llmBuildContext passes context_window when contextWindow specified", async () => {
-    await llmBuildContext({
-      nodeId: "notes/a.md",
-      neighborsDepth: 1,
-      model: "vllm-model",
-      messages: [],
-      contextWindow: 64000,
-    });
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("llm_build_context", {
-      args: {
-        node_id: "notes/a.md",
-        system_prompt: "",
-        neighbors_depth: 1,
-        model: "vllm-model",
-        messages: [],
-        provider: "",
-        context_window: 64000,
-      },
-    });
-  });
-
-  it("llmBuildContext returns BuiltContext shape", async () => {
-    const result = await llmBuildContext({
-      nodeId: "notes/a.md",
-      systemPrompt: "test system",
-      neighborsDepth: 1,
-      model: "claude-sonnet-4-6",
-      messages: [{ role: "user", content: "hello" }],
-      provider: "anthropic",
-    });
-    expect(result).toHaveProperty("system");
-    expect(result).toHaveProperty("messages");
-    expect(result).toHaveProperty("truncation");
-    expect(result.system).toBe("test system");
-    expect(result.messages).toEqual([{ role: "user", content: "hello" }]);
-    expect(result.truncation).toBeNull();
-  });
-
   it("trashPage calls trash_page with relativePath", async () => {
     await trashPage("Doomed.md");
     const { invoke } = await import("@tauri-apps/api/core");
@@ -2185,14 +1945,7 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("execute_split", { relativePath: "Doc.md" });
   });
 
-  it("suggestMergeTitle returns null on failure", async () => {
-    const result = await suggestMergeTitle(["A", "B"], "merged body");
-    expect(result).toBeNull();
-  });
 
-  it("cancelTitleSuggestion resolves without error", async () => {
-    await expect(cancelTitleSuggestion()).resolves.toBeUndefined();
-  });
 
   it("mergeDocuments invokes merge_documents and returns merged path", async () => {
     const result = await mergeDocuments(["A.md", "B.md"], "Merged", [0, 1]);

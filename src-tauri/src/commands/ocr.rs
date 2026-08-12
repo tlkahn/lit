@@ -183,7 +183,7 @@ fn map_ocr_error(e: &ocr_cli::error::Error) -> String {
     match e {
         ocr_cli::error::Error::MistralApi { status, body } => match *status {
             401 => {
-                "Mistral API key is invalid or expired \u{2014} check Settings \u{2192} LLM"
+                "Mistral API key is invalid or expired \u{2014} set it in Credentials"
                     .to_string()
             }
             429 => "Mistral rate limit exceeded \u{2014} try again later".to_string(),
@@ -281,7 +281,7 @@ pub async fn ocr_pdf_to_markdown(
     emit_progress(&window, &key, "auth", "Retrieving Mistral API key");
     let api_key =
         crate::commands::credential::get_api_key_inner(credential_store.as_ref(), "mistral")
-            .map_err(|_| "Mistral API key required \u{2014} configure in Settings \u{2192} LLM".to_string())?;
+            .map_err(|_| "Mistral API key required \u{2014} set it in Credentials".to_string())?;
 
     // Step 4: Read PDF bytes from disk
     emit_progress(&window, &key, "read_pdf", "Reading PDF file");
@@ -827,7 +827,7 @@ mod tests {
         };
         let msg = map_ocr_error(&e);
         assert!(msg.contains("invalid or expired"), "got: {msg}");
-        assert!(msg.contains("Settings"), "got: {msg}");
+        assert!(msg.contains("Credentials"), "got: {msg}");
     }
 
     #[test]

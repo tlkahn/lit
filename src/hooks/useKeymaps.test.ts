@@ -526,21 +526,21 @@ describe("useKeymaps", () => {
     expect(state.focusedPaneId).toBe("solo");
   });
 
-  // --- Cycle C4: Default keybinding for app.fireAnnotation ---
+  // --- Cycle C4: fire keybindings removed (#1010) ---
 
-  it("app.fireAnnotation is registered after ensureCommandsRegistered", async () => {
+  it("app.fireAnnotation is NOT registered after ensureCommandsRegistered", async () => {
     await loadHook();
-    expect(hasCommand("app.fireAnnotation")).toBe(true);
+    expect(hasCommand("app.fireAnnotation")).toBe(false);
   });
 
-  it("app.batchFireAnnotations is registered after ensureCommandsRegistered", async () => {
+  it("app.batchFireAnnotations is NOT registered after ensureCommandsRegistered", async () => {
     await loadHook();
-    expect(hasCommand("app.batchFireAnnotations")).toBe(true);
+    expect(hasCommand("app.batchFireAnnotations")).toBe(false);
   });
 
   // --- Cycle B4: when guard on global keydown handler ---
 
-  it("Mod-Enter does not fire app.fireAnnotation when no editor is focused", async () => {
+  it("Mod-Enter binding for the removed app.fireAnnotation is inert (never registered)", async () => {
     mockInvoke((cmd) => {
       if (cmd === "get_keymaps") {
         return [

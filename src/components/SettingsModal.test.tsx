@@ -926,7 +926,7 @@ describe("SettingsModal", () => {
   });
 
   it("clamps a non-form initialCategory to Appearance", () => {
-    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} initialCategory="LLM" />);
+    const { container } = render(<SettingsModal open={true} onClose={vi.fn()} initialCategory="Experimental" />);
     const sidebar = container.querySelector("[data-testid='settings-sidebar']")!;
     const buttons = Array.from(sidebar.querySelectorAll("button"));
     expect(buttons[0]!.getAttribute("aria-selected")).toBe("true");
@@ -1149,71 +1149,63 @@ describe("SettingsModal", () => {
 
   // --- hasApiKey effect ---
 
-  describe("hasApiKey effect", () => {
-    it("checks current provider on open", async () => {
+  describe("apiKey reconcile effect", () => {
+    it("checks the five paper-search providers on open and never the LLM provider", async () => {
       const { rerender } = render(<SettingsModal open={false} onClose={vi.fn()} />);
       invokeCalls.length = 0;
       await act(async () => {
         rerender(<SettingsModal open={true} onClose={vi.fn()} />);
       });
       const calls = invokeCalls.filter((c) => c.cmd === "has_api_key");
-      expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider: "anthropic" } });
-      expect(calls).toHaveLength(6);
+      expect(calls).toHaveLength(5);
+      for (const provider of [
+        "semantic-scholar",
+        "core",
+        "pubmed",
+        "google-books",
+        "base",
+      ]) {
+        expect(calls).toContainEqual({ cmd: "has_api_key", args: { provider } });
+      }
+      // No LLM provider key is ever reconciled (#1010).
+      expect(calls.some((c) => c.args?.provider === "anthropic")).toBe(false);
     });
 
-    it("updates llmProvider.apiKeySet when provider reports key exists", async () => {
-      mockInvoke((cmd, args) => {
-        if (cmd === "has_api_key" && args?.provider === "anthropic") return true;
-        if (cmd === "has_api_key") return false;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-      await act(async () => {
-        render(<SettingsModal open={true} onClose={vi.fn()} />);
-      });
-      await vi.waitFor(() => {
-        expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-      });
-    });
-
-    it("does not apply stale apiKeySet when provider switches before hasApiKey resolves", async () => {
-      let resolveHas!: (value: boolean) => void;
-      const hasPromise = new Promise<boolean>((r) => {
-        resolveHas = r;
-      });
-      mockInvoke((cmd, args) => {
-        invokeCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "has_api_key" && args?.provider === "anthropic") return hasPromise;
-        if (cmd === "has_api_key") return false;
+    it("does not touch llmProvider.apiKeySet regardless of stored keys (#1010)", async () => {
+      mockInvoke((cmd) => {
+        if (cmd === "has_api_key") return true;
         if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
         return undefined;
       });
       usePreferencesStore.setState({
         llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: false },
       });
-      // exists=false / unlocked=false is the default-fresh path so the effect runs.
       await act(async () => {
         render(<SettingsModal open={true} onClose={vi.fn()} />);
       });
-      // Effect fired has_api_key("anthropic") but it has NOT resolved yet.
-      // User switches providers in the meantime.
-      await act(async () => {
-        usePreferencesStore.setState({
-          llmProvider: { providerId: "openai", model: "gpt-4o", apiKeySet: false },
-        });
+      await vi.waitFor(() => {
+        // Paper-search flags reconcile; the LLM flag is left alone.
+        expect(usePreferencesStore.getState().searchS2ApiKeySet).toBe(true);
       });
-      // Now the stale anthropic check resolves with `true`.
-      await act(async () => {
-        resolveHas(true);
-        await hasPromise;
-      });
-      // The stale anthropic value must NOT clobber the openai provider.
-      expect(usePreferencesStore.getState().llmProvider.providerId).toBe("openai");
       expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(false);
     });
-  });
 
-  // --- Secret store integration (hasApiKey gating only) ---
+    it("reconciles paper-search flags against the credential store on open", async () => {
+      mockInvoke((cmd, args) => {
+        if (cmd === "has_api_key" && args?.provider === "semantic-scholar") return true;
+        if (cmd === "has_api_key") return false;
+        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
+        return undefined;
+      });
+      usePreferencesStore.setState({ searchS2ApiKeySet: false });
+      await act(async () => {
+        render(<SettingsModal open={true} onClose={vi.fn()} />);
+      });
+      await vi.waitFor(() => {
+        expect(usePreferencesStore.getState().searchS2ApiKeySet).toBe(true);
+      });
+    });
+  });
 
   describe("secret store integration", () => {
     beforeEach(() => {
@@ -1226,7 +1218,7 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("calls hasApiKey when store is unlocked", async () => {
+    it("reconciles paper-search keys regardless of store lock state (#1010)", async () => {
       useSecretStoreStore.setState({ exists: true, unlocked: true });
 
       const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
@@ -1242,31 +1234,18 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(6);
+      expect(hasApiKeyCalls).toHaveLength(5);
+      // The LLM provider key check is gone entirely.
+      expect(
+        hasApiKeyCalls.some((c) => c.args.provider === "anthropic"),
+      ).toBe(false);
     });
 
-    it("calls hasApiKey when store does not exist yet", async () => {
-      useSecretStoreStore.setState({ exists: false, unlocked: false });
-
-      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
-      mockInvoke((cmd, args) => {
-        localCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "has_api_key") return false;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      await act(async () => {
-        render(<SettingsModal open={true} onClose={vi.fn()} />);
-      });
-
-      const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(6);
-    });
-
-    it("does not check hasApiKey when store exists but is locked (migration pending)", async () => {
+    it("still reconciles paper-search keys when the store exists but is locked", async () => {
       useSecretStoreStore.setState({ exists: true, unlocked: false });
-      usePreferencesStore.setState({ llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true } });
+      usePreferencesStore.setState({
+        llmProvider: { providerId: "anthropic", model: "claude-sonnet-4-6", apiKeySet: true },
+      });
 
       const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
       mockInvoke((cmd, args) => {
@@ -1281,37 +1260,9 @@ describe("SettingsModal", () => {
       });
 
       const hasApiKeyCalls = localCalls.filter((c) => c.cmd === "has_api_key");
-      expect(hasApiKeyCalls).toHaveLength(0);
+      expect(hasApiKeyCalls).toHaveLength(5);
       expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
     });
-
-    it("re-checks hasApiKey after store becomes unlocked", async () => {
-      useSecretStoreStore.setState({ exists: true, unlocked: false });
-
-      const localCalls: { cmd: string; args: Record<string, unknown> }[] = [];
-      mockInvoke((cmd, args) => {
-        localCalls.push({ cmd, args: args ?? {} });
-        if (cmd === "has_api_key" && args?.provider === "anthropic") return true;
-        if (cmd === "has_api_key") return false;
-        if (cmd === "get_keymaps" || cmd === "get_menu_shortcuts") return [];
-        return undefined;
-      });
-
-      let rerender!: ReturnType<typeof render>["rerender"];
-      await act(async () => {
-        ({ rerender } = render(<SettingsModal open={true} onClose={vi.fn()} />));
-      });
-
-      expect(localCalls.filter((c) => c.cmd === "has_api_key")).toHaveLength(0);
-
-      await act(async () => {
-        useSecretStoreStore.setState({ unlocked: true });
-        rerender(<SettingsModal open={true} onClose={vi.fn()} />);
-      });
-
-      await vi.waitFor(() => {
-        expect(usePreferencesStore.getState().llmProvider.apiKeySet).toBe(true);
-      });
-    });
   });
+
 });

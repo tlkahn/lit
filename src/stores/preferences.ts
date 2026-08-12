@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type { DarkModePref, ViewMode, Preferences } from "../lib/ipc";
-import { getPreferences, setPreference, deleteApiKey, hasApiKey, isViewMode, listSearchProviders } from "../lib/ipc";
+import { getPreferences, setPreference, isViewMode, listSearchProviders } from "../lib/ipc";
 import type { AnnotationBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { isValidBuilderDefaults } from "../lib/annotationBuilderDefaults";
 import { providerIdForModel } from "../lib/providerRegistry";
@@ -250,15 +250,6 @@ function mapPreferences(prefs: Preferences) {
   };
 }
 
-export function setLlmProvider(patch: Partial<LlmProviderConfig>) {
-  const prev = usePreferencesStore.getState().llmProvider;
-  const next = { ...prev, ...patch };
-  usePreferencesStore.setState({ llmProvider: next });
-  setPreference("llm.provider", next).catch(() => {
-    usePreferencesStore.setState({ llmProvider: prev });
-  });
-}
-
 export type FontCategory = "interface" | "text" | "monospace";
 
 const FONT_CATEGORY_META: Record<FontCategory, { storeField: "fontInterfaceList" | "fontTextList" | "fontMonospaceList"; jsonKey: string }> = {
@@ -310,36 +301,6 @@ export function setSearchEnabledProviders(providers: string[]) {
       state.searchEnabledProviders === next ? { searchEnabledProviders: prev } : {},
     );
   });
-}
-
-export function addCustomProvider(def: CustomProviderDef) {
-  const prev = usePreferencesStore.getState().llmCustomProviders;
-  const next = [...prev, def];
-  usePreferencesStore.setState({ llmCustomProviders: next });
-  setPreference("llm.customProviders", next).catch(() => {
-    usePreferencesStore.setState({ llmCustomProviders: prev });
-  });
-}
-
-export function updateCustomProvider(id: string, patch: Partial<CustomProviderDef>) {
-  const prev = usePreferencesStore.getState().llmCustomProviders;
-  const next = prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
-  usePreferencesStore.setState({ llmCustomProviders: next });
-  setPreference("llm.customProviders", next).catch(() => {
-    usePreferencesStore.setState({ llmCustomProviders: prev });
-  });
-}
-
-export function removeCustomProvider(id: string) {
-  const prev = usePreferencesStore.getState().llmCustomProviders;
-  const next = prev.filter((p) => p.id !== id);
-  usePreferencesStore.setState({ llmCustomProviders: next });
-  setPreference("llm.customProviders", next).catch(() => {
-    usePreferencesStore.setState({ llmCustomProviders: prev });
-  });
-  // Clean up any stored credential. A custom provider with needsApiKey:false
-  // may have no stored key, so swallow errors and never roll back the array.
-  deleteApiKey(id).catch(() => {});
 }
 
 export const usePreferencesStore = create<PreferencesState>((set) => ({
@@ -436,26 +397,6 @@ export const usePreferencesStore = create<PreferencesState>((set) => ({
         setPreference("llm.provider", migrated).catch(() => {});
       }
 
-      // Reconcile apiKeySet against the real credential store. migrateLlmProvider
-      // hard-codes apiKeySet:false for legacy users, so upgraded users with a
-      // saved key would otherwise have LLM features disabled until they open
-      // Settings. Fire-and-forget so caller resolution timing is unchanged.
-      const checkedProviderId = usePreferencesStore.getState().llmProvider.providerId;
-      hasApiKey(checkedProviderId)
-        .then((has) => {
-          // Only upgrade to true — never clobber. A locked-but-existing secret
-          // store returns false for every provider; downgrading here would be a
-          // false negative (SettingsModal corrects it once unlocked).
-          if (!has) return;
-          // Skip if the provider changed during the async window (e.g. a
-          // preferences://changed event or user provider switch).
-          set((prev) =>
-            prev.llmProvider.providerId === checkedProviderId && !prev.llmProvider.apiKeySet
-              ? { llmProvider: { ...prev.llmProvider, apiKeySet: true } }
-              : {},
-          );
-        })
-        .catch(() => {});
     } catch {
       set({ loaded: true });
     }

@@ -397,7 +397,9 @@ pub fn extract_annotations(
                 AnnotationType::CrossRef => "crossref",
                 AnnotationType::Apparatus => "apparatus",
                 AnnotationType::Translation => "translation",
-                AnnotationType::Llm => "llm",
+                // Legacy `llm` keyword: lit treats LLM annotations as Notes
+                // (product direction #1010) without touching the pinned grammar.
+                AnnotationType::Llm => "note",
                 AnnotationType::Thread => "thread",
                 AnnotationType::SlipNote => "slipnote",
                 AnnotationType::Mark => "mark",
@@ -1140,11 +1142,11 @@ mod tests {
     }
 
     #[test]
-    fn extract_annotations_llm_type() {
+    fn legacy_llm_keyword_extracts_as_note() {
         let content = "Some text <!--- llm | summarize ---> more";
         let result = extract_annotations(content, crate::annotation::marks::builtin_mark_codes());
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].annotation_type, "llm");
+        assert_eq!(result[0].annotation_type, "note");
     }
 
     #[test]

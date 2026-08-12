@@ -105,12 +105,6 @@ describe("annotationConstants", () => {
 });
 
 describe("CLS constants", () => {
-  it("has correct values for fire-button classes", () => {
-    expect(CLS.FIRE_BTN).toBe("cm-annotation-fire-btn");
-    expect(CLS.FIRE_DISABLED).toBe("cm-annotation-fire-disabled");
-    expect(CLS.FIRE_PROXIMITY).toBe("cm-annotation-fire-proximity");
-  });
-
   it("has correct values for pill classes", () => {
     expect(CLS.PILL).toBe("cm-annotation-pill");
     expect(CLS.PILL_MINIMAL).toBe("cm-annotation-pill-minimal");
@@ -140,14 +134,9 @@ describe("CLS constants", () => {
     expect(CLS.THREAD_OVERFLOW).toBe("cm-thread-overflow");
     expect(CLS.THREAD_OVERFLOW_MENU).toBe("cm-thread-overflow-menu");
     expect(CLS.THREAD_OVERFLOW_ROW).toBe("cm-thread-overflow-row");
-    expect(CLS.THREAD_FOLLOWUP_TRIGGER).toBe("cm-thread-followup-trigger");
-    expect(CLS.THREAD_FOLLOWUP_INPUT).toBe("cm-thread-followup-input");
   });
 
   it("has correct values for shared classes", () => {
-    expect(CLS.SPINNER).toBe("cm-annotation-spinner");
-    expect(CLS.SPINNER_PASSIVE).toBe("cm-annotation-spinner-passive");
-    expect(CLS.STOP_ICON).toBe("cm-annotation-stop-icon");
     expect(CLS.FOLD_ICON).toBe("cm-annotation-fold-icon");
     expect(CLS.TENTATIVE).toBe("cm-annotation-tentative");
     expect(CLS.FIRM).toBe("cm-annotation-firm");

@@ -435,13 +435,11 @@ describe("AnnotationBuilderModal", () => {
   });
 
   describe("type dropdown options", () => {
-    it("includes LLM option", () => {
+    it("does NOT include an LLM option (#1010)", () => {
       render(<AnnotationBuilderModal onClose={onClose} onInsert={onInsert} />);
       const typeSelect = screen.getByTestId("annotation-type-select");
       const options = Array.from(typeSelect.querySelectorAll("option"));
-      const llmOption = options.find((o) => o.value === "llm");
-      expect(llmOption).toBeDefined();
-      expect(llmOption!.textContent).toContain("LLM");
+      expect(options.find((o) => o.value === "llm")).toBeUndefined();
     });
   });
 

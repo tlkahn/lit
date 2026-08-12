@@ -15,9 +15,6 @@ import { usePaneStore, collectLeaves, MAX_PANES } from "../stores/panes";
 import { usePaneHistoryStore } from "../stores/paneHistory";
 import { annotationDataField, findAnnotationAtCursor } from "../editor/livePreview/annotationState";
 import type { AnnotationBuilderEventDetail } from "../lib/annotationDsl";
-import { canFire } from "../lib/fireClassification";
-import { fireAnnotation } from "../lib/fireOrchestrator";
-import { batchFireReplacingAnnotations } from "../lib/batchFire";
 import { hasAnyFoldAllTarget, toggleAllBlockAnnotationFolds } from "../editor/livePreview/annotationFoldAll";
 import type { EditorView } from "@codemirror/view";
 
@@ -291,39 +288,6 @@ export function ensureCommandsRegistered() {
       } else {
         window.dispatchEvent(new CustomEvent("lit:open-annotation-builder"));
       }
-    },
-  });
-  registerCommand({
-    id: "app.fireAnnotation",
-    label: "Fire Annotation at Cursor",
-    keywords: ["fire", "llm", "annotation", "run"],
-    when: () => {
-      const view = getCurrentEditorView();
-      if (!view) return false;
-      const annotations = view.state.field(annotationDataField, false) ?? [];
-      const pos = view.state.selection.main.head;
-      const ann = findAnnotationAtCursor(annotations, pos);
-      return ann != null && canFire(ann.annotation_type);
-    },
-    action: () => {
-      const view = getCurrentEditorView();
-      if (!view) return;
-      const annotations = view.state.field(annotationDataField, false) ?? [];
-      const pos = view.state.selection.main.head;
-      const ann = findAnnotationAtCursor(annotations, pos);
-      if (ann && canFire(ann.annotation_type)) {
-        fireAnnotation({ view, annotation: ann });
-      }
-    },
-  });
-  registerCommand({
-    id: "app.batchFireAnnotations",
-    label: "Fire All Replacing Annotations",
-    keywords: ["fire", "batch", "llm", "all", "replacing"],
-    when: () => getCurrentEditorView() != null,
-    action: () => {
-      const view = getCurrentEditorView();
-      if (view) batchFireReplacingAnnotations(view);
     },
   });
   registerCommand({

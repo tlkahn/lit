@@ -1,12 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseThreadBody,
-  serializeThreadBody,
-  appendTurn,
-  turnsToMessages,
-  type ThreadTurn,
-} from "./threadBody";
-import type { LlmPromptStreamingArgs } from "./ipc";
+import { parseThreadBody, serializeThreadBody, type ThreadTurn } from "./threadBody";
 
 // Exact wire-format example from the plan (between `---` and `--->`).
 const WIRE_EXAMPLE = [
@@ -170,85 +163,4 @@ describe("serializeThreadBody", () => {
   });
 });
 
-describe("appendTurn", () => {
-  it("appends to a one-turn body yielding two turns", () => {
-    const body = "[q]: First?\n\nFirst answer.";
-    const result = appendTurn(body, "Second?", "Second answer.");
-    expect(parseThreadBody(result)).toEqual([
-      { question: "First?", response: "First answer." },
-      { question: "Second?", response: "Second answer." },
-    ]);
-  });
 
-  it("appends to an empty body yielding a single turn", () => {
-    const result = appendTurn("", "Only?", "Only answer.");
-    expect(parseThreadBody(result)).toEqual([
-      { question: "Only?", response: "Only answer." },
-    ]);
-  });
-
-  it("normalizes existing trailing whitespace in the body", () => {
-    const body = "[q]: First?\n\nFirst answer.\n\n   \n";
-    const result = appendTurn(body, "Second?", "Second answer.");
-    expect(result).toBe(
-      "[q]: First?\n\nFirst answer.\n\n[q]: Second?\n\nSecond answer.",
-    );
-  });
-
-  it("appends a streaming (empty-response) turn", () => {
-    const body = "[q]: First?\n\nFirst answer.";
-    const result = appendTurn(body, "Second?", "");
-    expect(parseThreadBody(result)).toEqual([
-      { question: "First?", response: "First answer." },
-      { question: "Second?", response: "" },
-    ]);
-  });
-});
-
-describe("turnsToMessages", () => {
-  it("returns [] for empty turns", () => {
-    expect(turnsToMessages([])).toEqual([]);
-  });
-
-  it("converts two complete turns to alternating user/assistant messages", () => {
-    const turns: ThreadTurn[] = [
-      { question: "First?", response: "First answer." },
-      { question: "Second?", response: "Second answer." },
-    ];
-    expect(turnsToMessages(turns)).toEqual([
-      { role: "user", content: "First?" },
-      { role: "assistant", content: "First answer." },
-      { role: "user", content: "Second?" },
-      { role: "assistant", content: "Second answer." },
-    ]);
-  });
-
-  it("omits the trailing assistant message for a final empty-response turn", () => {
-    const turns: ThreadTurn[] = [
-      { question: "First?", response: "First answer." },
-      { question: "Second?", response: "" },
-    ];
-    expect(turnsToMessages(turns)).toEqual([
-      { role: "user", content: "First?" },
-      { role: "assistant", content: "First answer." },
-      { role: "user", content: "Second?" },
-    ]);
-  });
-
-  it("skips an empty-question user message (no-prefix single turn)", () => {
-    const turns: ThreadTurn[] = [{ question: "", response: "raw response" }];
-    expect(turnsToMessages(turns)).toEqual([
-      { role: "assistant", content: "raw response" },
-    ]);
-  });
-
-  it("output is assignable to LlmPromptStreamingArgs['messages']", () => {
-    const messages: NonNullable<LlmPromptStreamingArgs["messages"]> = turnsToMessages([
-      { question: "Q?", response: "A." },
-    ]);
-    expect(messages).toEqual([
-      { role: "user", content: "Q?" },
-      { role: "assistant", content: "A." },
-    ]);
-  });
-});

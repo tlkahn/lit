@@ -16,7 +16,6 @@ import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
-import { providerNeedsApiKey } from "./lib/providerRegistry";
 import { useMarkConfigStore } from "./stores/markConfig";
 import { useFocusModeStore } from "./stores/focusMode";
 import { useLicenseStore } from "./stores/license";
@@ -80,10 +79,6 @@ function App() {
   const colorTheme = usePreferencesStore((s) => s.colorTheme);
   const syncFromPreferences = useThemeStore((s) => s.syncFromPreferences);
   const sidebarVisible = usePreferencesStore((s) => s.sidebarVisible);
-  const llmEnabled = usePreferencesStore((s) =>
-    s.llmProvider.apiKeySet ||
-    !providerNeedsApiKey(s.llmProvider.providerId, s.llmCustomProviders)
-  );
   const focusModeActive = useFocusModeStore((s) => s.active);
   const toggleFocusMode = useFocusModeStore((s) => s.toggleFocusMode);
   const { mode: bottomPanelMode, effectiveSide } = useBottomPanelPosition();
@@ -683,7 +678,6 @@ function App() {
         <MergePreviewDialog
           open={mergePreviewOpen}
           docs={mergePreviewDocs}
-          llmEnabled={llmEnabled}
           onConfirm={async (plan: MergePlan, ordering: number[]) => {
             setMergePreviewOpen(false);
             try {

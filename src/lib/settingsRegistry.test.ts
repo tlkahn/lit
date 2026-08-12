@@ -38,25 +38,6 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.controlType).toBe("dropdown");
   });
 
-  it("llmTemperature entry has controlType 'slider'", () => {
-    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmTemperature");
-    expect(entry).toBeDefined();
-    expect(entry!.controlType).toBe("slider");
-  });
-
-  it("llmSystemPrompt entry has controlType 'textarea'", () => {
-    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmSystemPrompt");
-    expect(entry).toBeDefined();
-    expect(entry!.controlType).toBe("textarea");
-  });
-
-  it("llmPromptLlm entry exists with controlType 'textarea'", () => {
-    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "llmPromptLlm");
-    expect(entry).toBeDefined();
-    expect(entry!.controlType).toBe("textarea");
-    expect(entry!.category).toBe("LLM");
-  });
-
   it("bottomPanelPosition entry has controlType 'segmented'", () => {
     const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "bottomPanelPosition");
     expect(entry).toBeDefined();
@@ -90,16 +71,6 @@ describe("SETTINGS_REGISTRY", () => {
     expect(entry!.jsonKey).toBe("companion.searchPath");
   });
 
-  it("all 3 type-specific prompt entries exist", () => {
-    const promptFields = [
-      "llmPromptLlm", "llmPromptTr", "llmPromptQ",
-    ];
-    for (const field of promptFields) {
-      const entry = SETTINGS_REGISTRY.find((e) => e.storeField === field);
-      expect(entry, `missing entry for ${field}`).toBeDefined();
-      expect(entry!.controlType).toBe("textarea");
-    }
-  });
 });
 
 describe("CATEGORIES", () => {
@@ -109,7 +80,6 @@ describe("CATEGORIES", () => {
       "Editor",
       "Cross-references",
       "Annotations",
-      "LLM",
       "Paper Search",
       "Credentials",
       "Academic Export",
@@ -204,14 +174,13 @@ describe("FORM_CATEGORIES", () => {
 });
 
 describe("groupByCategory", () => {
-  it("returns Map with 10 keys and correct counts", () => {
+  it("returns Map with 9 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
-    expect(grouped.size).toBe(10);
+    expect(grouped.size).toBe(9);
     expect(grouped.get("Appearance")).toHaveLength(9);
     expect(grouped.get("Editor")).toHaveLength(6);
     expect(grouped.get("Cross-references")).toHaveLength(3);
     expect(grouped.get("Annotations")).toHaveLength(5);
-    expect(grouped.get("LLM")).toHaveLength(7);
     expect(grouped.get("Paper Search")).toHaveLength(4);
     expect(grouped.get("Credentials")).toHaveLength(5);
     expect(grouped.get("Academic Export")).toHaveLength(6);
@@ -291,13 +260,13 @@ describe("filterSettings", () => {
     expect(filterFormSettings("")).toHaveLength(FORM_SETTINGS_REGISTRY.length);
   });
 
-  it("matches an LLM entry for provider-related queries via keywords", () => {
-    for (const q of ["model", "provider", "api key", "openai", "anthropic", "llm provider"]) {
+  it("LLM category is gone: no provider/model queries match any entry (#1010)", () => {
+    for (const q of ["model", "provider", "api key", "openai", "anthropic", "llm provider", "llm"]) {
       const results = filterSettings(SETTINGS_REGISTRY, q);
       expect(
-        results.some((r) => r.entry.category === "LLM"),
-        `expected an LLM-category match for query "${q}"`,
-      ).toBe(true);
+        results.some((r) => (r.entry.category as string) === "LLM"),
+        `query "${q}" must not match an LLM entry`,
+      ).toBe(false);
     }
   });
 
@@ -312,9 +281,9 @@ describe("filterSettings", () => {
   });
 
   it("yields empty highlight indices when only a keyword (not the label) matches", () => {
-    const results = filterSettings(SETTINGS_REGISTRY, "openai");
-    const llmMatch = results.find((r) => r.entry.category === "LLM" && r.entry.label === "LLM Provider");
-    expect(llmMatch).toBeDefined();
-    expect(llmMatch!.indices).toEqual([]);
+    const results = filterSettings(SETTINGS_REGISTRY, "sibling");
+    const match = results.find((r) => r.entry.storeField === "companionSearchPath");
+    expect(match).toBeDefined();
+    expect(match!.indices).toEqual([]);
   });
 });

@@ -53,10 +53,12 @@ const EXPLICIT_SCOPE_RE = /[_\\]/;
 export function annotationToFields(ann: Annotation): AnnotationFields {
   const hasAuthoredId = /^(?:<!---\s*\[|%%!\s*\[)/.test(ann.original);
   const id = hasAuthoredId ? (ann.uuid ?? null) : null;
+  // Legacy `llm` markers open as Note in the builder so Save re-emits `n`
+  // (no bulk on-disk rewrite; only edited annotations change).
+  const rawType =
+    ann.annotation_type === "llm" ? "note" : ann.annotation_type;
   const type: AnnotationType | null =
-    ann.annotation_type === "bare" || ann.annotation_type === "mark"
-      ? null
-      : ann.annotation_type;
+    rawType === "bare" || rawType === "mark" ? null : rawType;
   const mark = ann.annotation_type === "mark" ? (ann.mark ?? undefined) : undefined;
   const certainty: Certainty = ann.certainty;
 
@@ -85,7 +87,8 @@ const TYPE_KEYWORDS: Record<string, string> = {
   crossref: "cf",
   apparatus: "app",
   translation: "tr",
-  llm: "llm",
+  // Legacy `llm` keyword is intentionally absent: lit treats it as Note
+  // (normalizeLegacyAnnotationType) and nothing new emits `llm`.
   thread: "th",
   slipnote: "sn",
 };

@@ -83,7 +83,7 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
       focusModeCompartment: focusModeCompartment.current,
       focusModeActive: useFocusModeStore.getState().active,
       editableCompartment: editableCompartment.current,
-      editorLocked: useModalLockStore.getState().locked || useModalLockStore.getState().llmLocked,
+      editorLocked: useModalLockStore.getState().locked,
       mediaThumbnails,
       foldConfig: { enabled: foldingEnabled, showControls: foldingShowControls },
       frontmatter,
@@ -219,9 +219,9 @@ export function useCodeMirror(props: UseCodeMirrorProps): {
   useEffect(() => {
     const v = viewRef.current;
     if (!v) return;
-    let prev = useModalLockStore.getState().locked || useModalLockStore.getState().llmLocked;
+    let prev = useModalLockStore.getState().locked;
     return useModalLockStore.subscribe((s) => {
-      const shouldLock = s.locked || s.llmLocked;
+      const shouldLock = s.locked;
       if (shouldLock === prev) return;
       prev = shouldLock;
       v.dispatch({

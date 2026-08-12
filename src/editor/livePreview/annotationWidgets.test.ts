@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EditorState, ChangeSet } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { PillWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, firingAnnotationsField, setFiringAnnotation, clearFiringAnnotation, firingRangeField, setFiringRange, clearFiringRange, createFireButton, createCardboxLinkButton, llmLockedField, setLlmLockedEffect } from "./annotationWidgets";
+import { PillWidget, MarkerWidget, ThreadWidget, toggleAnnotationFoldEffect, setAllAnnotationFoldsEffect, annotationFoldField, threadTurnField, setThreadTurnEffect, createCardboxLinkButton } from "./annotationWidgets";
 import { CLS } from "./annotationConstants";
 import type { Annotation } from "../../lib/ipc";
-import { useModalLockStore } from "../../stores/modalLock";
 import { useMarkConfigStore } from "../../stores/markConfig";
 
 vi.mock("../../lib/ipc", () => ({
@@ -23,7 +22,6 @@ const mockHandleLeave = handleAnnotationLeave as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useModalLockStore.setState({ llmLocked: false });
 });
 
 function makeEditorView(doc = "hello world"): EditorView {
@@ -262,10 +260,10 @@ describe("annotationFoldField", () => {
   });
 
   it("returns the SAME Map reference on an unrelated effect (no fold effect, no doc change)", () => {
-    const state = EditorState.create({ doc: "hello", extensions: [annotationFoldField, firingAnnotationsField] });
+    const state = EditorState.create({ doc: "hello", extensions: [annotationFoldField] });
     const tr1 = state.update({ effects: toggleAnnotationFoldEffect.of({ pos: 0 }) });
     const before = tr1.state.field(annotationFoldField);
-    const tr2 = tr1.state.update({ effects: setFiringAnnotation.of(0) });
+    const tr2 = tr1.state.update({ effects: setThreadTurnEffect.of({ pos: 0, turn: 0 }) });
     expect(tr2.state.field(annotationFoldField)).toBe(before);
   });
 
@@ -356,15 +354,12 @@ describe("PillWidget click → edit event", () => {
 });
 
 describe("MarkerWidget", () => {
-  it("toDOM returns span.cm-annotation-marker-wrap for fireable types", () => {
+  it("toDOM returns sup.cm-annotation-marker directly when no cardbox link exists", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }));
     const dom = w.toDOM(view);
-    expect(dom.tagName).toBe("SPAN");
-    expect(dom.classList.contains("cm-annotation-marker-wrap")).toBe(true);
-    const sup = dom.querySelector("sup");
-    expect(sup).toBeTruthy();
-    expect(sup!.classList.contains("cm-annotation-marker")).toBe(true);
+    expect(dom.tagName).toBe("SUP");
+    expect(dom.classList.contains("cm-annotation-marker")).toBe(true);
     view.destroy();
   });
 
@@ -603,322 +598,46 @@ describe("MarkerWidget mark type", () => {
   });
 });
 
-describe("fire button", () => {
-  describe("PillWidget", () => {
-    it("renders .cm-annotation-fire-btn with ▶ for question type", () => {
+describe("fire UI absence (#1010)", () => {
+  it("PillWidget never renders .cm-annotation-fire-btn for former fireable types", () => {
+    for (const type of ["llm", "question", "translation"] as const) {
       const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "question", body: "why?" }));
+      const w = new PillWidget(makeAnnotation({ annotation_type: type, body: "x" }));
       const dom = w.toDOM(view);
-      const btn = dom.querySelector(".cm-annotation-fire-btn");
-      expect(btn).toBeTruthy();
-      expect(btn!.textContent).toBe("▶");
+      expect(dom.querySelector(".cm-annotation-fire-btn"), type).toBeNull();
       view.destroy();
-    });
-
-    it("does NOT render fire button for bare type", () => {
-      const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "bare" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
-
-    it("fire button mousedown dispatches lit:fire-annotation, NOT lit:open-annotation-builder", () => {
-      const view = makeEditorView();
-      const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
-      const w = new PillWidget(ann);
-      const dom = w.toDOM(view);
-      const btn = dom.querySelector(".cm-annotation-fire-btn")! as HTMLElement;
-
-      const fireSpy = vi.fn();
-      const editSpy = vi.fn();
-      window.addEventListener("lit:fire-annotation", fireSpy);
-      window.addEventListener("lit:open-annotation-builder", editSpy);
-      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-      expect(fireSpy).toHaveBeenCalledTimes(1);
-      const event = fireSpy.mock.calls[0]![0] as CustomEvent;
-      expect(event.detail.annotation).toBe(ann);
-      expect(editSpy).not.toHaveBeenCalled();
-      window.removeEventListener("lit:fire-annotation", fireSpy);
-      window.removeEventListener("lit:open-annotation-builder", editSpy);
-      view.destroy();
-    });
-
-    it("fire button mousedown calls preventDefault and stopPropagation", () => {
-      const view = makeEditorView();
-      const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
-      const w = new PillWidget(ann);
-      const dom = w.toDOM(view);
-      const btn = dom.querySelector(".cm-annotation-fire-btn")! as HTMLElement;
-
-      const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
-      const stopSpy = vi.spyOn(event, "stopPropagation");
-      btn.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-      expect(stopSpy).toHaveBeenCalled();
-      view.destroy();
-    });
-
-    it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "llm", body: "test" }), false, true);
-      const dom = w.toDOM(view);
-      const btn = dom.querySelector(".cm-annotation-fire-btn");
-      expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
-      view.destroy();
-    });
-
-    it("does NOT render fire button for note type", () => {
-      const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "note" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
-
-    it("does NOT render fire button for todo type", () => {
-      const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "todo" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
-
-    it("does NOT render fire button for crossref type", () => {
-      const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "crossref" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
-
-    it("does NOT render fire button for apparatus type", () => {
-      const view = makeEditorView();
-      const w = new PillWidget(makeAnnotation({ annotation_type: "apparatus" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
+    }
   });
 
-  describe("MarkerWidget", () => {
-    it("renders .cm-annotation-fire-btn for llm type", () => {
+  it("MarkerWidget never renders .cm-annotation-fire-btn for former fireable types", () => {
+    for (const type of ["llm", "question", "translation"] as const) {
       const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }));
+      const w = new MarkerWidget(makeAnnotation({ annotation_type: type }));
       const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeTruthy();
+      expect(dom.querySelector(".cm-annotation-fire-btn"), type).toBeNull();
       view.destroy();
-    });
-
-    it("does NOT render fire button for bare type", () => {
-      const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "bare" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
-
-    it("does NOT render fire button for note type", () => {
-      const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "note" }));
-      const dom = w.toDOM(view);
-      expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-      view.destroy();
-    });
-
-    it("fire button has .cm-annotation-fire-disabled when llmLocked", () => {
-      const view = makeEditorView();
-      const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm" }), false, true);
-      const dom = w.toDOM(view);
-      const btn = dom.querySelector(".cm-annotation-fire-btn");
-      expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
-      view.destroy();
-    });
+    }
   });
 
-});
-
-describe("firingAnnotationsField", () => {
-  it("initial state is an empty Set", () => {
-    const state = EditorState.create({ extensions: [firingAnnotationsField] });
-    const firing = state.field(firingAnnotationsField);
-    expect(firing.size).toBe(0);
-  });
-
-  it("setFiringAnnotation adds to the set", () => {
-    const state = EditorState.create({ doc: "hello", extensions: [firingAnnotationsField] });
-    const tr = state.update({ effects: setFiringAnnotation.of(3) });
-    const firing = tr.state.field(firingAnnotationsField);
-    expect(firing.has(3)).toBe(true);
-  });
-
-  it("clearFiringAnnotation removes from the set", () => {
-    const state = EditorState.create({ doc: "hello", extensions: [firingAnnotationsField] });
-    const tr1 = state.update({ effects: setFiringAnnotation.of(3) });
-    const tr2 = tr1.state.update({ effects: clearFiringAnnotation.of(3) });
-    const firing = tr2.state.field(firingAnnotationsField);
-    expect(firing.has(3)).toBe(false);
-  });
-
-  it("remaps positions on document change", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingAnnotationsField] });
-    const tr1 = state.update({ effects: setFiringAnnotation.of(6) });
-    const tr2 = tr1.state.update({ changes: { from: 0, to: 0, insert: "XX" } });
-    const firing = tr2.state.field(firingAnnotationsField);
-    expect(firing.has(6)).toBe(false);
-    expect(firing.has(8)).toBe(true);
-  });
-});
-
-describe("spinner rendering", () => {
-  it("createFireButton with isFiring=true has cm-annotation-spinner class and a stop icon, not the play glyph", () => {
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const btn = createFireButton(ann, true);
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
-    expect(btn!.querySelector(".cm-annotation-stop-icon")).toBeTruthy();
-    expect(btn!.textContent).not.toContain("▶");
-  });
-
-  it("createFireButton spinner dispatches lit:cancel-fire on mousedown", () => {
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const btn = createFireButton(ann, true);
-    expect(btn).toBeTruthy();
-    expect(btn!.onmousedown).toBeTruthy();
-    const listener = vi.fn();
-    window.addEventListener("lit:cancel-fire", listener);
-    btn!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(listener).toHaveBeenCalledOnce();
-    window.removeEventListener("lit:cancel-fire", listener);
-  });
-
-  it("createFireButton with isFiring=false has ▶ text", () => {
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const btn = createFireButton(ann, false);
-    expect(btn).toBeTruthy();
-    expect(btn!.textContent).toBe("▶");
-    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(false);
-  });
-
-  it("PillWidget with isFiring=true renders spinner button", () => {
+  it("clicking a former-fireable pill opens the builder, never dispatches lit:fire-annotation", () => {
     const view = makeEditorView();
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const w = new PillWidget(ann, true);
-    const dom = w.toDOM(view);
-    const btn = dom.querySelector(".cm-annotation-fire-btn");
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
-    view.destroy();
-  });
-
-  it("PillWidget eq returns false when isFiring differs", () => {
-    const ann = makeAnnotation();
-    const a = new PillWidget(ann, false);
-    const b = new PillWidget(ann, true);
-    expect(a.eq(b)).toBe(false);
-  });
-
-  it("MarkerWidget with isFiring=true renders spinner button", () => {
-    const view = makeEditorView();
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const w = new MarkerWidget(ann, true);
-    const dom = w.toDOM(view);
-    const btn = dom.querySelector(".cm-annotation-fire-btn");
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-spinner")).toBe(true);
-    view.destroy();
-  });
-
-});
-
-describe("llmLockedField", () => {
-  it("initial state is false", () => {
-    const state = EditorState.create({ extensions: [llmLockedField] });
-    expect(state.field(llmLockedField)).toBe(false);
-  });
-
-  it("setLlmLockedEffect.of(true) updates field to true", () => {
-    const state = EditorState.create({ extensions: [llmLockedField] });
-    const tr = state.update({ effects: setLlmLockedEffect.of(true) });
-    expect(tr.state.field(llmLockedField)).toBe(true);
-  });
-
-  it("setLlmLockedEffect.of(false) updates field back to false", () => {
-    const state = EditorState.create({ extensions: [llmLockedField] });
-    const tr1 = state.update({ effects: setLlmLockedEffect.of(true) });
-    const tr2 = tr1.state.update({ effects: setLlmLockedEffect.of(false) });
-    expect(tr2.state.field(llmLockedField)).toBe(false);
-  });
-});
-
-describe("createFireButton llmLocked param", () => {
-  it("adds disabled class when llmLocked param is true (store is false)", () => {
-    useModalLockStore.setState({ llmLocked: false });
-    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, true);
-    expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(true);
-  });
-
-  it("no disabled class when llmLocked param is false (store is true)", () => {
-    useModalLockStore.setState({ llmLocked: true });
-    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, false);
-    expect(btn!.classList.contains("cm-annotation-fire-disabled")).toBe(false);
-  });
-
-  it("does NOT add proximity class when llmLocked is true", () => {
-    const btn = createFireButton(makeAnnotation({ annotation_type: "llm" }), false, true);
-    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
-  });
-
-  it("does NOT dispatch lit:fire-annotation when llmLocked is true", () => {
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const btn = createFireButton(ann, false, true)!;
-    const spy = vi.fn();
-    window.addEventListener("lit:fire-annotation", spy);
-    btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(spy).not.toHaveBeenCalled();
-    window.removeEventListener("lit:fire-annotation", spy);
-  });
-});
-
-describe("widget eq with llmLocked", () => {
-  it("PillWidget eq returns false when llmLocked differs", () => {
-    const ann = makeAnnotation();
-    expect(new PillWidget(ann, false, false).eq(new PillWidget(ann, false, true))).toBe(false);
-  });
-
-  it("MarkerWidget eq returns false when llmLocked differs", () => {
-    const ann = makeAnnotation();
-    expect(new MarkerWidget(ann, false, false).eq(new MarkerWidget(ann, false, true))).toBe(false);
-  });
-
-});
-
-describe("fire button proximity reveal", () => {
-  it("fire button has cm-annotation-fire-proximity class when not firing", () => {
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const btn = createFireButton(ann, false);
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
-  });
-
-  it("fire button does NOT have cm-annotation-fire-proximity class when isFiring is true", () => {
-    const ann = makeAnnotation({ annotation_type: "llm" });
-    const btn = createFireButton(ann, true);
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(false);
-  });
-
-  it("PillWidget fire button has cm-annotation-fire-proximity class", () => {
-    const view = makeEditorView();
-    const ann = makeAnnotation({ annotation_type: "llm" });
+    const ann = makeAnnotation({ annotation_type: "llm", body: "explain" });
     const w = new PillWidget(ann);
     const dom = w.toDOM(view);
-    const btn = dom.querySelector(".cm-annotation-fire-btn");
-    expect(btn).toBeTruthy();
-    expect(btn!.classList.contains("cm-annotation-fire-proximity")).toBe(true);
+
+    const fireSpy = vi.fn();
+    const editSpy = vi.fn();
+    window.addEventListener("lit:fire-annotation", fireSpy);
+    window.addEventListener("lit:open-annotation-builder", editSpy);
+    dom.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(fireSpy).not.toHaveBeenCalled();
+    expect(editSpy).toHaveBeenCalledTimes(1);
+    window.removeEventListener("lit:fire-annotation", fireSpy);
+    window.removeEventListener("lit:open-annotation-builder", editSpy);
     view.destroy();
   });
 });
+
 
 describe("createCardboxLinkButton", () => {
   it("returns null when uuid is missing", () => {
@@ -1061,7 +780,7 @@ describe("PillWidget cardbox link", () => {
 });
 
 describe("MarkerWidget cardbox link", () => {
-  it("renders the cardbox link in the wrap for a fireable type when uuid is set", () => {
+  it("renders the cardbox link in the wrap when uuid is set", () => {
     const view = makeEditorView();
     const w = new MarkerWidget(makeAnnotation({ annotation_type: "llm", uuid: "abc" }));
     const dom = w.toDOM(view);
@@ -1271,69 +990,6 @@ describe("threadTurnField", () => {
   });
 });
 
-describe("firingRangeField", () => {
-  it("initial state is null", () => {
-    const state = EditorState.create({ extensions: [firingRangeField] });
-    expect(state.field(firingRangeField)).toBeNull();
-  });
-
-  it("setFiringRange stores { from, to }", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr = state.update({ effects: setFiringRange.of({ from: 2, to: 8 }) });
-    expect(tr.state.field(firingRangeField)).toEqual({ from: 2, to: 8 });
-  });
-
-  it("clearFiringRange resets to null", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr1 = state.update({ effects: setFiringRange.of({ from: 2, to: 8 }) });
-    const tr2 = tr1.state.update({ effects: clearFiringRange.of(undefined) });
-    expect(tr2.state.field(firingRangeField)).toBeNull();
-  });
-
-  it("set then clear returns null", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr = state.update({
-      effects: [setFiringRange.of({ from: 2, to: 8 }), clearFiringRange.of(undefined)],
-    });
-    expect(tr.state.field(firingRangeField)).toBeNull();
-  });
-
-  it("insert before range: both shift forward", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr1 = state.update({ effects: setFiringRange.of({ from: 6, to: 11 }) });
-    const tr2 = tr1.state.update({ changes: { from: 0, to: 0, insert: "XX" } });
-    expect(tr2.state.field(firingRangeField)).toEqual({ from: 8, to: 13 });
-  });
-
-  it("insert after range: unchanged", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr1 = state.update({ effects: setFiringRange.of({ from: 0, to: 5 }) });
-    const tr2 = tr1.state.update({ changes: { from: 11, to: 11, insert: "!!" } });
-    expect(tr2.state.field(firingRangeField)).toEqual({ from: 0, to: 5 });
-  });
-
-  it("insert inside range: from unchanged, to shifts", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr1 = state.update({ effects: setFiringRange.of({ from: 0, to: 11 }) });
-    const tr2 = tr1.state.update({ changes: { from: 5, to: 5, insert: "XX" } });
-    expect(tr2.state.field(firingRangeField)!.from).toBe(0);
-    expect(tr2.state.field(firingRangeField)!.to).toBe(13);
-  });
-
-  it("delete before range: both shift backward", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr1 = state.update({ effects: setFiringRange.of({ from: 6, to: 11 }) });
-    const tr2 = tr1.state.update({ changes: { from: 0, to: 3 } });
-    expect(tr2.state.field(firingRangeField)).toEqual({ from: 3, to: 8 });
-  });
-
-  it("null field + doc change: stays null", () => {
-    const state = EditorState.create({ doc: "hello world", extensions: [firingRangeField] });
-    const tr = state.update({ changes: { from: 0, to: 0, insert: "XX" } });
-    expect(tr.state.field(firingRangeField)).toBeNull();
-  });
-});
-
 describe("ThreadWidget", () => {
   const TWO_TURN_BODY =
     "[q]: First question?\n\nFirst **response** body.\n\n[q]: Second question?\n\nSecond response body.";
@@ -1443,63 +1099,8 @@ describe("ThreadWidget", () => {
     expect(chevron.querySelector("svg")).toBeTruthy();
   });
 
-  it("collapsed pill renders the firing spinner before the fold chevron", () => {
-    const w = new ThreadWidget(makeThread(), 0, true, 0, true);
-    const dom = w.toDOM(null as unknown as EditorView) as HTMLElement;
-    const spinner = dom.querySelector(".cm-annotation-spinner")!;
-    expect(spinner).toBeTruthy();
-    // Plain span, no fire-button chrome — threads have no manual fire handler.
-    expect(spinner.tagName).toBe("SPAN");
-    expect(spinner.classList.contains("cm-annotation-fire-btn")).toBe(false);
-    expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
-    const chevron = dom.querySelector(".cm-annotation-fold-icon")!;
-    expect(spinner.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Existing collapsed chrome is unchanged.
-    expect(dom.querySelector(".cm-annotation-pill-icon")!.textContent).toBe("◇");
-    expect(dom.querySelector(".cm-annotation-pill-body")!.textContent).toBe("First question?");
-    expect(chevron.classList.contains("is-collapsed")).toBe(true);
-  });
 
-  it("clicking the collapsed pill spinner does not open the annotation builder", () => {
-    const view = makeEditorView("x".repeat(50));
-    const w = new ThreadWidget(makeThread(), 0, true, 0, true);
-    const dom = w.toDOM(view) as HTMLElement;
-    const spy = vi.fn();
-    window.addEventListener("lit:open-annotation-builder", spy);
 
-    (dom.querySelector(".cm-annotation-spinner")! as HTMLElement).dispatchEvent(
-      new MouseEvent("click", { bubbles: true }),
-    );
-    expect(spy).not.toHaveBeenCalled();
-
-    // Edit path still works via the pill body.
-    (dom.querySelector(".cm-annotation-pill-body")! as HTMLElement).dispatchEvent(
-      new MouseEvent("click", { bubbles: true }),
-    );
-    expect(spy).toHaveBeenCalledTimes(1);
-
-    window.removeEventListener("lit:open-annotation-builder", spy);
-    view.destroy();
-  });
-
-  it("bare spinners carry cm-annotation-spinner-passive; fire-button spinner does not", () => {
-    const collapsed = new ThreadWidget(makeThread(), 0, true, 0, true)
-      .toDOM(null as unknown as EditorView) as HTMLElement;
-    const collapsedSpinner = collapsed.querySelector(".cm-annotation-spinner")!;
-    expect(collapsedSpinner.classList.contains("cm-annotation-spinner-passive")).toBe(true);
-
-    const expanded = new ThreadWidget(makeThread(), 0, false, 0, true)
-      .toDOM(null as unknown as EditorView) as HTMLElement;
-    const expandedSpinner = expanded.querySelector(
-      ".cm-annotation-callout-header .cm-annotation-spinner",
-    )!;
-    expect(expandedSpinner.classList.contains("cm-annotation-spinner-passive")).toBe(true);
-
-    // Fire-button spinner keeps cancel affordance / pointer cursor - no passive class.
-    const fireBtn = createFireButton(makeAnnotation({ annotation_type: "llm" }), true)!;
-    expect(fireBtn.classList.contains("cm-annotation-spinner")).toBe(true);
-    expect(fireBtn.classList.contains("cm-annotation-spinner-passive")).toBe(false);
-  });
 
   it("collapsed pill adds the certainty class", () => {
     const w = new ThreadWidget(makeThread({ certainty: "tentative" }), 0, true, 0);
@@ -1637,7 +1238,7 @@ describe("ThreadWidget", () => {
     expect(collapsedDom.querySelector(".cm-annotation-callout-body")).toBeNull();
     const expandedDom = new ThreadWidget(ann, 0, false, 0).toDOM(null as unknown as EditorView);
     expect(expandedDom.querySelectorAll(".cm-annotation-callout-body").length).toBe(1);
-    expect(expandedDom.querySelectorAll(".cm-thread-followup-trigger").length).toBe(1);
+    expect(expandedDom.querySelectorAll(".cm-thread-followup-trigger").length).toBe(0);
     expect(expandedDom.querySelectorAll(".cm-thread-followup-input").length).toBe(0);
   });
 
@@ -1679,28 +1280,7 @@ describe("ThreadWidget", () => {
     view.destroy();
   });
 
-  it("renders a spinner and suppresses the follow-up trigger when isFiring", () => {
-    const w = new ThreadWidget(makeThread(), 0, false, 0, true);
-    const dom = w.toDOM(null as unknown as EditorView);
-    expect(dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")).toBeTruthy();
-    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
-  });
 
-  it("clicking the expanded header spinner does not open the annotation builder", () => {
-    const view = makeEditorView("x".repeat(50));
-    const w = new ThreadWidget(makeThread(), 0, false, 0, true);
-    const dom = w.toDOM(view);
-    const spy = vi.fn();
-    window.addEventListener("lit:open-annotation-builder", spy);
-
-    (dom.querySelector(".cm-annotation-callout-header .cm-annotation-spinner")! as HTMLElement).dispatchEvent(
-      new MouseEvent("click", { bubbles: true }),
-    );
-    expect(spy).not.toHaveBeenCalled();
-
-    window.removeEventListener("lit:open-annotation-builder", spy);
-    view.destroy();
-  });
 
   it("does NOT render a fire button (threads are not fireable)", () => {
     const w = new ThreadWidget(makeThread(), 0, false, 0);
@@ -1708,147 +1288,12 @@ describe("ThreadWidget", () => {
     expect(dom.querySelector(".cm-annotation-fire-btn")).toBeNull();
   });
 
-  it("follow-up trigger has proximity-reveal class and expands to a textarea on mousedown", () => {
-    const view = makeEditorView("x".repeat(50));
-    const w = new ThreadWidget(makeThread(), 0, false, 0);
-    const dom = w.toDOM(view);
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    expect(trigger.classList.contains("cm-annotation-fire-proximity")).toBe(true);
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeNull();
-    expect(dom.querySelector(".cm-thread-followup-input")).toBeTruthy();
-    view.destroy();
-  });
 
-  it("Cmd+Enter in the follow-up textarea dispatches lit:thread-followup with {annotation, question}", () => {
-    const view = makeEditorView("x".repeat(50));
-    const ann = makeThread();
-    const w = new ThreadWidget(ann, 0, false, 0);
-    const dom = w.toDOM(view);
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
-    textarea.value = "What about etymology?";
 
-    const spy = vi.fn();
-    window.addEventListener("lit:thread-followup", spy);
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
-    expect(spy).toHaveBeenCalledTimes(1);
-    const event = spy.mock.calls[0]![0] as CustomEvent;
-    expect(event.detail.annotation).toBe(ann);
-    expect(event.detail.question).toBe("What about etymology?");
-    window.removeEventListener("lit:thread-followup", spy);
-    view.destroy();
-  });
 
-  it("Escape in the follow-up textarea restores the trigger", () => {
-    const view = makeEditorView("x".repeat(50));
-    const w = new ThreadWidget(makeThread(), 0, false, 0);
-    const dom = w.toDOM(view);
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    expect(dom.querySelector(".cm-thread-followup-input")).toBeNull();
-    expect(dom.querySelector(".cm-thread-followup-trigger")).toBeTruthy();
-    view.destroy();
-  });
 
-  it("keystrokes in follow-up textarea do not propagate to the editor", () => {
-    const view = makeEditorView("x".repeat(50));
-    const w = new ThreadWidget(makeThread(), 0, false, 0);
-    const dom = w.toDOM(view);
 
-    const wrapper = document.createElement("div");
-    wrapper.appendChild(dom);
-    document.body.appendChild(wrapper);
 
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
-
-    const parentSpy = vi.fn();
-    wrapper.addEventListener("keydown", parentSpy);
-
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
-    expect(parentSpy).not.toHaveBeenCalled();
-
-    wrapper.remove();
-    view.destroy();
-  });
-
-  it("paste in follow-up textarea does not propagate to the editor", () => {
-    const view = makeEditorView("x".repeat(50));
-    const w = new ThreadWidget(makeThread(), 0, false, 0);
-    const dom = w.toDOM(view);
-
-    const wrapper = document.createElement("div");
-    wrapper.appendChild(dom);
-    document.body.appendChild(wrapper);
-
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
-
-    const parentSpy = vi.fn();
-    wrapper.addEventListener("paste", parentSpy);
-
-    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
-    expect(parentSpy).not.toHaveBeenCalled();
-
-    wrapper.remove();
-    view.destroy();
-  });
-
-  it("paste in follow-up textarea does not alter editor document", () => {
-    const docText = "some document content here";
-    const view = makeEditorView(docText);
-    const w = new ThreadWidget(makeThread(), 0, false, 0);
-    const dom = w.toDOM(view);
-
-    view.dom.appendChild(dom);
-    document.body.appendChild(view.dom);
-
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
-
-    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
-    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
-    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
-
-    expect(view.state.doc.toString()).toBe(docText);
-
-    view.dom.remove();
-    view.destroy();
-  });
-
-  it("multiple rapid keystrokes and paste in follow-up textarea leave editor unchanged", () => {
-    const docText = "original document text";
-    const view = makeEditorView(docText);
-    const w = new ThreadWidget(makeThread(), 0, false, 0);
-    const dom = w.toDOM(view);
-
-    view.dom.appendChild(dom);
-    document.body.appendChild(view.dom);
-
-    const trigger = dom.querySelector(".cm-thread-followup-trigger")! as HTMLElement;
-    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    const textarea = dom.querySelector(".cm-thread-followup-input")! as HTMLTextAreaElement;
-
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
-    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
-    textarea.dispatchEvent(new Event("paste", { bubbles: true }));
-    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "v", bubbles: true, metaKey: true }));
-
-    expect(view.state.doc.toString()).toBe(docText);
-
-    view.dom.remove();
-    view.destroy();
-  });
 
   it("overflow menu 'Export thread' dispatches lit:thread-export with turn -1", () => {
     const ann = makeThread();
@@ -1920,21 +1365,7 @@ describe("ThreadWidget", () => {
     const ann = makeThread();
     expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 1, false, 0))).toBe(false);
     expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, true, 0))).toBe(false);
-    expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, false, 0, true))).toBe(false);
     expect(new ThreadWidget(ann, 0, false, 0).eq(new ThreadWidget(ann, 0, false, 0))).toBe(true);
-  });
-
-  it("eq ignores the global LLM lock state (threads have no fire button)", () => {
-    const ann = makeThread();
-    // Threads have no fire button, so the global LLM lock is not a thread widget
-    // input. Toggling it must NOT force a rebuild: two threads with identical real
-    // inputs stay eq()-equal regardless of the store's llmLocked state. Constructing
-    // ThreadWidget no longer accepts an llmLocked argument at all.
-    useModalLockStore.setState({ llmLocked: false });
-    const a = new ThreadWidget(ann, 0, false, 0, false);
-    useModalLockStore.setState({ llmLocked: true });
-    const b = new ThreadWidget(ann, 0, false, 0, false);
-    expect(a.eq(b)).toBe(true);
   });
 
   it("clicking ⋮ adds is-open; clicking again removes it", () => {
@@ -2018,29 +1449,12 @@ describe("ThreadWidget", () => {
     view.destroy();
   });
 
-  it("ignoreEvent returns true for mousedown; true for keydown/paste only from follow-up textarea", () => {
+  it("ignoreEvent returns true for mousedown only", () => {
     const w = new ThreadWidget(makeThread(), 0, false, 0);
     expect(w.ignoreEvent(new MouseEvent("mousedown"))).toBe(true);
     expect(w.ignoreEvent(new MouseEvent("click"))).toBe(false);
-
-    const textarea = document.createElement("textarea");
-    textarea.className = "cm-thread-followup-input";
-    const keyFromTextarea = new KeyboardEvent("keydown", { bubbles: true });
-    Object.defineProperty(keyFromTextarea, "target", { value: textarea });
-    expect(w.ignoreEvent(keyFromTextarea)).toBe(true);
-
-    const pasteFromTextarea = new Event("paste", { bubbles: true });
-    Object.defineProperty(pasteFromTextarea, "target", { value: textarea });
-    expect(w.ignoreEvent(pasteFromTextarea)).toBe(true);
-
-    const span = document.createElement("span");
-    const keyFromSpan = new KeyboardEvent("keydown", { bubbles: true });
-    Object.defineProperty(keyFromSpan, "target", { value: span });
-    expect(w.ignoreEvent(keyFromSpan)).toBe(false);
-
-    const pasteFromSpan = new Event("paste", { bubbles: true });
-    Object.defineProperty(pasteFromSpan, "target", { value: span });
-    expect(w.ignoreEvent(pasteFromSpan)).toBe(false);
+    expect(w.ignoreEvent(new KeyboardEvent("keydown", { bubbles: true }))).toBe(false);
+    expect(w.ignoreEvent(new Event("paste", { bubbles: true }))).toBe(false);
   });
 
   it("destroy closes an open overflow menu and releases the document keydown trap", () => {
@@ -2084,7 +1498,7 @@ describe("fold-driven menu cleanup (Phase 6)", () => {
       annotation_type: "thread",
       body: "[q]: Question?\n\nAnswer text.",
     });
-    const expanded = new ThreadWidget(ann, 0, false, 0, false);
+    const expanded = new ThreadWidget(ann, 0, false, 0);
     const dom = expanded.toDOM(view);
 
     const overflow = dom.querySelector(`.${CLS.THREAD_OVERFLOW}`)! as HTMLElement;

@@ -66,7 +66,7 @@
   color: rgb(158, 158, 158);
 }
 
-/* Marker wrapper (when fire button present) */
+/* Marker wrapper (when a cardbox link button is present) */
 .cm-annotation-marker-wrap {
   display: inline;
   vertical-align: super;
@@ -235,30 +235,7 @@
   height: 12px;
 }
 
-/* Fire button */
-.cm-annotation-fire-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0.7em;
-  opacity: 0.6;
-  padding: 0 2px;
-  transition: opacity 0.15s ease;
-}
-
-.cm-annotation-fire-btn:hover {
-  opacity: 1;
-}
-
-.cm-annotation-fire-disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-/* Cardbox link button — jumps to the matching card in cardbox view. Mirrors
-   the fire button's inline-flex sizing; uses the NerdFont mono glyph. */
+/* Cardbox link button */
 .cm-annotation-cardbox-link {
   display: inline-flex;
   align-items: center;
@@ -273,23 +250,6 @@
 }
 
 .cm-annotation-cardbox-link:hover {
-  opacity: 1;
-}
-
-/* Proximity reveal — hidden by default, shown on parent hover */
-.cm-annotation-fire-proximity {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.cm-annotation-pill:hover .cm-annotation-fire-proximity,
-.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity {
-  opacity: 0.6;
-  pointer-events: auto;
-}
-
-.cm-annotation-pill:hover .cm-annotation-fire-proximity:hover,
-.cm-annotation-marker-wrap:hover .cm-annotation-fire-proximity:hover {
   opacity: 1;
 }
 
@@ -333,16 +293,6 @@
 
 .cm-annotation-spinner:hover .cm-annotation-stop-icon {
   opacity: 1;
-}
-
-/* LLM type colors */
-.cm-annotation-pill[data-annotation-type="llm"] {
-  background: rgba(255, 193, 7, 0.15);
-  color: rgb(255, 193, 7);
-}
-
-.cm-annotation-marker[data-annotation-type="llm"] {
-  color: rgb(255, 193, 7);
 }
 
 /* Slipnote type colors */
@@ -394,33 +344,6 @@
   border-inline-start: 2px solid rgba(171, 71, 188, 0.6);
   opacity: 0.85;
   font-style: italic;
-}
-
-/* Follow-up trigger — proximity reveal, mirrors .cm-annotation-fire-proximity. */
-.cm-thread-followup-trigger {
-  display: inline-block;
-  cursor: pointer;
-  font-size: 0.85em;
-  padding-block: 2px;
-}
-
-.cm-annotation-callout:hover .cm-thread-followup-trigger.cm-annotation-fire-proximity {
-  opacity: 0.6;
-  pointer-events: auto;
-}
-
-.cm-annotation-callout:hover .cm-thread-followup-trigger.cm-annotation-fire-proximity:hover {
-  opacity: 1;
-}
-
-.cm-thread-followup-input {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px;
-  resize: vertical;
-  min-height: 3em;
-  font: inherit;
 }
 
 /* Overflow ⋮ menu — dropdown hidden until .is-open. */

@@ -50,7 +50,7 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
 
     const isDark = document.documentElement.classList.contains("dark");
     const theme = isDark ? "dark" : "light";
-    const { locked, llmLocked } = useModalLockStore.getState();
+    const { locked } = useModalLockStore.getState();
 
     const extensions = createCodeExtensions({
       theme,
@@ -58,7 +58,7 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
       languageCompartment: languageCompartment.current,
       keymapCompartment: keymapCompartment.current,
       editableCompartment: editableCompartment.current,
-      editorLocked: locked || llmLocked,
+      editorLocked: locked,
       language,
       keymapBindings,
       onChange: (content) => {
@@ -158,9 +158,9 @@ export function useCodeMirrorCode(props: UseCodeMirrorCodeProps): {
   useEffect(() => {
     const v = viewRef.current;
     if (!v) return;
-    let prev = useModalLockStore.getState().locked || useModalLockStore.getState().llmLocked;
+    let prev = useModalLockStore.getState().locked;
     return useModalLockStore.subscribe((s) => {
-      const shouldLock = s.locked || s.llmLocked;
+      const shouldLock = s.locked;
       if (shouldLock === prev) return;
       prev = shouldLock;
       v.dispatch({

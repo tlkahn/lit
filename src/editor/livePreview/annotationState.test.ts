@@ -33,18 +33,13 @@ import {
   ThreadWidget,
   threadTurnField,
   setThreadTurnEffect,
-  llmLockedField,
-  firingAnnotationsField,
-  setFiringAnnotation,
-  clearFiringAnnotation,
-  setLlmLockedEffect,
+
 } from "./annotationWidgets";
 import { Annotation as AnnotationGrammar } from "../markdown/annotation";
 import { Comment as CommentGrammar } from "../markdown/comment";
 import type { Annotation } from "../../lib/ipc";
 import { parseAnnotations, listAnnotations } from "../../lib/ipc";
 import { type AnnotationDisplayMode } from "../../stores/preferences";
-import { useModalLockStore } from "../../stores/modalLock";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { mockListen, emitMockEvent, resetListenMock } from "../../test/tauri-mock";
 
@@ -1470,8 +1465,6 @@ describe("annotationDecorationPlugin", () => {
         annotationDataField,
         displayModeField,
         annotationFoldField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -1692,8 +1685,6 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
         annotationDataField,
         displayModeField,
         annotationFoldField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationDecorationPlugin,
         annotationBlockDecorationField,
       ],
@@ -1757,36 +1748,7 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
     view.destroy();
   });
 
-  it("rebuilds on setFiringAnnotation / clearFiringAnnotation effects", () => {
-    const doc = "first line\ntext <!---n | body---> more";
-    const view = makeView(doc, 0);
-    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
-    view.dispatch({ effects: setAnnotationData.of([ann]) });
 
-    expect((widgetAt(getSet(view), 16, 33) as PillWidget).isFiring).toBe(false);
-
-    view.dispatch({ effects: setFiringAnnotation.of(16) });
-    expect((widgetAt(getSet(view), 16, 33) as PillWidget).isFiring).toBe(true);
-
-    view.dispatch({ effects: clearFiringAnnotation.of(16) });
-    expect((widgetAt(getSet(view), 16, 33) as PillWidget).isFiring).toBe(false);
-
-    view.destroy();
-  });
-
-  it("rebuilds on setLlmLockedEffect", () => {
-    const doc = "first line\ntext <!---n | body---> more";
-    const view = makeView(doc, 0);
-    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
-    view.dispatch({ effects: setAnnotationData.of([ann]) });
-
-    expect((widgetAt(getSet(view), 16, 33) as PillWidget).llmLocked).toBe(false);
-
-    view.dispatch({ effects: setLlmLockedEffect.of(true) });
-    expect((widgetAt(getSet(view), 16, 33) as PillWidget).llmLocked).toBe(true);
-
-    view.destroy();
-  });
 
   it("hasAnnotationEffect recognizes every block-field rebuild-triggering effect", () => {
     // Block-field superset gate: every annotation-relevant effect must be
@@ -1796,9 +1758,6 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
       setDisplayMode.of("footnote"),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
       setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
-      setFiringAnnotation.of(0),
-      clearFiringAnnotation.of(0),
-      setLlmLockedEffect.of(true),
       setThreadTurnEffect.of({ pos: 0, turn: 1 }),
     ];
     for (const effect of cases) {
@@ -1814,9 +1773,6 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
     const trueCases = [
       setAnnotationData.of([]),
       setDisplayMode.of("footnote"),
-      setFiringAnnotation.of(0),
-      clearFiringAnnotation.of(0),
-      setLlmLockedEffect.of(true),
     ];
     for (const effect of trueCases) {
       const tr = EditorState.create({ doc: "x" }).update({ effects: effect });
@@ -1840,9 +1796,6 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
   it("hasBlockAnnotationEffect returns true for block-relevant effects", () => {
     const trueCases = [
       setAnnotationData.of([]),
-      setFiringAnnotation.of(0),
-      clearFiringAnnotation.of(0),
-      setLlmLockedEffect.of(true),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
       setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
       setThreadTurnEffect.of({ pos: 0, turn: 1 }),
@@ -1867,9 +1820,6 @@ describe("annotationDecorationPlugin rebuild triggers", () => {
       setDisplayMode.of("footnote"),
       toggleAnnotationFoldEffect.of({ pos: 0 }),
       setAllAnnotationFoldsEffect.of({ positions: [0], collapsed: true }),
-      setFiringAnnotation.of(0),
-      clearFiringAnnotation.of(0),
-      setLlmLockedEffect.of(true),
       setThreadTurnEffect.of({ pos: 0, turn: 1 }),
     ];
     for (const effect of allEffects) {
@@ -2000,8 +1950,6 @@ describe("syntax-tree progression triggers rebuild", () => {
         annotationDataField,
         displayModeField,
         annotationFoldField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationDecorationPlugin,
         annotationBlockDecorationField,
       ],
@@ -2151,8 +2099,6 @@ describe("shouldRebuildBlocksOnTreeChange", () => {
         annotationDataField,
         displayModeField,
         annotationFoldField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationDecorationPlugin,
         annotationBlockDecorationField,
       ],
@@ -2194,8 +2140,6 @@ describe("buildAnnotationDecorations", () => {
         annotationDataField,
         displayModeField,
         annotationFoldField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -2349,19 +2293,6 @@ describe("buildAnnotationDecorations", () => {
     view.destroy();
   });
 
-  it("firing annotation → widget still produced (field read path intact)", () => {
-    const doc = "first line\ntext <!---n | body---> more";
-    const view = makeView(doc, 0);
-    const ann = makeAnnotation({ char_start: 16, char_end: 33, original: "<!---n | body--->" });
-    view.dispatch({ effects: setAnnotationData.of([ann]) });
-    view.dispatch({ effects: setFiringAnnotation.of(16) });
-
-    const { decorations } = buildAnnotationDecorations(view);
-    const found = iterateSet(decorations).find((d) => d.from === 16 && d.to === 33);
-    expect(found).toBeTruthy();
-    expect(found!.widget).toBeInstanceOf(PillWidget);
-    view.destroy();
-  });
 
   it("overlapping buffered visible ranges → annotation node decorated exactly once", () => {
     const doc = "first line\ntext <!---n | body---> more";
@@ -2456,7 +2387,7 @@ describe("annotationExtension", () => {
   it("returns array with 16 extensions", () => {
     const ext = annotationExtension();
     expect(Array.isArray(ext)).toBe(true);
-    expect((ext as unknown[]).length).toBe(16);
+    expect((ext as unknown[]).length).toBe(11);
   });
 
   it("includes annotationDataField", () => {
@@ -2469,10 +2400,6 @@ describe("annotationExtension", () => {
     expect(ext).toContain(annotationFoldField);
   });
 
-  it("includes llmLockedField", () => {
-    const ext = annotationExtension() as unknown[];
-    expect(ext).toContain(llmLockedField);
-  });
 
   it("wires annotationDecorationPlugin into the extension array", () => {
     const ext = annotationExtension() as unknown[];
@@ -2675,8 +2602,6 @@ describe("surgical path eligibility guards", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -2765,8 +2690,6 @@ describe("fold/turn + selection in one transaction", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -2878,8 +2801,6 @@ describe("setAllAnnotationFoldsEffect surgical path", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -3007,79 +2928,7 @@ describe("setAllAnnotationFoldsEffect surgical path", () => {
   });
 });
 
-describe("llmLockBridgePlugin", () => {
-  beforeEach(() => {
-    useModalLockStore.setState({ llmLocked: false });
-  });
 
-  it("does not dispatch synchronously in constructor when store is already locked", () => {
-    useModalLockStore.setState({ llmLocked: true });
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const view = new EditorView({
-      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
-      parent: document.createElement("div"),
-    });
-    expect(view.state.field(llmLockedField)).toBe(false);
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
-    view.destroy();
-  });
-
-  it("deferred dispatch sets llmLockedField after microtask when store is already locked", async () => {
-    useModalLockStore.setState({ llmLocked: true });
-    const view = new EditorView({
-      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
-      parent: document.createElement("div"),
-    });
-    expect(view.state.field(llmLockedField)).toBe(false);
-    await new Promise<void>((r) => queueMicrotask(r));
-    expect(view.state.field(llmLockedField)).toBe(true);
-    view.destroy();
-  });
-
-  it("sets llmLockedField when store.llmLocked changes to true", () => {
-    const view = new EditorView({
-      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
-      parent: document.createElement("div"),
-    });
-    useModalLockStore.getState().setLlmLocked(true);
-    expect(view.state.field(llmLockedField)).toBe(true);
-    view.destroy();
-  });
-
-  it("sets llmLockedField=false when store.llmLocked goes false", () => {
-    const view = new EditorView({
-      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
-      parent: document.createElement("div"),
-    });
-    useModalLockStore.getState().setLlmLocked(true);
-    expect(view.state.field(llmLockedField)).toBe(true);
-    useModalLockStore.getState().setLlmLocked(false);
-    expect(view.state.field(llmLockedField)).toBe(false);
-    view.destroy();
-  });
-
-  it("unsubscribes on destroy (no throw)", () => {
-    const view = new EditorView({
-      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
-      parent: document.createElement("div"),
-    });
-    view.destroy();
-    expect(() => useModalLockStore.getState().setLlmLocked(true)).not.toThrow();
-  });
-
-  it("does not dispatch on destroyed view when microtask fires after destroy", async () => {
-    useModalLockStore.setState({ llmLocked: true });
-    const view = new EditorView({
-      state: EditorState.create({ doc: "x", extensions: [annotationExtension()] }),
-      parent: document.createElement("div"),
-    });
-    view.destroy();
-    await new Promise<void>((r) => queueMicrotask(r));
-    // If the destroyed guard is missing, dispatching on a destroyed view would crash.
-    // The test passes without throwing.
-  });
-});
 
 describe("buildAnnotationBlockDecorations thread routing", () => {
   function makeView(doc: string, cursorPos = 0) {
@@ -3092,8 +2941,6 @@ describe("buildAnnotationBlockDecorations thread routing", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -3251,8 +3098,6 @@ describe("surgical gate hardening (Phase 3)", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -3297,8 +3142,6 @@ describe("blockSensitiveLines parity (Phase 2)", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });
@@ -3335,8 +3178,6 @@ describe("exact-span correctness (Phase 1)", () => {
         displayModeField,
         annotationFoldField,
         threadTurnField,
-        firingAnnotationsField,
-        llmLockedField,
         annotationBlockDecorationField,
       ],
     });

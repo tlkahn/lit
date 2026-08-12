@@ -31,7 +31,7 @@ beforeEach(() => {
   invokedCommands = [];
   resetListenMock();
   mockListen();
-  useModalLockStore.setState({ openCount: 0, locked: false, llmLocked: false });
+  useModalLockStore.setState({ openCount: 0, locked: false });
   mockInvoke((cmd, args) => {
     invokedCommands.push({ cmd, args });
     if (cmd === "check_ocr_target_exists") return false;
@@ -373,7 +373,7 @@ describe("OcrDialog", () => {
       invokedCommands.push({ cmd, args });
       if (cmd === "check_ocr_target_exists") return false;
       if (cmd === "ocr_pdf_to_markdown")
-        throw new Error("Mistral API key required — configure in Settings → LLM");
+        throw new Error("Mistral API key required — set it in Credentials");
       throw new Error(`Unknown: ${cmd}`);
     });
 

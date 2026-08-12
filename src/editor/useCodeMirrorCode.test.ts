@@ -20,7 +20,7 @@ describe("useCodeMirrorCode", () => {
 
   beforeEach(() => {
     container = makeContainer();
-    useModalLockStore.setState({ openCount: 0, locked: false, llmLocked: false });
+    useModalLockStore.setState({ openCount: 0, locked: false });
   });
 
   afterEach(() => {

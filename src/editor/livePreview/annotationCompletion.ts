@@ -1,7 +1,6 @@
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 
 const ANNOTATION_KEYWORDS: Record<string, string> = {
-  llm: "llm",
   todo: "todo",
   q: "q",
   n: "n",
