@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   SETTINGS_REGISTRY,
   CATEGORIES,
+  FORM_SETTINGS_REGISTRY,
+  FORM_CATEGORIES,
   groupByCategory,
   filterSettings,
+  filterFormSettings,
 } from "./settingsRegistry";
 
 describe("SETTINGS_REGISTRY", () => {
@@ -20,6 +23,12 @@ describe("SETTINGS_REGISTRY", () => {
       expect(entry.jsonKey).toBeDefined();
       expect(entry.controlType).toBeDefined();
       expect(entry.testId).toBeDefined();
+    }
+  });
+
+  it("every entry declares an explicit formVisible policy", () => {
+    for (const entry of SETTINGS_REGISTRY) {
+      expect(entry.formVisible, `${entry.storeField} must set formVisible explicitly`).toBeDefined();
     }
   });
 
@@ -109,6 +118,60 @@ describe("CATEGORIES", () => {
   });
 });
 
+describe("FORM_SETTINGS_REGISTRY", () => {
+  it("contains exactly the three productized appearance entries", () => {
+    expect(FORM_SETTINGS_REGISTRY).toHaveLength(3);
+    expect(FORM_SETTINGS_REGISTRY.map((e) => e.storeField).sort()).toEqual([
+      "colorTheme",
+      "darkMode",
+      "fontInterfaceList",
+    ]);
+  });
+
+  it("every form-visible entry is in the Appearance category", () => {
+    for (const entry of FORM_SETTINGS_REGISTRY) {
+      expect(entry.category).toBe("Appearance");
+      expect(entry.formVisible).toBe(true);
+    }
+  });
+
+  it("darkMode entry is form-visible", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "darkMode");
+    expect(entry!.formVisible).toBe(true);
+  });
+
+  it("colorTheme entry is form-visible", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "colorTheme");
+    expect(entry!.formVisible).toBe(true);
+  });
+
+  it("fonts anchor entry is form-visible", () => {
+    const entry = SETTINGS_REGISTRY.find((e) => e.storeField === "fontInterfaceList");
+    expect(entry!.formVisible).toBe(true);
+    expect(entry!.controlType).toBe("custom");
+  });
+
+  it("every hidden entry sets formVisible false explicitly", () => {
+    const hidden = SETTINGS_REGISTRY.filter((e) => !FORM_SETTINGS_REGISTRY.includes(e));
+    expect(hidden.length).toBe(SETTINGS_REGISTRY.length - 3);
+    for (const entry of hidden) {
+      expect(entry.formVisible, `${entry.storeField} must be formVisible:false`).toBe(false);
+    }
+  });
+});
+
+describe("FORM_CATEGORIES", () => {
+  it("equals the slim sidebar list", () => {
+    expect(FORM_CATEGORIES).toEqual(["Appearance", "Keyboard Shortcuts"]);
+  });
+
+  it("is a subset of the full CATEGORIES taxonomy", () => {
+    for (const cat of FORM_CATEGORIES) {
+      expect(CATEGORIES).toContain(cat);
+    }
+  });
+});
+
 describe("groupByCategory", () => {
   it("returns Map with 9 keys and correct counts", () => {
     const grouped = groupByCategory(SETTINGS_REGISTRY);
@@ -152,6 +215,32 @@ describe("filterSettings", () => {
   it("returns empty array for non-matching query", () => {
     const results = filterSettings(SETTINGS_REGISTRY, "xyzzynonesuch");
     expect(results).toEqual([]);
+  });
+
+  it("form subset: 'dark' hits Dark Mode", () => {
+    const results = filterSettings(FORM_SETTINGS_REGISTRY, "dark");
+    expect(results.map((r) => r.entry.storeField)).toEqual(["darkMode"]);
+  });
+
+  it("form subset: 'theme' hits Color Theme", () => {
+    const results = filterSettings(FORM_SETTINGS_REGISTRY, "theme");
+    expect(results.map((r) => r.entry.storeField)).toEqual(["colorTheme"]);
+  });
+
+  it("form subset: 'fold' is empty (hidden controls not surfaced by search)", () => {
+    expect(filterSettings(FORM_SETTINGS_REGISTRY, "fold")).toEqual([]);
+  });
+
+  it("form subset: LLM/companion queries are empty even though full registry matches", () => {
+    for (const q of ["openai", "model", "companion", "pdf"]) {
+      expect(filterSettings(FORM_SETTINGS_REGISTRY, q), `query "${q}"`).toEqual([]);
+    }
+  });
+
+  it("filterFormSettings only searches the form subset", () => {
+    expect(filterFormSettings("font").map((r) => r.entry.storeField)).toEqual(["fontInterfaceList"]);
+    expect(filterFormSettings("pandoc")).toEqual([]);
+    expect(filterFormSettings("")).toHaveLength(FORM_SETTINGS_REGISTRY.length);
   });
 
   it("matches an LLM entry for provider-related queries via keywords", () => {

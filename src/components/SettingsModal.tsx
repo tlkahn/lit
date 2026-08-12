@@ -14,12 +14,8 @@ import { SettingsTextArea } from "./SettingsTextArea";
 import { SettingsSlider } from "./SettingsSlider";
 import { HighlightedText } from "./HighlightedText";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
-import { CATEGORIES, SETTINGS_REGISTRY, STORE_FIELDS, filterSettings, type Category, type SettingEntry, type FilteredSetting, type PreferenceField, type PasswordEntry } from "../lib/settingsRegistry";
+import { FORM_CATEGORIES, FORM_SETTINGS_REGISTRY, SETTINGS_REGISTRY, STORE_FIELDS, filterFormSettings, type Category, type FormCategory, type SettingEntry, type FilteredSetting, type PreferenceField, type PasswordEntry } from "../lib/settingsRegistry";
 import { KeyboardShortcutsPanel } from "./KeyboardShortcutsPanel";
-import { AcademicExportSettings } from "./AcademicExportSettings";
-import { LlmProviderSettings } from "./LlmProviderSettings";
-import { CompanionSearchPathSettings } from "./CompanionSearchPathSettings";
-import { SearchProviderSettings } from "./SearchProviderSettings";
 import { FontSettings } from "./FontSettings";
 import { useSecretStoreStore } from "../stores/secretStore";
 
@@ -179,7 +175,7 @@ function renderControl(params: RenderControlParams) {
   }
 }
 
-const textEntries = SETTINGS_REGISTRY.filter((e) => e.controlType === "text" || e.controlType === "textarea");
+const textEntries = FORM_SETTINGS_REGISTRY.filter((e) => e.controlType === "text" || e.controlType === "textarea");
 
 export function SettingsModal({ open, onClose, initialCategory }: SettingsModalProps) {
   const prefs = usePreferencesStore(useShallow((s) => {
@@ -233,7 +229,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
   const searchInputRef = useRef<HTMLInputElement>(null);
   useFocusTrap(dialogRef, open);
 
-  const [activeCategory, setActiveCategory] = useState<Category>(CATEGORIES[0]);
+  const [activeCategory, setActiveCategory] = useState<FormCategory>(FORM_CATEGORIES[0]);
   const [searchQuery, setSearchQuery] = useState("");
   const [jsonMode, setJsonMode] = useState(false);
   const [rawJson, setRawJson] = useState("");
@@ -241,20 +237,22 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const filteredResults = useMemo(
-    () => filterSettings(SETTINGS_REGISTRY, searchQuery),
+    () => filterFormSettings(searchQuery),
     [searchQuery],
   );
 
   const filteredGroups = useMemo(() => {
-    const groups = new Map<Category, FilteredSetting[]>();
-    for (const cat of CATEGORIES) groups.set(cat, []);
-    for (const result of filteredResults) groups.get(result.entry.category)!.push(result);
+    const groups = new Map<FormCategory, FilteredSetting[]>();
+    for (const cat of FORM_CATEGORIES) groups.set(cat, []);
+    for (const result of filteredResults) {
+      groups.get(result.entry.category as FormCategory)!.push(result);
+    }
     return groups;
   }, [filteredResults]);
 
   const matchedCategories = useMemo(() => {
     if (searchQuery === "") return null;
-    const matched = new Set<Category>();
+    const matched = new Set<FormCategory>();
     for (const [cat, results] of filteredGroups) {
       if (results.length > 0) matched.add(cat);
     }
@@ -267,7 +265,12 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
     if (open && !prevOpenRef.current) {
       setSearchQuery("");
       setJsonMode(false);
-      setActiveCategory(initialCategory ?? CATEGORIES[0]);
+      const fallback: FormCategory = FORM_CATEGORIES[0];
+      const next =
+        initialCategory && (FORM_CATEGORIES as readonly string[]).includes(initialCategory)
+          ? (initialCategory as FormCategory)
+          : fallback;
+      setActiveCategory(next);
       searchInputRef.current?.focus();
     }
     prevOpenRef.current = open;
@@ -412,13 +415,13 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
                   e.preventDefault();
                   const step = e.key === "ArrowDown" ? 1 : -1;
-                  const len = CATEGORIES.length;
-                  let idx = CATEGORIES.indexOf(activeCategory);
+                  const len = FORM_CATEGORIES.length;
+                  let idx = FORM_CATEGORIES.indexOf(activeCategory);
                   for (let i = 0; i < len - 1; i++) {
                     idx = (idx + step + len) % len;
-                    if (!matchedCategories || matchedCategories.has(CATEGORIES[idx]!)) break;
+                    if (!matchedCategories || matchedCategories.has(FORM_CATEGORIES[idx]!)) break;
                   }
-                  const nextCat = CATEGORIES[idx]!;
+                  const nextCat = FORM_CATEGORIES[idx]!;
                   setActiveCategory(nextCat);
                   const buttons = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button");
                   buttons[idx]?.focus();
@@ -428,7 +431,7 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                   }
                 }}
               >
-                {CATEGORIES.map((cat) => {
+                {FORM_CATEGORIES.map((cat) => {
                   const hasMatches = matchedCategories
                     ? cat === "Keyboard Shortcuts" ? undefined : matchedCategories.has(cat)
                     : undefined;
@@ -482,32 +485,12 @@ export function SettingsModal({ open, onClose, initialCategory }: SettingsModalP
                       return (
                         <section key={cat} id={`settings-section-${cat}`} className={i > 0 ? "mt-5" : undefined}>
                           <h3 className="text-sm font-medium text-text-muted mb-3">{cat}</h3>
-                          {cat === "LLM" && (
-                            <div className="mb-3">
-                              <LlmProviderSettings ensureUnlocked={ensureUnlocked} />
-                            </div>
-                          )}
-                          {cat === "Paper Search" && (
-                            <div className="mb-3">
-                              <SearchProviderSettings />
-                            </div>
-                          )}
                           <div className="space-y-3">
                             {ungrouped.map(({ entry, indices }) => renderControl({ entry, prefs, localTextValues, setLocalTextValues, matchIndices: indices, ensureUnlocked, dynamicOptions }))}
                           </div>
-                          {cat === "Academic Export" && (
-                            <div className="mt-3">
-                              <AcademicExportSettings />
-                            </div>
-                          )}
                           {cat === "Appearance" && (
                             <div className="mt-3">
                               <FontSettings />
-                            </div>
-                          )}
-                          {cat === "Editor" && (
-                            <div className="mt-3">
-                              <CompanionSearchPathSettings />
                             </div>
                           )}
                           {Array.from(grouped).map(([groupName, groupResults]) => (
