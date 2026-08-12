@@ -1743,6 +1743,132 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("list_all_annotations", {});
   });
 
+  // Legacy `annotation_type: "llm"` payloads must be normalized to "note" at
+  // the IPC boundary (normalizeLegacyAnnotationType). These pin the contract so
+  // a future simplification of the wrappers cannot silently drop the remap.
+  it("parseAnnotations normalizes legacy llm to note", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "parse_annotations") {
+        return [
+          {
+            form: "compact",
+            annotation_type: "llm",
+            certainty: "neutral",
+            scope: { kind: "sentence", value: 1 },
+            body: "legacy llm body",
+            date: null,
+            is_structured: true,
+            char_start: 0,
+            char_end: 16,
+            original: "<!--- llm: | legacy llm body --->",
+          },
+        ];
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const anns = await parseAnnotations("<!--- llm: | legacy llm body --->");
+    expect(anns).toHaveLength(1);
+    expect(anns[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("parse_annotations", {
+      content: "<!--- llm: | legacy llm body --->",
+    });
+  });
+
+  it("searchAnnotations normalizes legacy llm to note", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "search_annotations") {
+        return [
+          {
+            annotation_id: 1,
+            node_id: "a.md",
+            node_title: "Alpha",
+            annotation_type: "llm",
+            certainty: "neutral",
+            body: "legacy llm body",
+            date: null,
+            source_line: 3,
+            char_start: 10,
+            char_end: 30,
+            uuid: "test-uuid-1",
+          },
+        ];
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const results = await searchAnnotations("legacy");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("search_annotations", {
+      query: "legacy",
+      annotationType: null,
+      limit: null,
+    });
+  });
+
+  it("listAnnotations normalizes legacy llm to note", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_annotations") {
+        return [
+          {
+            annotation_id: 2,
+            node_id: "a.md",
+            node_title: "Alpha",
+            annotation_type: "llm",
+            certainty: "firm",
+            body: "legacy llm body",
+            date: null,
+            source_line: 1,
+            char_start: 0,
+            char_end: 20,
+            uuid: "test-uuid-2",
+          },
+        ];
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const results = await listAnnotations("a.md");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_annotations", {
+      nodeId: "a.md",
+      annotationType: null,
+      limit: null,
+    });
+  });
+
+  it("listAllAnnotations normalizes legacy llm to note", async () => {
+    mockInvoke((cmd) => {
+      if (cmd === "list_all_annotations") {
+        return [
+          {
+            uuid: "cb-uuid-1",
+            annotation_type: "llm",
+            certainty: "neutral",
+            body: "legacy llm body",
+            date: null,
+            source_page_id: "a.md",
+            source_page_title: "Alpha",
+            source_line: 1,
+            char_start: 0,
+            char_end: 10,
+            scope_kind: "words",
+            scope_value: "1",
+            original: "<!--- llm: | legacy llm body --->",
+          },
+        ];
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    });
+    const results = await listAllAnnotations();
+    expect(results).toHaveLength(1);
+    expect(results[0]!.annotation_type).toBe("note");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("list_all_annotations", {});
+  });
+
   it("exportData calls export_data with destination", async () => {
     const summary = await exportData("/tmp/out.zip");
     expect(summary.exported_count).toBe(42);
