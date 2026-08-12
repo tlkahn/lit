@@ -4,6 +4,7 @@ import { hoverTooltip } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
 import { renderMarkdown } from "../../lib/renderMarkdown";
+import { loadKatex } from "./katexLoader";
 
 export interface FootnoteDefBodyInfo {
   /** Doc position where body content starts (after mark + optional one sep). */
@@ -79,6 +80,20 @@ export function renderFootnoteBody(bodyText: string): string {
   return renderMarkdown(bodyText);
 }
 
+/**
+ * Fill `el` with renderFootnoteBody HTML. If math placeholders remain (KaTeX
+ * not loaded yet), load KaTeX and repaint once, in place, only while the node
+ * is still connected (same pattern as the main-doc math widgets).
+ */
+export function paintFootnoteBody(el: HTMLElement, bodyText: string): void {
+  el.innerHTML = renderFootnoteBody(bodyText);
+  if (!el.querySelector(".cm-preview-math-placeholder")) return;
+  void loadKatex().then(() => {
+    if (!el.isConnected) return;
+    el.innerHTML = renderFootnoteBody(bodyText);
+  });
+}
+
 export function footnoteTooltipSource(
   view: EditorView,
   pos: number,
@@ -106,7 +121,7 @@ export function footnoteTooltipSource(
     create() {
       const dom = document.createElement("div");
       dom.className = "cm-footnote-tooltip";
-      dom.innerHTML = renderFootnoteBody(body);
+      paintFootnoteBody(dom, body);
       return { dom };
     },
   };

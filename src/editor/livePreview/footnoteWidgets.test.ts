@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import type { EditorView } from "@codemirror/view";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
+import { getKatexSync, loadKatex } from "./katexLoader";
 
-vi.mock("katex", () => ({
-  default: { render: vi.fn() },
+const mockKatex = {
+  render: vi.fn(),
+  renderToString: vi.fn((tex: string) => `<span class="katex">${tex}</span>`),
+};
+
+vi.mock("./katexLoader", () => ({
+  getKatexSync: vi.fn(() => mockKatex),
+  loadKatex: vi.fn(async () => mockKatex),
+  resetKatexLoader: vi.fn(),
 }));
 vi.mock("katex/dist/katex.min.css", () => ({}));
 
@@ -137,12 +145,49 @@ describe("FootnoteDefBodyWidget", () => {
   });
 
   it("toDOM renders inline math (placeholder path when katex not loaded)", () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
     const widget = new FootnoteDefBodyWidget("sigma $x$");
     const el = widget.toDOM();
-    // katex is not loaded in this suite, so renderMathToHtml emits the
-    // placeholder span with the latex text visible.
+    // katex is not loaded, so renderMathToHtml emits the placeholder span
+    // with the latex text visible (element is detached, so no upgrade).
     expect(el.innerHTML).toContain("cm-preview-math-placeholder");
     expect(el.innerHTML).toContain("x");
+  });
+
+  it("toDOM shows math placeholder then upgrades after loadKatex when katex was not ready", async () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+
+    const widget = new FootnoteDefBodyWidget("sigma $x$");
+    const el = widget.toDOM();
+    document.body.appendChild(el); // must be connected for the upgrade
+    expect(el.innerHTML).toContain("cm-preview-math-placeholder");
+
+    await vi.waitFor(() => {
+      expect(el.innerHTML).not.toContain("cm-preview-math-placeholder");
+    });
+    expect(el.innerHTML).toMatch(/katex|cm-preview-math-inline/);
+    el.remove();
+  });
+
+  it("toDOM does not call loadKatex when katex is already sync-available", () => {
+    // The factory default getKatexSync -> mockKatex renders math inline
+    // immediately, so no async upgrade is needed.
+    vi.mocked(loadKatex).mockClear();
+    const widget = new FootnoteDefBodyWidget("sigma $x$");
+    const el = widget.toDOM();
+    expect(el.innerHTML).not.toContain("cm-preview-math-placeholder");
+    expect(el.innerHTML).toContain("cm-preview-math-inline");
+    expect(loadKatex).not.toHaveBeenCalled();
+  });
+
+  it("toDOM does not throw if loadKatex resolves after the node is detached", async () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+
+    const el = new FootnoteDefBodyWidget("$x$").toDOM();
+    // Deliberately never attached: the upgrade must bail without throwing.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(el.innerHTML).toContain("cm-preview-math-placeholder");
   });
 
   it("toDOM sanitizes script tags out of the body", () => {
@@ -201,5 +246,21 @@ describe("FootnoteDefBodyWidget", () => {
     const plain = new FootnoteDefBodyWidget("a\nb");
     const display = new FootnoteDefBodyWidget("$$\na\nb\n$$");
     expect(display.estimatedHeight).toBeGreaterThan(plain.estimatedHeight);
+  });
+
+  it("mousedown on a link inside the body prevents default navigation", () => {
+    const el = new FootnoteDefBodyWidget("[go](https://example.com)").toDOM();
+    const anchor = el.querySelector("a[href]") as HTMLAnchorElement;
+    expect(anchor).toBeTruthy();
+    const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    anchor.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(true);
+  });
+
+  it("mousedown on non-link body text does not preventDefault", () => {
+    const el = new FootnoteDefBodyWidget("plain text").toDOM();
+    const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    el.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(false);
   });
 });

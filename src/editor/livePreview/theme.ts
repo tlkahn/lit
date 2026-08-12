@@ -460,6 +460,25 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     paddingTop: "0.35em",
     paddingBottom: "0.15em",
   },
+  // Nested blocks inside the rendered body: zero margins only (house rule -
+  // no Tailwind .prose resets). UA margins on ul/ol/li/blockquote/pre/table
+  // inflate the widget's estimatedHeight and add density gaps; padding-based
+  // separation is left to the existing p/p+p rules where needed.
+  ".cm-footnote-def-body ul, .cm-footnote-def-body ol": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body li": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body blockquote": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body pre": {
+    margin: "0",
+  },
+  ".cm-footnote-def-body table": {
+    margin: "0",
+  },
   ".cm-footnote-tooltip": {
     backgroundColor: "var(--background-primary, #fff)",
     border: "1px solid var(--background-modifier-border, #e0e0e0)",

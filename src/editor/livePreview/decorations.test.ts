@@ -2595,6 +2595,14 @@ describe("buildDecorations — footnote definitions", () => {
     view.destroy();
   });
 
+  it("buildBlockReplacements emits no body widget for whitespace-only body", () => {
+    const doc = "Text\n\n[^1]:   ";
+    const view = makeView(doc, 2);
+    const blockDecos = collectBlockDecos(view);
+    expect(blockDecos.some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
+    view.destroy();
+  });
+
   it("multi-line def: one body widget spanning both lines, raw indent kept in range", () => {
     const doc = "Text\n\n[^1]: First line\n    Continuation";
     const view = makeView(doc, 2);
@@ -2612,6 +2620,25 @@ describe("buildDecorations — footnote definitions", () => {
     const view = makeView(doc, 30); // caret on the continuation line
     const blockDecos = collectBlockDecos(view);
     expect(blockDecos.some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
+    view.destroy();
+  });
+
+  it("blank-separated continuation is covered by one body widget when caret outside", () => {
+    const doc = "Text\n\n[^1]: Title\n\n    Body with **x**";
+    const view = makeView(doc, 2);
+    const bodies = collectBlockDecos(view).filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.to).toBe(doc.length);
+    expect(bodies[0]!.footnoteBodyText).toContain("Body with **x**");
+    expect(bodies[0]!.footnoteBodyText).toContain("\n\n");
+    view.destroy();
+  });
+
+  it("caret on post-blank continuation reveals raw (no body widget)", () => {
+    const doc = "Text\n\n[^1]: Title\n\n    Body";
+    const bodyPos = doc.indexOf("Body");
+    const view = makeView(doc, bodyPos);
+    expect(collectBlockDecos(view).some((d) => d.widgetKind === "footnote-def-body")).toBe(false);
     view.destroy();
   });
 

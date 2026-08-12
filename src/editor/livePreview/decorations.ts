@@ -939,7 +939,7 @@ function addFootnoteDefBodyBlock(
   if (isCursorOnLine(state, from, to)) return;
 
   const info = getFootnoteDefBodyInfo(state, node);
-  if (!info || info.bodyFrom >= info.bodyTo || info.bodyText === "") return;
+  if (!info || info.bodyFrom >= info.bodyTo || info.bodyText.trim() === "") return;
 
   // Body span only: abuts the mark replace ([mark.from, bodyFrom)) so the
   // ViewPlugin mark widget and this body widget never overlap.

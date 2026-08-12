@@ -1,7 +1,7 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { recordDeparture, highlightLine } from "./crossrefWidgets";
 import { isJumpNavigation } from "../jumpHistory";
-import { renderFootnoteBody } from "./footnoteTooltip";
+import { paintFootnoteBody } from "./footnoteTooltip";
 
 export class FootnoteRefWidget extends WidgetType {
   constructor(
@@ -101,7 +101,15 @@ export class FootnoteDefBodyWidget extends WidgetType {
   toDOM(): HTMLElement {
     const div = document.createElement("div");
     div.className = "cm-footnote-def-body";
-    div.innerHTML = renderFootnoteBody(this.bodyText);
+    paintFootnoteBody(div, this.bodyText);
+    // Links inside the rendered body must not navigate (Tauri would open a
+    // new window / lose caret placement). preventDefault only, never
+    // stopPropagation: CM must still map the click to a doc position inside
+    // the replaced range so proximity reveals the raw source.
+    div.addEventListener("mousedown", (e) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("a[href]")) e.preventDefault();
+    });
     return div;
   }
 

@@ -112,6 +112,14 @@ describe("getFootnoteDefBodyInfo", () => {
     expect(info!.bodyText).toBe("First\nSecond");
   });
 
+  it("multi-line def with internal blank: bodyText keeps paragraph break and strips cont indent", () => {
+    const doc = "[^1]: Title\n\n    Body";
+    const info = defInfo(doc);
+    expect(info).not.toBeNull();
+    expect(info!.bodyText).toBe("Title\n\nBody");
+    expect(info!.bodyTo).toBe(doc.length);
+  });
+
   it("returns null when node has no FootnoteDefMark child", () => {
     const state = makeState("plain text");
     const top = syntaxTree(state).topNode;

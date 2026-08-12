@@ -61,7 +61,11 @@ export const Footnote: MarkdownConfig = {
         let lastEnd = cx.lineStart + line.text.length;
 
         while (cx.nextLine()) {
-          if (line.text.length === 0) break;
+          // Blank lines are skipped without moving lastEnd: they stay inside
+          // the node slice only when a later indented continuation advances
+          // lastEnd past them (GFM/export intent). Trailing blanks before a
+          // non-indented block never join the def.
+          if (line.text.length === 0) continue;
           if (line.text.charCodeAt(0) !== 9 && !line.text.startsWith("    ")) break;
           lastEnd = cx.lineStart + line.text.length;
         }
