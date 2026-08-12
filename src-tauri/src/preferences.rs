@@ -88,6 +88,10 @@ pub struct Preferences {
     )]
     pub default_view_mode: String,
     #[serde(flatten)]
+    // Raw unknown preference keys, including the legacy `llm.*` subtree
+    // (provider config, temperature, customProviders). Read-only compatibility
+    // for old preference JSON and Edit-JSON power users; nothing writes these
+    // keys anymore. Keep until the separate prefs-cleanup migration.
     pub extra: HashMap<String, serde_json::Value>,
 }
 
