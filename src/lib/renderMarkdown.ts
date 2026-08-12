@@ -3,6 +3,7 @@ import DOMPurify from "dompurify";
 import { renderMathToHtml, replaceInlineMath } from "./renderMath";
 import { litFootnoteExtension } from "./markedFootnote";
 import { maskEscapedDollars, restoreEscapedDollarsInHtml } from "./escapedDollar";
+import { escapeHtml } from "./escapeHtml";
 
 // Dedicated instance so the footnote extension never leaks into other callers
 // of the global `marked` (e.g. table cell rendering).
@@ -103,11 +104,13 @@ function extractAndRenderMath(text: string, stripFootnotes = false): MathExtract
 
 // Pill-style footnote handling for inline rendering: drop definition lines
 // (with their indented continuations) and replace refs with source-label
-// superscript markers; defs stripped.
+// superscript markers; defs stripped. Labels are restricted to the LP
+// identifier charset and HTML-escaped on the way into the markup so label
+// text can never close the sup or inject elements.
 function footnotesToInlineMarkers(text: string): string {
   let working = text.replace(/^\[\^[^\]\n]+\]:[^\n]*(?:\n+(?:[ ]{4,}|\t)[^\n]*)*(?:\n|$)/gm, "");
-  working = working.replace(/\[\^([^\]\n]+)\]/g, (_m, label: string) => {
-    return `<sup class="footnote-ref">${label}</sup>`;
+  working = working.replace(/\[\^([a-zA-Z0-9_-]+)\]/g, (_m, label: string) => {
+    return `<sup class="footnote-ref">${escapeHtml(label)}</sup>`;
   });
   return working;
 }
