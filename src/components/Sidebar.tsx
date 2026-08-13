@@ -337,23 +337,21 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   useEffect(() => {
     if (!autoRevealInSidebar || !currentPagePath) return;
 
-    // Navigating from a search result changes currentPagePath; switching to
-    // the files tab here would yank the user out of their search results.
-    if (tabRef.current === "search") return;
+    // Auto-reveal belongs to the Files tab only. Never steal focus from
+    // References / Outline / Search as a side effect of navigation.
+    if (tabRef.current !== "files") return;
 
-    // Auto-reveal directly instead of dispatching lit:reveal-in-file-tree,
-    // so we can preserve any active search filter. If the page is filtered
-    // out by the current search, silently skip -- the user intentionally
-    // typed a filter and auto-reveal should not wipe it.
+    // Reveal in place. Do not dispatch lit:reveal-in-file-tree (that path
+    // clears filters and is reserved for explicit manual reveal). If the
+    // page is filtered out by the current Files search, silently skip.
     ensureSidebarVisible();
-    setTab("files");
 
     const idx = revealPath(currentPagePath);
     if (idx >= 0) {
       triggerReveal(currentPagePath, idx);
       setFocusedIndex(idx);
     }
-  }, [autoRevealInSidebar, currentPagePath, setTab, revealPath, triggerReveal, setFocusedIndex]);
+  }, [autoRevealInSidebar, currentPagePath, revealPath, triggerReveal, setFocusedIndex]);
 
   const dispatchRevealLibrary = useCallback((relativePath: string) => {
     dispatchRevealBibEntryForPage(relativePath);
