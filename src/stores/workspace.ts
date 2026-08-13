@@ -219,6 +219,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     try {
       await flushSave(oldPath);
       const newPath = await ipc.renamePage(oldPath, newName);
+      // sharedDocs must rekey before pane paths flip. usePageContent cleanup
+      // calls release(oldPath); after the rekey that release is a no-op and
+      // acquire(newPath) reuses the moved doc (panes set + edit/save gens
+      // preserved), so the dirty state survives the path change.
       renameSharedDocPath(oldPath, newPath, { title: newName });
       set((state) => {
         const { [oldPath]: viewState, ...restViewStates } = state.viewStates;
