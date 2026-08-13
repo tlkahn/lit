@@ -36,33 +36,6 @@ export function resolveTrashTargets(
 }
 
 /**
- * Compute the pre-delete row index to focus after trashing `deletedPaths`.
- * - Focused row survives -> keep the focus where it is.
- * - Focused row deleted -> nearest surviving row forward, else backward.
- * - Nothing left -> -1.
- */
-export function nextFocusIndex(
-  rowsBefore: FlatRow[],
-  focusedIndex: number,
-  deletedPaths: Set<string>,
-): number {
-  const isDeleted = (row: FlatRow | undefined): boolean => {
-    if (!row || row.type === "folder") return false;
-    return deletedPaths.has(row.page.relative_path);
-  };
-
-  if (!isDeleted(rowsBefore[focusedIndex])) return focusedIndex;
-
-  for (let i = focusedIndex + 1; i < rowsBefore.length; i++) {
-    if (!isDeleted(rowsBefore[i])) return i;
-  }
-  for (let i = focusedIndex - 1; i >= 0; i--) {
-    if (!isDeleted(rowsBefore[i])) return i;
-  }
-  return -1;
-}
-
-/**
  * Resolve the row key to focus after trashing `deletedPaths`, using the
  * pre-delete row list. Returns a stable identity (row key) rather than a
  * pre-delete index, because indices shift once earlier rows are removed;

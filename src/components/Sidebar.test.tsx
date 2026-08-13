@@ -1731,4 +1731,45 @@ describe("Files tree trash focus", () => {
     const tree = screen.getByTestId("sidebar-file-list");
     expect(tree.getAttribute("aria-activedescendant")).toBe("tree-item-B.md");
   });
+
+  it("multi-trash moves focus to the nearest surviving page by identity", async () => {
+    const deletePage = vi.fn(async (path: string) => {
+      useWorkspaceStore.setState((s) => ({
+        pages: s.pages.filter((p) => p.relative_path !== path),
+      }));
+    });
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("A", "A.md"),
+        makePage("B", "B.md"),
+        makePage("C", "C.md"),
+        makePage("D", "D.md"),
+      ],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("B"));
+    fireEvent.click(screen.getByText("A"), { metaKey: true });
+    // Focus sits on A after the cmd-click; ArrowDown moves it to B without
+    // changing the selection.
+    fireEvent.keyDown(screen.getByTestId("sidebar-file-list"), { key: "ArrowDown" });
+    expect([...useFileTreeSelectionStore.getState().selectedPaths].sort()).toEqual([
+      "A.md",
+      "B.md",
+    ]);
+
+    fireEvent.keyDown(screen.getByTestId("sidebar-file-list"), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-delete-btn"));
+    });
+
+    const tree = screen.getByTestId("sidebar-file-list");
+    expect(tree.getAttribute("aria-activedescendant")).toBe("tree-item-C.md");
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual([]);
+  });
 });

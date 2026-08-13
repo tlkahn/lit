@@ -24,7 +24,7 @@ import { useSidebarSort } from "../hooks/useSidebarSort";
 import { useRevealFlash } from "../hooks/useRevealFlash";
 import { useTreeKeyboard } from "../hooks/useTreeKeyboard";
 import { useFileTreeSelectionStore } from "../stores/fileTreeSelection";
-import { visiblePagePaths, nextFocusIndex } from "../lib/fileTreeTrash";
+import { visiblePagePaths, nextFocusKey } from "../lib/fileTreeTrash";
 import { Outline } from "./Outline";
 import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SearchPanel } from "./SearchPanel";
@@ -301,11 +301,21 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     // Drop trashed paths from the selection; keep anything that failed.
     const remaining = useWorkspaceStore.getState().pages.map((p) => p.relative_path);
     useFileTreeSelectionStore.getState().pruneTo(remaining);
-    // Restore focus to the nearest surviving row (pre-delete math, applied
-    // after the refresh; the hook clamps to the new row count).
+    // Restore focus to the nearest surviving row by identity. The helper
+    // returns a row key from the pre-delete rows; we resolve it against the
+    // post-delete rows derived from the same snapshot (rowsBefore minus the
+    // succeeded paths) so the result never depends on render timing - the
+    // live rowsRef may lag the store during the loop's await boundaries.
     if (succeeded.length > 0 && rowsBefore.length > 0) {
-      const next = nextFocusIndex(rowsBefore, focusBefore, new Set(succeeded));
-      if (next >= 0) setFocusedIndexRef.current(next);
+      const focusKey = nextFocusKey(rowsBefore, focusBefore, new Set(succeeded));
+      if (focusKey != null) {
+        const deleted = new Set(succeeded);
+        const rowsAfter = rowsBefore.filter(
+          (r) => r.type === "folder" || !deleted.has(r.page.relative_path),
+        );
+        const idx = rowsAfter.findIndex((r) => r.key === focusKey);
+        if (idx >= 0) setFocusedIndexRef.current(idx);
+      }
     }
   }, [deletePageAction]);
 
