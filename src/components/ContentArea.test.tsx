@@ -322,6 +322,90 @@ describe("ContentArea", () => {
     expect(useStatusMessageStore.getState().variant).toBe("error");
   });
 
+  it("overlapping title commits do not revert a successful rename", async () => {
+    let resolveFirst!: (v: string) => void;
+    const rename = vi.fn()
+      .mockImplementationOnce(() => new Promise<string>((r) => { resolveFirst = r; }))
+      .mockImplementation(() => Promise.reject(new Error("Page not found")));
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Foo");
+    await act(async () => {
+      input.blur();
+    });
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Foo");
+
+    // While the first commit is in flight, start a second edit + blur. The
+    // second commit must be ignored (single-flight), not run and fail.
+    await act(async () => {
+      input.focus();
+    });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Bar");
+    await act(async () => {
+      input.blur();
+    });
+
+    // Resolve the first rename.
+    await act(async () => {
+      resolveFirst("Foo.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Foo");
+    });
+    // Locked design: overlapping commit is ignored entirely.
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
+
+  it("title commit failure does not revert when the pane already left the page", async () => {
+    let rejectRename!: (e: Error) => void;
+    const rename = vi.fn(
+      () => new Promise<string>((_, r) => { rejectRename = r; }),
+    );
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Foo");
+    await act(async () => {
+      input.blur();
+    });
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Foo");
+
+    // Mid-flight the pane navigates to a different page.
+    act(() => {
+      usePaneStore.getState().setPanePage("test-pane", "Other.md");
+      useWorkspaceStore.setState({ currentPagePath: "Other.md" });
+    });
+    await waitFor(() => {
+      expect(getPaneContent("test-pane")?.title).toBe("Other");
+    });
+
+    await act(async () => {
+      rejectRename(new Error("Page already exists"));
+    });
+
+    // The pane no longer points at Hello.md - the failed rename must not
+    // clobber the new page's title nor revert the input to the old title.
+    expect(getPaneContent("test-pane")?.title).toBe("Other");
+    expect(screen.getByTestId("page-title")).not.toHaveValue("Hello");
+  });
+
   it("does not update the pane content title before renamePage resolves", async () => {
     let resolveRename!: (v: string) => void;
     const rename = vi.fn(

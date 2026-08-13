@@ -73,6 +73,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const titleCancelRef = useRef(false);
+  const titleCommitInFlightRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const defaultViewModeRef = useRef(defaultViewMode);
@@ -170,8 +171,14 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
       titleCancelRef.current = false;
       return;
     }
+    // Single-flight: an overlapping blur while a commit is in flight would
+    // otherwise run a second renamePage(oldPath, ...) and, if it failed, revert
+    // chrome while the first rename had already landed on disk. Ignore it.
+    if (titleCommitInFlightRef.current) return;
+
     const trimmed = editingTitle.trim();
     const page = currentPanePage;
+    const paneId = focusedPaneId;
     if (!trimmed || !page) {
       setEditingTitle(title);
       return;
@@ -179,20 +186,28 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     if (trimmed === title) return;
 
     const previous = title;
+    titleCommitInFlightRef.current = true;
     try {
       await renamePageAction(page, trimmed);
-      updatePaneContent(focusedPaneId, { title: trimmed });
+      // Use the pane id captured at blur, not whatever pane is focused now.
+      updatePaneContent(paneId, { title: trimmed });
       setEditingTitle(trimmed);
     } catch (e) {
-      setEditingTitle(previous);
-      // Belt-and-suspenders: force the pane registry back to the committed
-      // title if an earlier bug left a stale optimistic value.
-      updatePaneContent(focusedPaneId, { title: previous });
+      const leaf = findLeaf(usePaneStore.getState().root, paneId);
+      // Only revert chrome if this pane still points at the path we failed to
+      // rename. If the pane moved on (or another rename landed), clobbering
+      // the title would lie about the current page.
+      if (leaf?.pagePath === page) {
+        setEditingTitle(previous);
+        updatePaneContent(paneId, { title: previous });
+      }
       const msg =
         e instanceof Error && e.message
           ? e.message
           : "Could not rename page";
       useStatusMessageStore.getState().show(msg, "error");
+    } finally {
+      titleCommitInFlightRef.current = false;
     }
   };
 
