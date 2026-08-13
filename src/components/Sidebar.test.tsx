@@ -885,7 +885,7 @@ describe("Sidebar reveal and search interaction", () => {
     expect(screen.getByText("Beta Note")).toBeInTheDocument();
   });
 
-  it("auto-reveal switches to files tab when on a non-files tab", async () => {
+  it("auto-reveal does not switch tabs while a non-files tab is active", async () => {
     const { usePreferencesStore } = await import("../stores/preferences");
     useWorkspaceStore.setState({
       pages: [makePage("Alpha", "Alpha.md")],
@@ -903,14 +903,77 @@ describe("Sidebar reveal and search interaction", () => {
     expect(screen.getByText("No page selected")).toBeInTheDocument();
     expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
 
-    // Trigger auto-reveal by setting currentPagePath
+    // Trigger auto-reveal by setting currentPagePath (with outline content)
     act(() => {
+      useWorkspaceStore.setState({
+        currentPagePath: "Alpha.md",
+        currentPageHeadings: [{ level: 1, text: "Intro", line: 1, from: 0, to: 6 }],
+      });
+    });
+
+    // Auto-reveal must NOT yank the user to the files tab
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+    expect(screen.getByText("Intro")).toBeInTheDocument();
+  });
+
+  it("auto-reveal does not switch tabs while the References tab is active", async () => {
+    const { usePreferencesStore } = await import("../stores/preferences");
+    useWorkspaceStore.setState({
+      pages: [makePage("Alpha", "Alpha.md")],
+      currentPagePath: null,
+    });
+    usePreferencesStore.setState({ autoRevealInSidebar: true, sidebarVisible: true });
+
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole("button", { name: "References" }));
+    expect(await screen.findByText(/No references found/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+
+    act(() => {
+      // Simulates Open note / Open PDF / materialize / OCR completion, etc.
       useWorkspaceStore.setState({ currentPagePath: "Alpha.md" });
     });
 
-    // Auto-reveal should switch to the files tab
-    expect(screen.getByLabelText("Search pages")).toBeInTheDocument();
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search pages")).not.toBeInTheDocument();
+    expect(screen.getByText(/No references found/i)).toBeInTheDocument();
+  });
+
+  it("auto-reveal expands and flashes the active file while the Files tab is active", async () => {
+    vi.useFakeTimers();
+    try {
+      const { usePreferencesStore } = await import("../stores/preferences");
+      useWorkspaceStore.setState({
+        pages: [
+          makePage("Nested", "docs/Nested.md"),
+          makePage("Outside", "Outside.md"),
+        ],
+        currentPagePath: null,
+      });
+      usePreferencesStore.setState({ autoRevealInSidebar: true, sidebarVisible: true });
+
+      render(<Sidebar />);
+
+      // Files tab is default; Nested is under a collapsed folder initially
+      expect(screen.getByText("docs")).toBeInTheDocument();
+      expect(screen.queryByText("Nested")).not.toBeInTheDocument();
+
+      act(() => {
+        useWorkspaceStore.setState({ currentPagePath: "docs/Nested.md" });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // Ancestors expanded + row visible
+      expect(screen.getByText("Nested")).toBeInTheDocument();
+      // Flash class applied via useRevealFlash
+      const rowButton = screen.getByText("Nested").closest("button");
+      expect(rowButton?.className).toMatch(/sidebar-item-revealed/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("auto-reveal does not switch tabs while the search tab is active", async () => {
