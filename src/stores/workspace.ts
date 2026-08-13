@@ -18,7 +18,7 @@ import {
   deserializeLinks,
 } from "./panePdfLink";
 import { usePaneHistoryStore, initPaneHistoryTracking, setPageExistsCheck, deserializeHistory, type PaneHistoryStack } from "./paneHistory";
-import { renamePath as renameSharedDocPath } from "../lib/sharedDocs";
+import { renamePath as renameSharedDocPath, flushSave } from "../lib/sharedDocs";
 import {
   loadLayout,
   validateLayout,
@@ -217,6 +217,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         : [...s.pendingRenameOldPaths, oldPath],
     }));
     try {
+      await flushSave(oldPath);
       const newPath = await ipc.renamePage(oldPath, newName);
       renameSharedDocPath(oldPath, newPath, { title: newName });
       set((state) => {

@@ -58,6 +58,7 @@ export interface SharedDocRegistry<Content extends HasBody> {
   setContent: (pagePath: string, content: Content) => void;
   setBody: (pagePath: string, newBody: string, fromPaneId: string) => void;
   renamePath: (oldPath: string, newPath: string, patch?: Partial<Content>) => void;
+  flushSave: (pagePath: string) => Promise<void>;
   isShared: (pagePath: string) => boolean;
   isDirty: (pagePath: string) => boolean;
   subscribe: (
@@ -262,10 +263,33 @@ export function createSharedDocRegistry<Content extends HasBody>(
 
     // Re-arm the save against the new path when the doc is still dirty. A
     // dirty doc always had a timer (setBody schedules one), so this covers the
-    // cleared-timer case. In-flight writes are chained by the caller when they
-    // settle (see renamePath callers / Cycle 2 follow-up).
-    if (!doc.saveInFlight && doc.editGen > doc.saveGen) {
+    // cleared-timer case. When a write is already in flight, chain a follow-up
+    // on its settle: if the doc is still dirty (edited during the flight) the
+    // follow-up saves to the new path so the in-flight old-path write cannot
+    // be the last word.
+    if (doc.saveInFlight) {
+      void doc.saveInFlight.then(() => {
+        if (docs.get(newPath) === doc && doc.editGen > doc.saveGen) {
+          scheduleSave(newPath, doc);
+        }
+      });
+    } else if (doc.editGen > doc.saveGen) {
       scheduleSave(newPath, doc);
+    }
+  }
+
+  async function flushSave(pagePath: string): Promise<void> {
+    const doc = docs.get(pagePath);
+    if (!doc) return;
+    if (doc.saveTimer) {
+      clearTimeout(doc.saveTimer);
+      doc.saveTimer = undefined;
+    }
+    if (doc.saveInFlight) {
+      await doc.saveInFlight;
+    }
+    if (doc.editGen > doc.saveGen) {
+      await executeSave(pagePath, doc);
     }
   }
 
@@ -362,6 +386,7 @@ export function createSharedDocRegistry<Content extends HasBody>(
     setContent,
     setBody,
     renamePath,
+    flushSave,
     isShared,
     isDirty,
     subscribe,

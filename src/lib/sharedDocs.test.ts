@@ -15,6 +15,7 @@ import {
   isDirty,
   isShared,
   renamePath,
+  flushSave,
   _resetForTesting,
 } from "./sharedDocs";
 import { writePage } from "./ipc";
@@ -531,6 +532,95 @@ describe("SharedDocRegistry", () => {
       await vi.advanceTimersByTimeAsync(0);
 
       expect(writePage).not.toHaveBeenCalled();
+    });
+
+    it("renamePath during in-flight save follows up on the new path if still dirty", async () => {
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementation(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "v0",
+        title: "Old",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "tags:\n  - a\n",
+      });
+
+      // First write goes in flight on the old path (pre-rename flight is
+      // unavoidable - the timer was armed before the rename).
+      setBody("old.md", "v1", "p1");
+      vi.advanceTimersByTime(300);
+      expect(writePage).toHaveBeenCalledOnce();
+      expect(writePage).toHaveBeenCalledWith("old.md", "v1", { tags: ["a"] });
+
+      // Edit while in flight, then rename.
+      setBody("old.md", "v2", "p1");
+      renamePath("old.md", "new.md", { title: "New" });
+
+      // Settle the first write; the follow-up must target the new path.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The follow-up write (new.md) is also deferred - settle it so the doc
+      // ends clean.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const calls = vi.mocked(writePage).mock.calls;
+      expect(calls.some(([path, body]) => path === "new.md" && body === "v2")).toBe(true);
+      expect(isDirty("new.md")).toBe(false);
+      expect(getDoc("old.md")).toBeNull();
+      expect(getDoc("new.md")!.body).toBe("v2");
+      expect(getDoc("new.md")!.title).toBe("New");
+    });
+  });
+
+  describe("flushSave", () => {
+    it("flushSave awaits pending debounce and writes immediately", async () => {
+      // The previous test left a deferred implementation on the shared mock;
+      // restore the immediate-resolve default so flushSave can settle.
+      vi.mocked(writePage).mockImplementation(() => Promise.resolve());
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", {
+        body: "old",
+        title: "T",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "",
+      });
+      setBody("notes.md", "edited", "p1");
+
+      expect(writePage).not.toHaveBeenCalled();
+
+      await flushSave("notes.md");
+
+      expect(writePage).toHaveBeenCalledOnce();
+      expect(writePage).toHaveBeenCalledWith("notes.md", "edited", { tags: ["a"] });
+      expect(isDirty("notes.md")).toBe(false);
+    });
+
+    it("flushSave is a no-op for missing docs", async () => {
+      await expect(flushSave("missing.md")).resolves.toBeUndefined();
+      expect(writePage).not.toHaveBeenCalled();
+    });
+
+    it("flushSave is a no-op for clean docs", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", {
+        body: "clean",
+        title: "T",
+        frontmatter: {},
+        rawYaml: "",
+      });
+
+      await flushSave("notes.md");
+
+      expect(writePage).not.toHaveBeenCalled();
+      expect(isDirty("notes.md")).toBe(false);
     });
   });
 
