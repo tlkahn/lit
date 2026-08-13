@@ -44,7 +44,12 @@ export function GraphDeleteDialog({ deleteConfirm, onClose }: GraphDeleteDialogP
               onClose();
               useGraphSelectionStore.getState().clearSelection();
               for (const id of ids) {
-                await deletePageAction(id);
+                try {
+                  await deletePageAction(id);
+                } catch {
+                  // Best-effort continue: a failed trash must not abort the
+                  // remaining deletes. The store still records `error`.
+                }
               }
             }}
           >

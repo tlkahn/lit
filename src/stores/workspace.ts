@@ -315,6 +315,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       usePaneHistoryStore.getState().clearPath(relativePath);
     } catch (e) {
       set({ error: String(e) });
+      throw e instanceof Error ? e : new Error(String(e));
     }
   },
 }));

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { mockInvoke } from "../test/tauri-mock";
 import { useGraphSelectionStore } from "../stores/graphSelection";
+import { useWorkspaceStore } from "../stores/workspace";
 import { GraphDeleteDialog } from "./GraphDeleteDialog";
 
 describe("GraphDeleteDialog", () => {
@@ -102,5 +103,32 @@ describe("GraphDeleteDialog", () => {
     expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
     expect(trashedIds).toContain("a.md");
     expect(trashedIds).toContain("b.md");
+  });
+
+  it("continues deleting remaining ids when one deletePage rejects", async () => {
+    const trashed: string[] = [];
+    const deletePage = vi.fn(async (id: string) => {
+      trashed.push(id);
+      if (id === "a.md") throw new Error("nope");
+    });
+    useWorkspaceStore.setState({ deletePage });
+    useGraphSelectionStore.getState().toggleNode("a.md");
+    useGraphSelectionStore.getState().toggleNode("b.md");
+
+    const onClose = vi.fn();
+    render(
+      <GraphDeleteDialog
+        deleteConfirm={{ nodeIds: ["a.md", "b.md"], labels: ["A", "B"] }}
+        onClose={onClose}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-delete-btn"));
+    });
+
+    expect(trashed).toEqual(["a.md", "b.md"]);
+    expect(onClose).toHaveBeenCalled();
+    expect(useGraphSelectionStore.getState().selectedNodes).toEqual([]);
   });
 });
