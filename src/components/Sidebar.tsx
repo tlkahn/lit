@@ -332,9 +332,12 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   // Selection lifecycle: clear when leaving the Files tab, on workspace change,
   // and prune paths that disappear from pages (trash / rename / external delete).
+  // The trash confirm dialog is dismissed on the same transitions so a stale
+  // confirm can never survive into another workspace or tab.
   useEffect(() => {
     if (tab !== "files") {
       useFileTreeSelectionStore.getState().clear();
+      setTrashConfirm(null);
     }
   }, [tab]);
 
@@ -343,6 +346,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     if (prevWorkspacePathRef.current !== workspacePath) {
       prevWorkspacePathRef.current = workspacePath;
       useFileTreeSelectionStore.getState().clear();
+      setTrashConfirm(null);
     }
   }, [workspacePath]);
 
@@ -577,7 +581,13 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
             aria-label="File tree"
             aria-activedescendant={focusedIndex >= 0 && rows[focusedIndex] ? "tree-item-" + rows[focusedIndex].key : undefined}
             tabIndex={0}
-            onKeyDown={handleTreeKeyDown}
+            onKeyDown={(e) => {
+              // While the trash confirm is open the tree keyboard is inert:
+              // Escape must cancel the dialog (document listener) instead of
+              // clearing selection, and Delete must not re-enter requestTrash.
+              if (trashConfirm) return;
+              handleTreeKeyDown(e);
+            }}
             onFocus={handleContainerFocus}
             className="flex-1 overflow-y-auto overscroll-contain px-1 outline-none"
           >

@@ -1629,6 +1629,92 @@ describe("Files tree multi trash confirm", () => {
   });
 });
 
+describe("Files tree multi trash dialog lifecycle", () => {
+  function tree(): HTMLElement {
+    return screen.getByTestId("sidebar-file-list");
+  }
+
+  function openMultiTrashDialog() {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    return deletePage;
+  }
+
+  it("Escape while multi-trash dialog open cancels dialog and keeps selection", async () => {
+    const deletePage = openMultiTrashDialog();
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    fireEvent.keyDown(tree(), { key: "Escape" });
+
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+    expect([...useFileTreeSelectionStore.getState().selectedPaths].sort()).toEqual([
+      "A.md",
+      "B.md",
+    ]);
+    expect(deletePage).not.toHaveBeenCalled();
+  });
+
+  it("Delete while multi-trash dialog open does not re-enter requestTrash", async () => {
+    const deletePage = openMultiTrashDialog();
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    fireEvent.keyDown(tree(), { key: "Delete" });
+
+    expect(screen.getAllByTestId("confirm-delete-dialog")).toHaveLength(1);
+    expect(deletePage).not.toHaveBeenCalled();
+  });
+
+  it("workspace change dismisses multi-trash dialog", async () => {
+    openMultiTrashDialog();
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    act(() => {
+      useWorkspaceStore.setState({ workspacePath: "/other" });
+    });
+
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+  });
+
+  it("leaving Files tab dismisses multi-trash dialog", async () => {
+    openMultiTrashDialog();
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Outline" }));
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+  });
+});
+
 describe("Files tree selection lifecycle", () => {
   function selectTwo() {
     useWorkspaceStore.setState({
