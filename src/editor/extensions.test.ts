@@ -272,6 +272,26 @@ describe("createExtensions", () => {
     const state = EditorState.create({ doc: "hello", extensions: exts });
     expect(state.facet(EditorView.editable)).toBe(false);
   });
+
+  // Issue #1013: after create-from-+ the editor is focused but empty. Without
+  // drawSelection(), CM falls back to the native contenteditable caret, which
+  // is often invisible on an empty doc after programmatic focus. theme.ts
+  // styles `.cm-cursor`; drawSelection is what actually renders it.
+  it("draws a CM caret layer on an empty focused document", () => {
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const exts = createExtensions(makeConfig());
+    const view = new EditorView({
+      state: EditorState.create({ doc: "", extensions: exts }),
+      parent,
+    });
+    view.focus();
+    // drawSelection mounts a cursor layer; native-caret fallback has neither.
+    const layer = parent.querySelector(".cm-cursorLayer, .cm-cursor");
+    expect(layer).not.toBeNull();
+    view.destroy();
+    parent.remove();
+  });
 });
 
 function createViewWithSearch(doc: string, onChange?: (content: string) => void) {

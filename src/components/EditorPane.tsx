@@ -171,6 +171,10 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   // the pane's CM view registers (empty pane -> first mount race), then clears
   // the flag so it never goes stale. Only the focused editor pane consumes it;
   // unfocused panes must not clear it.
+  //
+  // Visible caret on the empty new page also requires drawSelection() in the
+  // CM extension set (see src/editor/extensions.ts) - native contenteditable
+  // caret is often invisible on an empty doc after programmatic focus.
   useEffect(() => {
     if (!pendingEditorFocus) return;
     if (!isFocused) return;

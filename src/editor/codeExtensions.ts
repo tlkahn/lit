@@ -1,6 +1,7 @@
 import { type Extension, Compartment, EditorState } from "@codemirror/state";
 import {
   EditorView,
+  drawSelection,
   keymap,
   lineNumbers,
   highlightActiveLine,
@@ -59,6 +60,8 @@ export function createCodeExtensions(config: CodeExtensionConfig): Extension[] {
     config.editableCompartment.of(
       EditorView.editable.of(!(config.editorLocked ?? false)),
     ),
+    // Match markdown editor: draw CM caret (see extensions.ts).
+    drawSelection(),
     // User bindings come first so custom shortcuts win over built-ins.
     config.keymapCompartment.of(
       keymap.of([

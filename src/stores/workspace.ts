@@ -195,7 +195,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         currentPagePath: meta.relative_path,
         // Create wants the editor caret in the focused pane once the new page
         // is loaded. The focused EditorPane consumes this flag (view.focus)
-        // and clears it; see src/components/EditorPane.tsx.
+        // and clears it; see src/components/EditorPane.tsx. Visible caret on
+        // the empty page also needs drawSelection() in the CM extensions.
         pendingEditorFocus: true,
       }));
     } catch (e) {
