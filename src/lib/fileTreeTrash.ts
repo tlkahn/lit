@@ -61,3 +61,35 @@ export function nextFocusIndex(
   }
   return -1;
 }
+
+/**
+ * Resolve the row key to focus after trashing `deletedPaths`, using the
+ * pre-delete row list. Returns a stable identity (row key) rather than a
+ * pre-delete index, because indices shift once earlier rows are removed;
+ * callers resolve the key against the post-delete rows via findIndex.
+ * - Focused row survives -> that row's key.
+ * - Focused row deleted -> nearest surviving row forward, else backward.
+ * - Nothing left -> null.
+ */
+export function nextFocusKey(
+  rowsBefore: FlatRow[],
+  focusedIndex: number,
+  deletedPaths: Set<string>,
+): string | null {
+  const isDeleted = (row: FlatRow | undefined): boolean => {
+    if (!row || row.type === "folder") return false;
+    return deletedPaths.has(row.page.relative_path);
+  };
+
+  if (!isDeleted(rowsBefore[focusedIndex])) {
+    return rowsBefore[focusedIndex]?.key ?? null;
+  }
+
+  for (let i = focusedIndex + 1; i < rowsBefore.length; i++) {
+    if (!isDeleted(rowsBefore[i])) return rowsBefore[i]!.key;
+  }
+  for (let i = focusedIndex - 1; i >= 0; i--) {
+    if (!isDeleted(rowsBefore[i])) return rowsBefore[i]!.key;
+  }
+  return null;
+}

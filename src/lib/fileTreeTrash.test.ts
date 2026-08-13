@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { FlatRow } from "../hooks/useFlatTree";
 import type { PageMeta } from "./ipc";
-import { resolveTrashTargets, visiblePagePaths, nextFocusIndex } from "./fileTreeTrash";
+import { resolveTrashTargets, visiblePagePaths, nextFocusKey } from "./fileTreeTrash";
 
 function makePage(title: string, path?: string): PageMeta {
   return {
@@ -89,7 +89,7 @@ describe("resolveTrashTargets", () => {
   });
 });
 
-describe("nextFocusIndex", () => {
+describe("nextFocusKey", () => {
   const rows: FlatRow[] = [
     page("A", 0, "A.md"),
     page("B", 0, "B.md"),
@@ -97,34 +97,42 @@ describe("nextFocusIndex", () => {
     page("D", 0, "D.md"),
   ];
 
-  it("keeps focus when the focused row is not deleted", () => {
-    expect(nextFocusIndex(rows, 1, new Set(["C.md"]))).toBe(1);
+  it("returns focused row key when that row survives", () => {
+    expect(nextFocusKey(rows, 1, new Set(["C.md"]))).toBe("B.md");
   });
 
-  it("moves to the next surviving row when the focused page is deleted", () => {
-    expect(nextFocusIndex(rows, 1, new Set(["B.md"]))).toBe(2);
+  it("returns next survivor key when focused page deleted", () => {
+    expect(nextFocusKey(rows, 1, new Set(["B.md"]))).toBe("C.md");
   });
 
-  it("moves to the previous row when the focused page is the last", () => {
-    expect(nextFocusIndex(rows, 3, new Set(["D.md"]))).toBe(2);
+  it("returns previous survivor key when focused page was last", () => {
+    expect(nextFocusKey(rows, 3, new Set(["D.md"]))).toBe("C.md");
   });
 
-  it("skips other deleted rows when scanning", () => {
-    expect(nextFocusIndex(rows, 0, new Set(["A.md", "B.md"]))).toBe(2);
+  it("skips other deleted rows when scanning forward", () => {
+    expect(nextFocusKey(rows, 0, new Set(["A.md", "B.md"]))).toBe("C.md");
   });
 
-  it("moves to a folder row when it is the next neighbor", () => {
+  it("returns folder key when folder is next neighbor", () => {
     const withFolder: FlatRow[] = [
       page("A", 0, "A.md"),
       page("B", 1, "docs/B.md"),
       folder("docs", 0),
       page("C", 0, "C.md"),
     ];
-    expect(nextFocusIndex(withFolder, 1, new Set(["docs/B.md"]))).toBe(2);
+    expect(nextFocusKey(withFolder, 1, new Set(["docs/B.md"]))).toBe("folder:docs");
   });
 
-  it("returns -1 when every row is deleted", () => {
+  it("returns null when every page deleted and no folder rows", () => {
     const two = [page("A", 0, "A.md"), page("B", 0, "B.md")];
-    expect(nextFocusIndex(two, 0, new Set(["A.md", "B.md"]))).toBe(-1);
+    expect(nextFocusKey(two, 0, new Set(["A.md", "B.md"]))).toBeNull();
+  });
+
+  it("key remains resolvable after earlier rows are removed", () => {
+    const rowsBefore: FlatRow[] = rows;
+    const key = nextFocusKey(rowsBefore, 1, new Set(["A.md", "B.md"]));
+    expect(key).toBe("C.md");
+    const rowsAfter = [page("C", 0, "C.md"), page("D", 0, "D.md")];
+    expect(rowsAfter.findIndex((r) => r.key === key)).toBe(0);
   });
 });
