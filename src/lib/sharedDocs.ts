@@ -27,6 +27,7 @@ export const getPaneIds = registry.getPaneIds;
 export const getDoc = registry.getDoc;
 export const setContent = registry.setContent;
 export const setBody = registry.setBody;
+export const renamePath = registry.renamePath;
 export const isShared = registry.isShared;
 export const isDirty = registry.isDirty;
 export const subscribe = registry.subscribe;

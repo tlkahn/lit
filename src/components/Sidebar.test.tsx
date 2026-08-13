@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
 import type { BibEntry } from "../lib/ipc";
 
@@ -384,6 +385,38 @@ describe("Sidebar context menu events", () => {
     });
 
     expect(screen.getByDisplayValue("Notes")).toBeInTheDocument();
+  });
+
+  it("inline rename failure shows an error toast and leaves the tree unchanged", async () => {
+    const rename = vi.fn(async () => {
+      throw new Error("Page already exists: NewNotes.md");
+    });
+    useWorkspaceStore.setState({
+      pages: [makePage("Notes", "Notes.md")],
+      renamePage: rename,
+    });
+    useStatusMessageStore.setState({ message: null, variant: "success", action: null });
+
+    render(<Sidebar />);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/rename", { relative_path: "Notes.md" });
+    });
+
+    const input = screen.getByDisplayValue("Notes");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewNotes");
+    await act(async () => {
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(rename).toHaveBeenCalledWith("Notes.md", "NewNotes");
+    });
+    expect(useStatusMessageStore.getState().message).toMatch(/already exists/i);
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+    expect(useWorkspaceStore.getState().pages[0]!.title).toBe("Notes");
+    expect(useWorkspaceStore.getState().pages[0]!.relative_path).toBe("Notes.md");
   });
 
   it("external-editor event calls open_in_external_editor", async () => {

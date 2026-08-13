@@ -14,6 +14,7 @@ import {
   setBody,
   isDirty,
   isShared,
+  renamePath,
   _resetForTesting,
 } from "./sharedDocs";
 import { writePage } from "./ipc";
@@ -435,6 +436,55 @@ describe("SharedDocRegistry", () => {
       release("notes.md", "p2");
       await vi.advanceTimersByTimeAsync(0);
       expect(getDoc("notes.md")).toBeNull();
+    });
+  });
+
+  describe("renamePath", () => {
+    it("moves the doc to the new path and applies the patch", () => {
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "# Old",
+        title: "Old",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "tags:\n  - a\n",
+      });
+
+      renamePath("old.md", "new.md", { title: "New" });
+
+      expect(getDoc("old.md")).toBeNull();
+      const doc = getDoc("new.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.body).toBe("# Old");
+      expect(doc!.title).toBe("New");
+      expect(doc!.frontmatter).toEqual({ tags: ["a"] });
+      expect(getPaneIds("new.md")).toEqual(["p1"]);
+    });
+
+    it("no-op when old path is missing (does not throw)", () => {
+      expect(() => renamePath("missing.md", "new.md", { title: "New" })).not.toThrow();
+      expect(getDoc("new.md")).toBeNull();
+    });
+
+    it("no-op when oldPath equals newPath", () => {
+      acquire("same.md", "p1");
+      setContent("same.md", { body: "b", title: "T", frontmatter: {}, rawYaml: "" });
+
+      renamePath("same.md", "same.md", { title: "Changed" });
+
+      const doc = getDoc("same.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.title).toBe("T");
+      expect(doc!.body).toBe("b");
+    });
+
+    it("without a patch the doc keeps its original title", () => {
+      acquire("old.md", "p1");
+      setContent("old.md", { body: "b", title: "Old", frontmatter: {}, rawYaml: "" });
+
+      renamePath("old.md", "new.md");
+
+      expect(getDoc("old.md")).toBeNull();
+      expect(getDoc("new.md")!.title).toBe("Old");
     });
   });
 

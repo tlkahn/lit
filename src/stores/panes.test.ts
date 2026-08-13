@@ -9,6 +9,7 @@ import {
   findSplitByPath,
   replaceSplitSizes,
   clearPagePath,
+  mapPagePath,
   rotateChildren,
   getPanePosition,
   createInitialState,
@@ -457,6 +458,64 @@ describe("clearPagePath", () => {
 
     const other: PaneLeaf = { type: "leaf", id: "b", pagePath: "other.md" };
     expect(clearPagePath(other, "deleted.md")).toBe(other);
+  });
+});
+
+describe("mapPagePath", () => {
+  it("rewrites a matching leaf pagePath", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "a.md" };
+    const result = mapPagePath(root, "a.md", "b.md") as PaneLeaf;
+    expect(result.pagePath).toBe("b.md");
+    expect(result.id).toBe("a");
+  });
+
+  it("rewrites all matching leaves in a split; others unchanged", () => {
+    const a: PaneLeaf = { type: "leaf", id: "a", pagePath: "a.md" };
+    const b: PaneLeaf = { type: "leaf", id: "b", pagePath: "keep.md" };
+    const c: PaneLeaf = { type: "leaf", id: "c", pagePath: "a.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [a, b, c],
+      sizes: [33, 34, 33],
+    };
+    const result = mapPagePath(root, "a.md", "b.md") as PaneSplit;
+    expect((result.children[0] as PaneLeaf).pagePath).toBe("b.md");
+    expect((result.children[1] as PaneLeaf).pagePath).toBe("keep.md");
+    expect((result.children[2] as PaneLeaf).pagePath).toBe("b.md");
+  });
+
+  it("returns same reference when no leaf matches", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "other.md" };
+    expect(mapPagePath(root, "a.md", "b.md")).toBe(root);
+  });
+
+  it("preserves viewMode on the rewritten leaf", () => {
+    const root: PaneLeaf = { type: "leaf", id: "a", pagePath: "a.md", viewMode: "mindmap" };
+    const result = mapPagePath(root, "a.md", "b.md") as PaneLeaf;
+    expect(result.pagePath).toBe("b.md");
+    expect(result.viewMode).toBe("mindmap");
+  });
+
+  it("store renamePagePath updates root when a leaf matches", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "a", pagePath: "a.md" },
+      focusedPaneId: "a",
+    });
+    usePaneStore.getState().renamePagePath("a.md", "b.md");
+    const leaf = findLeaf(usePaneStore.getState().root, "a");
+    expect(leaf!.pagePath).toBe("b.md");
+  });
+
+  it("store renamePagePath no-op keeps root reference", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "a", pagePath: "a.md" },
+      focusedPaneId: "a",
+    });
+    const before = usePaneStore.getState().root;
+    usePaneStore.getState().renamePagePath("unknown.md", "b.md");
+    expect(usePaneStore.getState().root).toBe(before);
   });
 });
 

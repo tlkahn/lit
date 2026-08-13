@@ -18,6 +18,7 @@ import {
   deserializeLinks,
 } from "./panePdfLink";
 import { usePaneHistoryStore, initPaneHistoryTracking, setPageExistsCheck, deserializeHistory, type PaneHistoryStack } from "./paneHistory";
+import { renamePath as renameSharedDocPath } from "../lib/sharedDocs";
 import {
   loadLayout,
   validateLayout,
@@ -53,6 +54,7 @@ export interface WorkspaceStore {
   indexProgress: IndexProgress | null;
   loading: boolean;
   error: string | null;
+  pendingRenameOldPaths: string[];
 
   openWorkspace: (path: string) => Promise<void>;
   refreshPages: () => Promise<void>;
@@ -60,7 +62,7 @@ export interface WorkspaceStore {
   selectPageAtLine: (relativePath: string, line: number, col?: number, fileAbsolute?: boolean) => void;
   createPage: (name: string, parentDir?: string) => Promise<void>;
   clearPendingEditorFocus: () => void;
-  renamePage: (oldPath: string, newName: string) => Promise<void>;
+  renamePage: (oldPath: string, newName: string) => Promise<string>;
   deletePage: (relativePath: string) => Promise<void>;
   setCurrentPageHeadings: (headings: Heading[]) => void;
   setCurrentFrontmatterLineCount: (count: number) => void;
@@ -93,6 +95,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   indexProgress: null,
   loading: false,
   error: null,
+  pendingRenameOldPaths: [],
 
   openWorkspace: async (path: string) => {
     set({ loading: true, error: null, graphReady: false, indexProgress: null });
@@ -207,8 +210,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   clearPendingEditorFocus: () => set({ pendingEditorFocus: false }),
 
   renamePage: async (oldPath: string, newName: string) => {
+    set((s) => ({
+      error: null,
+      pendingRenameOldPaths: s.pendingRenameOldPaths.includes(oldPath)
+        ? s.pendingRenameOldPaths
+        : [...s.pendingRenameOldPaths, oldPath],
+    }));
     try {
       const newPath = await ipc.renamePage(oldPath, newName);
+      renameSharedDocPath(oldPath, newPath, { title: newName });
       set((state) => {
         const { [oldPath]: viewState, ...restViewStates } = state.viewStates;
         const newViewStates = viewState !== undefined
@@ -223,11 +233,22 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           currentPagePath:
             state.currentPagePath === oldPath ? newPath : state.currentPagePath,
           viewStates: newViewStates,
+          pendingRenameOldPaths: state.pendingRenameOldPaths.filter(
+            (p) => p !== oldPath,
+          ),
         };
       });
+      usePaneStore.getState().renamePagePath(oldPath, newPath);
       usePaneHistoryStore.getState().renamePath(oldPath, newPath);
+      return newPath;
     } catch (e) {
-      set({ error: String(e) });
+      set((s) => ({
+        error: String(e),
+        pendingRenameOldPaths: s.pendingRenameOldPaths.filter(
+          (p) => p !== oldPath,
+        ),
+      }));
+      throw e instanceof Error ? e : new Error(String(e));
     }
   },
 

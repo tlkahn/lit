@@ -33,6 +33,7 @@ export interface PaneStore {
   focusPrev(): void;
   setPanePage(paneId: string, pagePath: string | null): void;
   setPaneViewMode(paneId: string, mode: ViewMode): void;
+  renamePagePath(oldPath: string, newPath: string): void;
   resize(splitPath: number[], sizes: number[]): void;
   clearPageFromPanes(pagePath: string): void;
   swapLayout(): void;
@@ -174,6 +175,19 @@ export function clearPagePath(root: PaneNode, pagePath: string): PaneNode {
   return changed ? { ...root, children: newChildren } : root;
 }
 
+export function mapPagePath(root: PaneNode, oldPath: string, newPath: string): PaneNode {
+  if (root.type === "leaf") {
+    return root.pagePath === oldPath ? { ...root, pagePath: newPath } : root;
+  }
+  let changed = false;
+  const children = root.children.map((c) => {
+    const n = mapPagePath(c, oldPath, newPath);
+    if (n !== c) changed = true;
+    return n;
+  });
+  return changed ? { ...root, children } : root;
+}
+
 function segmentLabel(
   direction: "horizontal" | "vertical",
   index: number,
@@ -273,6 +287,12 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
       : { type: "leaf", id: paneId, pagePath: leaf.pagePath, viewMode: mode };
     const newRoot = replaceLeaf(root, paneId, updated);
     set({ root: newRoot });
+  },
+
+  renamePagePath: (oldPath, newPath) => {
+    const { root } = get();
+    const next = mapPagePath(root, oldPath, newPath);
+    if (next !== root) set({ root: next });
   },
 
   resize: (splitPath, sizes) => {

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { useCardboxStore } from "../stores/cardbox";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
 import { writePage, parseRawYaml, isViewMode, type ViewMode } from "../lib/ipc";
@@ -71,6 +72,7 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleCancelRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const defaultViewModeRef = useRef(defaultViewMode);
@@ -91,6 +93,12 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }, [loaded, focusedPaneId, setPaneViewMode]);
 
   useEffect(() => {
+    if (
+      titleInputRef.current &&
+      document.activeElement === titleInputRef.current
+    ) {
+      return; // user is mid-edit; do not clobber the draft
+    }
     setEditingTitle(title);
   }, [title]);
 
@@ -157,13 +165,34 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setYamlError(null);
   }, [currentPanePage, saveViewState]);
 
-  const commitTitle = () => {
+  const commitTitle = async () => {
+    if (titleCancelRef.current) {
+      titleCancelRef.current = false;
+      return;
+    }
     const trimmed = editingTitle.trim();
-    if (trimmed && trimmed !== title && currentPanePage) {
-      renamePageAction(currentPanePage, trimmed);
-      updatePaneContent(focusedPaneId, { title: trimmed });
-    } else {
+    const page = currentPanePage;
+    if (!trimmed || !page) {
       setEditingTitle(title);
+      return;
+    }
+    if (trimmed === title) return;
+
+    const previous = title;
+    try {
+      await renamePageAction(page, trimmed);
+      updatePaneContent(focusedPaneId, { title: trimmed });
+      setEditingTitle(trimmed);
+    } catch (e) {
+      setEditingTitle(previous);
+      // Belt-and-suspenders: force the pane registry back to the committed
+      // title if an earlier bug left a stale optimistic value.
+      updatePaneContent(focusedPaneId, { title: previous });
+      const msg =
+        e instanceof Error && e.message
+          ? e.message
+          : "Could not rename page";
+      useStatusMessageStore.getState().show(msg, "error");
     }
   };
 
@@ -329,7 +358,11 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
                 titleInputRef.current?.blur();
               }
               if (e.key === "Escape") {
+                e.preventDefault();
                 setEditingTitle(title);
+                // Mark cancelled so the synchronous blur's commitTitle no-ops
+                // (setEditingTitle hasn't re-rendered yet).
+                titleCancelRef.current = true;
                 titleInputRef.current?.blur();
               }
             }}

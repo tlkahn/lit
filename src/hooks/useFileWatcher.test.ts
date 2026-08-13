@@ -3,6 +3,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useFileWatcher } from "./useFileWatcher";
 import { mockListen, emitMockEvent } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
+import { usePaneStore } from "../stores/panes";
 import { useModalLockStore } from "../stores/modalLock";
 
 beforeEach(() => {
@@ -15,6 +16,11 @@ beforeEach(() => {
     reloadTrigger: 0,
     loading: false,
     error: null,
+    pendingRenameOldPaths: [],
+  });
+  usePaneStore.setState({
+    root: { type: "leaf", id: "pane-a", pagePath: null },
+    focusedPaneId: "pane-a",
   });
   useModalLockStore.setState({ openCount: 0, locked: false });
 });
@@ -263,5 +269,65 @@ describe("useFileWatcher", () => {
     emitMockEvent("workspace://file-deleted", { path: "A.md" });
 
     expect(useWorkspaceStore.getState().currentPagePath).toBe("Merged.md");
+  });
+
+  it("file-deleted for pendingRenameOldPaths skips deselect and clearPageFromPanes", async () => {
+    mockListen();
+    const selectPage = vi.fn();
+    const refreshPages = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "old.md",
+      pendingRenameOldPaths: ["old.md"],
+      selectPage,
+      refreshPages,
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "old.md" },
+      focusedPaneId: "pane-a",
+    });
+
+    renderHook(() => useFileWatcher());
+    await act(async () => {});
+
+    emitMockEvent("workspace://file-deleted", { path: "old.md" });
+
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(usePaneStore.getState().root).toEqual({
+      type: "leaf",
+      id: "pane-a",
+      pagePath: "old.md",
+    });
+    expect(refreshPages).toHaveBeenCalled();
+  });
+
+  it("file-deleted still deselects and clears panes for non-pending paths", async () => {
+    mockListen();
+    const selectPage = vi.fn();
+    const refreshPages = vi.fn();
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      currentPagePath: "old.md",
+      pendingRenameOldPaths: ["other.md"],
+      selectPage,
+      refreshPages,
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "old.md" },
+      focusedPaneId: "pane-a",
+    });
+
+    renderHook(() => useFileWatcher());
+    await act(async () => {});
+
+    emitMockEvent("workspace://file-deleted", { path: "old.md" });
+
+    expect(selectPage).toHaveBeenCalledWith(null);
+    expect(usePaneStore.getState().root).toEqual({
+      type: "leaf",
+      id: "pane-a",
+      pagePath: null,
+    });
+    expect(refreshPages).toHaveBeenCalled();
   });
 });
