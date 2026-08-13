@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, type FocusEvent } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
@@ -11,6 +11,7 @@ import { getCurrentEditorView } from "../lib/editorViewRef";
 import { getDoc } from "../lib/sharedDocs";
 import { extractHeadings } from "../lib/headings";
 import { frontmatterLineCount } from "../lib/pathUtils";
+import { dispatchEditorFocusRequest, isEditorChrome } from "../lib/editorFocus";
 import { PaneContainer } from "./PaneContainer";
 import { BottomPanel } from "./BottomPanel";
 import { YamlHighlighter } from "./YamlHighlighter";
@@ -75,6 +76,8 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   const titleInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
+  const createHandoffRef = useRef(false);
+  const titleCancelRef = useRef(false);
   const defaultViewModeRef = useRef(defaultViewMode);
   defaultViewModeRef.current = defaultViewMode;
   const graphViewEnabledRef = useRef(graphViewEnabled);
@@ -160,16 +163,26 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }, [currentPanePage, saveViewState]);
 
   useEffect(() => {
-    if (pendingTitleFocus && title) {
-      if (titleInputRef.current) {
-        titleInputRef.current.focus();
-        titleInputRef.current.select();
-        clearPendingTitleFocus();
-      }
+    if (pendingTitleFocus && title && titleInputRef.current) {
+      // Defer focus/select to the next frame so the controlled input value has
+      // been committed (selecting before the re-render would select nothing).
+      createHandoffRef.current = true;
+      clearPendingTitleFocus();
+      requestAnimationFrame(() => {
+        if (titleInputRef.current) {
+          titleInputRef.current.focus();
+          titleInputRef.current.select();
+        }
+      });
     }
   }, [pendingTitleFocus, title, clearPendingTitleFocus]);
 
   const commitTitle = () => {
+    if (titleCancelRef.current) {
+      titleCancelRef.current = false;
+      setEditingTitle(title);
+      return;
+    }
     const trimmed = editingTitle.trim();
     if (trimmed && trimmed !== title && currentPanePage) {
       renamePageAction(currentPanePage, trimmed);
@@ -177,6 +190,20 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     } else {
       setEditingTitle(title);
     }
+  };
+
+  const handleTitleBlur = (e: FocusEvent<HTMLInputElement>) => {
+    commitTitle();
+    if (!createHandoffRef.current) return;
+    if (isEditorChrome(e.relatedTarget)) {
+      createHandoffRef.current = false;
+      dispatchEditorFocusRequest();
+    } else if (e.relatedTarget != null) {
+      // Focus is moving to a non-editor target (sidebar, search, etc.): drop
+      // the create-driven handoff so a later editor click does not steal focus.
+      createHandoffRef.current = false;
+    }
+    // relatedTarget === null: leave the ref set; Enter / pointerdown consume it.
   };
 
   const enterYamlEdit = () => {
@@ -324,7 +351,16 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt">
+    <main
+      className="flex min-h-0 flex-1 flex-col bg-bg-primary-alt"
+      onPointerDownCapture={(e) => {
+        if (!createHandoffRef.current) return;
+        if (!isEditorChrome(e.target)) return;
+        commitTitle();
+        createHandoffRef.current = false;
+        requestAnimationFrame(() => dispatchEditorFocusRequest());
+      }}
+    >
       {currentPanePage && focusedFileType === "markdown" && !isMultiPane && (<div className="px-6 py-3">
         <div className="flex items-center gap-2">
           <HistoryNavButtons paneId={focusedPaneId} testIdPrefix="history-" />
@@ -334,14 +370,18 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             data-testid="page-title"
             value={editingTitle}
             onChange={(e) => setEditingTitle(e.target.value)}
-            onBlur={commitTitle}
+            onBlur={handleTitleBlur}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
+                createHandoffRef.current = false;
                 titleInputRef.current?.blur();
+                dispatchEditorFocusRequest();
               }
               if (e.key === "Escape") {
+                titleCancelRef.current = true;
                 setEditingTitle(title);
+                createHandoffRef.current = false;
                 titleInputRef.current?.blur();
               }
             }}

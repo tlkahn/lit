@@ -243,6 +243,23 @@ describe("ContentArea", () => {
     });
   });
 
+  it("focuses and selects the title input when pendingTitleFocus is set (create)", async () => {
+    setPage("Hello.md");
+    useWorkspaceStore.setState({ pendingTitleFocus: true });
+    render(<ContentArea />);
+
+    const input = await screen.findByTestId("page-title");
+    await waitFor(() => {
+      expect(input).toHaveValue("Hello");
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input);
+      expect((input as HTMLInputElement).selectionStart).toBe(0);
+      expect((input as HTMLInputElement).selectionEnd).toBe((input as HTMLInputElement).value.length);
+    });
+    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(false);
+  });
+
   it("title editing commits rename for focused pane's page", async () => {
     const spy = vi.fn();
     useWorkspaceStore.setState({ renamePage: spy });
@@ -1477,5 +1494,199 @@ describe("ContentArea multi-pane guard side-effects (#730)", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("frontmatter")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("ContentArea title -> editor focus handoff (#1013)", () => {
+  async function renderWithCreateHandoff() {
+    setPage("Hello.md");
+    useWorkspaceStore.setState({ pendingTitleFocus: true });
+    render(<ContentArea />);
+    const title = (await screen.findByTestId("page-title")) as HTMLInputElement;
+    await waitFor(() => {
+      expect(title).toHaveValue("Hello");
+      expect(document.activeElement).toBe(title);
+    });
+    return title;
+  }
+
+  it("Enter on title requests editor focus after create", async () => {
+    const title = await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    fireEvent.keyDown(title, { key: "Enter" });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("Enter on title commits a rename typed before Enter", async () => {
+    const renameSpy = vi.fn();
+    useWorkspaceStore.setState({ renamePage: renameSpy });
+    const title = await renderWithCreateHandoff();
+
+    await userEvent.clear(title);
+    await userEvent.type(title, "NewTitle");
+    fireEvent.keyDown(title, { key: "Enter" });
+
+    expect(renameSpy).toHaveBeenCalledWith("Hello.md", "NewTitle");
+  });
+
+  it("Escape on title reverts and does not request editor focus", async () => {
+    const title = await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    await userEvent.clear(title);
+    await userEvent.type(title, "Changed");
+    fireEvent.keyDown(title, { key: "Escape" });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(title).toHaveValue("Hello");
+    expect(title).not.toHaveFocus();
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("blur into editor chrome requests editor focus after create", async () => {
+    const title = await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    const pane = screen.getByTestId("editor-pane");
+    fireEvent.blur(title, { relatedTarget: pane });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("blur into sidebar does not request editor focus after create", async () => {
+    const title = await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    const tree = document.createElement("div");
+    tree.setAttribute("role", "tree");
+    const item = document.createElement("button");
+    tree.appendChild(item);
+    document.body.appendChild(tree);
+
+    fireEvent.blur(title, { relatedTarget: item });
+    expect(spy).not.toHaveBeenCalled();
+
+    // A later pointerdown on editor-pane must also NOT dispatch (ref dropped).
+    fireEvent.pointerDown(screen.getByTestId("editor-pane"));
+    await act(async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+    expect(spy).not.toHaveBeenCalled();
+
+    tree.remove();
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("blur into a search input does not request editor focus after create", async () => {
+    const title = await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    const search = document.createElement("input");
+    document.body.appendChild(search);
+    fireEvent.blur(title, { relatedTarget: search });
+
+    expect(spy).not.toHaveBeenCalled();
+    search.remove();
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("later rename blur into editor does not use the create handoff", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    const title = (await screen.findByTestId("page-title")) as HTMLInputElement;
+    await waitFor(() => expect(title).toHaveValue("Hello"));
+
+    await userEvent.click(title);
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    fireEvent.blur(title, { relatedTarget: screen.getByTestId("editor-pane") });
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("Enter on a later rename still requests editor focus (ungated)", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    const title = (await screen.findByTestId("page-title")) as HTMLInputElement;
+    await waitFor(() => expect(title).toHaveValue("Hello"));
+
+    await userEvent.click(title);
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    fireEvent.keyDown(title, { key: "Enter" });
+    expect(spy).toHaveBeenCalledTimes(1);
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("pointerdown on editor-pane requests editor focus on the next frame after create", async () => {
+    await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    fireEvent.pointerDown(screen.getByTestId("editor-pane"));
+    expect(spy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("pointerdown on the title input does not request editor focus", async () => {
+    const title = await renderWithCreateHandoff();
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+
+    fireEvent.pointerDown(title);
+    await act(async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("pointerdown on editor-pane without a create-driven focus does not request editor focus", async () => {
+    setPage("Hello.md");
+    render(<ContentArea />);
+    await waitFor(() => expect(screen.getByTestId("editor-pane")).toBeInTheDocument());
+
+    const spy = vi.fn();
+    window.addEventListener("lit:request-editor-focus", spy);
+    fireEvent.pointerDown(screen.getByTestId("editor-pane"));
+    await act(async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+    expect(spy).not.toHaveBeenCalled();
+    window.removeEventListener("lit:request-editor-focus", spy);
+  });
+
+  it("pointerdown then blur into editor commits a rename once", async () => {
+    const renameSpy = vi.fn();
+    useWorkspaceStore.setState({ renamePage: renameSpy });
+    const title = await renderWithCreateHandoff();
+
+    await userEvent.clear(title);
+    await userEvent.type(title, "NewTitle");
+    const pane = screen.getByTestId("editor-pane");
+    fireEvent.pointerDown(pane);
+    fireEvent.blur(title, { relatedTarget: pane });
+    await act(async () => {
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+
+    expect(renameSpy).toHaveBeenCalledTimes(1);
+    expect(renameSpy).toHaveBeenCalledWith("Hello.md", "NewTitle");
   });
 });

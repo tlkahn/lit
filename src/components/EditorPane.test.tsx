@@ -625,6 +625,30 @@ describe("EditorPane", () => {
       expect(view.focus).toHaveBeenCalled();
     });
 
+    it("does not claim focus on doc replace when an input holds focus", async () => {
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+      input.focus();
+      expect(document.activeElement).toBe(input);
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).not.toHaveBeenCalled();
+      input.remove();
+    });
+
     it("does not claim focus on doc replace when the file tree holds focus", async () => {
       const tree = document.createElement("div");
       tree.setAttribute("role", "tree");

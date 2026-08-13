@@ -616,6 +616,18 @@ describe("StatusBar", () => {
       expect(useWorkspaceStore.getState().currentPagePath).toBe("Untitled.md");
     });
 
+    it("sets pendingTitleFocus after clicking New page", async () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [],
+        pendingTitleFocus: false,
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByRole("button", { name: "New page" }));
+      expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(true);
+    });
+
     it("does not call window.prompt", async () => {
       const promptSpy = vi.spyOn(window, "prompt");
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [] });
