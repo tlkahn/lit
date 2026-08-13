@@ -486,6 +486,52 @@ describe("SharedDocRegistry", () => {
       expect(getDoc("old.md")).toBeNull();
       expect(getDoc("new.md")!.title).toBe("Old");
     });
+
+    it("renamePath with pending debounce writes only the new path", async () => {
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "original",
+        title: "Old",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "tags:\n  - a\n",
+      });
+      setBody("old.md", "edited", "p1");
+
+      expect(writePage).not.toHaveBeenCalled();
+
+      renamePath("old.md", "new.md", { title: "New" });
+
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(writePage).toHaveBeenCalledOnce();
+      expect(writePage).toHaveBeenCalledWith("new.md", "edited", { tags: ["a"] });
+      const calls = vi.mocked(writePage).mock.calls;
+      expect(calls.every(([path]) => path !== "old.md")).toBe(true);
+
+      expect(getDoc("old.md")).toBeNull();
+      const doc = getDoc("new.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.body).toBe("edited");
+      expect(doc!.title).toBe("New");
+    });
+
+    it("renamePath on clean doc does not schedule a save", async () => {
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "clean",
+        title: "Old",
+        frontmatter: {},
+        rawYaml: "",
+      });
+
+      renamePath("old.md", "new.md");
+
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(writePage).not.toHaveBeenCalled();
+    });
   });
 
   describe("misc", () => {

@@ -245,11 +245,28 @@ export function createSharedDocRegistry<Content extends HasBody>(
     if (oldPath === newPath) return;
     const doc = docs.get(oldPath);
     if (!doc) return;
+
+    // Migrate any armed debounce off the old path before rekeying. A timer
+    // closed over oldPath would otherwise writePage(oldPath) after the rename
+    // and resurrect the old file.
+    if (doc.saveTimer) {
+      clearTimeout(doc.saveTimer);
+      doc.saveTimer = undefined;
+    }
+
     docs.delete(oldPath);
     if (patch) Object.assign(doc, patch);
     // If newPath already has a doc (should not happen on successful rename),
     // prefer the moved in-memory doc and drop the empty placeholder.
     docs.set(newPath, doc);
+
+    // Re-arm the save against the new path when the doc is still dirty. A
+    // dirty doc always had a timer (setBody schedules one), so this covers the
+    // cleared-timer case. In-flight writes are chained by the caller when they
+    // settle (see renamePath callers / Cycle 2 follow-up).
+    if (!doc.saveInFlight && doc.editGen > doc.saveGen) {
+      scheduleSave(newPath, doc);
+    }
   }
 
   function isShared(pagePath: string): boolean {
