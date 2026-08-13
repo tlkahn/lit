@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 interface TrashPagesDialogProps {
   paths: string[];
   labels: string[];
@@ -11,15 +13,26 @@ interface TrashPagesDialogProps {
  * only renders copy and fires onConfirm/onCancel.
  */
 export function TrashPagesDialog({ paths, labels, onCancel, onConfirm }: TrashPagesDialogProps) {
+  // Document-level Escape: focus may live on the tree (or anywhere else), so
+  // a backdrop-only onKeyDown would miss it. Same pattern as ConfirmDeleteDialog.
+  useEffect(() => {
+    if (paths.length === 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [paths.length, onCancel]);
+
   if (paths.length === 0) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       data-testid="confirm-delete-backdrop"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onCancel();
-      }}
     >
       <div className="w-80 rounded-lg bg-bg-primary p-5 shadow-lg" data-testid="confirm-delete-dialog">
         <p className="mb-4 text-sm text-text-normal">

@@ -80,4 +80,39 @@ describe("TrashPagesDialog", () => {
     fireEvent.keyDown(screen.getByTestId("confirm-delete-backdrop"), { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("Escape on document fires onCancel while open", () => {
+    const onCancel = vi.fn();
+    render(
+      <TrashPagesDialog
+        paths={["a.md", "b.md"]}
+        labels={["Note A", "Note B"]}
+        onCancel={onCancel}
+        onConfirm={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape on document does nothing after unmount or with empty paths", () => {
+    const onCancel = vi.fn();
+    const { unmount } = render(
+      <TrashPagesDialog
+        paths={["a.md"]}
+        labels={["Note A"]}
+        onCancel={onCancel}
+        onConfirm={vi.fn()}
+      />,
+    );
+    unmount();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).not.toHaveBeenCalled();
+
+    render(
+      <TrashPagesDialog paths={[]} labels={[]} onCancel={onCancel} onConfirm={vi.fn()} />,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).not.toHaveBeenCalled();
+  });
 });
