@@ -1446,6 +1446,71 @@ describe("Files tree trash", () => {
   });
 });
 
+describe("Files tree trash failures", () => {
+  function tree(): HTMLElement {
+    return screen.getByTestId("sidebar-file-list");
+  }
+
+  it("partial trash failure shows status error and keeps failed paths selected", async () => {
+    const deletePage = vi.fn(async (path: string) => {
+      if (path === "B.md") throw new Error("nope");
+      useWorkspaceStore.setState((s) => ({
+        pages: s.pages.filter((p) => p.relative_path !== path),
+      }));
+    });
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    useStatusMessageStore.setState({ message: null, variant: "success", action: null });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-delete-btn"));
+    });
+
+    expect(deletePage).toHaveBeenCalledWith("A.md");
+    expect(deletePage).toHaveBeenCalledWith("B.md");
+    expect(useStatusMessageStore.getState().message).toMatch(/nope/);
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual(["B.md"]);
+    expect(useWorkspaceStore.getState().pages.map((p) => p.relative_path)).toEqual(["B.md", "C.md"]);
+  });
+
+  it("single trash failure shows status error and does not drop selection", async () => {
+    const deletePage = vi.fn(async () => {
+      throw new Error("nope");
+    });
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    useStatusMessageStore.setState({ message: null, variant: "success", action: null });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    await act(async () => {
+      fireEvent.keyDown(tree(), { key: "Delete" });
+    });
+
+    expect(deletePage).toHaveBeenCalledWith("A.md");
+
+    expect(useStatusMessageStore.getState().message).toMatch(/nope/);
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual(["A.md"]);
+    expect(useWorkspaceStore.getState().pages.map((p) => p.relative_path)).toEqual(["A.md", "B.md"]);
+  });
+});
+
 describe("Files tree multi trash confirm", () => {
   function tree(): HTMLElement {
     return screen.getByTestId("sidebar-file-list");
