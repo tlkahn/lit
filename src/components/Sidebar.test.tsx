@@ -1293,6 +1293,33 @@ describe("Files tree keyboard selection", () => {
       .filter((el) => el.getAttribute("aria-selected") === "true").length;
   }
 
+  it("Enter opens the focused page and reduces selection to that page", async () => {
+    const selectPage = vi.fn();
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage,
+      deletePage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    expect(selectedCount()).toBe(1);
+
+    fireEvent.keyDown(tree(), { key: "ArrowDown" });
+    fireEvent.keyDown(tree(), { key: "Enter" });
+
+    expect(selectPage).toHaveBeenCalledWith("B.md");
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual(["B.md"]);
+
+    // Delete right after Enter targets only the opened page, no dialog.
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(deletePage).toHaveBeenCalledTimes(1);
+    expect(deletePage).toHaveBeenCalledWith("B.md");
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+  });
+
   it("Escape clears the multi-selection", async () => {
     useWorkspaceStore.setState({
       pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],

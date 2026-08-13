@@ -277,7 +277,9 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     useFileTreeSelectionStore.getState().rangeSelect(path, visiblePagePaths(rows));
   }, [rows]);
 
-  const handlePlainSelect = useCallback((path: string) => {
+  // Open a page from the tree (plain click or keyboard Enter): both reduce the
+  // selection to that page so Delete afterwards matches what the user opened.
+  const openPageFromTree = useCallback((path: string) => {
     useFileTreeSelectionStore.getState().setOnly(path);
     selectPage(path);
   }, [selectPage]);
@@ -357,7 +359,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const { focusedIndex, setFocusedIndex, handleKeyDown: handleTreeKeyDown, handleContainerFocus } = useTreeKeyboard({
     rows,
     toggleCollapse,
-    selectPage,
+    selectPage: openPageFromTree,
     scrollToIndex: (index: number) => virtualizer.scrollToIndex(index, { align: "auto" }),
     onTrash: requestTrash,
     onClearSelection: () => useFileTreeSelectionStore.getState().clear(),
@@ -641,7 +643,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                         onSelect={selectPage}
                         onToggleSelect={handleToggleSelect}
                         onRangeSelect={handleRangeSelect}
-                        onPlainSelect={handlePlainSelect}
+                        onPlainSelect={openPageFromTree}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
                         depth={row.depth}
