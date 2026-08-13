@@ -35,8 +35,8 @@ describe("WorkspaceStore", () => {
       workspacePath: null,
       pages: [],
       currentPagePath: null,
-      pendingTitleFocus: false,
       pendingSection: null,
+      pendingEditorFocus: false,
       currentPageHeadings: [],
       isDirty: false,
       reloadTrigger: 0,
@@ -191,24 +191,34 @@ describe("WorkspaceStore", () => {
     expect(useWorkspaceStore.getState().currentPagePath).toBe("New Page.md");
   });
 
-  it("createPage sets pendingTitleFocus", async () => {
+  it("createPage sets pendingEditorFocus so the editor caret can land", async () => {
     await act(async () => {
       await useWorkspaceStore.getState().createPage("New Page");
     });
 
-    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(true);
+    const state = useWorkspaceStore.getState();
+    expect(state.pendingEditorFocus).toBe(true);
+    expect(state.currentPagePath).toBe("New Page.md");
   });
 
-  it("clearPendingTitleFocus resets the flag", async () => {
+  it("clearPendingEditorFocus resets the flag", async () => {
     await act(async () => {
       await useWorkspaceStore.getState().createPage("New Page");
     });
+    expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(true);
 
     act(() => {
-      useWorkspaceStore.getState().clearPendingTitleFocus();
+      useWorkspaceStore.getState().clearPendingEditorFocus();
     });
 
-    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(false);
+    expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
+  });
+
+  it("selectPage does not set pendingEditorFocus (sidebar nav must not yank focus)", () => {
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page A.md");
+    });
+    expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
   });
 
   it("renamePage updates pages list and current selection", async () => {
@@ -632,8 +642,8 @@ describe("Layout Persistence", () => {
       workspacePath: null,
       pages: [],
       currentPagePath: null,
-      pendingTitleFocus: false,
       pendingSection: null,
+      pendingEditorFocus: false,
       currentPageHeadings: [],
       isDirty: false,
       reloadTrigger: 0,

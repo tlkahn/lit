@@ -1,5 +1,5 @@
 import { type Extension, Compartment, Prec, EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, drawSelection, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { enterInList, indentListItem, outdentListItem } from "./listCommands";
 import { markdown } from "@codemirror/lang-markdown";
@@ -75,6 +75,11 @@ export function createExtensions(config: ExtensionConfig): Extension[] {
     config.foldCompartment.of(foldExtension(config.foldConfig)),
     config.focusModeCompartment.of(focusModeExtension(config.focusModeActive ?? false)),
     config.editableCompartment.of(EditorView.editable.of(!(config.editorLocked ?? false))),
+    // Draw CM's own caret layer. Without this, the editor falls back to the
+    // native contenteditable caret, which is often invisible on an empty doc
+    // after programmatic focus (create-from-+ lands focus but no blinking
+    // caret until the user types or clicks). theme.ts styles `.cm-cursor`.
+    drawSelection(),
     EditorState.allowMultipleSelections.of(true),
     history(),
     search(),

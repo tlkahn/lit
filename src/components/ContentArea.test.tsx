@@ -1433,21 +1433,6 @@ describe("ContentArea multi-pane guard side-effects (#730)", () => {
     expect(screen.queryByTestId("mindmap-view")).not.toBeInTheDocument();
   });
 
-  it("pendingTitleFocus flag is NOT cleared when title input is unmounted (multi-pane)", async () => {
-    setupMultiPane();
-    useWorkspaceStore.setState({ pendingTitleFocus: true });
-    render(<ContentArea />);
-
-    await waitFor(() => {
-      expect(screen.getAllByTestId("pane-header")).toHaveLength(2);
-    });
-
-    // Title input is inside the guard, so it's not rendered in multi-pane mode
-    expect(screen.queryByTestId("page-title")).not.toBeInTheDocument();
-    // The flag should NOT have been consumed
-    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(true);
-  });
-
   it("lit:toggle-frontmatter event toggles frontmatter visibility", async () => {
     setPage("Hello.md");
     render(<ContentArea />);

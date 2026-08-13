@@ -42,8 +42,6 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   const viewMode: ViewMode = focusedLeaf?.viewMode ?? "editor";
 
-  const pendingTitleFocus = useWorkspaceStore((s) => s.pendingTitleFocus);
-  const clearPendingTitleFocus = useWorkspaceStore((s) => s.clearPendingTitleFocus);
   const renamePageAction = useWorkspaceStore((s) => s.renamePage);
   const saveViewState = useWorkspaceStore((s) => s.saveViewState);
 
@@ -158,16 +156,6 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setYamlDraft("");
     setYamlError(null);
   }, [currentPanePage, saveViewState]);
-
-  useEffect(() => {
-    if (pendingTitleFocus && title) {
-      if (titleInputRef.current) {
-        titleInputRef.current.focus();
-        titleInputRef.current.select();
-        clearPendingTitleFocus();
-      }
-    }
-  }, [pendingTitleFocus, title, clearPendingTitleFocus]);
 
   const commitTitle = () => {
     const trimmed = editingTitle.trim();
