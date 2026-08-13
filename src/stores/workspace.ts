@@ -101,7 +101,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set({ loading: true, error: null, graphReady: false, indexProgress: null });
     try {
       const pages = await ipc.openWorkspace(path);
-      set({ workspacePath: path, pages, loading: false });
+      set({ workspacePath: path, pages, loading: false, pendingRenameOldPaths: [] });
       addRecentWorkspace(path);
 
       stopLayoutSync();
@@ -164,7 +164,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         unlisten();
       }
     } catch (e) {
-      set({ loading: false, error: String(e) });
+      set({ loading: false, error: String(e), pendingRenameOldPaths: [] });
     }
   },
 
@@ -238,22 +238,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           currentPagePath:
             state.currentPagePath === oldPath ? newPath : state.currentPagePath,
           viewStates: newViewStates,
-          pendingRenameOldPaths: state.pendingRenameOldPaths.filter(
-            (p) => p !== oldPath,
-          ),
         };
       });
+      // Pending is cleared in finally, AFTER pane + history repath, so the
+      // mid-repath window is genuinely guarded.
       usePaneStore.getState().renamePagePath(oldPath, newPath);
       usePaneHistoryStore.getState().renamePath(oldPath, newPath);
       return newPath;
     } catch (e) {
-      set((s) => ({
-        error: String(e),
-        pendingRenameOldPaths: s.pendingRenameOldPaths.filter(
-          (p) => p !== oldPath,
-        ),
-      }));
+      set({ error: String(e) });
       throw e instanceof Error ? e : new Error(String(e));
+    } finally {
+      // Success and failure both clear here; filter is idempotent.
+      set((s) => ({
+        pendingRenameOldPaths: s.pendingRenameOldPaths.filter((p) => p !== oldPath),
+      }));
     }
   },
 

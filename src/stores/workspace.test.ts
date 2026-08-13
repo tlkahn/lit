@@ -52,6 +52,7 @@ describe("WorkspaceStore", () => {
       indexProgress: null,
       loading: false,
       error: null,
+      pendingRenameOldPaths: [],
     });
 
     mockListen();
@@ -525,6 +526,85 @@ describe("WorkspaceStore", () => {
     expect(getDoc("Renamed.md")!.title).toBe("Renamed");
     expect(getDoc("Renamed.md")!.body).toBe("# Page A");
     expect(getDoc("Renamed.md")!.panes.has("pane-a")).toBe(true);
+  });
+
+  it("renamePage adds oldPath to pendingRenameOldPaths for the duration of IPC", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+      pendingRenameOldPaths: [],
+    });
+    let resolveRename!: (v: string) => void;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "rename_page":
+          return new Promise<string>((r) => { resolveRename = r; });
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    let renamePromise!: Promise<string>;
+    await act(async () => {
+      renamePromise = useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    // Guard is armed while IPC is in flight.
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toContain("Page A.md");
+    expect(resolveRename).toBeTypeOf("function");
+
+    await act(async () => {
+      resolveRename("Renamed.md");
+      await renamePromise;
+    });
+
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+  });
+
+  it("renamePage clears pending only after success path fully updates panes", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "Page A.md" },
+      focusedPaneId: "pane-a",
+    });
+    const real = usePaneStore.getState().renamePagePath;
+    const order: string[] = [];
+    usePaneStore.setState({
+      renamePagePath: (o: string, n: string) => {
+        order.push("pane");
+        // The pending guard must still be armed when pane repath runs; only
+        // then does the comment's "mid-repath protection" actually hold.
+        expect(useWorkspaceStore.getState().pendingRenameOldPaths).toContain("Page A.md");
+        real(o, n);
+      },
+    });
+    try {
+      await act(async () => {
+        await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+      });
+      order.push("done");
+
+      expect(order).toEqual(["pane", "done"]);
+      expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+    } finally {
+      usePaneStore.setState({ renamePagePath: real });
+    }
+  });
+
+  it("openWorkspace clears pendingRenameOldPaths", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      pendingRenameOldPaths: ["stale.md"],
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/tmp/ws");
+    });
+
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
   });
 
   it("renamePage flushes dirty sharedDoc before IPC rename", async () => {
