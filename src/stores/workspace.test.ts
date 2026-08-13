@@ -35,7 +35,6 @@ describe("WorkspaceStore", () => {
       workspacePath: null,
       pages: [],
       currentPagePath: null,
-      pendingTitleFocus: false,
       pendingSection: null,
       currentPageHeadings: [],
       isDirty: false,
@@ -189,26 +188,6 @@ describe("WorkspaceStore", () => {
     });
 
     expect(useWorkspaceStore.getState().currentPagePath).toBe("New Page.md");
-  });
-
-  it("createPage sets pendingTitleFocus", async () => {
-    await act(async () => {
-      await useWorkspaceStore.getState().createPage("New Page");
-    });
-
-    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(true);
-  });
-
-  it("clearPendingTitleFocus resets the flag", async () => {
-    await act(async () => {
-      await useWorkspaceStore.getState().createPage("New Page");
-    });
-
-    act(() => {
-      useWorkspaceStore.getState().clearPendingTitleFocus();
-    });
-
-    expect(useWorkspaceStore.getState().pendingTitleFocus).toBe(false);
   });
 
   it("renamePage updates pages list and current selection", async () => {
@@ -632,7 +611,6 @@ describe("Layout Persistence", () => {
       workspacePath: null,
       pages: [],
       currentPagePath: null,
-      pendingTitleFocus: false,
       pendingSection: null,
       currentPageHeadings: [],
       isDirty: false,

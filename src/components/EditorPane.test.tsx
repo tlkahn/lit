@@ -625,6 +625,60 @@ describe("EditorPane", () => {
       expect(view.focus).toHaveBeenCalled();
     });
 
+    // Issue #1013 create-from-+ contract: after clicking the bottom-left
+    // New page button, the button is still document.activeElement when the new
+    // page's doc replace fires. shouldEditorClaimFocus must let the focused
+    // pane's CM claim focus from a plain button (unlike the file tree).
+    it("claims focus on doc replace when a plain button holds focus (post-create-+)", async () => {
+      const button = document.createElement("button");
+      document.body.appendChild(button);
+      button.focus();
+      expect(document.activeElement).toBe(button);
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).toHaveBeenCalled();
+      button.remove();
+    });
+
+    // Symmetric guard: an input (e.g. the page title input, or any future
+    // search field) holding focus must keep CM from stealing it on doc replace.
+    it("does not claim focus on doc replace when an input holds focus", async () => {
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+      input.focus();
+      expect(document.activeElement).toBe(input);
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onDocReplaced).toBeDefined();
+      });
+      (capturedProps.onDocReplaced as () => void)();
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).not.toHaveBeenCalled();
+      input.remove();
+    });
+
     it("does not claim focus on doc replace when the file tree holds focus", async () => {
       const tree = document.createElement("div");
       tree.setAttribute("role", "tree");

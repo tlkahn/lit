@@ -39,7 +39,6 @@ export interface WorkspaceStore {
   workspacePath: string | null;
   pages: PageMeta[];
   currentPagePath: string | null;
-  pendingTitleFocus: boolean;
   pendingCursorLine: number | null;
   pendingCursorCol: number | null;
   pendingCursorFileAbsolute: boolean;
@@ -61,7 +60,6 @@ export interface WorkspaceStore {
   createPage: (name: string, parentDir?: string) => Promise<void>;
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
-  clearPendingTitleFocus: () => void;
   setCurrentPageHeadings: (headings: Heading[]) => void;
   setCurrentFrontmatterLineCount: (count: number) => void;
   setDirty: (dirty: boolean) => void;
@@ -78,7 +76,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   workspacePath: null,
   pages: [],
   currentPagePath: null,
-  pendingTitleFocus: false,
   pendingCursorLine: null,
   pendingCursorCol: null,
   pendingCursorFileAbsolute: false,
@@ -193,7 +190,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       set((state) => ({
         pages: [...state.pages, meta],
         currentPagePath: meta.relative_path,
-        pendingTitleFocus: true,
       }));
     } catch (e) {
       set({ error: String(e) });
@@ -224,8 +220,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       set({ error: String(e) });
     }
   },
-
-  clearPendingTitleFocus: () => set({ pendingTitleFocus: false }),
 
   setCurrentPageHeadings: (headings: Heading[]) => set({ currentPageHeadings: headings }),
 
