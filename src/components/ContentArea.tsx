@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
 import { usePaneStore, findLeaf } from "../stores/panes";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { useCardboxStore } from "../stores/cardbox";
 import { usePaneField, updatePaneContent, type PaneContentEntry } from "../lib/paneContentRegistry";
 import { writePage, parseRawYaml, isViewMode, type ViewMode } from "../lib/ipc";
@@ -71,6 +72,8 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
 
   const currentPathRef = useRef<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleCancelRef = useRef(false);
+  const titleCommitInFlightRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cancelledRef = useRef(false);
   const defaultViewModeRef = useRef(defaultViewMode);
@@ -91,6 +94,12 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
   }, [loaded, focusedPaneId, setPaneViewMode]);
 
   useEffect(() => {
+    if (
+      titleInputRef.current &&
+      document.activeElement === titleInputRef.current
+    ) {
+      return; // user is mid-edit; do not clobber the draft
+    }
     setEditingTitle(title);
   }, [title]);
 
@@ -157,13 +166,48 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
     setYamlError(null);
   }, [currentPanePage, saveViewState]);
 
-  const commitTitle = () => {
+  const commitTitle = async () => {
+    if (titleCancelRef.current) {
+      titleCancelRef.current = false;
+      return;
+    }
+    // Single-flight: an overlapping blur while a commit is in flight would
+    // otherwise run a second renamePage(oldPath, ...) and, if it failed, revert
+    // chrome while the first rename had already landed on disk. Ignore it.
+    if (titleCommitInFlightRef.current) return;
+
     const trimmed = editingTitle.trim();
-    if (trimmed && trimmed !== title && currentPanePage) {
-      renamePageAction(currentPanePage, trimmed);
-      updatePaneContent(focusedPaneId, { title: trimmed });
-    } else {
+    const page = currentPanePage;
+    const paneId = focusedPaneId;
+    if (!trimmed || !page) {
       setEditingTitle(title);
+      return;
+    }
+    if (trimmed === title) return;
+
+    const previous = title;
+    titleCommitInFlightRef.current = true;
+    try {
+      await renamePageAction(page, trimmed);
+      // Use the pane id captured at blur, not whatever pane is focused now.
+      updatePaneContent(paneId, { title: trimmed });
+      setEditingTitle(trimmed);
+    } catch (e) {
+      const leaf = findLeaf(usePaneStore.getState().root, paneId);
+      // Only revert chrome if this pane still points at the path we failed to
+      // rename. If the pane moved on (or another rename landed), clobbering
+      // the title would lie about the current page.
+      if (leaf?.pagePath === page) {
+        setEditingTitle(previous);
+        updatePaneContent(paneId, { title: previous });
+      }
+      const msg =
+        e instanceof Error && e.message
+          ? e.message
+          : "Could not rename page";
+      useStatusMessageStore.getState().show(msg, "error");
+    } finally {
+      titleCommitInFlightRef.current = false;
     }
   };
 
@@ -323,13 +367,22 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             value={editingTitle}
             onChange={(e) => setEditingTitle(e.target.value)}
             onBlur={commitTitle}
+            onFocus={() => {
+              // A stuck cancel flag (e.g. Escape whose blur() skipped onBlur)
+              // must not swallow the next real commit.
+              titleCancelRef.current = false;
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
                 titleInputRef.current?.blur();
               }
               if (e.key === "Escape") {
+                e.preventDefault();
                 setEditingTitle(title);
+                // Mark cancelled so the synchronous blur's commitTitle no-ops
+                // (setEditingTitle hasn't re-rendered yet).
+                titleCancelRef.current = true;
                 titleInputRef.current?.blur();
               }
             }}

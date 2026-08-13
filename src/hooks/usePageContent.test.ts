@@ -6,7 +6,7 @@ import {
   getPaneContent,
   _resetForTesting,
 } from "../lib/paneContentRegistry";
-import { _resetForTesting as resetSharedDocs, getPaneIds } from "../lib/sharedDocs";
+import { _resetForTesting as resetSharedDocs, getPaneIds, renamePath } from "../lib/sharedDocs";
 import { usePaneStore } from "../stores/panes";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePageContent } from "./usePageContent";
@@ -201,6 +201,58 @@ describe("usePageContent", () => {
     });
 
     expect(result.current.isDirty).toBe(true);
+  });
+
+  it("path change onto a moved dirty sharedDoc preserves dirty and does not write the old path", async () => {
+    const writeCalls: Array<{ relativePath: string; body: string }> = [];
+    mockInvoke((cmd, args) => {
+      if (cmd === "read_page") {
+        const rp = (args as Record<string, unknown>)?.relativePath as string;
+        return {
+          ...mockPage,
+          meta: { ...mockPage.meta, relative_path: rp, title: rp.replace(/\.md$/, "") },
+        };
+      }
+      if (cmd === "write_page") {
+        writeCalls.push(args as { relativePath: string; body: string });
+        return null;
+      }
+      if (cmd === "acknowledge_file_hash") return null;
+      return null;
+    });
+
+    const { result, rerender } = renderHook(
+      ({ path }) => usePageContent("p1", path),
+      { initialProps: { path: "old.md" as string | null } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.body).toBe("# Hello\nContent here");
+    });
+
+    act(() => {
+      result.current.handleChange("dirty body");
+    });
+    expect(result.current.isDirty).toBe(true);
+
+    // Production rename order: sharedDocs rekey first (with title patch), then
+    // the pane path prop flips via renamePagePath. The hook only observes the
+    // path change.
+    act(() => {
+      renamePath("old.md", "new.md", { title: "New" });
+    });
+    rerender({ path: "new.md" });
+
+    expect(result.current.body).toBe("dirty body");
+    expect(result.current.isDirty).toBe(true);
+    expect(result.current.title).toBe("New");
+
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0]).toMatchObject({ relativePath: "new.md", body: "dirty body" });
   });
 
   it("resets state when pagePath changes and flushes old-path save", async () => {

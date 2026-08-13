@@ -1,11 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mockInvoke, mockListen, emitMockEvent } from "../test/tauri-mock";
 import { useWorkspaceStore, getRecentWorkspaces, addRecentWorkspace } from "./workspace";
-import { usePaneStore, createInitialState, collectLeaves, stopLayoutSync } from "./panes";
+import { usePaneStore, createInitialState, collectLeaves, stopLayoutSync, findLeaf } from "./panes";
 import type { PaneLeaf, PaneSplit } from "./panes";
 import { saveLayout, STALE_THRESHOLD_MS } from "../lib/paneLayout";
 import { usePanePdfLinkStore } from "./panePdfLink";
 import { usePaneHistoryStore, stopPaneHistoryTracking } from "./paneHistory";
+import {
+  acquire,
+  setContent,
+  getDoc,
+  _resetForTesting as resetSharedDocs,
+} from "../lib/sharedDocs";
 import { act } from "@testing-library/react";
 
 const samplePages = [
@@ -46,9 +52,11 @@ describe("WorkspaceStore", () => {
       indexProgress: null,
       loading: false,
       error: null,
+      pendingRenameOldPaths: [],
     });
 
     mockListen();
+    resetSharedDocs();
 
     mockInvoke((cmd, args) => {
       switch (cmd) {
@@ -491,6 +499,289 @@ describe("WorkspaceStore", () => {
     expect(useWorkspaceStore.getState().viewStates).toEqual({});
   });
 
+  it("renamePage rewrites pane leaf paths, moves sharedDocs, and returns newPath", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "Page A.md" },
+      focusedPaneId: "pane-a",
+    });
+    acquire("Page A.md", "pane-a");
+    setContent("Page A.md", {
+      body: "# Page A",
+      title: "Page A",
+      frontmatter: {},
+      rawYaml: "",
+    });
+
+    const newPath = await act(async () => {
+      return await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    expect(newPath).toBe("Renamed.md");
+    expect(findLeaf(usePaneStore.getState().root, "pane-a")!.pagePath).toBe("Renamed.md");
+    expect(getDoc("Page A.md")).toBeNull();
+    expect(getDoc("Renamed.md")!.title).toBe("Renamed");
+    expect(getDoc("Renamed.md")!.body).toBe("# Page A");
+    expect(getDoc("Renamed.md")!.panes.has("pane-a")).toBe(true);
+  });
+
+  it("renamePage adds oldPath to pendingRenameOldPaths for the duration of IPC", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+      pendingRenameOldPaths: [],
+    });
+    let resolveRename!: (v: string) => void;
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "rename_page":
+          return new Promise<string>((r) => { resolveRename = r; });
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    let renamePromise!: Promise<string>;
+    await act(async () => {
+      renamePromise = useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    // Guard is armed while IPC is in flight.
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toContain("Page A.md");
+    expect(resolveRename).toBeTypeOf("function");
+
+    await act(async () => {
+      resolveRename("Renamed.md");
+      await renamePromise;
+    });
+
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+  });
+
+  it("renamePage clears pending only after success path fully updates panes", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "Page A.md" },
+      focusedPaneId: "pane-a",
+    });
+    const real = usePaneStore.getState().renamePagePath;
+    const order: string[] = [];
+    usePaneStore.setState({
+      renamePagePath: (o: string, n: string) => {
+        order.push("pane");
+        // The pending guard must still be armed when pane repath runs; only
+        // then does the comment's "mid-repath protection" actually hold.
+        expect(useWorkspaceStore.getState().pendingRenameOldPaths).toContain("Page A.md");
+        real(o, n);
+      },
+    });
+    try {
+      await act(async () => {
+        await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+      });
+      order.push("done");
+
+      expect(order).toEqual(["pane", "done"]);
+      expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+    } finally {
+      usePaneStore.setState({ renamePagePath: real });
+    }
+  });
+
+  it("openWorkspace clears pendingRenameOldPaths", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      pendingRenameOldPaths: ["stale.md"],
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().openWorkspace("/tmp/ws");
+    });
+
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+  });
+
+  it("renamePage flushes dirty sharedDoc before IPC rename", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "Page A.md" },
+      focusedPaneId: "pane-a",
+    });
+    acquire("Page A.md", "pane-a");
+    setContent("Page A.md", {
+      body: "# Page A",
+      title: "Page A",
+      frontmatter: {},
+      rawYaml: "",
+    });
+    const { setBody } = await import("../lib/sharedDocs");
+    setBody("Page A.md", "# Page A\nEdited", "pane-a");
+
+    const order: string[] = [];
+    mockInvoke((cmd, args) => {
+      switch (cmd) {
+        case "write_page":
+          order.push(`write:${(args as Record<string, unknown>)?.relativePath}`);
+          return null;
+        case "rename_page":
+          order.push(`rename:${(args as Record<string, unknown>)?.oldPath}`);
+          return `${(args as Record<string, unknown>)?.newName as string}.md`;
+        case "open_workspace":
+          return samplePages;
+        case "list_pages":
+          return samplePages;
+        case "ensure_graph_ready":
+          return null;
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    expect(order[0]).toBe("write:Page A.md");
+    expect(order[1]).toBe("rename:Page A.md");
+    const doc = getDoc("Renamed.md");
+    expect(doc).not.toBeNull();
+    expect(doc!.body).toBe("# Page A\nEdited");
+    expect(doc!.title).toBe("Renamed");
+    expect(getDoc("Page A.md")).toBeNull();
+  });
+
+  it("renamePage rewrites every leaf on the old path in a split", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    const left: PaneLeaf = { type: "leaf", id: "left", pagePath: "Page A.md" };
+    const right: PaneLeaf = { type: "leaf", id: "right", pagePath: "Page A.md" };
+    const root: PaneSplit = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [left, right],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "left" });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    const leaves = collectLeaves(usePaneStore.getState().root);
+    expect(leaves.map((l) => l.pagePath)).toEqual(["Renamed.md", "Renamed.md"]);
+  });
+
+  it("renamePage rejects on IPC failure without changing pages or panes", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+      error: null,
+    });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-a", pagePath: "Page A.md" },
+      focusedPaneId: "pane-a",
+    });
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "rename_page":
+          throw new Error("Page already exists: Renamed.md");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await expect(
+      useWorkspaceStore.getState().renamePage("Page A.md", "Renamed"),
+    ).rejects.toThrow(/already exists/i);
+
+    expect(
+      useWorkspaceStore.getState().pages.find((p) => p.relative_path === "Page A.md"),
+    ).toBeTruthy();
+    expect(
+      useWorkspaceStore.getState().pages.find((p) => p.relative_path === "Renamed.md"),
+    ).toBeFalsy();
+    expect(findLeaf(usePaneStore.getState().root, "pane-a")!.pagePath).toBe("Page A.md");
+    expect(useWorkspaceStore.getState().error).toMatch(/already exists/i);
+  });
+
+  it("renamePage rejects on IPC failure without touching sharedDocs", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+    });
+    acquire("Page A.md", "pane-a");
+    setContent("Page A.md", {
+      body: "# Page A",
+      title: "Page A",
+      frontmatter: {},
+      rawYaml: "",
+    });
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "rename_page":
+          throw new Error("Page already exists: Renamed.md");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await expect(
+      useWorkspaceStore.getState().renamePage("Page A.md", "Renamed"),
+    ).rejects.toThrow(/already exists/i);
+
+    expect(getDoc("Page A.md")).not.toBeNull();
+    expect(getDoc("Page A.md")!.title).toBe("Page A");
+    expect(getDoc("Renamed.md")).toBeNull();
+  });
+
+  it("renamePage clears pendingRenameOldPaths on success", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+      pendingRenameOldPaths: ["Page A.md"],
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().renamePage("Page A.md", "Renamed");
+    });
+
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+  });
+
+  it("renamePage clears pendingRenameOldPaths on failure", async () => {
+    useWorkspaceStore.setState({
+      pages: [...samplePages],
+      currentPagePath: "Page A.md",
+      pendingRenameOldPaths: ["Page A.md"],
+    });
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "rename_page":
+          throw new Error("Page already exists");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await expect(
+      useWorkspaceStore.getState().renamePage("Page A.md", "Renamed"),
+    ).rejects.toThrow(/already exists/i);
+
+    expect(useWorkspaceStore.getState().pendingRenameOldPaths).toEqual([]);
+  });
+
   it("saveMindmapFoldState stores ids in viewStates", () => {
     act(() => {
       useWorkspaceStore.getState().saveMindmapFoldState("Page A.md", ["h-1", "h-3"]);
@@ -656,6 +947,7 @@ describe("Layout Persistence", () => {
     });
 
     mockListen();
+    resetSharedDocs();
     mockInvoke((cmd) => {
       switch (cmd) {
         case "open_workspace":

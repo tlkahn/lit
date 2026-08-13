@@ -11,6 +11,7 @@ import {
   getDoc,
   setContent,
   setBody as sharedSetBody,
+  isDirty as sharedIsDirty,
   subscribe as sharedSubscribe,
   subscribeSaveSettled,
   subscribeContentReload,
@@ -141,7 +142,13 @@ export function usePageContent(
       setTitle(doc.title);
       setFrontmatter(doc.frontmatter);
       setRawYaml(doc.rawYaml);
-      setIsDirty(false);
+      // Re-acquiring a moved (renamed) doc must not lie about dirty: after
+      // renamePath the doc's editGen/saveGen survive, so consult the registry
+      // instead of hardcoding false. Navigation onto a fresh doc still lands
+      // in the else branch and starts clean.
+      const dirty = sharedIsDirty(pagePath);
+      setIsDirty(dirty);
+      if (isFocused()) setDirty(dirty);
       siblingUpdateRef.current = false;
       registerPaneContent(paneId, {
         title: doc.title,

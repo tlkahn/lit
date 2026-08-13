@@ -18,6 +18,7 @@ import {
   deserializeLinks,
 } from "./panePdfLink";
 import { usePaneHistoryStore, initPaneHistoryTracking, setPageExistsCheck, deserializeHistory, type PaneHistoryStack } from "./paneHistory";
+import { renamePath as renameSharedDocPath, flushSave } from "../lib/sharedDocs";
 import {
   loadLayout,
   validateLayout,
@@ -53,6 +54,7 @@ export interface WorkspaceStore {
   indexProgress: IndexProgress | null;
   loading: boolean;
   error: string | null;
+  pendingRenameOldPaths: string[];
 
   openWorkspace: (path: string) => Promise<void>;
   refreshPages: () => Promise<void>;
@@ -60,7 +62,7 @@ export interface WorkspaceStore {
   selectPageAtLine: (relativePath: string, line: number, col?: number, fileAbsolute?: boolean) => void;
   createPage: (name: string, parentDir?: string) => Promise<void>;
   clearPendingEditorFocus: () => void;
-  renamePage: (oldPath: string, newName: string) => Promise<void>;
+  renamePage: (oldPath: string, newName: string) => Promise<string>;
   deletePage: (relativePath: string) => Promise<void>;
   setCurrentPageHeadings: (headings: Heading[]) => void;
   setCurrentFrontmatterLineCount: (count: number) => void;
@@ -93,12 +95,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   indexProgress: null,
   loading: false,
   error: null,
+  pendingRenameOldPaths: [],
 
   openWorkspace: async (path: string) => {
     set({ loading: true, error: null, graphReady: false, indexProgress: null });
     try {
       const pages = await ipc.openWorkspace(path);
-      set({ workspacePath: path, pages, loading: false });
+      set({ workspacePath: path, pages, loading: false, pendingRenameOldPaths: [] });
       addRecentWorkspace(path);
 
       stopLayoutSync();
@@ -161,7 +164,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         unlisten();
       }
     } catch (e) {
-      set({ loading: false, error: String(e) });
+      set({ loading: false, error: String(e), pendingRenameOldPaths: [] });
     }
   },
 
@@ -207,8 +210,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   clearPendingEditorFocus: () => set({ pendingEditorFocus: false }),
 
   renamePage: async (oldPath: string, newName: string) => {
+    set((s) => ({
+      error: null,
+      pendingRenameOldPaths: s.pendingRenameOldPaths.includes(oldPath)
+        ? s.pendingRenameOldPaths
+        : [...s.pendingRenameOldPaths, oldPath],
+    }));
     try {
+      await flushSave(oldPath);
       const newPath = await ipc.renamePage(oldPath, newName);
+      // sharedDocs must rekey before pane paths flip. usePageContent cleanup
+      // calls release(oldPath); after the rekey that release is a no-op and
+      // acquire(newPath) reuses the moved doc (panes set + edit/save gens
+      // preserved), so the dirty state survives the path change.
+      renameSharedDocPath(oldPath, newPath, { title: newName });
       set((state) => {
         const { [oldPath]: viewState, ...restViewStates } = state.viewStates;
         const newViewStates = viewState !== undefined
@@ -225,9 +240,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           viewStates: newViewStates,
         };
       });
+      // Pending is cleared in finally, AFTER pane + history repath, so the
+      // mid-repath window is genuinely guarded.
+      usePaneStore.getState().renamePagePath(oldPath, newPath);
       usePaneHistoryStore.getState().renamePath(oldPath, newPath);
+      return newPath;
     } catch (e) {
       set({ error: String(e) });
+      throw e instanceof Error ? e : new Error(String(e));
+    } finally {
+      // Success and failure both clear here; filter is idempotent.
+      set((s) => ({
+        pendingRenameOldPaths: s.pendingRenameOldPaths.filter((p) => p !== oldPath),
+      }));
     }
   },
 

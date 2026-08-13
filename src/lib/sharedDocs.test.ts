@@ -14,6 +14,8 @@ import {
   setBody,
   isDirty,
   isShared,
+  renamePath,
+  flushSave,
   _resetForTesting,
 } from "./sharedDocs";
 import { writePage } from "./ipc";
@@ -435,6 +437,190 @@ describe("SharedDocRegistry", () => {
       release("notes.md", "p2");
       await vi.advanceTimersByTimeAsync(0);
       expect(getDoc("notes.md")).toBeNull();
+    });
+  });
+
+  describe("renamePath", () => {
+    it("moves the doc to the new path and applies the patch", () => {
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "# Old",
+        title: "Old",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "tags:\n  - a\n",
+      });
+
+      renamePath("old.md", "new.md", { title: "New" });
+
+      expect(getDoc("old.md")).toBeNull();
+      const doc = getDoc("new.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.body).toBe("# Old");
+      expect(doc!.title).toBe("New");
+      expect(doc!.frontmatter).toEqual({ tags: ["a"] });
+      expect(getPaneIds("new.md")).toEqual(["p1"]);
+    });
+
+    it("no-op when old path is missing (does not throw)", () => {
+      expect(() => renamePath("missing.md", "new.md", { title: "New" })).not.toThrow();
+      expect(getDoc("new.md")).toBeNull();
+    });
+
+    it("no-op when oldPath equals newPath", () => {
+      acquire("same.md", "p1");
+      setContent("same.md", { body: "b", title: "T", frontmatter: {}, rawYaml: "" });
+
+      renamePath("same.md", "same.md", { title: "Changed" });
+
+      const doc = getDoc("same.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.title).toBe("T");
+      expect(doc!.body).toBe("b");
+    });
+
+    it("without a patch the doc keeps its original title", () => {
+      acquire("old.md", "p1");
+      setContent("old.md", { body: "b", title: "Old", frontmatter: {}, rawYaml: "" });
+
+      renamePath("old.md", "new.md");
+
+      expect(getDoc("old.md")).toBeNull();
+      expect(getDoc("new.md")!.title).toBe("Old");
+    });
+
+    it("renamePath with pending debounce writes only the new path", async () => {
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "original",
+        title: "Old",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "tags:\n  - a\n",
+      });
+      setBody("old.md", "edited", "p1");
+
+      expect(writePage).not.toHaveBeenCalled();
+
+      renamePath("old.md", "new.md", { title: "New" });
+
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(writePage).toHaveBeenCalledOnce();
+      expect(writePage).toHaveBeenCalledWith("new.md", "edited", { tags: ["a"] });
+      const calls = vi.mocked(writePage).mock.calls;
+      expect(calls.every(([path]) => path !== "old.md")).toBe(true);
+
+      expect(getDoc("old.md")).toBeNull();
+      const doc = getDoc("new.md");
+      expect(doc).not.toBeNull();
+      expect(doc!.body).toBe("edited");
+      expect(doc!.title).toBe("New");
+    });
+
+    it("renamePath on clean doc does not schedule a save", async () => {
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "clean",
+        title: "Old",
+        frontmatter: {},
+        rawYaml: "",
+      });
+
+      renamePath("old.md", "new.md");
+
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(writePage).not.toHaveBeenCalled();
+    });
+
+    it("renamePath during in-flight save follows up on the new path if still dirty", async () => {
+      let resolveWrite!: () => void;
+      vi.mocked(writePage).mockImplementation(
+        () => new Promise<void>((r) => { resolveWrite = r; }),
+      );
+
+      acquire("old.md", "p1");
+      setContent("old.md", {
+        body: "v0",
+        title: "Old",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "tags:\n  - a\n",
+      });
+
+      // First write goes in flight on the old path (pre-rename flight is
+      // unavoidable - the timer was armed before the rename).
+      setBody("old.md", "v1", "p1");
+      vi.advanceTimersByTime(300);
+      expect(writePage).toHaveBeenCalledOnce();
+      expect(writePage).toHaveBeenCalledWith("old.md", "v1", { tags: ["a"] });
+
+      // Edit while in flight, then rename.
+      setBody("old.md", "v2", "p1");
+      renamePath("old.md", "new.md", { title: "New" });
+
+      // Settle the first write; the follow-up must target the new path.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The follow-up write (new.md) is also deferred - settle it so the doc
+      // ends clean.
+      resolveWrite();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const calls = vi.mocked(writePage).mock.calls;
+      expect(calls.some(([path, body]) => path === "new.md" && body === "v2")).toBe(true);
+      expect(isDirty("new.md")).toBe(false);
+      expect(getDoc("old.md")).toBeNull();
+      expect(getDoc("new.md")!.body).toBe("v2");
+      expect(getDoc("new.md")!.title).toBe("New");
+    });
+  });
+
+  describe("flushSave", () => {
+    it("flushSave awaits pending debounce and writes immediately", async () => {
+      // The previous test left a deferred implementation on the shared mock;
+      // restore the immediate-resolve default so flushSave can settle.
+      vi.mocked(writePage).mockImplementation(() => Promise.resolve());
+
+      acquire("notes.md", "p1");
+      setContent("notes.md", {
+        body: "old",
+        title: "T",
+        frontmatter: { tags: ["a"] },
+        rawYaml: "",
+      });
+      setBody("notes.md", "edited", "p1");
+
+      expect(writePage).not.toHaveBeenCalled();
+
+      await flushSave("notes.md");
+
+      expect(writePage).toHaveBeenCalledOnce();
+      expect(writePage).toHaveBeenCalledWith("notes.md", "edited", { tags: ["a"] });
+      expect(isDirty("notes.md")).toBe(false);
+    });
+
+    it("flushSave is a no-op for missing docs", async () => {
+      await expect(flushSave("missing.md")).resolves.toBeUndefined();
+      expect(writePage).not.toHaveBeenCalled();
+    });
+
+    it("flushSave is a no-op for clean docs", async () => {
+      acquire("notes.md", "p1");
+      setContent("notes.md", {
+        body: "clean",
+        title: "T",
+        frontmatter: {},
+        rawYaml: "",
+      });
+
+      await flushSave("notes.md");
+
+      expect(writePage).not.toHaveBeenCalled();
+      expect(isDirty("notes.md")).toBe(false);
     });
   });
 

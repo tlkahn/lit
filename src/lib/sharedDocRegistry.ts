@@ -57,6 +57,8 @@ export interface SharedDocRegistry<Content extends HasBody> {
   getDoc: (pagePath: string) => SharedDocOf<Content> | null;
   setContent: (pagePath: string, content: Content) => void;
   setBody: (pagePath: string, newBody: string, fromPaneId: string) => void;
+  renamePath: (oldPath: string, newPath: string, patch?: Partial<Content>) => void;
+  flushSave: (pagePath: string) => Promise<void>;
   isShared: (pagePath: string) => boolean;
   isDirty: (pagePath: string) => boolean;
   subscribe: (
@@ -236,6 +238,61 @@ export function createSharedDocRegistry<Content extends HasBody>(
     scheduleSave(pagePath, doc);
   }
 
+  function renamePath(
+    oldPath: string,
+    newPath: string,
+    patch?: Partial<Content>,
+  ): void {
+    if (oldPath === newPath) return;
+    const doc = docs.get(oldPath);
+    if (!doc) return;
+
+    // Migrate any armed debounce off the old path before rekeying. A timer
+    // closed over oldPath would otherwise writePage(oldPath) after the rename
+    // and resurrect the old file.
+    if (doc.saveTimer) {
+      clearTimeout(doc.saveTimer);
+      doc.saveTimer = undefined;
+    }
+
+    docs.delete(oldPath);
+    if (patch) Object.assign(doc, patch);
+    // If newPath already has a doc (should not happen on successful rename),
+    // prefer the moved in-memory doc and drop the empty placeholder.
+    docs.set(newPath, doc);
+
+    // Re-arm the save against the new path when the doc is still dirty. A
+    // dirty doc always had a timer (setBody schedules one), so this covers the
+    // cleared-timer case. When a write is already in flight, chain a follow-up
+    // on its settle: if the doc is still dirty (edited during the flight) the
+    // follow-up saves to the new path so the in-flight old-path write cannot
+    // be the last word.
+    if (doc.saveInFlight) {
+      void doc.saveInFlight.then(() => {
+        if (docs.get(newPath) === doc && doc.editGen > doc.saveGen) {
+          scheduleSave(newPath, doc);
+        }
+      });
+    } else if (doc.editGen > doc.saveGen) {
+      scheduleSave(newPath, doc);
+    }
+  }
+
+  async function flushSave(pagePath: string): Promise<void> {
+    const doc = docs.get(pagePath);
+    if (!doc) return;
+    if (doc.saveTimer) {
+      clearTimeout(doc.saveTimer);
+      doc.saveTimer = undefined;
+    }
+    if (doc.saveInFlight) {
+      await doc.saveInFlight;
+    }
+    if (doc.editGen > doc.saveGen) {
+      await executeSave(pagePath, doc);
+    }
+  }
+
   function isShared(pagePath: string): boolean {
     const doc = docs.get(pagePath);
     return (doc?.panes.size ?? 0) > 1;
@@ -328,6 +385,8 @@ export function createSharedDocRegistry<Content extends HasBody>(
     getDoc,
     setContent,
     setBody,
+    renamePath,
+    flushSave,
     isShared,
     isDirty,
     subscribe,

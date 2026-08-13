@@ -10,7 +10,9 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { usePaneStore } from "../stores/panes";
 import { usePreferencesStore } from "../stores/preferences";
 import { useCardboxStore } from "../stores/cardbox";
-import { _resetForTesting as resetRegistry } from "../lib/paneContentRegistry";
+import { useStatusMessageStore } from "../stores/statusMessage";
+import { getDoc } from "../lib/sharedDocs";
+import { _resetForTesting as resetRegistry, getPaneContent, updatePaneContent } from "../lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef } from "../lib/editorViewRef";
 import * as commandRegistryModule from "../lib/commandRegistry";
 
@@ -82,6 +84,12 @@ vi.mock("@sigma/node-border", () => ({
 }));
 
 import { globalJumpTracker } from "../editor/jumpTracker";
+
+// Capture the real store action once at module load so tests that need the
+// real renamePage (integration smoke) can restore it after other tests
+// replaced it with a mock (zustand setState merges; beforeEach does not reset
+// actions).
+const realRenamePage = useWorkspaceStore.getState().renamePage;
 
 const samplePage = {
   body: "# Hello\nSome content",
@@ -261,6 +269,357 @@ describe("ContentArea", () => {
     });
 
     expect(spy).toHaveBeenCalledWith("Hello.md", "NewTitle");
+  });
+
+  it("title commit awaits renamePage and keeps the new title after blur", async () => {
+    const rename = vi.fn(async () => "NewTitle.md");
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await act(async () => {
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(rename).toHaveBeenCalledWith("Hello.md", "NewTitle");
+    });
+    expect(screen.getByTestId("page-title")).toHaveValue("NewTitle");
+  });
+
+  it("title commit failure reverts the input and shows an error toast", async () => {
+    const rename = vi.fn(async () => {
+      throw new Error("Page already exists: NewTitle.md");
+    });
+    useWorkspaceStore.setState({ renamePage: rename });
+    useStatusMessageStore.setState({ message: null, variant: "success", action: null });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await act(async () => {
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(rename).toHaveBeenCalled();
+    });
+    expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    expect(useStatusMessageStore.getState().message).toMatch(/already exists/i);
+    expect(useStatusMessageStore.getState().variant).toBe("error");
+  });
+
+  it("overlapping title commits do not revert a successful rename", async () => {
+    let resolveFirst!: (v: string) => void;
+    const rename = vi.fn()
+      .mockImplementationOnce(() => new Promise<string>((r) => { resolveFirst = r; }))
+      .mockImplementation(() => Promise.reject(new Error("Page not found")));
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Foo");
+    await act(async () => {
+      input.blur();
+    });
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Foo");
+
+    // While the first commit is in flight, start a second edit + blur. The
+    // second commit must be ignored (single-flight), not run and fail.
+    await act(async () => {
+      input.focus();
+    });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Bar");
+    await act(async () => {
+      input.blur();
+    });
+
+    // Resolve the first rename.
+    await act(async () => {
+      resolveFirst("Foo.md");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Foo");
+    });
+    // Locked design: overlapping commit is ignored entirely.
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
+
+  it("title commit failure does not revert when the pane already left the page", async () => {
+    let rejectRename!: (e: Error) => void;
+    const rename = vi.fn(
+      () => new Promise<string>((_, r) => { rejectRename = r; }),
+    );
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Foo");
+    await act(async () => {
+      input.blur();
+    });
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Foo");
+
+    // Mid-flight the pane navigates to a different page.
+    act(() => {
+      usePaneStore.getState().setPanePage("test-pane", "Other.md");
+      useWorkspaceStore.setState({ currentPagePath: "Other.md" });
+    });
+    await waitFor(() => {
+      expect(getPaneContent("test-pane")?.title).toBe("Other");
+    });
+
+    await act(async () => {
+      rejectRename(new Error("Page already exists"));
+    });
+
+    // The pane no longer points at Hello.md - the failed rename must not
+    // clobber the new page's title nor revert the input to the old title.
+    expect(getPaneContent("test-pane")?.title).toBe("Other");
+    expect(screen.getByTestId("page-title")).not.toHaveValue("Hello");
+  });
+
+  it("does not update the pane content title before renamePage resolves", async () => {
+    let resolveRename!: (v: string) => void;
+    const rename = vi.fn(
+      () => new Promise<string>((r) => { resolveRename = r; }),
+    );
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(getPaneContent("test-pane")?.title).toBe("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await act(async () => {
+      input.blur();
+    });
+
+    expect(rename).toHaveBeenCalledWith("Hello.md", "NewTitle");
+    // Mid-flight: no optimistic committed title.
+    expect(getPaneContent("test-pane")?.title).toBe("Hello");
+
+    await act(async () => {
+      resolveRename("NewTitle.md");
+    });
+    await waitFor(() => {
+      expect(getPaneContent("test-pane")?.title).toBe("NewTitle");
+    });
+    expect(screen.getByTestId("page-title")).toHaveValue("NewTitle");
+  });
+
+  it("does not reset editingTitle from store while the title input is focused", async () => {
+    const rename = vi.fn(async () => "Draft.md");
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Draft");
+
+    // Externally push a title change into the pane content registry while the
+    // input is focused - must not clobber the draft.
+    act(() => {
+      updatePaneContent("test-pane", { title: "External" });
+    });
+    expect(screen.getByTestId("page-title")).toHaveValue("Draft");
+
+    // Blur commits the draft (rename mocked to succeed).
+    await act(async () => {
+      input.blur();
+    });
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Draft");
+  });
+
+  it("Escape after editing title does not call renamePage and restores the title", async () => {
+    const spy = vi.fn();
+    useWorkspaceStore.setState({ renamePage: spy });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await userEvent.keyboard("{Escape}");
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+  });
+
+  it("after Escape, a new edit + blur still renames", async () => {
+    const rename = vi.fn(async () => "Other.md");
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    expect(rename).not.toHaveBeenCalled();
+
+    // Re-edit after the cancelled Escape must still commit.
+    await userEvent.clear(input);
+    await userEvent.type(input, "Other");
+    await act(async () => {
+      input.blur();
+    });
+
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Other");
+  });
+
+  it("Escape cancel flag does not stick across a re-focus + re-edit", async () => {
+    const rename = vi.fn(async () => "Other.md");
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    // Stub blur so Escape's blur() no-ops and onBlur never fires - the cancel
+    // flag would otherwise stay set (the sticky-flag scenario).
+    const blurSpy = vi.spyOn(HTMLInputElement.prototype, "blur").mockImplementation(() => {});
+    try {
+      await userEvent.clear(input);
+      await userEvent.type(input, "NewTitle");
+      await userEvent.keyboard("{Escape}");
+    } finally {
+      blurSpy.mockRestore();
+    }
+    expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    expect(rename).not.toHaveBeenCalled();
+
+    // Re-focus fires the input's onFocus, which must clear any stuck cancel
+    // flag before the next commit.
+    fireEvent.focus(input);
+    await userEvent.clear(input);
+    await userEvent.type(input, "Other");
+    await act(async () => {
+      input.blur();
+    });
+
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Other");
+  });
+
+  it("integration: real renamePage keeps pages, pane path, sharedDocs, and input in sync", async () => {
+    // Use the REAL renamePage store action; only IPC is mocked. After blur the
+    // disk rename must flow through to pages, pane paths, sharedDocs, and the
+    // visible title bar input.
+    useWorkspaceStore.setState({ renamePage: realRenamePage });
+    mockInvoke((cmd, args) => {
+      if (cmd === "rename_page") return "Renamed.md";
+      if (cmd === "read_page") {
+        const rp = (args as Record<string, unknown>)?.relativePath as string;
+        return {
+          body: "# Hello\nSome content",
+          raw_yaml: "",
+          meta: {
+            title: rp.replace(/\.md$/, ""),
+            frontmatter: {},
+            relative_path: rp,
+            created_at: 1000,
+            modified_at: 2000,
+            file_type: "markdown" as const,
+            has_companion: false,
+          },
+        };
+      }
+      if (cmd === "parse_raw_yaml") return {};
+      if (cmd === "get_backlinks") return [];
+      if (cmd === "get_keymaps") return [];
+      if (cmd === "get_graph_subgraph") return { nodes: [], edges: [] };
+      if (cmd === "get_pagerank") return {};
+      if (cmd === "get_graph_positions") return {};
+      if (cmd === "acknowledge_file_hash") return null;
+      if (cmd === "allow_asset_scope") return undefined;
+      throw new Error(`Unknown command: ${cmd}`);
+    });
+    useWorkspaceStore.setState({
+      pages: [
+        {
+          title: "Hello",
+          relative_path: "Hello.md",
+          frontmatter: {},
+          created_at: 1000,
+          modified_at: 2000,
+          file_type: "markdown" as const,
+          has_companion: false,
+        },
+      ],
+    });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Renamed");
+    await act(async () => {
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Renamed");
+    });
+    expect(
+      useWorkspaceStore.getState().pages.find((p) => p.relative_path === "Renamed.md")?.title,
+    ).toBe("Renamed");
+    expect(useWorkspaceStore.getState().currentPagePath).toBe("Renamed.md");
+    const leaf = usePaneStore.getState().root as { pagePath: string | null };
+    expect(leaf.pagePath).toBe("Renamed.md");
+    expect(getDoc("Renamed.md")?.title).toBe("Renamed");
+    expect(getDoc("Hello.md")).toBeNull();
   });
 
   it("frontmatter toggle works", async () => {

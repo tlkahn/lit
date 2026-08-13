@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useDeferredValue, useCallback, me
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "../stores/workspace";
 import { usePreferencesStore } from "../stores/preferences";
+import { useStatusMessageStore } from "../stores/statusMessage";
 import { openInExternalEditor } from "../lib/ipc";
 import { ensureSidebarVisible } from "../lib/sidebarVisibility";
 import {
@@ -243,9 +244,16 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
 
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
 
-  const handleRenameCommit = useCallback((path: string, newName: string) => {
+  const handleRenameCommit = useCallback(async (path: string, newName: string) => {
     setRenamingPath(null);
-    renamePageAction(path, newName);
+    try {
+      await renamePageAction(path, newName);
+    } catch (e) {
+      useStatusMessageStore.getState().show(
+        e instanceof Error ? e.message : "Could not rename page",
+        "error",
+      );
+    }
   }, [renamePageAction]);
 
   const onExportNetworkRef = useRef(onExportNetwork);

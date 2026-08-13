@@ -54,6 +54,15 @@ export function useFileWatcher(onCurrentPageModified?: () => void) {
         (event) => {
           if (cancelled) return;
           console.debug("[FileWatcher] file-deleted:", event.payload.path, "current:", useWorkspaceStore.getState().currentPagePath);
+          // A self-rename produces a delete for the old path. If the rename is
+          // still in flight (or the watcher event landed mid-repath), do not
+          // deselect the page or clear it from panes - the rename already
+          // moved those to the new path.
+          const pending = useWorkspaceStore.getState().pendingRenameOldPaths;
+          if (pending.includes(event.payload.path)) {
+            refreshPages();
+            return;
+          }
           if (useWorkspaceStore.getState().currentPagePath === event.payload.path) {
             console.warn("[FileWatcher] current page deleted, deselecting:", event.payload.path);
             selectPage(null);
