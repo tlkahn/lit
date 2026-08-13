@@ -1,11 +1,20 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { FlatRow } from "./useFlatTree";
+import { resolveTrashTargets, visiblePagePaths } from "../lib/fileTreeTrash";
 
 interface UseTreeKeyboardOptions {
   rows: FlatRow[];
   toggleCollapse: (folderPath: string) => void;
   selectPage: (path: string) => void;
   scrollToIndex: (index: number) => void;
+  // New optional callbacks -- selection / trash / rename keys. Optional so
+  // existing callers and tests stay valid without new required args.
+  onTrash?: (paths: string[]) => void;
+  onClearSelection?: () => void;
+  onSelectAllPages?: () => void;
+  onToggleSelectPath?: (path: string) => void;
+  onRenamePath?: (path: string) => void;
+  getSelectedPaths?: () => Set<string>;
 }
 
 export function findParentIndex(rows: FlatRow[], currentIndex: number): number {
@@ -24,6 +33,12 @@ export function useTreeKeyboard({
   toggleCollapse,
   selectPage,
   scrollToIndex,
+  onTrash,
+  onClearSelection,
+  onSelectAllPages,
+  onToggleSelectPath,
+  onRenamePath,
+  getSelectedPaths,
 }: UseTreeKeyboardOptions) {
   const [focusedIndex, setFocusedIndexState] = useState(-1);
 
@@ -40,6 +55,18 @@ export function useTreeKeyboard({
   selectPageRef.current = selectPage;
   const scrollToIndexRef = useRef(scrollToIndex);
   scrollToIndexRef.current = scrollToIndex;
+  const onTrashRef = useRef(onTrash);
+  onTrashRef.current = onTrash;
+  const onClearSelectionRef = useRef(onClearSelection);
+  onClearSelectionRef.current = onClearSelection;
+  const onSelectAllPagesRef = useRef(onSelectAllPages);
+  onSelectAllPagesRef.current = onSelectAllPages;
+  const onToggleSelectPathRef = useRef(onToggleSelectPath);
+  onToggleSelectPathRef.current = onToggleSelectPath;
+  const onRenamePathRef = useRef(onRenamePath);
+  onRenamePathRef.current = onRenamePath;
+  const getSelectedPathsRef = useRef(getSelectedPaths);
+  getSelectedPathsRef.current = getSelectedPaths;
   const focusedIndexRef = useRef(focusedIndex);
   focusedIndexRef.current = focusedIndex;
 
@@ -61,6 +88,18 @@ export function useTreeKeyboard({
   }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Never interpret keys that originate inside an editable (e.g. the inline
+    // rename input): Delete/Backspace must type characters, and focus/selection
+    // keys must not steal from the editor or rename field.
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
     const r = rowsRef.current;
     if (r.length === 0) return;
 
@@ -117,6 +156,43 @@ export function useTreeKeyboard({
         e.preventDefault();
         setFocusedIndex(r.length - 1);
         break;
+      case "Escape":
+        if (getSelectedPathsRef.current?.().size) {
+          e.preventDefault();
+          onClearSelectionRef.current?.();
+        }
+        break;
+      case "a":
+      case "A":
+        if (e.metaKey || e.ctrlKey) {
+          if (onSelectAllPagesRef.current) {
+            e.preventDefault();
+            onSelectAllPagesRef.current();
+          }
+        }
+        break;
+      case " ":
+        if (row.type === "page" && onToggleSelectPathRef.current) {
+          e.preventDefault();
+          onToggleSelectPathRef.current(row.page.relative_path);
+        }
+        break;
+      case "F2":
+        if (row.type === "page" && onRenamePathRef.current) {
+          e.preventDefault();
+          onRenamePathRef.current(row.page.relative_path);
+        }
+        break;
+      case "Delete":
+      case "Backspace": {
+        const selected = getSelectedPathsRef.current?.() ?? new Set<string>();
+        const targets = resolveTrashTargets(selected, row, visiblePagePaths(r));
+        if (targets.length > 0 && onTrashRef.current) {
+          e.preventDefault();
+          onTrashRef.current(targets);
+        }
+        break;
+      }
     }
   }, [setFocusedIndex]);
 

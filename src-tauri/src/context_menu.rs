@@ -157,7 +157,12 @@ pub struct CardboxContextPayload {
     pub color: Option<String>,
 }
 
-pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
+pub fn sidebar_menu_items(selection_count: usize) -> Vec<MenuItemSpec> {
+    let trash_label = if selection_count >= 2 {
+        format!("Move {} Items to Trash", selection_count)
+    } else {
+        "Move to Trash".into()
+    };
     vec![
         MenuItemSpec {
             id: CTX_SIDEBAR_RENAME,
@@ -176,7 +181,7 @@ pub fn sidebar_menu_items() -> Vec<MenuItemSpec> {
         },
         MenuItemSpec {
             id: CTX_SIDEBAR_TRASH,
-            label: "Move to Trash".into(),
+            label: trash_label,
             enabled: true,
         },
         MenuItemSpec {
@@ -513,13 +518,14 @@ fn show_popup_menu(
 #[tauri::command]
 pub fn show_sidebar_context_menu(
     relative_path: String,
+    selection_count: usize,
     window: tauri::Window,
     pending: tauri::State<PendingContextMenu>,
 ) -> Result<(), String> {
     *pending.0.lock().unwrap() = Some(ContextMenuContext::Sidebar {
         relative_path,
     });
-    let entries = wrap_flat(sidebar_menu_items());
+    let entries = wrap_flat(sidebar_menu_items(selection_count));
     show_popup_menu(&entries, &window)
 }
 
@@ -709,7 +715,7 @@ mod tests {
 
     #[test]
     fn sidebar_menu_items_returns_six_specs() {
-        let items = sidebar_menu_items();
+        let items = sidebar_menu_items(1);
         assert_eq!(items.len(), 6);
         assert_eq!(items[0].id, CTX_SIDEBAR_RENAME);
         assert_eq!(items[0].label, "Rename");
@@ -735,6 +741,20 @@ mod tests {
         assert_eq!(items[5].id, CTX_SIDEBAR_REVEAL_LIBRARY);
         assert_eq!(items[5].label, "Reveal in Reference Library");
         assert!(items[5].enabled);
+    }
+
+    #[test]
+    fn sidebar_menu_items_trash_label_reflects_selection_count() {
+        let single = sidebar_menu_items(1);
+        assert_eq!(single[3].id, CTX_SIDEBAR_TRASH);
+        assert_eq!(single[3].label, "Move to Trash");
+
+        let zero = sidebar_menu_items(0);
+        assert_eq!(zero[3].label, "Move to Trash");
+
+        let many = sidebar_menu_items(3);
+        assert_eq!(many[3].id, CTX_SIDEBAR_TRASH);
+        assert_eq!(many[3].label, "Move 3 Items to Trash");
     }
 
     #[test]

@@ -4,8 +4,8 @@ import { useEffect, useRef } from "react";
 import { readPage, previewSplit } from "./ipc";
 import type { PageContent, SplitPlan } from "./ipc";
 
-export async function showSidebarContextMenu(relativePath: string): Promise<void> {
-  return invoke<void>("show_sidebar_context_menu", { relativePath });
+export async function showSidebarContextMenu(relativePath: string, selectionCount: number): Promise<void> {
+  return invoke<void>("show_sidebar_context_menu", { relativePath, selectionCount });
 }
 
 interface SidebarContextPayload {

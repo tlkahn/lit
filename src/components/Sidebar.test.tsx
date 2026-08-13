@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, act, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
+import { useFileTreeSelectionStore } from "../stores/fileTreeSelection";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
 import type { BibEntry } from "../lib/ipc";
 
@@ -48,6 +49,7 @@ beforeEach(() => {
     }
     throw new Error(`Unknown command: ${cmd}`);
   });
+  useFileTreeSelectionStore.getState().clear();
 });
 
 describe("Sidebar tabs", () => {
@@ -334,7 +336,7 @@ describe("Sidebar virtualization", () => {
 
     const call = invokedCommands.find((c) => c.cmd === "show_sidebar_context_menu");
     expect(call).toBeTruthy();
-    expect(call!.args).toEqual({ relativePath: "Notes.md" });
+    expect(call!.args).toEqual({ relativePath: "Notes.md", selectionCount: 1 });
   });
 });
 
@@ -736,6 +738,7 @@ describe("Sidebar ARIA tree attributes", () => {
       pages: [makePage("Alpha"), makePage("Beta")],
       currentPagePath: "Alpha.md",
     });
+    useFileTreeSelectionStore.getState().setOnly("Alpha.md");
     render(<Sidebar />);
     const treeItems = screen.getAllByRole("treeitem");
     expect(treeItems.length).toBe(2);
@@ -1138,5 +1141,529 @@ describe("Sidebar reveal and search interaction", () => {
     expect(screen.getByLabelText("Search pages")).toHaveValue("Note");
     expect(screen.getByText("Beta Note")).toBeInTheDocument();
     expect(screen.queryByText("Other")).not.toBeInTheDocument();
+  });
+});
+
+describe("Files tree selection", () => {
+  function treeItemByText(text: string): HTMLElement {
+    const items = screen.getAllByRole("treeitem");
+    const found = items.find((el) => el.textContent === text);
+    if (!found) throw new Error(`no treeitem with text ${text}`);
+    return found;
+  }
+
+  function selectedCount(): number {
+    return screen
+      .getAllByRole("treeitem")
+      .filter((el) => el.getAttribute("aria-selected") === "true").length;
+  }
+
+  it("plain click selects and opens the page", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+
+    expect(selectPage).toHaveBeenCalledWith("A.md");
+    expect(treeItemByText("A").getAttribute("aria-selected")).toBe("true");
+    expect(selectedCount()).toBe(1);
+  });
+
+  it("cmd-click toggles selection without opening", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    expect(selectPage).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+
+    expect(selectPage).toHaveBeenCalledTimes(1);
+    expect(treeItemByText("A").getAttribute("aria-selected")).toBe("true");
+    expect(treeItemByText("B").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("ctrl-click toggles selection like meta", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      selectPage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { ctrlKey: true });
+
+    expect(selectPage).toHaveBeenCalledTimes(1);
+    expect(treeItemByText("A").getAttribute("aria-selected")).toBe("true");
+    expect(treeItemByText("B").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("cmd-click on an already selected page deselects it", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    expect(treeItemByText("A").getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(screen.getByText("A"), { metaKey: true });
+    expect(treeItemByText("A").getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("shift-click range-selects from the anchor without opening intermediate pages", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    expect(selectPage).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText("C"), { shiftKey: true });
+
+    expect(selectPage).toHaveBeenCalledTimes(1);
+    expect(treeItemByText("A").getAttribute("aria-selected")).toBe("true");
+    expect(treeItemByText("B").getAttribute("aria-selected")).toBe("true");
+    expect(treeItemByText("C").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("selected non-active row gets a distinct selected class", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      currentPagePath: null,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+
+    const btnA = screen.getByText("A");
+    expect(btnA.classList.contains("bg-bg-hover")).toBe(true);
+    expect(btnA.classList.contains("bg-nav-active-bg")).toBe(false);
+  });
+
+  it("plain click after multi-selection reduces to one and opens", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("C"), { metaKey: true });
+    expect(selectedCount()).toBe(2);
+
+    await user.click(screen.getByText("B"));
+
+    expect(selectedCount()).toBe(1);
+    expect(treeItemByText("B").getAttribute("aria-selected")).toBe("true");
+    expect(selectPage).toHaveBeenCalledWith("B.md");
+  });
+});
+
+describe("Files tree keyboard selection", () => {
+  function tree(): HTMLElement {
+    return screen.getByTestId("sidebar-file-list");
+  }
+
+  function selectedCount(): number {
+    return screen
+      .getAllByRole("treeitem")
+      .filter((el) => el.getAttribute("aria-selected") === "true").length;
+  }
+
+  it("Escape clears the multi-selection", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    expect(selectedCount()).toBe(2);
+
+    fireEvent.keyDown(tree(), { key: "Escape" });
+
+    expect(selectedCount()).toBe(0);
+  });
+
+  it("Space toggles the focused page in the selection without opening", async () => {
+    const selectPage = vi.fn();
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      selectPage,
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    expect(selectPage).toHaveBeenCalledTimes(1);
+
+    // Move focus to B via ArrowDown, then Space toggles B in.
+    fireEvent.keyDown(tree(), { key: "ArrowDown" });
+    fireEvent.keyDown(tree(), { key: " " });
+
+    expect(selectPage).toHaveBeenCalledTimes(1);
+    const sel = useFileTreeSelectionStore.getState().selectedPaths;
+    expect([...sel].sort()).toEqual(["A.md", "B.md"]);
+  });
+
+  it("Mod-a selects all visible pages only", async () => {
+    useWorkspaceStore.setState({
+      pages: [
+        makePage("A", "A.md"),
+        makePage("B", "B.md"),
+        makePage("C", "C.md"),
+        makePage("Nested", "docs/Nested.md"),
+      ],
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    // docs folder starts collapsed; Nested is not rendered.
+    expect(screen.queryByText("Nested")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("A"));
+    fireEvent.keyDown(tree(), { key: "a", metaKey: true });
+
+    expect(selectedCount()).toBe(3);
+    const sel = useFileTreeSelectionStore.getState().selectedPaths;
+    expect([...sel].sort()).toEqual(["A.md", "B.md", "C.md"]);
+  });
+
+  it("F2 on the focused page starts inline rename", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.keyDown(tree(), { key: "F2" });
+
+    expect(screen.getByDisplayValue("A")).toBeInTheDocument();
+  });
+});
+
+describe("Files tree trash", () => {
+  function tree(): HTMLElement {
+    return screen.getByTestId("sidebar-file-list");
+  }
+
+  it("Delete on a single selected page trashes it without a dialog", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.keyDown(tree(), { key: "Delete" });
+
+    expect(deletePage).toHaveBeenCalledTimes(1);
+    expect(deletePage).toHaveBeenCalledWith("A.md");
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+  });
+
+  it("Backspace with a focused page and empty selection trashes that page", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    useFileTreeSelectionStore.getState().clear();
+    fireEvent.keyDown(tree(), { key: "Backspace" });
+
+    expect(deletePage).toHaveBeenCalledWith("A.md");
+  });
+
+  it("Delete on a focused folder with empty selection does nothing", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("Inside", "docs/Inside.md"), makePage("Outside", "Outside.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("docs"));
+    fireEvent.keyDown(tree(), { key: "Delete" });
+
+    expect(deletePage).not.toHaveBeenCalled();
+  });
+
+  it("Delete while the rename input is focused does not trash", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    render(<Sidebar />);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/rename", { relative_path: "A.md" });
+    });
+
+    const input = screen.getByDisplayValue("A");
+    fireEvent.keyDown(input, { key: "Delete" });
+
+    expect(deletePage).not.toHaveBeenCalled();
+  });
+});
+
+describe("Files tree multi trash confirm", () => {
+  function tree(): HTMLElement {
+    return screen.getByTestId("sidebar-file-list");
+  }
+
+  it("Delete with a multi-selection shows the confirm dialog first", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+    expect(deletePage).not.toHaveBeenCalled();
+  });
+
+  it("cancelling the confirm dialog keeps the selection and trashes nothing", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("confirm-delete-cancel"));
+
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+    expect(deletePage).not.toHaveBeenCalled();
+    const sel = useFileTreeSelectionStore.getState().selectedPaths;
+    expect([...sel].sort()).toEqual(["A.md", "B.md"]);
+  });
+
+  it("confirming trashes each selected path and prunes the selection", async () => {
+    const deletePage = vi.fn(async (path: string) => {
+      useWorkspaceStore.setState((s) => ({
+        pages: s.pages.filter((p) => p.relative_path !== path),
+      }));
+    });
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.keyDown(tree(), { key: "Delete" });
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("confirm-delete-btn"));
+    });
+
+    expect(deletePage).toHaveBeenCalledWith("A.md");
+    expect(deletePage).toHaveBeenCalledWith("B.md");
+    expect(screen.queryByTestId("confirm-delete-dialog")).not.toBeInTheDocument();
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual([]);
+  });
+
+  it("context-menu trash on a path inside a multi-selection shows the dialog", async () => {
+    const deletePage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.click(screen.getByText("C"), { metaKey: true });
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(3);
+
+    act(() => {
+      emitMockEvent("context-menu://sidebar/trash", { relative_path: "B.md" });
+    });
+
+    expect(screen.getByTestId("confirm-delete-dialog")).toBeInTheDocument();
+    expect(deletePage).not.toHaveBeenCalled();
+  });
+
+  it("context menu passes the multi-selection count for a selected path", async () => {
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")],
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    fireEvent.click(screen.getByText("C"), { metaKey: true });
+
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByText("B") });
+
+    const call = invokedCommands.find((c) => c.cmd === "show_sidebar_context_menu");
+    expect(call).toBeTruthy();
+    expect(call!.args).toEqual({ relativePath: "B.md", selectionCount: 3 });
+  });
+});
+
+describe("Files tree selection lifecycle", () => {
+  function selectTwo() {
+    useWorkspaceStore.setState({
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      selectPage: vi.fn(),
+    });
+  }
+
+  it("switching away from the Files tab clears the selection", async () => {
+    selectTwo();
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(2);
+
+    await user.click(screen.getByRole("button", { name: "Outline" }));
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(0);
+  });
+
+  it("changing the workspace clears the selection", async () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/workspace",
+      pages: [makePage("A", "A.md"), makePage("B", "B.md")],
+      selectPage: vi.fn(),
+    });
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(2);
+
+    act(() => {
+      useWorkspaceStore.setState({ workspacePath: "/other" });
+    });
+
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(0);
+  });
+
+  it("prunes selection when a selected page disappears from pages", async () => {
+    selectTwo();
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("A"));
+    fireEvent.click(screen.getByText("B"), { metaKey: true });
+    expect(useFileTreeSelectionStore.getState().selectedPaths.size).toBe(2);
+
+    act(() => {
+      useWorkspaceStore.setState({
+        pages: [makePage("A", "A.md")],
+      });
+    });
+
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual(["A.md"]);
+  });
+});
+
+describe("Files tree trash focus", () => {
+  function trashWithState(pages: ReturnType<typeof makePage>[]) {
+    const deletePage = vi.fn(async (path: string) => {
+      useWorkspaceStore.setState((s) => ({
+        pages: s.pages.filter((p) => p.relative_path !== path),
+      }));
+    });
+    useWorkspaceStore.setState({
+      pages,
+      deletePage,
+      selectPage: vi.fn(),
+    });
+    return deletePage;
+  }
+
+  it("moves focus to the next neighbor after trashing the focused page", async () => {
+    trashWithState([makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")]);
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("B"));
+    fireEvent.keyDown(screen.getByTestId("sidebar-file-list"), { key: "Delete" });
+
+    const tree = screen.getByTestId("sidebar-file-list");
+    expect(tree.getAttribute("aria-activedescendant")).toBe("tree-item-C.md");
+    expect([...useFileTreeSelectionStore.getState().selectedPaths]).toEqual([]);
+  });
+
+  it("moves focus to the previous row when the trashed page was last", async () => {
+    trashWithState([makePage("A", "A.md"), makePage("B", "B.md"), makePage("C", "C.md")]);
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByText("C"));
+    fireEvent.keyDown(screen.getByTestId("sidebar-file-list"), { key: "Delete" });
+
+    const tree = screen.getByTestId("sidebar-file-list");
+    expect(tree.getAttribute("aria-activedescendant")).toBe("tree-item-B.md");
   });
 });

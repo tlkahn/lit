@@ -84,10 +84,11 @@ describe("showSidebarContextMenu", () => {
       throw new Error(`Unknown command: ${cmd}`);
     });
     const { showSidebarContextMenu } = await import("./contextMenuIpc");
-    await showSidebarContextMenu("notes.md");
+    await showSidebarContextMenu("notes.md", 1);
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("show_sidebar_context_menu", {
       relativePath: "notes.md",
+      selectionCount: 1,
     });
   });
 });

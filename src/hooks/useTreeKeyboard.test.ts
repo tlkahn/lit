@@ -36,19 +36,42 @@ function page(title: string, depth: number, path?: string): FlatRow {
   };
 }
 
-function fireKey(handler: (e: React.KeyboardEvent) => void, key: string) {
+function fireKey(
+  handler: (e: React.KeyboardEvent) => void,
+  key: string,
+  mods: { metaKey?: boolean; ctrlKey?: boolean } = {},
+) {
   const event = {
     key,
+    metaKey: mods.metaKey ?? false,
+    ctrlKey: mods.ctrlKey ?? false,
     preventDefault: vi.fn(),
   } as unknown as React.KeyboardEvent;
   handler(event);
   return event;
 }
 
-function setup(rows: FlatRow[]) {
+interface SetupCallbacks {
+  onTrash?: (paths: string[]) => void;
+  onClearSelection?: () => void;
+  onSelectAllPages?: () => void;
+  onToggleSelectPath?: (path: string) => void;
+  onRenamePath?: (path: string) => void;
+  getSelectedPaths?: () => Set<string>;
+}
+
+function setup(rows: FlatRow[], callbacks: SetupCallbacks = {}) {
   const toggleCollapse = vi.fn();
   const selectPage = vi.fn();
   const scrollToIndex = vi.fn();
+  const full: Required<SetupCallbacks> = {
+    onTrash: callbacks.onTrash ?? vi.fn(),
+    onClearSelection: callbacks.onClearSelection ?? vi.fn(),
+    onSelectAllPages: callbacks.onSelectAllPages ?? vi.fn(),
+    onToggleSelectPath: callbacks.onToggleSelectPath ?? vi.fn(),
+    onRenamePath: callbacks.onRenamePath ?? vi.fn(),
+    getSelectedPaths: callbacks.getSelectedPaths ?? (() => new Set<string>()),
+  };
   const { result, rerender } = renderHook(
     ({ rows: r }) =>
       useTreeKeyboard({
@@ -56,10 +79,11 @@ function setup(rows: FlatRow[]) {
         toggleCollapse,
         selectPage,
         scrollToIndex,
+        ...full,
       }),
     { initialProps: { rows } },
   );
-  return { result, rerender, toggleCollapse, selectPage, scrollToIndex };
+  return { result, rerender, toggleCollapse, selectPage, scrollToIndex, callbacks: full };
 }
 
 describe("findParentIndex", () => {
@@ -273,5 +297,150 @@ describe("useTreeKeyboard", () => {
     expect(result.current.focusedIndex).toBe(-1);
     act(() => fireKey(result.current.handleKeyDown, "ArrowUp"));
     expect(result.current.focusedIndex).toBe(0);
+  });
+});
+
+describe("useTreeKeyboard selection keys", () => {
+  const rows: FlatRow[] = [
+    folder("docs", 0),
+    page("Alpha", 1, "docs/Alpha.md"),
+    page("Beta", 1, "docs/Beta.md"),
+    page("Root", 0),
+  ];
+
+  it("Escape with selection non-empty calls onClearSelection and preventDefault", () => {
+    const { result, callbacks } = setup(rows, {
+      getSelectedPaths: () => new Set(["docs/Alpha.md"]),
+    });
+    act(() => result.current.setFocusedIndex(1));
+    let e: ReturnType<typeof fireKey>;
+    act(() => {
+      e = fireKey(result.current.handleKeyDown, "Escape");
+    });
+    expect(callbacks.onClearSelection).toHaveBeenCalled();
+    expect(e!.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Escape with empty selection does not clear or preventDefault", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    let e: ReturnType<typeof fireKey>;
+    act(() => {
+      e = fireKey(result.current.handleKeyDown, "Escape");
+    });
+    expect(callbacks.onClearSelection).not.toHaveBeenCalled();
+    expect(e!.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("Space on focused page toggles selection without opening", () => {
+    const { result, callbacks, selectPage } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    let e: ReturnType<typeof fireKey>;
+    act(() => {
+      e = fireKey(result.current.handleKeyDown, " ");
+    });
+    expect(callbacks.onToggleSelectPath).toHaveBeenCalledWith("docs/Alpha.md");
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(e!.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Space on focused folder does not toggle", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(0));
+    act(() => fireKey(result.current.handleKeyDown, " "));
+    expect(callbacks.onToggleSelectPath).not.toHaveBeenCalled();
+  });
+
+  it("Mod-a calls onSelectAllPages and preventDefault", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    let e: ReturnType<typeof fireKey>;
+    act(() => {
+      e = fireKey(result.current.handleKeyDown, "a", { metaKey: true });
+    });
+    expect(callbacks.onSelectAllPages).toHaveBeenCalled();
+    expect(e!.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Ctrl-a calls onSelectAllPages", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    act(() => fireKey(result.current.handleKeyDown, "a", { ctrlKey: true }));
+    expect(callbacks.onSelectAllPages).toHaveBeenCalled();
+  });
+
+  it("plain 'a' without modifier does not select all", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    act(() => fireKey(result.current.handleKeyDown, "a"));
+    expect(callbacks.onSelectAllPages).not.toHaveBeenCalled();
+  });
+
+  it("F2 on page calls onRenamePath", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    act(() => fireKey(result.current.handleKeyDown, "F2"));
+    expect(callbacks.onRenamePath).toHaveBeenCalledWith("docs/Alpha.md");
+  });
+
+  it("F2 on folder does not rename", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(0));
+    act(() => fireKey(result.current.handleKeyDown, "F2"));
+    expect(callbacks.onRenamePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("useTreeKeyboard trash keys", () => {
+  const rows: FlatRow[] = [
+    folder("docs", 0),
+    page("Alpha", 1, "docs/Alpha.md"),
+    page("Beta", 1, "docs/Beta.md"),
+    page("Root", 0),
+  ];
+
+  it("Delete with selection calls onTrash with selected paths in visible order", () => {
+    const { result, callbacks } = setup(rows, {
+      getSelectedPaths: () => new Set(["docs/Beta.md", "docs/Alpha.md"]),
+    });
+    act(() => result.current.setFocusedIndex(2));
+    let e: ReturnType<typeof fireKey>;
+    act(() => {
+      e = fireKey(result.current.handleKeyDown, "Delete");
+    });
+    expect(callbacks.onTrash).toHaveBeenCalledWith(["docs/Alpha.md", "docs/Beta.md"]);
+    expect(e!.preventDefault).toHaveBeenCalled();
+  });
+
+  it("Delete with empty selection and focused page calls onTrash with the page", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(1));
+    act(() => fireKey(result.current.handleKeyDown, "Delete"));
+    expect(callbacks.onTrash).toHaveBeenCalledWith(["docs/Alpha.md"]);
+  });
+
+  it("Delete with empty selection and focused folder does not call onTrash", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(0));
+    act(() => fireKey(result.current.handleKeyDown, "Delete"));
+    expect(callbacks.onTrash).not.toHaveBeenCalled();
+  });
+
+  it("Backspace behaves like Delete for a focused page", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(3));
+    act(() => fireKey(result.current.handleKeyDown, "Backspace"));
+    expect(callbacks.onTrash).toHaveBeenCalledWith(["Root.md"]);
+  });
+
+  it("Delete does not preventDefault when it is a no-op", () => {
+    const { result, callbacks } = setup(rows);
+    act(() => result.current.setFocusedIndex(0));
+    let e: ReturnType<typeof fireKey>;
+    act(() => {
+      e = fireKey(result.current.handleKeyDown, "Delete");
+    });
+    expect(callbacks.onTrash).not.toHaveBeenCalled();
+    expect(e!.preventDefault).not.toHaveBeenCalled();
   });
 });
