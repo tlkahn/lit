@@ -468,6 +468,26 @@ describe("WorkspaceStore", () => {
     expect(vs["Page B.md"]).toEqual({ scrollTop: 200, cursor: 20 });
   });
 
+  it("deletePage rejects and sets error when trashPage fails", async () => {
+    useWorkspaceStore.setState({ pages: [...samplePages], error: null });
+    mockInvoke((cmd) => {
+      switch (cmd) {
+        case "trash_page":
+          throw new Error("trash boom");
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    });
+
+    await expect(
+      useWorkspaceStore.getState().deletePage("Page A.md"),
+    ).rejects.toThrow(/trash boom/);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.pages.find((p) => p.relative_path === "Page A.md")).toBeTruthy();
+    expect(state.error).toMatch(/trash boom/);
+  });
+
   it("renamePage transfers viewState to new path", async () => {
     useWorkspaceStore.setState({
       pages: [...samplePages],

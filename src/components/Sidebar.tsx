@@ -23,11 +23,14 @@ import { useFlatTree, type FolderNode } from "../hooks/useFlatTree";
 import { useSidebarSort } from "../hooks/useSidebarSort";
 import { useRevealFlash } from "../hooks/useRevealFlash";
 import { useTreeKeyboard } from "../hooks/useTreeKeyboard";
+import { useFileTreeSelectionStore } from "../stores/fileTreeSelection";
+import { visiblePagePaths, nextFocusKey } from "../lib/fileTreeTrash";
 import { Outline } from "./Outline";
 import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SearchPanel } from "./SearchPanel";
 import { useSearchPanelStore } from "../stores/searchPanel";
 import { SortDropdown } from "./SortDropdown";
+import { TrashPagesDialog } from "./TrashPagesDialog";
 import type { PageMeta } from "../lib/ipc";
 
 function buildTree(pages: PageMeta[]): FolderNode {
@@ -51,10 +54,14 @@ const PageItem = memo(function PageItem({
   id,
   page,
   isActive,
+  isSelected,
   isRenaming,
   isRevealed,
   isFocused,
   onSelect,
+  onToggleSelect,
+  onRangeSelect,
+  onPlainSelect,
   onRenameCommit,
   onRenameCancel,
   depth,
@@ -62,10 +69,14 @@ const PageItem = memo(function PageItem({
   id?: string;
   page: PageMeta;
   isActive: boolean;
+  isSelected: boolean;
   isRenaming: boolean;
   isRevealed: boolean;
   isFocused: boolean;
   onSelect: (path: string) => void;
+  onToggleSelect: (path: string) => void;
+  onRangeSelect: (path: string) => void;
+  onPlainSelect: (path: string) => void;
   onRenameCommit: (path: string, newName: string) => void;
   onRenameCancel: () => void;
   depth: number;
@@ -98,11 +109,14 @@ const PageItem = memo(function PageItem({
       className="group relative"
       role="treeitem"
       aria-level={depth + 1}
-      aria-selected={isActive}
+      aria-selected={isSelected}
       onContextMenu={(e) => {
         e.preventDefault();
         if (!isRenaming) {
-          showSidebarContextMenu(page.relative_path);
+          const selected = useFileTreeSelectionStore.getState().selectedPaths;
+          const count =
+            selected.size > 1 && selected.has(page.relative_path) ? selected.size : 1;
+          showSidebarContextMenu(page.relative_path, count);
         }
       }}
     >
@@ -121,12 +135,26 @@ const PageItem = memo(function PageItem({
         />
       ) : (
         <button
-          onClick={() => onSelect(page.relative_path)}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey) {
+              e.preventDefault();
+              onToggleSelect(page.relative_path);
+              return;
+            }
+            if (e.shiftKey) {
+              e.preventDefault();
+              onRangeSelect(page.relative_path);
+              return;
+            }
+            onPlainSelect(page.relative_path);
+          }}
           tabIndex={-1}
           className={`w-full select-none truncate rounded-md px-2 py-1 text-start text-xs ${
             isActive
               ? "bg-nav-active-bg text-nav-active-text"
-              : "text-text-normal hover:bg-bg-hover"
+              : isSelected
+                ? "bg-bg-hover text-text-normal"
+                : "text-text-normal hover:bg-bg-hover"
           }${isRevealed ? " sidebar-item-revealed" : ""}${isFocused ? " ring-1 ring-interactive-accent" : ""}`}
           style={{ paddingInlineStart: `${depth * 12 + 8}px` }}
           title={page.relative_path}
@@ -209,6 +237,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [trashConfirm, setTrashConfirm] = useState<{ paths: string[]; labels: string[] } | null>(null);
 
   const filtered = useMemo(
     () => deferredSearch ? localeFilter(pages, deferredSearch, (p) => p.title) : pages,
@@ -233,12 +262,116 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const virtualizerRef = useRef(virtualizer);
   virtualizerRef.current = virtualizer;
 
+  // Mirrored focus handles so runTrash can restore focus after the pages
+  // refresh (the hook return values are declared later in the body).
+  const focusedIndexRef = useRef(-1);
+  const setFocusedIndexRef = useRef<(index: number) => void>(() => {});
+
+  const selectedPaths = useFileTreeSelectionStore((s) => s.selectedPaths);
+
+  const handleToggleSelect = useCallback((path: string) => {
+    useFileTreeSelectionStore.getState().toggle(path);
+  }, []);
+
+  const handleRangeSelect = useCallback((path: string) => {
+    useFileTreeSelectionStore.getState().rangeSelect(path, visiblePagePaths(rows));
+  }, [rows]);
+
+  // Open a page from the tree (plain click or keyboard Enter): both reduce the
+  // selection to that page so Delete afterwards matches what the user opened.
+  const openPageFromTree = useCallback((path: string) => {
+    useFileTreeSelectionStore.getState().setOnly(path);
+    selectPage(path);
+  }, [selectPage]);
+
+  const runTrash = useCallback(async (paths: string[]) => {
+    setTrashConfirm(null);
+    const rowsBefore = rowsRef.current;
+    const focusBefore = focusedIndexRef.current;
+    const succeeded: string[] = [];
+    for (const path of paths) {
+      try {
+        await deletePageAction(path);
+        succeeded.push(path);
+      } catch (e) {
+        useStatusMessageStore.getState().show(
+          e instanceof Error ? e.message : `Could not trash ${path}`,
+          "error",
+        );
+      }
+    }
+    // Drop trashed paths from the selection; keep anything that failed.
+    const remaining = useWorkspaceStore.getState().pages.map((p) => p.relative_path);
+    useFileTreeSelectionStore.getState().pruneTo(remaining);
+    // Restore focus to the nearest surviving row by identity. The helper
+    // returns a row key from the pre-delete rows; we resolve it against the
+    // post-delete rows derived from the same snapshot (rowsBefore minus the
+    // succeeded paths) so the result never depends on render timing - the
+    // live rowsRef may lag the store during the loop's await boundaries.
+    if (succeeded.length > 0 && rowsBefore.length > 0) {
+      const focusKey = nextFocusKey(rowsBefore, focusBefore, new Set(succeeded));
+      if (focusKey != null) {
+        const deleted = new Set(succeeded);
+        const rowsAfter = rowsBefore.filter(
+          (r) => r.type === "folder" || !deleted.has(r.page.relative_path),
+        );
+        const idx = rowsAfter.findIndex((r) => r.key === focusKey);
+        if (idx >= 0) setFocusedIndexRef.current(idx);
+      }
+    }
+  }, [deletePageAction]);
+
+  const requestTrash = useCallback((paths: string[]) => {
+    if (paths.length === 0) return;
+    if (paths.length === 1) {
+      void runTrash(paths);
+      return;
+    }
+    const pages = useWorkspaceStore.getState().pages;
+    const labels = paths.map((p) => pages.find((page) => page.relative_path === p)?.title ?? p);
+    setTrashConfirm({ paths, labels });
+  }, [runTrash]);
+
+  // Selection lifecycle: clear when leaving the Files tab, on workspace change,
+  // and prune paths that disappear from pages (trash / rename / external delete).
+  // The trash confirm dialog is dismissed on the same transitions so a stale
+  // confirm can never survive into another workspace or tab.
+  useEffect(() => {
+    if (tab !== "files") {
+      useFileTreeSelectionStore.getState().clear();
+      setTrashConfirm(null);
+    }
+  }, [tab]);
+
+  const prevWorkspacePathRef = useRef(workspacePath);
+  useEffect(() => {
+    if (prevWorkspacePathRef.current !== workspacePath) {
+      prevWorkspacePathRef.current = workspacePath;
+      useFileTreeSelectionStore.getState().clear();
+      setTrashConfirm(null);
+    }
+  }, [workspacePath]);
+
+  useEffect(() => {
+    useFileTreeSelectionStore.getState().pruneTo(pages.map((p) => p.relative_path));
+  }, [pages]);
+
   const { focusedIndex, setFocusedIndex, handleKeyDown: handleTreeKeyDown, handleContainerFocus } = useTreeKeyboard({
     rows,
     toggleCollapse,
-    selectPage,
+    selectPage: openPageFromTree,
     scrollToIndex: (index: number) => virtualizer.scrollToIndex(index, { align: "auto" }),
+    onTrash: requestTrash,
+    onClearSelection: () => useFileTreeSelectionStore.getState().clear(),
+    onSelectAllPages: () => {
+      useFileTreeSelectionStore.getState().selectAll(visiblePagePaths(rows));
+    },
+    onToggleSelectPath: handleToggleSelect,
+    onRenamePath: (path) => setRenamingPath(path),
+    getSelectedPaths: () => useFileTreeSelectionStore.getState().selectedPaths,
   });
+  focusedIndexRef.current = focusedIndex;
+  setFocusedIndexRef.current = setFocusedIndex;
 
   const { revealedKey: revealedPath, triggerReveal } = useRevealFlash(virtualizerRef);
 
@@ -361,7 +494,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     onRename: (relativePath) => setRenamingPath(relativePath),
     onExternalEditor: (relativePath) => openInExternalEditor(relativePath, 1, 1),
     onExportNetwork: (relativePath) => onExportNetworkRef.current?.(relativePath),
-    onTrash: (relativePath) => deletePageAction(relativePath),
+    onTrash: (relativePath) => {
+      const selected = useFileTreeSelectionStore.getState().selectedPaths;
+      const paths =
+        selected.size > 1 && selected.has(relativePath)
+          ? visiblePagePaths(rows).filter((p) => selected.has(p))
+          : [relativePath];
+      requestTrash(paths);
+    },
     onShowInFinder: (relativePath) => {
       if (workspacePath) {
         join(workspacePath, relativePath).then((abs) => revealItemInDir(abs));
@@ -443,7 +583,13 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
             aria-label="File tree"
             aria-activedescendant={focusedIndex >= 0 && rows[focusedIndex] ? "tree-item-" + rows[focusedIndex].key : undefined}
             tabIndex={0}
-            onKeyDown={handleTreeKeyDown}
+            onKeyDown={(e) => {
+              // While the trash confirm is open the tree keyboard is inert:
+              // Escape must cancel the dialog (document listener) instead of
+              // clearing selection, and Delete must not re-enter requestTrash.
+              if (trashConfirm) return;
+              handleTreeKeyDown(e);
+            }}
             onFocus={handleContainerFocus}
             className="flex-1 overflow-y-auto overscroll-contain px-1 outline-none"
           >
@@ -490,10 +636,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
                         id={"tree-item-" + row.key}
                         page={row.page}
                         isActive={currentPagePath === row.page.relative_path}
+                        isSelected={selectedPaths.has(row.page.relative_path)}
                         isRenaming={renamingPath === row.page.relative_path}
                         isRevealed={revealedPath === row.page.relative_path}
                         isFocused={focusedIndex === virtualRow.index}
                         onSelect={selectPage}
+                        onToggleSelect={handleToggleSelect}
+                        onRangeSelect={handleRangeSelect}
+                        onPlainSelect={openPageFromTree}
                         onRenameCommit={handleRenameCommit}
                         onRenameCancel={handleRenameCancel}
                         depth={row.depth}
@@ -524,6 +674,14 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           <SearchPanel isActive={tab === "search"} />
         </div>
       )}
+      <TrashPagesDialog
+        paths={trashConfirm?.paths ?? []}
+        labels={trashConfirm?.labels ?? []}
+        onCancel={() => setTrashConfirm(null)}
+        onConfirm={() => {
+          if (trashConfirm) void runTrash(trashConfirm.paths);
+        }}
+      />
     </aside>
   );
 }
