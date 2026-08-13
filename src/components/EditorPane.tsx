@@ -48,6 +48,8 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
   const selectPage = useWorkspaceStore((s) => s.selectPage);
   const triggerReload = useWorkspaceStore((s) => s.triggerReload);
   const refreshPages = useWorkspaceStore((s) => s.refreshPages);
+  const pendingEditorFocus = useWorkspaceStore((s) => s.pendingEditorFocus);
+  const clearPendingEditorFocus = useWorkspaceStore((s) => s.clearPendingEditorFocus);
 
   const { body, frontmatter, rawYaml, handleChange } = usePageContent(paneId, pagePath);
   const { editorBindings } = useKeymaps();
@@ -161,6 +163,52 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     window.addEventListener("lit:request-editor-focus", handler);
     return () => window.removeEventListener("lit:request-editor-focus", handler);
   }, [paneId]);
+
+  // Create-from-+ focus. workspace.createPage sets pendingEditorFocus to ask
+  // for the editor caret in the focused pane once the new page is shown. Unlike
+  // the opportunistic doc-replace focus (handleDocReplaced), this is deliberate
+  // create intent: it bypasses shouldEditorClaimFocus and retries via rAF until
+  // the pane's CM view registers (empty pane -> first mount race), then clears
+  // the flag so it never goes stale. Only the focused editor pane consumes it;
+  // unfocused panes must not clear it.
+  useEffect(() => {
+    if (!pendingEditorFocus) return;
+    if (!isFocused) return;
+    if (!pagePath) return;
+    if (viewMode !== "editor") {
+      // Focused leaf cannot host the CM caret (mindmap/pdf/code view): drop
+      // the request rather than leave a sticky flag that would yank focus on a
+      // later viewMode switch.
+      clearPendingEditorFocus();
+      return;
+    }
+
+    let cancelled = false;
+    let tries = 0;
+    const MAX_TRIES = 30; // ~0.5s at 60fps; enough for CM mount + pane registration
+
+    const tick = () => {
+      if (cancelled) return;
+      const view = getPaneView(paneId);
+      if (view) {
+        view.focus();
+        clearPendingEditorFocus();
+        return;
+      }
+      if (tries++ < MAX_TRIES) {
+        requestAnimationFrame(tick);
+      } else {
+        // The pane never hosted a CM view (e.g. it stays on the empty state):
+        // drop the flag so it cannot go stale.
+        clearPendingEditorFocus();
+      }
+    };
+
+    requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingEditorFocus, isFocused, pagePath, viewMode, paneId, clearPendingEditorFocus]);
 
   const noteDir = useMemo(() => {
     if (!pagePath) return "";

@@ -616,6 +616,20 @@ describe("StatusBar", () => {
       expect(useWorkspaceStore.getState().currentPagePath).toBe("Untitled.md");
     });
 
+    it("requests editor focus via pendingEditorFocus after creation", async () => {
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        graphReady: true,
+        pages: [],
+        pendingEditorFocus: false,
+      });
+      render(<StatusBar />);
+      await userEvent.click(screen.getByRole("button", { name: "New page" }));
+      const state = useWorkspaceStore.getState();
+      expect(state.currentPagePath).toBe("Untitled.md");
+      expect(state.pendingEditorFocus).toBe(true);
+    });
+
     it("does not call window.prompt", async () => {
       const promptSpy = vi.spyOn(window, "prompt");
       useWorkspaceStore.setState({ workspacePath: "/test", graphReady: true, pages: [] });

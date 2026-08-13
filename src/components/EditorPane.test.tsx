@@ -83,6 +83,7 @@ beforeEach(() => {
     pendingCursorLine: null,
     pendingCursorCol: null,
     pendingCursorFileAbsolute: false,
+    pendingEditorFocus: false,
   });
   editorViewRef._resetForTesting();
   pdfPaneRef._resetForTesting();
@@ -703,6 +704,116 @@ describe("EditorPane", () => {
 
       expect(view.focus).not.toHaveBeenCalled();
       tree.remove();
+    });
+  });
+
+  describe("pendingEditorFocus (create requests editor caret)", () => {
+    it("focuses the editor and clears the flag when the view is present", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ pendingEditorFocus: true });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
+    });
+
+    it("focuses when the flag is set after the editor is already mounted (create flow)", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      act(() => {
+        useWorkspaceStore.setState({ pendingEditorFocus: true });
+      });
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
+    });
+
+    it("does not focus or clear the flag when the pane is unfocused", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "other",
+      });
+      useWorkspaceStore.setState({ pendingEditorFocus: true });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).not.toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(true);
+    });
+
+    it("retries via rAF until the view registers (empty pane -> first mount race), then focuses", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ pendingEditorFocus: true });
+      const getPaneViewSpy = vi.spyOn(editorViewRef, "getPaneView");
+      getPaneViewSpy.mockReturnValue(null);
+
+      render(<EditorPane paneId="pane-1" />);
+
+      // First rAF ticks: the CM view has not registered yet.
+      await vi.advanceTimersByTimeAsync(50);
+      expect(getPaneViewSpy).toHaveBeenCalled();
+
+      // CodeMirror mounts and registers the view mid-retry.
+      const registered = fakeViewWithDoc("hello");
+      getPaneViewSpy.mockReturnValue(registered);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(registered.focus).toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
+    });
+
+    it("drops the flag when the focused leaf is in a non-editor view (mindmap) without focusing", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ pendingEditorFocus: true });
+      const view = fakeViewWithDoc("test");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      render(<EditorPane paneId="pane-1" />);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(view.focus).not.toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
+    });
+
+    it("clears the flag after MAX retries when no view ever registers", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      useWorkspaceStore.setState({ pendingEditorFocus: true });
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(null);
+
+      render(<EditorPane paneId="pane-1" />);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
     });
   });
 

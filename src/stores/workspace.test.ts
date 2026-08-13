@@ -36,6 +36,7 @@ describe("WorkspaceStore", () => {
       pages: [],
       currentPagePath: null,
       pendingSection: null,
+      pendingEditorFocus: false,
       currentPageHeadings: [],
       isDirty: false,
       reloadTrigger: 0,
@@ -188,6 +189,36 @@ describe("WorkspaceStore", () => {
     });
 
     expect(useWorkspaceStore.getState().currentPagePath).toBe("New Page.md");
+  });
+
+  it("createPage sets pendingEditorFocus so the editor caret can land", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().createPage("New Page");
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.pendingEditorFocus).toBe(true);
+    expect(state.currentPagePath).toBe("New Page.md");
+  });
+
+  it("clearPendingEditorFocus resets the flag", async () => {
+    await act(async () => {
+      await useWorkspaceStore.getState().createPage("New Page");
+    });
+    expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(true);
+
+    act(() => {
+      useWorkspaceStore.getState().clearPendingEditorFocus();
+    });
+
+    expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
+  });
+
+  it("selectPage does not set pendingEditorFocus (sidebar nav must not yank focus)", () => {
+    act(() => {
+      useWorkspaceStore.getState().selectPage("Page A.md");
+    });
+    expect(useWorkspaceStore.getState().pendingEditorFocus).toBe(false);
   });
 
   it("renamePage updates pages list and current selection", async () => {
@@ -612,6 +643,7 @@ describe("Layout Persistence", () => {
       pages: [],
       currentPagePath: null,
       pendingSection: null,
+      pendingEditorFocus: false,
       currentPageHeadings: [],
       isDirty: false,
       reloadTrigger: 0,

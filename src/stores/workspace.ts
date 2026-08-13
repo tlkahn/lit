@@ -43,6 +43,7 @@ export interface WorkspaceStore {
   pendingCursorCol: number | null;
   pendingCursorFileAbsolute: boolean;
   pendingSection: string | null;
+  pendingEditorFocus: boolean;
   currentPageHeadings: Heading[];
   currentFrontmatterLineCount: number;
   isDirty: boolean;
@@ -58,6 +59,7 @@ export interface WorkspaceStore {
   selectPage: (relativePath: string | null) => void;
   selectPageAtLine: (relativePath: string, line: number, col?: number, fileAbsolute?: boolean) => void;
   createPage: (name: string, parentDir?: string) => Promise<void>;
+  clearPendingEditorFocus: () => void;
   renamePage: (oldPath: string, newName: string) => Promise<void>;
   deletePage: (relativePath: string) => Promise<void>;
   setCurrentPageHeadings: (headings: Heading[]) => void;
@@ -80,6 +82,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   pendingCursorCol: null,
   pendingCursorFileAbsolute: false,
   pendingSection: null,
+  pendingEditorFocus: false,
   currentPageHeadings: [],
   currentFrontmatterLineCount: 0,
   isDirty: false,
@@ -190,11 +193,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       set((state) => ({
         pages: [...state.pages, meta],
         currentPagePath: meta.relative_path,
+        // Create wants the editor caret in the focused pane once the new page
+        // is loaded. The focused EditorPane consumes this flag (view.focus)
+        // and clears it; see src/components/EditorPane.tsx.
+        pendingEditorFocus: true,
       }));
     } catch (e) {
       set({ error: String(e) });
     }
   },
+
+  clearPendingEditorFocus: () => set({ pendingEditorFocus: false }),
 
   renamePage: async (oldPath: string, newName: string) => {
     try {
