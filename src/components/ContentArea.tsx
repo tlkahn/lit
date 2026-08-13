@@ -367,6 +367,11 @@ export function ContentArea({ onExportNetwork, renderBottomPanel = true }: { onE
             value={editingTitle}
             onChange={(e) => setEditingTitle(e.target.value)}
             onBlur={commitTitle}
+            onFocus={() => {
+              // A stuck cancel flag (e.g. Escape whose blur() skipped onBlur)
+              // must not swallow the next real commit.
+              titleCancelRef.current = false;
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();

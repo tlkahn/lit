@@ -486,6 +486,69 @@ describe("ContentArea", () => {
     expect(screen.getByTestId("page-title")).toHaveValue("Hello");
   });
 
+  it("after Escape, a new edit + blur still renames", async () => {
+    const rename = vi.fn(async () => "Other.md");
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    await userEvent.clear(input);
+    await userEvent.type(input, "NewTitle");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    expect(rename).not.toHaveBeenCalled();
+
+    // Re-edit after the cancelled Escape must still commit.
+    await userEvent.clear(input);
+    await userEvent.type(input, "Other");
+    await act(async () => {
+      input.blur();
+    });
+
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Other");
+  });
+
+  it("Escape cancel flag does not stick across a re-focus + re-edit", async () => {
+    const rename = vi.fn(async () => "Other.md");
+    useWorkspaceStore.setState({ renamePage: rename });
+    setPage("Hello.md");
+    render(<ContentArea />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    });
+
+    const input = screen.getByTestId("page-title");
+    // Stub blur so Escape's blur() no-ops and onBlur never fires - the cancel
+    // flag would otherwise stay set (the sticky-flag scenario).
+    const blurSpy = vi.spyOn(HTMLInputElement.prototype, "blur").mockImplementation(() => {});
+    try {
+      await userEvent.clear(input);
+      await userEvent.type(input, "NewTitle");
+      await userEvent.keyboard("{Escape}");
+    } finally {
+      blurSpy.mockRestore();
+    }
+    expect(screen.getByTestId("page-title")).toHaveValue("Hello");
+    expect(rename).not.toHaveBeenCalled();
+
+    // Re-focus fires the input's onFocus, which must clear any stuck cancel
+    // flag before the next commit.
+    fireEvent.focus(input);
+    await userEvent.clear(input);
+    await userEvent.type(input, "Other");
+    await act(async () => {
+      input.blur();
+    });
+
+    expect(rename).toHaveBeenCalledWith("Hello.md", "Other");
+  });
+
   it("integration: real renamePage keeps pages, pane path, sharedDocs, and input in sync", async () => {
     // Use the REAL renamePage store action; only IPC is mocked. After blur the
     // disk rename must flow through to pages, pane paths, sharedDocs, and the
