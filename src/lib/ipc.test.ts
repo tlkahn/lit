@@ -139,6 +139,7 @@ import {
   migrateCardboxSlipNotes,
   exportCardNote,
   exportCardboxHtml,
+  exportCardboxAnki,
   mergeCardsToDraft,
   setCardColor,
   clearCardColor,
@@ -854,6 +855,8 @@ describe("ipc", () => {
         case "export_card_note":
           return "Note on Test.md";
         case "export_cardbox_html":
+          return (args as Record<string, unknown>)?.destination ?? "";
+        case "export_cardbox_anki":
           return (args as Record<string, unknown>)?.destination ?? "";
         case "merge_cards_to_draft":
           return "Drafts/Merged Draft.md";
@@ -2669,6 +2672,38 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("export_cardbox_html", {
       destination: "/out/cards.html",
       html: "<html></html>",
+    });
+  });
+
+  it("exportCardboxAnki calls export_cardbox_anki with snake_case args", async () => {
+    const notes = [
+      { uuid: "u1", front_html: "<p>f</p>", back_html: "" },
+    ];
+    const result = await exportCardboxAnki(
+      "/out/cards.apkg",
+      "My Deck",
+      notes,
+      ".katex{}",
+    );
+    expect(result).toBe("/out/cards.apkg");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_cardbox_anki", {
+      destination: "/out/cards.apkg",
+      deck_name: "My Deck",
+      notes,
+      model_css: ".katex{}",
+    });
+  });
+
+  it("exportCardboxAnki sends model_css null when omitted", async () => {
+    const result = await exportCardboxAnki("/out/cards.apkg", "My Deck", []);
+    expect(result).toBe("/out/cards.apkg");
+    const { invoke } = await import("@tauri-apps/api/core");
+    expect(invoke).toHaveBeenCalledWith("export_cardbox_anki", {
+      destination: "/out/cards.apkg",
+      deck_name: "My Deck",
+      notes: [],
+      model_css: null,
     });
   });
 

@@ -14,6 +14,7 @@ pub const MENU_ID_EXPORT_LATEX: &str = "export_latex";
 pub const MENU_ID_EXPORT_HTML: &str = "export_html";
 pub const MENU_ID_EXPORT_DOCX: &str = "export_docx";
 pub const MENU_ID_EXPORT_CARDBOX_HTML: &str = "export_cardbox_html";
+pub const MENU_ID_EXPORT_CARDBOX_ANKI: &str = "export_cardbox_anki";
 pub const MENU_ID_EXPORT_LKG: &str = "export_lkg";
 pub const MENU_ID_IMPORT_LKG: &str = "import_lkg";
 pub const MENU_ID_CLOSE: &str = "close-pane";
@@ -48,6 +49,7 @@ pub const EVENT_EXPORT_LATEX: &str = "menu://export-latex";
 pub const EVENT_EXPORT_HTML: &str = "menu://export-html";
 pub const EVENT_EXPORT_DOCX: &str = "menu://export-docx";
 pub const EVENT_EXPORT_CARDBOX_HTML: &str = "menu://export-cardbox-html";
+pub const EVENT_EXPORT_CARDBOX_ANKI: &str = "menu://export-cardbox-anki";
 pub const EVENT_EXPORT_LKG: &str = "menu://export-lkg";
 pub const EVENT_IMPORT_LKG: &str = "menu://import-lkg";
 pub const EVENT_ACKNOWLEDGEMENTS: &str = "menu://acknowledgements";
@@ -66,6 +68,7 @@ pub(crate) enum MenuAction {
     ExportHtml,
     ExportDocx,
     ExportCardboxHtml,
+    ExportCardboxAnki,
     ExportLkg,
     ImportLkg,
     LicenseInfo,
@@ -91,6 +94,7 @@ impl MenuAction {
             MENU_ID_EXPORT_HTML => Some(Self::ExportHtml),
             MENU_ID_EXPORT_DOCX => Some(Self::ExportDocx),
             MENU_ID_EXPORT_CARDBOX_HTML => Some(Self::ExportCardboxHtml),
+            MENU_ID_EXPORT_CARDBOX_ANKI => Some(Self::ExportCardboxAnki),
             MENU_ID_EXPORT_LKG => Some(Self::ExportLkg),
             MENU_ID_IMPORT_LKG => Some(Self::ImportLkg),
             MENU_ID_ABOUT => Some(Self::ShowAbout),
@@ -232,6 +236,11 @@ pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
                 let _ = window.emit_to(window.label(), EVENT_EXPORT_CARDBOX_HTML, ());
             }
         }
+        MenuAction::ExportCardboxAnki => {
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit_to(window.label(), EVENT_EXPORT_CARDBOX_ANKI, ());
+            }
+        }
         MenuAction::ExportLkg => {
             if let Some(window) = find_focused_window(app) {
                 let _ = window.emit_to(window.label(), EVENT_EXPORT_LKG, ());
@@ -310,6 +319,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &MenuItem::with_id(app, MENU_ID_EXPORT_DOCX, "Export to DOCX\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_CARDBOX_HTML, "Export Cardbox to HTML\u{2026}", true, None::<&str>)?,
+            &MenuItem::with_id(app, MENU_ID_EXPORT_CARDBOX_ANKI, "Export Cardbox to Anki\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_EXPORT_LKG, "Export as Knowledge Graph Bundle\u{2026}", true, None::<&str>)?,
         ],
@@ -440,6 +450,21 @@ mod tests {
     }
 
     #[test]
+    fn cardbox_anki_export_menu_id_defined() {
+        assert_eq!(MENU_ID_EXPORT_CARDBOX_ANKI, "export_cardbox_anki");
+    }
+
+    #[test]
+    fn cardbox_anki_export_event_constant_defined() {
+        assert_eq!(EVENT_EXPORT_CARDBOX_ANKI, "menu://export-cardbox-anki");
+    }
+
+    #[test]
+    fn cardbox_anki_export_from_id() {
+        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_CARDBOX_ANKI), Some(MenuAction::ExportCardboxAnki));
+    }
+
+    #[test]
     fn lkg_bundle_menu_ids_are_defined() {
         assert_eq!(MENU_ID_EXPORT_LKG, "export_lkg");
         assert_eq!(MENU_ID_IMPORT_LKG, "import_lkg");
@@ -470,6 +495,7 @@ mod tests {
             MENU_ID_EXPORT_HTML,
             MENU_ID_EXPORT_DOCX,
             MENU_ID_EXPORT_CARDBOX_HTML,
+            MENU_ID_EXPORT_CARDBOX_ANKI,
             MENU_ID_EXPORT_LKG,
             MENU_ID_IMPORT_LKG,
             MENU_ID_BUY_LICENSE,
@@ -497,6 +523,7 @@ mod tests {
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_HTML), Some(MenuAction::ExportHtml));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_DOCX), Some(MenuAction::ExportDocx));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_CARDBOX_HTML), Some(MenuAction::ExportCardboxHtml));
+        assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_CARDBOX_ANKI), Some(MenuAction::ExportCardboxAnki));
         assert_eq!(MenuAction::from_id(MENU_ID_EXPORT_LKG), Some(MenuAction::ExportLkg));
         assert_eq!(MenuAction::from_id(MENU_ID_IMPORT_LKG), Some(MenuAction::ImportLkg));
         assert_eq!(MenuAction::from_id(MENU_ID_BUY_LICENSE), Some(MenuAction::BuyLicense));

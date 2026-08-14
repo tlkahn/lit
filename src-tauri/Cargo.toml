@@ -54,10 +54,12 @@ turboref-core = { path = "crates/turboref-core" }
 # Annotation grammar (scanner/parser/scope-resolver/emitter). Pin tags only;
 # grammar changes go to tlkahn/lit-annotation-core first, then bump the tag.
 lit-annotation-core = { git = "https://github.com/tlkahn/lit-annotation-core.git", tag = "v0.1.0" }
+# Anki .apkg writer for cardbox export (#1026). Pin tags only.
+genanki = { git = "https://github.com/tlkahn/genanki-rs", tag = "v0.1.0" }
 regex = "1"
 fancy-regex = "0.14"
 tauri-plugin-single-instance = "2"
-rusqlite = { version = "0.35", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

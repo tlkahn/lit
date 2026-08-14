@@ -251,6 +251,18 @@ function App() {
       if (cancelled) { unExportCardboxHtml(); return; }
       unlisteners.push(unExportCardboxHtml);
 
+      const unExportCardboxAnki = await win.listen("menu://export-cardbox-anki", async () => {
+        const page = useWorkspaceStore.getState().currentPagePath;
+        if (!page) {
+          statusShow("Open a document first", "info");
+          return;
+        }
+        const { exportCardboxToAnki } = await import("./lib/cardboxAnkiExportFlow");
+        await exportCardboxToAnki(page);
+      });
+      if (cancelled) { unExportCardboxAnki(); return; }
+      unlisteners.push(unExportCardboxAnki);
+
       const unExportLkg = await win.listen("menu://export-lkg", async () => {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const dest = await save({
