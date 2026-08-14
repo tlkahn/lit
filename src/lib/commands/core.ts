@@ -82,6 +82,7 @@ export function initCoreCommands(): void {
     // second initCoreCommands() call stays idempotent.
     {
       id: "app.newPage",
+      when: hasWorkspace,
       action: () => {
         void createUntitledPage();
       },

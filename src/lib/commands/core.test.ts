@@ -194,6 +194,16 @@ describe("initCoreCommands", () => {
     expect(cmd.label).toBeUndefined();
   });
 
+  it("app.newPage when is false without a workspace and true with one", () => {
+    initCoreCommands();
+    const cmd = getAllCommands().find((c) => c.id === "app.newPage")!;
+    expect(cmd.when).toBeTypeOf("function");
+    mockWorkspaceState.workspacePath = null;
+    expect(cmd.when!()).toBe(false);
+    mockWorkspaceState.workspacePath = "/tmp/vault";
+    expect(cmd.when!()).toBe(true);
+  });
+
   it("core.page.new keywords include file and untitled", () => {
     initCoreCommands();
     const cmd = getAllCommands().find((c) => c.id === "core.page.new")!;
