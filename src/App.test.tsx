@@ -1798,6 +1798,7 @@ describe("App", () => {
       let invokedAnki: {
         destination: string;
         deckName: string;
+        deckKey: string;
         notes: Array<{ uuid: string; front_html: string; back_html: string }>;
       } | null = null;
       mockInvoke((cmd, args) => {
@@ -1828,6 +1829,7 @@ describe("App", () => {
         expect(invokedAnki).not.toBeNull();
         expect(invokedAnki!.destination).toBe("/out/cards.apkg");
         expect(invokedAnki!.deckName).toBe("Hello");
+        expect(invokedAnki!.deckKey).toBe("notes/hello.md");
         expect(invokedAnki!.notes).toHaveLength(1);
         expect(invokedAnki!.notes[0]).toMatchObject({ uuid: "u1" });
       });

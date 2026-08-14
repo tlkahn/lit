@@ -2682,6 +2682,7 @@ describe("ipc", () => {
     const result = await exportCardboxAnki(
       "/out/cards.apkg",
       "My Deck",
+      "notes/a.md",
       notes,
       ".katex{}",
     );
@@ -2690,6 +2691,7 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("export_cardbox_anki", {
       destination: "/out/cards.apkg",
       deckName: "My Deck",
+      deckKey: "notes/a.md",
       notes,
       modelCss: ".katex{}",
     });
@@ -2702,12 +2704,18 @@ describe("ipc", () => {
   });
 
   it("exportCardboxAnki sends modelCss null when omitted", async () => {
-    const result = await exportCardboxAnki("/out/cards.apkg", "My Deck", []);
+    const result = await exportCardboxAnki(
+      "/out/cards.apkg",
+      "My Deck",
+      "notes/a.md",
+      [],
+    );
     expect(result).toBe("/out/cards.apkg");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_cardbox_anki", {
       destination: "/out/cards.apkg",
       deckName: "My Deck",
+      deckKey: "notes/a.md",
       notes: [],
       modelCss: null,
     });

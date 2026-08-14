@@ -3,13 +3,14 @@
 //! Thin wrapper over `genanki` (tlkahn/genanki-rs, tag v0.1.0): assemble the
 //! package from frontend-rendered note HTML and write it to disk. No
 //! zip/sqlite hand-rolling here.
+//!
+//! Deck identity is per page: the deck id is `lit_cardbox_deck_id(deck_key)`
+//! where `deck_key` is the page path passed from the frontend, so re-exports
+//! of the same page update the same deck and different pages produce distinct
+//! decks. The model id/CSS stay global across decks.
 
 use std::path::Path;
 use serde::Deserialize;
-
-/// Hardcoded lit-owned deck id (Anki convention: 1<<30 .. 1<<31). Do not change
-/// casually - re-imports key off deck+model identity.
-pub const LIT_CARDBOX_DECK_ID: i64 = 1_128_672_242;
 
 /// Lit-owned Basic-shaped model id (Front/Back). Separate from genanki's
 /// BASIC_MODEL id so custom CSS does not collide with upstream builtins.
@@ -71,19 +72,25 @@ pub(crate) fn lit_cardbox_model(extra_css: Option<&str>) -> genanki::Model {
 }
 
 /// Assemble the package from frontend-rendered note HTML and write it to
-/// `dest`. Returns the destination path string on success.
+/// `dest`. Returns the destination path string on success. The deck id is a
+/// pure function of `deck_key` (the page path), so re-exports of the same page
+/// update the same deck while different pages produce distinct decks.
 pub(crate) fn do_export_cardbox_anki(
     dest: &Path,
     deck_name: &str,
+    deck_key: &str,
     notes: &[CardboxAnkiNote],
     model_css: Option<&str>,
 ) -> Result<String, String> {
+    if deck_key.is_empty() {
+        return Err("Missing deck key".to_string());
+    }
     if notes.is_empty() {
         return Err("No cards to export".to_string());
     }
 
     let model = std::sync::Arc::new(lit_cardbox_model(model_css));
-    let mut deck = genanki::Deck::new(LIT_CARDBOX_DECK_ID, deck_name);
+    let mut deck = genanki::Deck::new(lit_cardbox_deck_id(deck_key), deck_name);
     for note in notes {
         let anki_note = genanki::Note::new(
             std::sync::Arc::clone(&model),
@@ -104,6 +111,7 @@ pub(crate) fn do_export_cardbox_anki(
 pub async fn export_cardbox_anki(
     destination: String,
     deck_name: String,
+    deck_key: String,
     notes: Vec<CardboxAnkiNote>,
     model_css: Option<String>,
 ) -> Result<String, String> {
@@ -111,6 +119,7 @@ pub async fn export_cardbox_anki(
         do_export_cardbox_anki(
             Path::new(&destination),
             &deck_name,
+            &deck_key,
             &notes,
             model_css.as_deref(),
         )
@@ -136,11 +145,12 @@ mod tests {
     }
 
     /// Slice 0 compile gate: proves the pinned genanki dep resolves and the
-    /// lit-owned deck id constant is wired through.
+    /// lit-owned deck id helper is wired through.
     #[test]
     fn lit_deck_id_and_name_construct() {
-        let deck = genanki::Deck::new(LIT_CARDBOX_DECK_ID, "t");
-        assert_eq!(deck.id(), LIT_CARDBOX_DECK_ID);
+        let id = lit_cardbox_deck_id("t");
+        let deck = genanki::Deck::new(id, "t");
+        assert_eq!(deck.id(), id);
         assert_eq!(deck.name(), "t");
     }
 
@@ -213,11 +223,12 @@ mod tests {
     fn write_and_open(
         notes: &[CardboxAnkiNote],
         deck_name: &str,
+        deck_key: &str,
         css: Option<&str>,
     ) -> (tempfile::TempDir, Connection, String) {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("out.apkg");
-        let result = do_export_cardbox_anki(&dest, deck_name, notes, css);
+        let result = do_export_cardbox_anki(&dest, deck_name, deck_key, notes, css);
         let dest_str = result.expect("export should succeed");
         assert_eq!(dest_str, dest.display().to_string());
         let mut z = open_zip(&dest);
@@ -231,7 +242,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("out.apkg");
         let notes = vec![anki_note("u1", "<p>front</p>", "<span>back</span>")];
-        let result = do_export_cardbox_anki(&dest, "Deck", &notes, None);
+        let result = do_export_cardbox_anki(&dest, "Deck", "page-key-r1", &notes, None);
         assert_eq!(result.unwrap(), dest.display().to_string());
         let bytes = std::fs::read(&dest).unwrap();
         assert!(!bytes.is_empty());
@@ -249,7 +260,7 @@ mod tests {
             anki_note("u1", "<p>a</p>", "x"),
             anki_note("u2", "<p>b</p>", "y"),
         ];
-        let (_dir, conn, _dest) = write_and_open(&notes, "My Deck", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "My Deck", "page-key-r2", None);
 
         let count: i64 = conn
             .query_row("SELECT count(*) FROM notes", [], |r| r.get(0))
@@ -266,7 +277,10 @@ mod tests {
         assert_eq!(flds, vec!["<p>a</p>\x1fx", "<p>b</p>\x1fy"]);
 
         let decks = col_json(&conn, "decks");
-        assert_eq!(decks[LIT_CARDBOX_DECK_ID.to_string()]["name"], "My Deck");
+        assert_eq!(
+            decks[lit_cardbox_deck_id("page-key-r2").to_string()]["name"],
+            "My Deck"
+        );
     }
 
     // R3
@@ -276,7 +290,7 @@ mod tests {
             anki_note("alpha-uuid", "<p>a</p>", "x"),
             anki_note("beta-uuid", "<p>b</p>", "y"),
         ];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r3", None);
 
         let guids: Vec<String> = conn
             .prepare("SELECT guid FROM notes ORDER BY id")
@@ -298,7 +312,7 @@ mod tests {
     #[test]
     fn r4_empty_back_field_round_trips_as_empty_second_field() {
         let notes = vec![anki_note("u1", "<p>f</p>", "")];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r4", None);
 
         let flds: String = conn
             .query_row("SELECT flds FROM notes", [], |r| r.get(0))
@@ -314,7 +328,7 @@ mod tests {
             anki_note("second", "<p>2</p>", ""),
             anki_note("third", "<p>3</p>", ""),
         ];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r5", None);
 
         let uuids_by_guid: Vec<String> = conn
             .prepare("SELECT guid FROM notes ORDER BY id")
@@ -337,9 +351,9 @@ mod tests {
         let notes = vec![anki_note("stable-uuid", "<p>a</p>", "b")];
 
         let dest1 = dir.path().join("one.apkg");
-        do_export_cardbox_anki(&dest1, "D", &notes, None).unwrap();
+        do_export_cardbox_anki(&dest1, "D", "page-key-r6", &notes, None).unwrap();
         let dest2 = dir.path().join("two.apkg");
-        do_export_cardbox_anki(&dest2, "D", &notes, None).unwrap();
+        do_export_cardbox_anki(&dest2, "D", "page-key-r6", &notes, None).unwrap();
 
         let guid_of = |dest: &std::path::Path| -> String {
             let mut z = open_zip(dest);
@@ -357,7 +371,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("nonexistent").join("out.apkg");
         let notes = vec![anki_note("u1", "<p>f</p>", "b")];
-        let result = do_export_cardbox_anki(&dest, "D", &notes, None);
+        let result = do_export_cardbox_anki(&dest, "D", "page-key-r7", &notes, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to write Anki package"));
         assert!(!dest.exists());
@@ -370,7 +384,7 @@ mod tests {
         let dest = dir.path().join("out.apkg");
         std::fs::write(&dest, "old content").unwrap();
         let notes = vec![anki_note("u1", "<p>new</p>", "b")];
-        do_export_cardbox_anki(&dest, "D", &notes, None).unwrap();
+        do_export_cardbox_anki(&dest, "D", "page-key-r8", &notes, None).unwrap();
 
         let mut z = open_zip(&dest);
         let names = entry_names(&z);
@@ -382,7 +396,7 @@ mod tests {
     fn r9_empty_notes_returns_err_and_writes_no_file() {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("out.apkg");
-        let result = do_export_cardbox_anki(&dest, "D", &[], None);
+        let result = do_export_cardbox_anki(&dest, "D", "page-key-r9", &[], None);
         assert!(result.is_err());
         assert!(!dest.exists());
     }
@@ -391,7 +405,7 @@ mod tests {
     #[test]
     fn r10_model_is_basic_shaped_with_lit_model_id() {
         let notes = vec![anki_note("u1", "<p>f</p>", "b")];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r10", None);
 
         let models = col_json(&conn, "models");
         let model = &models[LIT_CARDBOX_MODEL_ID.to_string()];
@@ -406,20 +420,59 @@ mod tests {
     #[test]
     fn r11_deck_id_in_col_decks_json() {
         let notes = vec![anki_note("u1", "<p>f</p>", "b")];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r11", None);
 
         let decks = col_json(&conn, "decks");
-        assert_eq!(
-            decks[LIT_CARDBOX_DECK_ID.to_string()]["id"],
-            LIT_CARDBOX_DECK_ID
-        );
+        let expected = lit_cardbox_deck_id("page-key-r11");
+        assert_eq!(decks[expected.to_string()]["id"], expected);
+    }
+
+    // R14
+    #[test]
+    fn r14_two_page_keys_yield_distinct_deck_ids_in_packages() {
+        let notes = vec![anki_note("u1", "<p>f</p>", "b")];
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest_a = dir.path().join("a.apkg");
+        do_export_cardbox_anki(&dest_a, "A", "notes/a.md", &notes, None).unwrap();
+        let dest_b = dir.path().join("b.apkg");
+        do_export_cardbox_anki(&dest_b, "B", "notes/b.md", &notes, None).unwrap();
+
+        let lit_deck_id_of = |dest: &std::path::Path| -> i64 {
+            let mut z = open_zip(dest);
+            let (_dbdir, conn) = open_collection(&mut z);
+            let decks = col_json(&conn, "decks");
+            decks
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|k| k.parse::<i64>().unwrap())
+                .find(|&id| id >= 1 << 30)
+                .expect("lit-owned deck present")
+        };
+
+        assert_eq!(lit_deck_id_of(&dest_a), lit_cardbox_deck_id("notes/a.md"));
+        assert_eq!(lit_deck_id_of(&dest_b), lit_cardbox_deck_id("notes/b.md"));
+        assert_ne!(lit_deck_id_of(&dest_a), lit_deck_id_of(&dest_b));
+    }
+
+    // R15
+    #[test]
+    fn r15_empty_deck_key_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out.apkg");
+        let notes = vec![anki_note("u1", "<p>f</p>", "b")];
+        let result = do_export_cardbox_anki(&dest, "D", "", &notes, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_lowercase().contains("deck key"));
+        assert!(!dest.exists());
     }
 
     // R12
     #[test]
     fn r12_optional_extra_css_appears_in_model_css() {
         let notes = vec![anki_note("u1", "<p>f</p>", "b")];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", Some("KATEX-CSS-MARKER"));
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r12", Some("KATEX-CSS-MARKER"));
 
         let models = col_json(&conn, "models");
         let css = models[LIT_CARDBOX_MODEL_ID.to_string()]["css"]
@@ -433,7 +486,7 @@ mod tests {
     #[test]
     fn r13_utf8_math_html_survives_flds_roundtrip() {
         let notes = vec![anki_note("u1", "<p>数学 𝔸</p>", "café $x^2$")];
-        let (_dir, conn, _dest) = write_and_open(&notes, "D", None);
+        let (_dir, conn, _dest) = write_and_open(&notes, "D", "page-key-r13", None);
 
         let flds: String = conn
             .query_row("SELECT flds FROM notes", [], |r| r.get(0))

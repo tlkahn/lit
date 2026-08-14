@@ -42,6 +42,7 @@ const mockedSave = vi.mocked(
 interface InvokedAnkiArgs {
   destination: string;
   deckName: string;
+  deckKey: string;
   notes: Array<{ uuid: string; front_html: string; back_html: string }>;
   modelCss: string | null;
 }
@@ -187,6 +188,14 @@ describe("exportCardboxToAnki", () => {
     const exportCardboxToAnki = await loadFlow();
     await exportCardboxToAnki("notes/a.md");
     expect(invokedAnkiArgs!.deckName).toBe("Page A");
+  });
+
+  // F9c: deck key is the page path (deck identity)
+  it("F9c: deckKey is the exported page path", async () => {
+    mockedSave.mockResolvedValue("/out/cards.apkg");
+    const exportCardboxToAnki = await loadFlow();
+    await exportCardboxToAnki("notes/a.md");
+    expect(invokedAnkiArgs!.deckKey).toBe("notes/a.md");
   });
 
   it("F9b: falls back to filename stem when title is empty", async () => {

@@ -50,7 +50,7 @@ export async function exportCardboxToAnki(pagePath: string): Promise<void> {
     const deckName = resolveAnkiDeckName(sorted, pagePath);
     const extraCss = ankiModelCss(hasMath);
 
-    await exportCardboxAnki(destination, deckName, notes, extraCss);
+    await exportCardboxAnki(destination, deckName, pagePath, notes, extraCss);
     statusShow(`Exported ${sorted.length} cards`, "success");
   } catch (err) {
     statusShow(

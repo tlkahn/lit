@@ -1455,12 +1455,14 @@ export interface CardboxAnkiNote {
 export async function exportCardboxAnki(
   destination: string,
   deckName: string,
+  deckKey: string,
   notes: CardboxAnkiNote[],
   modelCss?: string,
 ): Promise<string> {
   return invoke<string>("export_cardbox_anki", {
     destination,
     deckName,
+    deckKey,
     notes,
     modelCss: modelCss ?? null,
   });
