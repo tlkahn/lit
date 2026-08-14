@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { _clear, getAllCommands } from "../commandRegistry";
+import { waitFor } from "@testing-library/react";
+import { _clear, getAllCommands, getVisibleCommands, hasCommand, executeCommand } from "../commandRegistry";
 
 const mockWorkspaceState = vi.hoisted(() => ({
   workspacePath: "/tmp/vault" as string | null,
   currentPagePath: "hello.md" as string | null,
   refreshPages: vi.fn(),
+  pages: [] as Array<{ title: string }>,
+  createPage: vi.fn(),
 }));
 
 const mockPreferencesState = vi.hoisted(() => ({
@@ -39,15 +42,18 @@ describe("initCoreCommands", () => {
     vi.clearAllMocks();
     mockWorkspaceState.workspacePath = "/tmp/vault";
     mockWorkspaceState.currentPagePath = "hello.md";
+    mockWorkspaceState.pages = [];
+    mockWorkspaceState.createPage = vi.fn();
     mockPreferencesState.darkMode = "auto";
   });
 
-  it("registers exactly 8 commands with expected IDs", () => {
+  it("registers exactly 9 commands with expected IDs", () => {
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(8);
+    expect(commands).toHaveLength(9);
     const ids = commands.map((c) => c.id).sort();
     expect(ids).toEqual([
+      "app.newPage",
       "core.graph.rebuildIndex",
       "core.page.copyPath",
       "core.page.delete",
@@ -57,6 +63,12 @@ describe("initCoreCommands", () => {
       "core.theme.toggle",
       "core.workspace.reload",
     ]);
+  });
+
+  it("registers 8 visible (labeled) commands; app.newPage alias is hidden", () => {
+    initCoreCommands();
+    expect(getVisibleCommands()).toHaveLength(8);
+    expect(getVisibleCommands().some((c) => c.id === "app.newPage")).toBe(false);
   });
 
   it("core.page.rename/delete/copyPath have when returning false when no page selected", () => {
@@ -139,14 +151,65 @@ describe("initCoreCommands", () => {
     });
   });
 
-  it("core.page.new dispatches lit:new-page event", () => {
+  it("core.page.new calls createPage with the next untitled name", async () => {
+    initCoreCommands();
+    mockWorkspaceState.pages = [{ title: "Untitled" }];
+    const cmd = getAllCommands().find((c) => c.id === "core.page.new")!;
+    cmd.action();
+    await waitFor(() => {
+      expect(mockWorkspaceState.createPage).toHaveBeenCalledWith("Untitled 1");
+    });
+  });
+
+  it("core.page.new does not dispatch lit:new-page", () => {
     initCoreCommands();
     const handler = vi.fn();
     window.addEventListener("lit:new-page", handler);
     const cmd = getAllCommands().find((c) => c.id === "core.page.new")!;
     cmd.action();
-    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
     window.removeEventListener("lit:new-page", handler);
+  });
+
+  it("core.page.new no-ops when no workspace is open", () => {
+    initCoreCommands();
+    mockWorkspaceState.workspacePath = null;
+    const cmd = getAllCommands().find((c) => c.id === "core.page.new")!;
+    cmd.action();
+    expect(mockWorkspaceState.createPage).not.toHaveBeenCalled();
+  });
+
+  it("app.newPage alias is registered and creates an untitled page", async () => {
+    initCoreCommands();
+    expect(hasCommand("app.newPage")).toBe(true);
+    executeCommand("app.newPage");
+    await waitFor(() => {
+      expect(mockWorkspaceState.createPage).toHaveBeenCalledWith("Untitled");
+    });
+  });
+
+  it("app.newPage alias is hidden from the palette (no label)", () => {
+    initCoreCommands();
+    const cmd = getAllCommands().find((c) => c.id === "app.newPage")!;
+    expect(cmd.label).toBeUndefined();
+  });
+
+  it("app.newPage when is false without a workspace and true with one", () => {
+    initCoreCommands();
+    const cmd = getAllCommands().find((c) => c.id === "app.newPage")!;
+    expect(cmd.when).toBeTypeOf("function");
+    mockWorkspaceState.workspacePath = null;
+    expect(cmd.when!()).toBe(false);
+    mockWorkspaceState.workspacePath = "/tmp/vault";
+    expect(cmd.when!()).toBe(true);
+  });
+
+  it("core.page.new keywords include file and untitled", () => {
+    initCoreCommands();
+    const cmd = getAllCommands().find((c) => c.id === "core.page.new")!;
+    expect(cmd.keywords).toEqual(
+      expect.arrayContaining(["create", "new", "page", "file", "untitled"]),
+    );
   });
 
   it("core.page.rename dispatches lit:rename-page event", () => {
@@ -190,12 +253,12 @@ describe("initCoreCommands", () => {
     initCoreCommands();
     initCoreCommands();
     const commands = getAllCommands();
-    expect(commands).toHaveLength(8);
+    expect(commands).toHaveLength(9);
   });
 
-  it("commands have icons", () => {
+  it("visible commands have icons", () => {
     initCoreCommands();
-    const commands = getAllCommands();
+    const commands = getVisibleCommands();
     for (const cmd of commands) {
       expect(cmd.icon).toBeDefined();
     }

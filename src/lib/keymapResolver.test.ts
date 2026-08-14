@@ -63,6 +63,25 @@ describe("resolveKeymaps", () => {
 });
 
 describe("keymaps/default.json", () => {
+  it("does not bind Mod-n in default keymaps (menu-owned chord)", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) => b.key === "Mod-n",
+    );
+    expect(entry).toBeUndefined();
+    const pageNew = defaultKeymaps.find(
+      (b: { key: string; command: string }) => b.command === "core.page.new",
+    );
+    expect(pageNew).toBeUndefined();
+  });
+
+  it("does not bind Mod-Shift-n to app.newPage", () => {
+    const entry = defaultKeymaps.find(
+      (b: { key: string; command: string }) =>
+        b.key === "Mod-Shift-n" && b.command === "app.newPage",
+    );
+    expect(entry).toBeUndefined();
+  });
+
   it("contains Mod-g binding for editor.findNext", () => {
     const entry = defaultKeymaps.find(
       (b: { key: string; command: string }) =>

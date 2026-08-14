@@ -395,8 +395,8 @@ mod tests {
     // --- Cycle 4: menu shortcut extraction ---
 
     #[test]
-    fn test_menu_shortcuts_returns_three_entries() {
-        assert_eq!(get_menu_shortcut_bindings().len(), 3);
+    fn test_menu_shortcuts_returns_four_entries() {
+        assert_eq!(get_menu_shortcut_bindings().len(), 4);
     }
 
     #[test]
@@ -411,6 +411,7 @@ mod tests {
         let bindings = get_menu_shortcut_bindings();
         let keys: Vec<&str> = bindings.iter().map(|b| b.key.as_str()).collect();
         assert!(keys.contains(&"Mod-,"));
+        assert!(keys.contains(&"Mod-n"));
         assert!(keys.contains(&"Mod-Shift-s"));
         assert!(keys.contains(&"Mod-Shift-e"));
     }
@@ -419,6 +420,7 @@ mod tests {
     fn test_menu_shortcuts_command_ids() {
         let bindings = get_menu_shortcut_bindings();
         let cmds: Vec<&str> = bindings.iter().map(|b| b.command.as_str()).collect();
+        assert!(cmds.contains(&"core.page.new"));
         assert!(cmds.contains(&"core.settings.open"));
         assert!(cmds.contains(&"app.exportMarkdown"));
         assert!(cmds.contains(&"editor.openInExternalEditor"));

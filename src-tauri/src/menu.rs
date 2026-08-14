@@ -2,6 +2,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri::Wry;
 
+pub const MENU_ID_NEW_PAGE: &str = "new_page";
 pub const MENU_ID_OPEN_WORKSPACE: &str = "open_workspace";
 pub const MENU_ID_OPEN_PREFERENCES: &str = "open_preferences";
 pub const MENU_ID_OPEN_IN_EXTERNAL_EDITOR: &str = "open_in_external_editor";
@@ -30,11 +31,13 @@ pub struct MenuShortcutDef {
 }
 
 pub const MENU_SHORTCUTS: &[MenuShortcutDef] = &[
+    MenuShortcutDef { menu_id: MENU_ID_NEW_PAGE, command_id: "core.page.new", accelerator: "cmdOrCtrl+n", label: "New Page" },
     MenuShortcutDef { menu_id: MENU_ID_OPEN_PREFERENCES, command_id: "core.settings.open", accelerator: "cmdOrCtrl+,", label: "Settings" },
     MenuShortcutDef { menu_id: MENU_ID_EXPORT_MARKDOWN, command_id: "app.exportMarkdown", accelerator: "cmdOrCtrl+shift+s", label: "Export as Markdown Archive" },
     MenuShortcutDef { menu_id: MENU_ID_OPEN_IN_EXTERNAL_EDITOR, command_id: "editor.openInExternalEditor", accelerator: "cmdOrCtrl+shift+e", label: "Open in External Editor" },
 ];
 
+pub const EVENT_NEW_PAGE: &str = "menu://new-page";
 pub const EVENT_CLOSE_PANE: &str = "menu://close-pane";
 pub const EVENT_OPEN_PREFERENCES: &str = "menu://open-preferences";
 pub const EVENT_OPEN_IN_EXTERNAL_EDITOR: &str = "menu://open-in-external-editor";
@@ -51,6 +54,7 @@ pub const EVENT_ACKNOWLEDGEMENTS: &str = "menu://acknowledgements";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
+    NewPage,
     OpenWorkspace,
     OpenPreferences,
     OpenInExternalEditor,
@@ -73,6 +77,7 @@ pub(crate) enum MenuAction {
 impl MenuAction {
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
+            MENU_ID_NEW_PAGE => Some(Self::NewPage),
             MENU_ID_OPEN_WORKSPACE => Some(Self::OpenWorkspace),
             MENU_ID_OPEN_PREFERENCES => Some(Self::OpenPreferences),
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR => Some(Self::OpenInExternalEditor),
@@ -117,6 +122,11 @@ fn find_focused_window(app: &AppHandle<Wry>) -> Option<tauri::WebviewWindow<Wry>
 
 pub(crate) fn execute_action(action: MenuAction, app: &AppHandle) {
     match action {
+        MenuAction::NewPage => {
+            if let Some(window) = find_focused_window(app) {
+                let _ = window.emit_to(window.label(), EVENT_NEW_PAGE, ());
+            }
+        }
         MenuAction::OpenWorkspace => {
             let handle = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -310,6 +320,8 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "File",
         true,
         &[
+            &MenuItem::with_id(app, MENU_ID_NEW_PAGE, "New Page", true, Some("cmdOrCtrl+n"))?,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, MENU_ID_OPEN_WORKSPACE, "Open Another Workspace", true, None::<&str>)?,
             &MenuItem::with_id(app, MENU_ID_IMPORT_LKG, "Import Knowledge Graph Bundle\u{2026}", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
@@ -380,6 +392,18 @@ mod tests {
     }
 
     #[test]
+    fn new_page_menu_id_and_event_are_defined() {
+        assert_eq!(MENU_ID_NEW_PAGE, "new_page");
+        assert_eq!(EVENT_NEW_PAGE, "menu://new-page");
+    }
+
+    #[test]
+    fn new_page_from_id() {
+        assert_eq!(MenuAction::from_id(MENU_ID_NEW_PAGE), Some(MenuAction::NewPage));
+        assert_eq!(MenuAction::from_id("new_page"), Some(MenuAction::NewPage));
+    }
+
+    #[test]
     fn academic_export_menu_ids_are_defined() {
         assert_eq!(MENU_ID_EXPORT_LATEX, "export_latex");
         assert_eq!(MENU_ID_EXPORT_HTML, "export_html");
@@ -436,6 +460,7 @@ mod tests {
     #[test]
     fn all_menu_ids_are_unique() {
         let ids = [
+            MENU_ID_NEW_PAGE,
             MENU_ID_OPEN_WORKSPACE,
             MENU_ID_OPEN_PREFERENCES,
             MENU_ID_OPEN_IN_EXTERNAL_EDITOR,
@@ -462,6 +487,7 @@ mod tests {
 
     #[test]
     fn from_id_maps_all_known_ids() {
+        assert_eq!(MenuAction::from_id(MENU_ID_NEW_PAGE), Some(MenuAction::NewPage));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_WORKSPACE), Some(MenuAction::OpenWorkspace));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_PREFERENCES), Some(MenuAction::OpenPreferences));
         assert_eq!(MenuAction::from_id(MENU_ID_OPEN_IN_EXTERNAL_EDITOR), Some(MenuAction::OpenInExternalEditor));
@@ -484,6 +510,34 @@ mod tests {
     #[test]
     fn from_id_returns_none_for_unknown() {
         assert!(MenuAction::from_id("nonexistent").is_none());
+    }
+
+    #[test]
+    fn new_page_handler_is_window_scoped() {
+        // The New Page handler must use find_focused_window + emit_to
+        // (window-scoped), not app.emit (global broadcast), so a menu click in
+        // one window does not create pages in every window of a multi-window
+        // setup.
+        let src = include_str!("menu.rs");
+        let np_pos = src
+            .find("MenuAction::NewPage =>")
+            .expect("MenuAction::NewPage arm not found");
+        let rest = &src[np_pos..];
+        let arm_end = rest
+            .find("\n        MenuAction::")
+            .or_else(|| rest.find("\n    }"))
+            .unwrap_or(rest.len());
+        let arm_body = &rest[..arm_end];
+        assert!(
+            arm_body.contains("find_focused_window"),
+            "New Page handler must use find_focused_window, not app.emit. Got:\n{}",
+            arm_body,
+        );
+        assert!(
+            arm_body.contains("emit_to"),
+            "New Page handler must use emit_to (window-scoped), not app.emit. Got:\n{}",
+            arm_body,
+        );
     }
 
     #[test]

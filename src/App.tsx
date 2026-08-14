@@ -13,6 +13,7 @@ import { useFontOverrides } from "./hooks/useFontOverrides";
 import { useSidebarPosition } from "./hooks/useSidebarPosition";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { useMenuLicenseSync } from "./hooks/useMenuLicenseSync";
+import { useNewPageMenuListener } from "./hooks/useNewPageMenuListener";
 import { useWorkspaceStore, getRecentWorkspaces } from "./stores/workspace";
 import { useThemeStore } from "./stores/theme";
 import { usePreferencesStore } from "./stores/preferences";
@@ -177,6 +178,7 @@ function App() {
   const [splitPreviewPath, setSplitPreviewPath] = useState("");
 
   useMenuLicenseSync();
+  useNewPageMenuListener();
 
   useEffect(() => {
     let cancelled = false;

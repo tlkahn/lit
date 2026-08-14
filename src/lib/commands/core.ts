@@ -3,6 +3,7 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import { usePreferencesStore } from "../../stores/preferences";
 import { setPreference, rebuildGraphIndex } from "../ipc";
 import { useStatusMessageStore } from "../../stores/statusMessage";
+import { createUntitledPage } from "../newPage";
 
 function hasWorkspace(): boolean {
   return useWorkspaceStore.getState().workspacePath !== null;
@@ -68,11 +69,22 @@ export function initCoreCommands(): void {
     {
       id: "core.page.new",
       label: "New Page",
-      keywords: ["create", "new", "page"],
+      keywords: ["create", "new", "page", "file", "untitled"],
       icon: "📄",
       when: hasWorkspace,
       action: () => {
-        window.dispatchEvent(new CustomEvent("lit:new-page"));
+        void createUntitledPage();
+      },
+    },
+    // Legacy alias so old default.json / user keymaps bound to app.newPage
+    // keep working. No label -> hidden from the palette (getVisibleCommands
+    // requires label). Registered inside the same registerOnce group so a
+    // second initCoreCommands() call stays idempotent.
+    {
+      id: "app.newPage",
+      when: hasWorkspace,
+      action: () => {
+        void createUntitledPage();
       },
     },
     {
