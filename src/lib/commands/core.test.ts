@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { waitFor } from "@testing-library/react";
 import { _clear, getAllCommands, getVisibleCommands, hasCommand, executeCommand } from "../commandRegistry";
 
 const mockWorkspaceState = vi.hoisted(() => ({
@@ -150,12 +151,14 @@ describe("initCoreCommands", () => {
     });
   });
 
-  it("core.page.new calls createPage with the next untitled name", () => {
+  it("core.page.new calls createPage with the next untitled name", async () => {
     initCoreCommands();
     mockWorkspaceState.pages = [{ title: "Untitled" }];
     const cmd = getAllCommands().find((c) => c.id === "core.page.new")!;
     cmd.action();
-    expect(mockWorkspaceState.createPage).toHaveBeenCalledWith("Untitled 1");
+    await waitFor(() => {
+      expect(mockWorkspaceState.createPage).toHaveBeenCalledWith("Untitled 1");
+    });
   });
 
   it("core.page.new does not dispatch lit:new-page", () => {
@@ -176,11 +179,13 @@ describe("initCoreCommands", () => {
     expect(mockWorkspaceState.createPage).not.toHaveBeenCalled();
   });
 
-  it("app.newPage alias is registered and creates an untitled page", () => {
+  it("app.newPage alias is registered and creates an untitled page", async () => {
     initCoreCommands();
     expect(hasCommand("app.newPage")).toBe(true);
     executeCommand("app.newPage");
-    expect(mockWorkspaceState.createPage).toHaveBeenCalledWith("Untitled");
+    await waitFor(() => {
+      expect(mockWorkspaceState.createPage).toHaveBeenCalledWith("Untitled");
+    });
   });
 
   it("app.newPage alias is hidden from the palette (no label)", () => {
