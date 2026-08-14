@@ -1,5 +1,6 @@
 import type { CardboxAnnotation, CardboxAnkiNote } from "./ipc";
 import { renderMarkdown, renderInlineMarkdown } from "./renderMarkdown";
+import { pagePathStem } from "./pagePathStem";
 import { KATEX_INLINE_CSS } from "./katexInlineCss";
 
 /** Math sentinel shared with the HTML cardbox export (see renderMath.ts). */
@@ -29,13 +30,6 @@ export function buildCardboxAnkiNotes(
   return { notes, hasMath };
 }
 
-/** Last path segment without its extension; mirrors the HTML flow's helper. */
-function filenameStem(pagePath: string): string {
-  const base = pagePath.split("/").pop() ?? pagePath;
-  const dot = base.lastIndexOf(".");
-  return dot > 0 ? base.slice(0, dot) : base;
-}
-
 /**
  * Extra model CSS to send with the package: KaTeX styles when any note has
  * math, else undefined. Rust owns the base card typography block, so the
@@ -56,5 +50,5 @@ export function resolveAnkiDeckName(
   pagePath: string,
 ): string {
   const title = cards[0]?.source_page_title?.trim();
-  return (title || filenameStem(pagePath)).replaceAll("::", " - ");
+  return (title || pagePathStem(pagePath)).replaceAll("::", " - ");
 }

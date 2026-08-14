@@ -5,14 +5,9 @@ import {
   resolveAnkiDeckName,
   ankiModelCss,
 } from "./cardboxAnkiExport";
+import { pagePathStem } from "./pagePathStem";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { loadKatex } from "../editor/livePreview/katexLoader";
-
-function filenameStem(pagePath: string): string {
-  const base = pagePath.split("/").pop() ?? pagePath;
-  const dot = base.lastIndexOf(".");
-  return dot > 0 ? base.slice(0, dot) : base;
-}
 
 export async function exportCardboxToAnki(pagePath: string): Promise<void> {
   const statusShow = useStatusMessageStore.getState().show;
@@ -28,7 +23,7 @@ export async function exportCardboxToAnki(pagePath: string): Promise<void> {
     const sorted = sortByDocPosition(pageCards);
 
     const { save } = await import("@tauri-apps/plugin-dialog");
-    const stem = filenameStem(pagePath);
+    const stem = pagePathStem(pagePath);
     const dest = await save({
       defaultPath: `${stem}.apkg`,
       filters: [{ name: "Anki Package", extensions: ["apkg"] }],
