@@ -15,6 +15,21 @@ pub const LIT_CARDBOX_DECK_ID: i64 = 1_128_672_242;
 /// BASIC_MODEL id so custom CSS does not collide with upstream builtins.
 pub const LIT_CARDBOX_MODEL_ID: i64 = 2_091_562_257;
 
+/// Stable Anki deck id derived from the page key (`source_page_id` path).
+///
+/// A pure function of the key so re-exports of the same page update the same
+/// deck in place, while different pages get distinct decks. Must not be
+/// randomized per export - Anki merges by deck id. Mapped into the lit-owned
+/// band `[1 << 30, 1 << 31)` (Anki convention for app-owned ids).
+pub fn lit_cardbox_deck_id(page_key: &str) -> i64 {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(page_key.as_bytes());
+    let n = u64::from_be_bytes(digest[0..8].try_into().expect("8 bytes"));
+    const LO: i64 = 1 << 30;
+    const SPAN: u64 = 1 << 30; // maps into [LO, LO+SPAN) = [1<<30, 1<<31)
+    LO + (n % SPAN) as i64
+}
+
 /// Base card CSS: Basic-like typography safe for Anki fields. Rust owns this
 /// so the common path never ships the large KaTeX CSS string.
 const BASE_CARD_CSS: &str = r#".card {
@@ -127,6 +142,38 @@ mod tests {
         let deck = genanki::Deck::new(LIT_CARDBOX_DECK_ID, "t");
         assert_eq!(deck.id(), LIT_CARDBOX_DECK_ID);
         assert_eq!(deck.name(), "t");
+    }
+
+    // Deck id is a stable pure function of the page key (#1026).
+    #[test]
+    fn deck_id_stable_for_same_key() {
+        assert_eq!(
+            lit_cardbox_deck_id("notes/a.md"),
+            lit_cardbox_deck_id("notes/a.md")
+        );
+    }
+
+    #[test]
+    fn deck_id_differs_across_keys() {
+        assert_ne!(
+            lit_cardbox_deck_id("notes/a.md"),
+            lit_cardbox_deck_id("notes/b.md")
+        );
+    }
+
+    #[test]
+    fn deck_id_in_anki_owned_band() {
+        for key in ["notes/a.md", "notes/b.md", "deep/path/page.md"] {
+            let id = lit_cardbox_deck_id(key);
+            assert!(id >= 1 << 30, "{key}: {id} below band");
+            assert!(id < 1 << 31, "{key}: {id} above band");
+        }
+    }
+
+    /// Golden pin: algorithm drift (hash, byte order, band math) fails CI.
+    #[test]
+    fn deck_id_golden_notes_a_md() {
+        assert_eq!(lit_cardbox_deck_id("notes/a.md"), 1_880_234_326);
     }
 
     fn open_zip(path: &std::path::Path) -> ZipArchive<std::fs::File> {
