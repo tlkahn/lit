@@ -313,4 +313,44 @@ describe("exportCardboxToAnki", () => {
     await exportCardboxToAnki("notes/a.md");
     expect(invokedAnkiArgs!.modelCss).toBeNull();
   });
+
+  // F14: all-empty-front page
+  it("F14: all empty-front cards show info toast, no export invoke", async () => {
+    const { renderMarkdown } = await import("./renderMarkdown");
+    vi.mocked(renderMarkdown).mockReturnValue("");
+    mockedSave.mockResolvedValue("/out/cards.apkg");
+    const exportCardboxToAnki = await loadFlow();
+    await exportCardboxToAnki("notes/a.md");
+    expect(mockedSave).toHaveBeenCalled();
+    expect(invokedAnkiArgs).toBeNull();
+    const state = useStatusMessageStore.getState();
+    expect(state.message).toBe("No cards to export");
+    expect(state.variant).toBe("info");
+  });
+
+  // F15: success toast counts exported notes, not annotations
+  it("F15: success toast counts exported notes, not annotations", async () => {
+    const { renderMarkdown } = await import("./renderMarkdown");
+    vi.mocked(renderMarkdown).mockImplementation((text: string) =>
+      text === "empty" ? "" : `<p>${text}</p>`,
+    );
+    const mixed = cardsOnA.map((c) =>
+      c.uuid === "u1" ? { ...c, body: "empty" } : c,
+    );
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_all_annotations") return mixed;
+      if (cmd === "export_cardbox_anki") {
+        invokedAnkiArgs = args as unknown as InvokedAnkiArgs;
+        return invokedAnkiArgs.destination;
+      }
+      throw new Error(`Unexpected: ${cmd}`);
+    });
+    mockedSave.mockResolvedValue("/out/cards.apkg");
+    const exportCardboxToAnki = await loadFlow();
+    await exportCardboxToAnki("notes/a.md");
+    expect(invokedAnkiArgs!.notes).toHaveLength(2);
+    const state = useStatusMessageStore.getState();
+    expect(state.message).toBe("Exported 2 cards");
+    expect(state.variant).toBe("success");
+  });
 });

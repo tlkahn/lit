@@ -109,6 +109,36 @@ describe("buildCardboxAnkiNotes", () => {
     ]);
     expect(hasMath).toBe(false);
   });
+
+  // B1: empty-front filter (#1026 review)
+  it("B1: skips card when body renders to empty front_html", () => {
+    vi.mocked(renderMarkdown).mockImplementation((text: string) =>
+      text.trim() === "" ? "" : `<p>${text}</p>`,
+    );
+    const { notes } = buildCardboxAnkiNotes([
+      makeCard({ uuid: "empty", body: "" }),
+      makeCard({ uuid: "null-body", body: null }),
+      makeCard({ uuid: "kept", body: "real" }),
+    ]);
+    expect(notes.map((n) => n.uuid)).toEqual(["kept"]);
+  });
+
+  it("B2: keeps note with empty back when front is non-empty", () => {
+    const { notes } = buildCardboxAnkiNotes([
+      makeCard({ uuid: "u-front-only", original: null, body: "visible" }),
+    ]);
+    expect(notes.map((n) => n.uuid)).toEqual(["u-front-only"]);
+    expect(notes[0]!.back_html).toBe("");
+  });
+
+  it("B3: hasMath ignores cards skipped for empty front", () => {
+    vi.mocked(renderMarkdown).mockReturnValue("");
+    const { notes, hasMath } = buildCardboxAnkiNotes([
+      makeCard({ uuid: "empty-math", body: "$x^2$" }),
+    ]);
+    expect(notes).toHaveLength(0);
+    expect(hasMath).toBe(false);
+  });
 });
 
 describe("resolveAnkiDeckName", () => {

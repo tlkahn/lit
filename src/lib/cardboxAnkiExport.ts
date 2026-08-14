@@ -16,6 +16,9 @@ export function buildCardboxAnkiNotes(
   let hasMath = false;
   for (const card of cards) {
     const frontHtml = renderMarkdown(card.body ?? "");
+    // Skip cards whose rendered Front is empty - Anki's Basic model would
+    // drop them anyway, and counting them would over-report the export.
+    if (!frontHtml) continue;
     const original = card.original?.trim();
     const backHtml = original ? renderInlineMarkdown(original) : "";
     if (frontHtml.includes(MATH_CLASS) || backHtml.includes(MATH_CLASS)) {

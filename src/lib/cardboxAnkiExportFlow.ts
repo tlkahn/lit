@@ -47,11 +47,15 @@ export async function exportCardboxToAnki(pagePath: string): Promise<void> {
     await loadKatex();
 
     const { notes, hasMath } = buildCardboxAnkiNotes(sorted);
+    if (notes.length === 0) {
+      statusShow("No cards to export", "info");
+      return;
+    }
     const deckName = resolveAnkiDeckName(sorted, pagePath);
     const extraCss = ankiModelCss(hasMath);
 
     await exportCardboxAnki(destination, deckName, pagePath, notes, extraCss);
-    statusShow(`Exported ${sorted.length} cards`, "success");
+    statusShow(`Exported ${notes.length} cards`, "success");
   } catch (err) {
     statusShow(
       err instanceof Error ? err.message : String(err),
