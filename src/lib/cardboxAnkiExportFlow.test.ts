@@ -41,9 +41,9 @@ const mockedSave = vi.mocked(
 
 interface InvokedAnkiArgs {
   destination: string;
-  deck_name: string;
+  deckName: string;
   notes: Array<{ uuid: string; front_html: string; back_html: string }>;
-  model_css: string | null;
+  modelCss: string | null;
 }
 
 let invokedAnkiArgs: InvokedAnkiArgs | null = null;
@@ -186,7 +186,7 @@ describe("exportCardboxToAnki", () => {
     mockedSave.mockResolvedValue("/out/cards.apkg");
     const exportCardboxToAnki = await loadFlow();
     await exportCardboxToAnki("notes/a.md");
-    expect(invokedAnkiArgs!.deck_name).toBe("Page A");
+    expect(invokedAnkiArgs!.deckName).toBe("Page A");
   });
 
   it("F9b: falls back to filename stem when title is empty", async () => {
@@ -202,7 +202,7 @@ describe("exportCardboxToAnki", () => {
     mockedSave.mockResolvedValue("/out/cards.apkg");
     const exportCardboxToAnki = await loadFlow();
     await exportCardboxToAnki("notes/a.md");
-    expect(invokedAnkiArgs!.deck_name).toBe("a");
+    expect(invokedAnkiArgs!.deckName).toBe("a");
   });
 
   // F10: dialog before loadKatex
@@ -279,7 +279,7 @@ describe("exportCardboxToAnki", () => {
   });
 
   // F13: KaTeX css
-  it("F13a: model_css includes KaTeX css when math is present", async () => {
+  it("F13a: modelCss includes KaTeX css when math is present", async () => {
     const mathCards = cardsOnA.map((c) =>
       c.uuid === "u1" ? { ...c, body: "$x^2$" } : c,
     );
@@ -294,14 +294,14 @@ describe("exportCardboxToAnki", () => {
     mockedSave.mockResolvedValue("/out/cards.apkg");
     const exportCardboxToAnki = await loadFlow();
     await exportCardboxToAnki("notes/a.md");
-    expect(invokedAnkiArgs!.model_css).not.toBeNull();
-    expect(invokedAnkiArgs!.model_css).toContain(".katex");
+    expect(invokedAnkiArgs!.modelCss).not.toBeNull();
+    expect(invokedAnkiArgs!.modelCss).toContain(".katex");
   });
 
-  it("F13b: model_css omitted when no math", async () => {
+  it("F13b: modelCss omitted when no math", async () => {
     mockedSave.mockResolvedValue("/out/cards.apkg");
     const exportCardboxToAnki = await loadFlow();
     await exportCardboxToAnki("notes/a.md");
-    expect(invokedAnkiArgs!.model_css).toBeNull();
+    expect(invokedAnkiArgs!.modelCss).toBeNull();
   });
 });

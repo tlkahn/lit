@@ -1460,9 +1460,9 @@ export async function exportCardboxAnki(
 ): Promise<string> {
   return invoke<string>("export_cardbox_anki", {
     destination,
-    deck_name: deckName,
+    deckName,
     notes,
-    model_css: modelCss ?? null,
+    modelCss: modelCss ?? null,
   });
 }
 

@@ -2675,7 +2675,7 @@ describe("ipc", () => {
     });
   });
 
-  it("exportCardboxAnki calls export_cardbox_anki with snake_case args", async () => {
+  it("exportCardboxAnki calls export_cardbox_anki with camelCase top-level args", async () => {
     const notes = [
       { uuid: "u1", front_html: "<p>f</p>", back_html: "" },
     ];
@@ -2689,21 +2689,27 @@ describe("ipc", () => {
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_cardbox_anki", {
       destination: "/out/cards.apkg",
-      deck_name: "My Deck",
+      deckName: "My Deck",
       notes,
-      model_css: ".katex{}",
+      modelCss: ".katex{}",
+    });
+    // Nested note fields stay snake_case; only top-level keys are camelCase.
+    expect(notes[0]).toEqual({
+      uuid: "u1",
+      front_html: "<p>f</p>",
+      back_html: "",
     });
   });
 
-  it("exportCardboxAnki sends model_css null when omitted", async () => {
+  it("exportCardboxAnki sends modelCss null when omitted", async () => {
     const result = await exportCardboxAnki("/out/cards.apkg", "My Deck", []);
     expect(result).toBe("/out/cards.apkg");
     const { invoke } = await import("@tauri-apps/api/core");
     expect(invoke).toHaveBeenCalledWith("export_cardbox_anki", {
       destination: "/out/cards.apkg",
-      deck_name: "My Deck",
+      deckName: "My Deck",
       notes: [],
-      model_css: null,
+      modelCss: null,
     });
   });
 

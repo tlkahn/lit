@@ -1797,7 +1797,7 @@ describe("App", () => {
     it("M1: menu://export-cardbox-anki with currentPagePath calls save and export_cardbox_anki", async () => {
       let invokedAnki: {
         destination: string;
-        deck_name: string;
+        deckName: string;
         notes: Array<{ uuid: string; front_html: string; back_html: string }>;
       } | null = null;
       mockInvoke((cmd, args) => {
@@ -1827,7 +1827,7 @@ describe("App", () => {
       await waitFor(() => {
         expect(invokedAnki).not.toBeNull();
         expect(invokedAnki!.destination).toBe("/out/cards.apkg");
-        expect(invokedAnki!.deck_name).toBe("Hello");
+        expect(invokedAnki!.deckName).toBe("Hello");
         expect(invokedAnki!.notes).toHaveLength(1);
         expect(invokedAnki!.notes[0]).toMatchObject({ uuid: "u1" });
       });
