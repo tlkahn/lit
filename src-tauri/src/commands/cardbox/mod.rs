@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
+pub(crate) mod anki_export;
 pub(crate) mod html_export;
 pub(crate) mod merge_to_draft;
 pub(crate) mod slip_note;

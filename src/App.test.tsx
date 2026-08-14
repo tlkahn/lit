@@ -1723,4 +1723,178 @@ describe("App", () => {
       expect(mockedSave).not.toHaveBeenCalled();
     });
   });
+
+  describe("Cardbox Anki export wiring", () => {
+    const mockedSave = save as unknown as ReturnType<typeof vi.fn>;
+
+    function defaultAnkiInvoke(cmd: string): unknown {
+      switch (cmd) {
+        case "get_app_info":
+          return { name: "Lit", version: "0.0.0" };
+        case "open_workspace":
+        case "list_pages":
+          return samplePages;
+        case "get_startup_context":
+          return { workspace: null, file: null, line: null, col: null };
+        case "list_themes":
+          return [];
+        case "get_preferences":
+          return {
+            "workbench.colorTheme": null,
+            "workbench.darkMode": "light",
+            "workbench.sideBar.location": "left",
+          };
+        case "get_keymaps":
+          return [];
+        case "get_backlinks":
+          return [];
+        case "parse_raw_yaml":
+          return {};
+        case "ensure_graph_ready":
+          return null;
+        case "get_license_status":
+          return { state: "trial", days_remaining: 12 };
+        case "has_api_key":
+          return false;
+        case "list_all_annotations":
+          return [
+            {
+              uuid: "u1",
+              annotation_type: "note",
+              certainty: "medium",
+              body: "test body",
+              date: null,
+              source_page_id: "notes/hello.md",
+              source_page_title: "Hello",
+              source_line: 1,
+              char_start: 0,
+              char_end: 10,
+              scope_kind: "word",
+              scope_value: "w",
+              original: "quoted",
+            },
+          ];
+        case "export_cardbox_anki":
+          return "/out/cards.apkg";
+        default:
+          throw new Error(`Unknown command: ${cmd}`);
+      }
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockListen();
+      mockWindowListen();
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        currentPagePath: "notes/hello.md",
+        pages: [],
+        graphReady: true,
+      });
+      useStatusMessageStore.setState({ message: null, variant: "success" });
+    });
+
+    it("M1: menu://export-cardbox-anki with currentPagePath calls save and export_cardbox_anki", async () => {
+      let invokedAnki: {
+        destination: string;
+        deckName: string;
+        deckKey: string;
+        notes: Array<{ uuid: string; front_html: string; back_html: string }>;
+      } | null = null;
+      mockInvoke((cmd, args) => {
+        if (cmd === "export_cardbox_anki") {
+          invokedAnki = args as typeof invokedAnki;
+          return "/out/cards.apkg";
+        }
+        return defaultAnkiInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue("/out/cards.apkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-anki", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedSave).toHaveBeenCalledWith({
+          defaultPath: "hello.apkg",
+          filters: [{ name: "Anki Package", extensions: ["apkg"] }],
+        });
+      });
+
+      await waitFor(() => {
+        expect(invokedAnki).not.toBeNull();
+        expect(invokedAnki!.destination).toBe("/out/cards.apkg");
+        expect(invokedAnki!.deckName).toBe("Hello");
+        expect(invokedAnki!.deckKey).toBe("notes/hello.md");
+        expect(invokedAnki!.notes).toHaveLength(1);
+        expect(invokedAnki!.notes[0]).toMatchObject({ uuid: "u1" });
+      });
+    });
+
+    it("M2: save returning null does not call export_cardbox_anki", async () => {
+      const invokedCmds: string[] = [];
+      mockInvoke((cmd) => {
+        invokedCmds.push(cmd);
+        return defaultAnkiInvoke(cmd);
+      });
+      mockedSave.mockResolvedValue(null);
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-anki", {});
+      });
+
+      await waitFor(() => {
+        expect(mockedSave).toHaveBeenCalled();
+      });
+      expect(invokedCmds).not.toContain("export_cardbox_anki");
+    });
+
+    it("M3: no page shows info toast instead of exporting", async () => {
+      mockInvoke((cmd) => defaultAnkiInvoke(cmd));
+      useWorkspaceStore.setState({
+        workspacePath: "/test",
+        currentPagePath: null,
+        pages: [],
+        graphReady: true,
+      });
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitWindowEvent("menu://export-cardbox-anki", {});
+      });
+
+      await waitFor(() => {
+        const state = useStatusMessageStore.getState();
+        expect(state.message).toBe("Open a document first");
+        expect(state.variant).toBe("info");
+      });
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+
+    it("M4: global emit does NOT trigger window-scoped handler", async () => {
+      mockInvoke((cmd) => defaultAnkiInvoke(cmd));
+      mockedSave.mockResolvedValue("/out/cards.apkg");
+
+      await act(async () => {
+        render(<App />);
+      });
+
+      await act(async () => {
+        emitMockEvent("menu://export-cardbox-anki", {});
+      });
+
+      expect(mockedSave).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -1444,6 +1444,30 @@ export async function exportCardboxHtml(destination: string, html: string): Prom
   return invoke<string>("export_cardbox_html", { destination, html });
 }
 
+/** One Anki note as handed to the Rust package writer (#1026). */
+export interface CardboxAnkiNote {
+  /** Annotation uuid; Rust hashes via genanki::guid_for(&[uuid]). */
+  uuid: string;
+  front_html: string;
+  back_html: string; // may be ""
+}
+
+export async function exportCardboxAnki(
+  destination: string,
+  deckName: string,
+  deckKey: string,
+  notes: CardboxAnkiNote[],
+  modelCss?: string,
+): Promise<string> {
+  return invoke<string>("export_cardbox_anki", {
+    destination,
+    deckName,
+    deckKey,
+    notes,
+    modelCss: modelCss ?? null,
+  });
+}
+
 export async function setCardColor(uuid: string, color: string): Promise<void> {
   return invoke<void>("set_card_color", { uuid, color });
 }
