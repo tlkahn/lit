@@ -54,4 +54,15 @@ describe("useNewPageMenuListener", () => {
     unmount();
     await waitFor(() => expect(unlisten).toHaveBeenCalled());
   });
+
+  it("logs and does not throw when listen rejects", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockListen.mockRejectedValueOnce(new Error("listen failed"));
+    const { unmount } = renderHook(() => useNewPageMenuListener());
+    await waitFor(() => expect(errSpy).toHaveBeenCalled());
+    expect(errSpy.mock.calls[0]![1]).toMatch(/listen failed/);
+    expect(JSON.stringify(errSpy.mock.calls[0]![0])).toMatch(/useNewPageMenuListener/);
+    expect(() => unmount()).not.toThrow();
+    errSpy.mockRestore();
+  });
 });

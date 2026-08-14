@@ -14,6 +14,9 @@ export function useNewPageMenuListener() {
       .then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
+      })
+      .catch((err) => {
+        console.error("[useNewPageMenuListener]", err);
       });
     return () => {
       cancelled = true;
