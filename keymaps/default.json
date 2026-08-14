@@ -3,7 +3,6 @@
   { "key": "Mod-i", "command": "editor.toggleItalic", "when": "editorFocus" },
   { "key": "Mod-k", "command": "editor.insertLink", "when": "editorFocus" },
   { "key": "Mod-/", "command": "editor.toggleComment", "when": "editorFocus" },
-  { "key": "Mod-n", "command": "core.page.new" },
   { "key": "Mod-r", "command": "app.gotoHeading" },
   { "key": "Mod-Shift-e", "command": "editor.openInExternalEditor", "when": "editorFocus" },
   { "key": "Ctrl--", "command": "editor.navigateBack", "when": "editorFocus" },
