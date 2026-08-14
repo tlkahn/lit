@@ -60,7 +60,7 @@ describe("useNewPageMenuListener", () => {
     mockListen.mockRejectedValueOnce(new Error("listen failed"));
     const { unmount } = renderHook(() => useNewPageMenuListener());
     await waitFor(() => expect(errSpy).toHaveBeenCalled());
-    expect(errSpy.mock.calls[0]![1]).toMatch(/listen failed/);
+    expect((errSpy.mock.calls[0]![1] as Error).message).toMatch(/listen failed/);
     expect(JSON.stringify(errSpy.mock.calls[0]![0])).toMatch(/useNewPageMenuListener/);
     expect(() => unmount()).not.toThrow();
     errSpy.mockRestore();
