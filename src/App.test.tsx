@@ -807,6 +807,32 @@ describe("App", () => {
     });
   });
 
+  it("menu://new-page event creates an untitled page", async () => {
+    mockListen();
+    mockWindowListen();
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useLicenseStore.setState({ state: "licensed", loading: false });
+
+    // Stub the store's createPage so the menu path is exercised without
+    // touching IPC; the real create flow is covered by StatusBar/helper tests.
+    const createPageSpy = vi
+      .spyOn(useWorkspaceStore.getState(), "createPage")
+      .mockResolvedValue(undefined);
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    act(() => {
+      emitWindowEvent("menu://new-page", {});
+    });
+
+    await waitFor(() => {
+      expect(createPageSpy).toHaveBeenCalledWith("Untitled");
+    });
+    createPageSpy.mockRestore();
+  });
+
   it("license://activate-key shows entry dialog on failure", async () => {
     mockListen();
     useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });

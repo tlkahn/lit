@@ -10,7 +10,7 @@ import { usePanePdfLinkStore } from "../stores/panePdfLink";
 import { useLeafFileType } from "../hooks/useLeafFileType";
 import { resolveLanguage } from "../editor/codeLanguages";
 import { getPdfGoToPage, getPdfCurrentPage } from "../lib/pdfPaneRef";
-import { getNextUntitledName } from "../lib/naming";
+import { createUntitledPage } from "../lib/newPage";
 import { BufferStack } from "./BufferStack";
 import { executeCommand } from "../lib/commandRegistry";
 import type { TabId } from "../stores/bottomPanel";
@@ -268,8 +268,6 @@ export function StatusBar() {
   const graphReady = useWorkspaceStore((s) => s.graphReady);
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const indexProgress = useWorkspaceStore((s) => s.indexProgress);
-  const pages = useWorkspaceStore((s) => s.pages);
-  const createPage = useWorkspaceStore((s) => s.createPage);
   const line = useCursorInfoStore((s) => s.line);
   const col = useCursorInfoStore((s) => s.col);
   const { toast, phase } = useToastAnimation();
@@ -284,8 +282,7 @@ export function StatusBar() {
       : null;
 
   const handleNewPage = () => {
-    const name = getNextUntitledName(pages);
-    createPage(name);
+    void createUntitledPage();
   };
 
   const newPageButton = (
