@@ -47,12 +47,14 @@ export function ankiModelCss(hasMath: boolean): string | undefined {
 
 /**
  * Deck name: first sorted card's `source_page_title`, else the filename
- * stem (same rule as the HTML cardbox export).
+ * stem (same rule as the HTML cardbox export). Anki splits deck names on
+ * `::` into a subdeck hierarchy, so the separator is replaced with ` - `
+ * (display-only; page titles in the workspace are untouched).
  */
 export function resolveAnkiDeckName(
   cards: CardboxAnnotation[],
   pagePath: string,
 ): string {
   const title = cards[0]?.source_page_title?.trim();
-  return title || filenameStem(pagePath);
+  return (title || filenameStem(pagePath)).replaceAll("::", " - ");
 }

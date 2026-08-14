@@ -4,6 +4,7 @@ import { renderMarkdown, renderInlineMarkdown } from "./renderMarkdown";
 import {
   buildCardboxAnkiNotes,
   resolveAnkiDeckName,
+  ankiModelCss,
 } from "./cardboxAnkiExport";
 
 vi.mock("./renderMarkdown", () => ({
@@ -154,5 +155,38 @@ describe("resolveAnkiDeckName", () => {
 
   it("A9c: falls back to stem when no cards", () => {
     expect(resolveAnkiDeckName([], "notes/deep/page-name.md")).toBe("page-name");
+  });
+
+  // B4: Anki subdeck separator sanitization (#1026 review)
+  it("B4a: replaces :: with space-hyphen-space", () => {
+    const cards = [makeCard({ source_page_title: "Foo::Bar" })];
+    expect(resolveAnkiDeckName(cards, "notes/x.md")).toBe("Foo - Bar");
+  });
+
+  it("B4b: replaces multiple :: occurrences", () => {
+    const cards = [makeCard({ source_page_title: "A::B::C" })];
+    expect(resolveAnkiDeckName(cards, "notes/x.md")).toBe("A - B - C");
+  });
+
+  it("B4c: leaves single colons untouched", () => {
+    const cards = [makeCard({ source_page_title: "Note: draft" })];
+    expect(resolveAnkiDeckName(cards, "notes/x.md")).toBe("Note: draft");
+  });
+
+  it("B4d: sanitizes the stem fallback too", () => {
+    const cards = [makeCard({ source_page_title: "" })];
+    expect(resolveAnkiDeckName(cards, "notes/Chap::One.md")).toBe("Chap - One");
+  });
+});
+
+describe("ankiModelCss", () => {
+  it("C1: hasMath true returns KaTeX css", () => {
+    const css = ankiModelCss(true);
+    expect(css).toBeTruthy();
+    expect(css).toContain(".katex");
+  });
+
+  it("C2: hasMath false returns undefined", () => {
+    expect(ankiModelCss(false)).toBeUndefined();
   });
 });

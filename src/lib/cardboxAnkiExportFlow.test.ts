@@ -353,4 +353,21 @@ describe("exportCardboxToAnki", () => {
     expect(state.message).toBe("Exported 2 cards");
     expect(state.variant).toBe("success");
   });
+
+  // F16: Anki subdeck separator sanitized in deck name
+  it("F16: deck name has :: replaced so Anki does not create subdecks", async () => {
+    const titled = cardsOnA.map((c) => ({ ...c, source_page_title: "Chap::One" }));
+    mockInvoke((cmd, args) => {
+      if (cmd === "list_all_annotations") return titled;
+      if (cmd === "export_cardbox_anki") {
+        invokedAnkiArgs = args as unknown as InvokedAnkiArgs;
+        return invokedAnkiArgs.destination;
+      }
+      throw new Error(`Unexpected: ${cmd}`);
+    });
+    mockedSave.mockResolvedValue("/out/cards.apkg");
+    const exportCardboxToAnki = await loadFlow();
+    await exportCardboxToAnki("notes/a.md");
+    expect(invokedAnkiArgs!.deckName).toBe("Chap - One");
+  });
 });
