@@ -366,6 +366,30 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
+  it("after leaving the active ann, leave for another ann still clears highlight", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    const ann1 = makeAnnotation({ char_start: 6, char_end: 11 });
+    const ann2 = makeAnnotation({ char_start: 20, char_end: 24 });
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, ann1);
+    expect(highlightRange(view)).toEqual({ from: 0, to: 5 });
+
+    handleAnnotationLeave(view, ann1);
+    expect(highlightRange(view)).toBeNull();
+
+    // Simulate a stuck decoration that did not go through hover (or a future
+    // caller). Leave for a different ann must not early-return on a stale
+    // activeKey still equal to ann1.
+    view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
+    expect(highlightRange(view)).toEqual({ from: 0, to: 5 });
+
+    handleAnnotationLeave(view, ann2);
+    expect(highlightRange(view)).toBeNull();
+    view.destroy();
+  });
+
   it("leave for the actively hovered annotation still clears and cancels its resolve", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const view = makeView();

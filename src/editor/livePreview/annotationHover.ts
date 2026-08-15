@@ -91,6 +91,7 @@ export function handleAnnotationLeave(view: EditorView, annotation?: Annotation)
     // invalidate that hover's in-flight resolve or clear its highlight.
     if (active !== undefined && active !== annotationKey(annotation)) return;
   }
+  activeKeyMap.delete(view);
   bumpGen(view);
   clearScopeHighlight(view);
 }
