@@ -132,13 +132,14 @@ describe("PillWidget", () => {
     view.destroy();
   });
 
-  it("mouseleave triggers handleAnnotationLeave with (view)", () => {
+  it("mouseleave triggers handleAnnotationLeave with (view, annotation)", () => {
     const view = makeEditorView();
-    const w = new PillWidget(makeAnnotation());
+    const ann = makeAnnotation();
+    const w = new PillWidget(ann);
     const dom = w.toDOM(view);
     dom.dispatchEvent(new Event("mouseleave"));
     expect(mockHandleLeave).toHaveBeenCalledOnce();
-    expect(mockHandleLeave).toHaveBeenCalledWith(view);
+    expect(mockHandleLeave).toHaveBeenCalledWith(view, ann);
     view.destroy();
   });
 });
@@ -536,13 +537,14 @@ describe("MarkerWidget", () => {
     view.destroy();
   });
 
-  it("mouseleave triggers handleAnnotationLeave with (view)", () => {
+  it("mouseleave triggers handleAnnotationLeave with (view, annotation)", () => {
     const view = makeEditorView();
-    const w = new MarkerWidget(makeAnnotation());
+    const ann = makeAnnotation({ char_start: 3 });
+    const w = new MarkerWidget(ann);
     const dom = w.toDOM(view);
     dom.dispatchEvent(new Event("mouseleave"));
     expect(mockHandleLeave).toHaveBeenCalledOnce();
-    expect(mockHandleLeave).toHaveBeenCalledWith(view);
+    expect(mockHandleLeave).toHaveBeenCalledWith(view, ann);
     view.destroy();
   });
 });
@@ -1212,7 +1214,7 @@ describe("ThreadWidget", () => {
     dom.dispatchEvent(new Event("mouseenter"));
     expect(mockHandleHover).toHaveBeenCalledWith(view, ann, { altKey: undefined });
     dom.dispatchEvent(new Event("mouseleave"));
-    expect(mockHandleLeave).toHaveBeenCalledWith(view);
+    expect(mockHandleLeave).toHaveBeenCalledWith(view, ann);
     view.destroy();
   });
 
@@ -1446,6 +1448,7 @@ describe("ThreadWidget", () => {
     overflow.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     dom.dispatchEvent(new Event("mouseleave"));
     expect(mockHandleLeave).toHaveBeenCalledOnce();
+    expect(mockHandleLeave).toHaveBeenCalledWith(view, makeThread());
     view.destroy();
   });
 

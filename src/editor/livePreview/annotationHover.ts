@@ -8,6 +8,20 @@ import { dispatchScopeHighlight, clearScopeHighlight } from "./scopeHighlight";
 
 const generationMap = new WeakMap<EditorView, number>();
 
+/**
+ * Identity of the annotation the pointer is currently hovering (per view).
+ * Kept alongside the generation so a mouseleave from a DIFFERENT annotation's
+ * widget (stale sibling leave: enter-before-leave event ordering, or a leave
+ * fired by an old widget being destroyed) cannot discard the active hover's
+ * in-flight resolve. A leave for the active annotation still invalidates and
+ * clears, matching the pre-existing semantics.
+ */
+const activeKeyMap = new WeakMap<EditorView, string>();
+
+function annotationKey(annotation: Annotation): string {
+  return `${annotation.char_start}:${annotation.char_end}`;
+}
+
 function getGen(view: EditorView): number {
   return generationMap.get(view) ?? 0;
 }
@@ -30,6 +44,7 @@ export async function handleAnnotationHover(
   const prefs = usePreferencesStore.getState();
   if (!prefs.annotationScopeHighlight) return;
 
+  activeKeyMap.set(view, annotationKey(annotation));
   const generation = bumpGen(view);
   const content = view.state.doc.toString();
   const lang = effectiveAnnotationLang(
@@ -68,7 +83,14 @@ export async function handleAnnotationHover(
   }
 }
 
-export function handleAnnotationLeave(view: EditorView): void {
+export function handleAnnotationLeave(view: EditorView, annotation?: Annotation): void {
+  if (annotation) {
+    const active = activeKeyMap.get(view);
+    // Stale sibling leave: the pointer is logically on a DIFFERENT annotation
+    // (its mouseenter already ran, or the leaving widget was destroyed). Do not
+    // invalidate that hover's in-flight resolve or clear its highlight.
+    if (active !== undefined && active !== annotationKey(annotation)) return;
+  }
   bumpGen(view);
   clearScopeHighlight(view);
 }

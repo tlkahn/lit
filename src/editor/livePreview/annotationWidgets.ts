@@ -129,7 +129,7 @@ export class PillWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const pill = buildPillDOM(this.annotation);
     pill.onmouseenter = (e) => handleAnnotationHover(view, this.annotation, { altKey: e.altKey });
-    pill.onmouseleave = () => handleAnnotationLeave(view);
+    pill.onmouseleave = () => handleAnnotationLeave(view, this.annotation);
     pill.onclick = (e) => {
       if ((e.target as HTMLElement).closest(`.${CLS.CARDBOX_LINK}`)) return;
       e.preventDefault();
@@ -181,7 +181,7 @@ export class MarkerWidget extends WidgetType {
     const cardboxLink = createCardboxLinkButton(ann);
     if (!cardboxLink) {
       sup.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
-      sup.onmouseleave = () => handleAnnotationLeave(view);
+      sup.onmouseleave = () => handleAnnotationLeave(view, ann);
       sup.onclick = (e) => {
         e.preventDefault();
         if (e.metaKey || e.ctrlKey) {
@@ -201,7 +201,7 @@ export class MarkerWidget extends WidgetType {
     wrap.appendChild(cardboxLink);
 
     wrap.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
-    wrap.onmouseleave = () => handleAnnotationLeave(view);
+    wrap.onmouseleave = () => handleAnnotationLeave(view, ann);
     wrap.onclick = (e) => {
       if ((e.target as HTMLElement).closest(`.${CLS.CARDBOX_LINK}`)) return;
       e.preventDefault();
@@ -406,7 +406,7 @@ export class ThreadWidget extends WidgetType {
       pill.appendChild(arrow);
 
       pill.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
-      pill.onmouseleave = () => handleAnnotationLeave(view);
+      pill.onmouseleave = () => handleAnnotationLeave(view, ann);
       pill.onclick = (e) => {
         if ((e.target as HTMLElement).closest(`.${CLS.FOLD_ICON}, .${CLS.CARDBOX_LINK}`)) return;
         e.preventDefault();
@@ -439,7 +439,7 @@ export class ThreadWidget extends WidgetType {
 
     container.onmouseenter = (e) => handleAnnotationHover(view, ann, { altKey: e.altKey });
     container.onmouseleave = () => {
-      if (!overflow.classList.contains(CLS.IS_OPEN)) handleAnnotationLeave(view);
+      if (!overflow.classList.contains(CLS.IS_OPEN)) handleAnnotationLeave(view, ann);
     };
 
     // --- Header ---
