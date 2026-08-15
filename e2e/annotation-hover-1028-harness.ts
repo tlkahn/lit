@@ -3,61 +3,11 @@ import { EditorView } from "@codemirror/view";
 import { createExtensions } from "../src/editor/extensions";
 import { setAnnotationData } from "../src/editor/livePreview/annotationState";
 import { scopeHighlightField } from "../src/editor/livePreview/scopeHighlight";
-import type { Annotation } from "../src/lib/ipc";
+import { DOC, PARSED_ANNOTATIONS } from "./annotation-hover-1028-fixture";
 import "../src/index.css";
 
-// Exact fixture from issue #1028.
-export const DOC = [
-  "First term alpha appears here.",
-  "",
-  '<!--- n: ^"alpha"',
-  "---",
-  "note about alpha",
-  "--->",
-  "",
-  "Second term beta appears here.",
-  "",
-  '<!--- n: ^"beta"',
-  "---",
-  "note about beta",
-  "--->",
-].join("\n");
-
-// Offsets verified against the real lit-annotation-core parser:
-const ANN1_START = DOC.indexOf('<!--- n: ^"alpha"');
-const ANN1_END = ANN1_START + '<!--- n: ^"alpha"\n---\nnote about alpha\n--->'.length;
-const ANN2_START = DOC.indexOf('<!--- n: ^"beta"');
-const ANN2_END = ANN2_START + '<!--- n: ^"beta"\n---\nnote about beta\n--->'.length;
-
-// Real parser output for this fixture: both block headers are compact-style
-// (`n: ^"alpha"`), which the block grammar does not recognize, so scope falls
-// back to the default Sentence(1) and the block is unstructured.
-export const PARSED_ANNOTATIONS: Annotation[] = [
-  {
-    form: "block",
-    annotation_type: "note",
-    certainty: "neutral",
-    scope: { kind: "sentence", value: 1 },
-    body: "note about alpha",
-    date: null,
-    is_structured: false,
-    char_start: ANN1_START,
-    char_end: ANN1_END,
-    original: DOC.slice(ANN1_START, ANN1_END),
-  },
-  {
-    form: "block",
-    annotation_type: "note",
-    certainty: "neutral",
-    scope: { kind: "sentence", value: 1 },
-    body: "note about beta",
-    date: null,
-    is_structured: false,
-    char_start: ANN2_START,
-    char_end: ANN2_END,
-    original: DOC.slice(ANN2_START, ANN2_END),
-  },
-];
+// Exact fixture from issue #1028 - shared with the spec via
+// annotation-hover-1028-fixture.ts (DOC, PARSED_ANNOTATIONS).
 
 const view = new EditorView({
   state: EditorState.create({
