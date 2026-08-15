@@ -9,12 +9,13 @@ import { dispatchScopeHighlight, clearScopeHighlight } from "./scopeHighlight";
 const generationMap = new WeakMap<EditorView, number>();
 
 /**
- * Identity of the annotation the pointer is currently hovering (per view).
- * Kept alongside the generation so a mouseleave from a DIFFERENT annotation's
- * widget (stale sibling leave: enter-before-leave event ordering, or a leave
- * fired by an old widget being destroyed) cannot discard the active hover's
- * in-flight resolve. A leave for the active annotation still invalidates and
- * clears, matching the pre-existing semantics.
+ * Key of the annotation the pointer is currently hovering (per view). Kept
+ * alongside the generation so a stale SIBLING leave (a mouseleave for an
+ * annotation with a DIFFERENT `char_start:char_end` than the active hover,
+ * e.g. enter-before-leave event ordering) cannot discard the active hover's
+ * in-flight resolve or clear its highlight. A leave for the ACTIVE key still
+ * invalidates and clears - same-key widget replacement clears too, unless a
+ * new mouseenter re-arms hover.
  */
 const activeKeyMap = new WeakMap<EditorView, string>();
 
@@ -85,9 +86,9 @@ export async function handleAnnotationHover(
 
 export function handleAnnotationLeave(view: EditorView, annotation: Annotation): void {
   const active = activeKeyMap.get(view);
-  // Stale sibling leave: the pointer is logically on a DIFFERENT annotation
-  // (its mouseenter already ran, or the leaving widget was destroyed). Do not
-  // invalidate that hover's in-flight resolve or clear its highlight.
+  // Stale sibling leave: a leave for a DIFFERENT annotation key than the
+  // active hover (enter-before-leave ordering). Do not invalidate that
+  // hover's in-flight resolve or clear its highlight.
   if (active !== undefined && active !== annotationKey(annotation)) return;
   activeKeyMap.delete(view);
   bumpGen(view);

@@ -392,6 +392,29 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
+  it("same-key leave clears even with a second object identity (active leave)", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const view = makeView();
+    let resolveAnn2: (v: { start: number; end: number } | null) => void;
+    mockResolve.mockReturnValueOnce(
+      new Promise((res) => {
+        resolveAnn2 = res;
+      }),
+    );
+
+    const ann2 = makeAnnotation({ char_start: 20, char_end: 24 });
+    const promise2 = handleAnnotationHover(view, ann2);
+    // Different object identity, but the SAME char_start:char_end key as the
+    // hovered ann - this is the real pointer-leave of the hovered widget, not
+    // a stale sibling leave, so it must clear and cancel the in-flight resolve.
+    handleAnnotationLeave(view, makeAnnotation({ char_start: 20, char_end: 24 }));
+    resolveAnn2!({ start: 20, end: 24 });
+    await promise2;
+
+    expect(highlightRange(view)).toBeNull();
+    view.destroy();
+  });
+
   it("leave for the actively hovered annotation still clears and cancels its resolve", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const view = makeView();
