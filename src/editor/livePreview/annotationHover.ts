@@ -83,14 +83,12 @@ export async function handleAnnotationHover(
   }
 }
 
-export function handleAnnotationLeave(view: EditorView, annotation?: Annotation): void {
-  if (annotation) {
-    const active = activeKeyMap.get(view);
-    // Stale sibling leave: the pointer is logically on a DIFFERENT annotation
-    // (its mouseenter already ran, or the leaving widget was destroyed). Do not
-    // invalidate that hover's in-flight resolve or clear its highlight.
-    if (active !== undefined && active !== annotationKey(annotation)) return;
-  }
+export function handleAnnotationLeave(view: EditorView, annotation: Annotation): void {
+  const active = activeKeyMap.get(view);
+  // Stale sibling leave: the pointer is logically on a DIFFERENT annotation
+  // (its mouseenter already ran, or the leaving widget was destroyed). Do not
+  // invalidate that hover's in-flight resolve or clear its highlight.
+  if (active !== undefined && active !== annotationKey(annotation)) return;
   activeKeyMap.delete(view);
   bumpGen(view);
   clearScopeHighlight(view);

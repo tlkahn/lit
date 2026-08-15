@@ -89,7 +89,7 @@ describe("annotationHover", () => {
     );
 
     const promise = handleAnnotationHover(view, makeAnnotation());
-    handleAnnotationLeave(view);
+    handleAnnotationLeave(view, makeAnnotation());
     resolvePromise!({ start: 0, end: 5 });
     await promise;
 
@@ -97,10 +97,10 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
-  it("handleAnnotationLeave clears highlight", () => {
+  it("leave with annotation clears even when no active hover key is set", () => {
     const view = makeView();
     view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
-    handleAnnotationLeave(view);
+    handleAnnotationLeave(view, makeAnnotation());
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();
   });
@@ -255,13 +255,15 @@ describe("annotationHover", () => {
       .mockResolvedValueOnce({ start: 0, end: 5 })
       .mockResolvedValueOnce({ start: 20, end: 24 });
 
-    await handleAnnotationHover(view, makeAnnotation({ char_start: 6, char_end: 11 }));
+    const ann1 = makeAnnotation({ char_start: 6, char_end: 11 });
+    const ann2 = makeAnnotation({ char_start: 20, char_end: 24 });
+    await handleAnnotationHover(view, ann1);
     expect(highlightRange(view)).toEqual({ from: 0, to: 5 });
 
-    handleAnnotationLeave(view);
+    handleAnnotationLeave(view, ann1);
     expect(highlightRange(view)).toBeNull();
 
-    await handleAnnotationHover(view, makeAnnotation({ char_start: 20, char_end: 24 }));
+    await handleAnnotationHover(view, ann2);
     expect(highlightRange(view)).toEqual({ from: 20, to: 24 });
     view.destroy();
   });
