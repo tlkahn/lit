@@ -19,7 +19,7 @@ export default defineConfig({
     },
     {
       name: "webkit",
-      testMatch: "cardbox-flip.spec.ts",
+      testMatch: ["cardbox-flip.spec.ts", "annotation-hover-1028.spec.ts"],
       use: { ...devices["Desktop Safari"] },
     },
   ],
