@@ -189,6 +189,7 @@ mod tests {
     use super::*;
     use crate::annotation::lang::AnnotationIndexOpts;
     use crate::annotation::marks::merged_config;
+    use crate::annotation::scanner::utf16_len;
     use crate::annotation::scope_resolver::extract_text_for_range;
     use crate::annotation::types::{AnnotationType, ResolutionMode};
     use crate::graph::indexer::GraphIndex;
@@ -234,6 +235,125 @@ mod tests {
             Scope::Words(1),
             "en".to_string(),
         );
+        assert_eq!(result, None);
+    }
+
+    // --- Issue #1028: stacked block fixtures A/B execute REAL core resolve
+    // (no FE mock), so a bad core bump cannot silent-green the FE suite. ---
+
+    #[test]
+    fn cmd_resolve_stacked_anchor_second_is_prose() {
+        // Fixture A: two stacked block annotations with the same `^"anuttara"`
+        // anchor. The 2nd block's anchor must resolve to the prose occurrence,
+        // not the prior block's header/body.
+        let content = concat!(
+            "The term anuttara is central to the system.\n",
+            "\n",
+            "<!---\n",
+            "n\n",
+            "^\"anuttara\"\n",
+            "---\n",
+            "Primary sense: unsurpassed.\n",
+            "--->\n",
+            "\n",
+            "<!---\n",
+            "cf\n",
+            "^\"anuttara\"\n",
+            "---\n",
+            "See T\u{100} 3.68.\n",
+            "--->",
+        )
+        .to_string();
+        let anns = parse_annotations_builtin(&content);
+        assert_eq!(anns.len(), 2);
+        let second_start = anns[1].char_start;
+
+        let result = resolve_annotation_scope(
+            content.clone(),
+            second_start,
+            Scope::Anchor("anuttara".to_string()),
+            "en".to_string(),
+        );
+        let range = result.expect("2nd stacked anchor must resolve");
+        let text = extract_text_for_range(&content, &range);
+        assert_eq!(text, "anuttara");
+        // The prose occurrence before the first block span, never inside it.
+        let prose_start = content.find("anuttara").unwrap();
+        assert_eq!(range.start, utf16_len(&content[..prose_start]));
+        assert_eq!(range.end, range.start + utf16_len("anuttara"));
+        assert!(range.end <= anns[0].char_start);
+    }
+
+    #[test]
+    fn cmd_resolve_adjacent_sentence_second_is_prose() {
+        // Fixture B: two adjacent block annotations. The 2nd's sentence must
+        // resolve to the prose sentence, not the prior block's body.
+        let content = concat!(
+            "Only one prose sentence.\n",
+            "\n",
+            "<!---\n",
+            "n\n",
+            "---\n",
+            "body one\n",
+            "--->\n",
+            "\n",
+            "<!---\n",
+            "n\n",
+            "---\n",
+            "body two\n",
+            "--->",
+        )
+        .to_string();
+        let anns = parse_annotations_builtin(&content);
+        assert_eq!(anns.len(), 2);
+        let second_start = anns[1].char_start;
+
+        let result = resolve_annotation_scope(
+            content.clone(),
+            second_start,
+            Scope::Sentence(1),
+            "en".to_string(),
+        );
+        let range = result.expect("2nd adjacent sentence must resolve");
+        let text = extract_text_for_range(&content, &range);
+        assert_eq!(text.trim(), "Only one prose sentence.");
+        assert!(range.start < anns[0].char_start);
+        assert!(range.end <= anns[0].char_start);
+    }
+
+    #[test]
+    fn cmd_resolve_stacked_anchor_multibyte_prior_does_not_panic() {
+        // The prior block body holds the only in-annotation match, immediately
+        // after a multi-byte char. Core v0.1.1 sliced mid-codepoint here;
+        // v0.1.2 walks on char boundaries and returns None (no prose match).
+        let content = concat!(
+            "Hello world only.\n",
+            "\n",
+            "<!---\n",
+            "n\n",
+            "---\n",
+            "\u{754c}foo is inside.\n",
+            "--->\n",
+            "\n",
+            "<!---\n",
+            "n\n",
+            "^\"foo\"\n",
+            "---\n",
+            "second\n",
+            "--->\n",
+        )
+        .to_string();
+        let anns = parse_annotations_builtin(&content);
+        assert_eq!(anns.len(), 2);
+        let second_start = anns[1].char_start;
+
+        let result = resolve_annotation_scope(
+            content,
+            second_start,
+            Scope::Anchor("foo".to_string()),
+            "en".to_string(),
+        );
+        // No prose "foo" outside annotations: Ok(None) is correct.
         assert_eq!(result, None);
     }
 
