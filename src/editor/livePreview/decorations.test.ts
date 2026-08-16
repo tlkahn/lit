@@ -1873,6 +1873,176 @@ describe("buildDecorations — strikethrough", () => {
   });
 });
 
+describe("buildDecorations — inline HTML sup/sub", () => {
+  it("hides <sup>/</sup> and marks content when cursor elsewhere", () => {
+    const doc = "Hello<sup>world</sup>\n\nother";
+    const view = makeView(doc, doc.length - 1); // caret on "other"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 5 && d.to === 10)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 15 && d.to === 21)).toBe(true);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(10);
+    expect(sup!.to).toBe(15);
+    view.destroy();
+  });
+
+  it("hides <sub>/</sub> and marks content when cursor elsewhere", () => {
+    const doc = "a<sub>i</sub>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 7 && d.to === 13)).toBe(true);
+    const sub = decos.find((d) => d.class === "cm-preview-sub");
+    expect(sub).toBeDefined();
+    expect(sub!.from).toBe(6);
+    expect(sub!.to).toBe(7);
+    view.destroy();
+  });
+
+  it("reveals raw tags + source when caret is inside the span", () => {
+    const doc = "Hello<sup>world</sup>\n\nother";
+    const view = makeView(doc, 12); // caret inside "world"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace" && d.from >= 5 && d.to <= 21)).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("reveals raw tags when caret sits on the open tag itself", () => {
+    const doc = "Hello<sup>world</sup>\n\nother";
+    const view = makeView(doc, 5); // caret on "<" of <sup>
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    view.destroy();
+  });
+
+  it("keeps a sibling span decorated when caret is inside another", () => {
+    const doc = "Hello<sup>world</sup> and <sup>there</sup>\n\nother";
+    const view = makeView(doc, 7); // caret inside first span's content
+    const decos = collectDecos(view);
+    const sups = decos.filter((d) => d.class === "cm-preview-sup");
+    expect(sups).toHaveLength(1);
+    expect(sups[0]!.from).toBe(31);
+    expect(sups[0]!.to).toBe(36);
+    view.destroy();
+  });
+
+  it("sup over a link keeps both the sup mark and the link decorations", () => {
+    const doc = "See<sup>[1](#chap01.html_b_1)</sup>\n\nx";
+    const view = makeView(doc, doc.length - 1); // caret on x
+    const decos = collectDecos(view);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(8);
+    expect(sup!.to).toBe(29);
+    const link = decos.find((d) => d.class === "cm-preview-link");
+    expect(link).toBeDefined();
+    expect(link!.url).toBe("#chap01.html_b_1");
+    expect(decos.some((d) => d.type === "replace" && d.from === 8 && d.to === 9)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 10 && d.to === 29)).toBe(true);
+    view.destroy();
+  });
+
+  it("sup over bold keeps both the sup mark and the bold mark", () => {
+    const doc = "a<sup>**b**</sup>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(6);
+    expect(sup!.to).toBe(11);
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    view.destroy();
+  });
+
+  it("unclosed <sup> stays raw (no hide, no mark)", () => {
+    const doc = "Unclosed<sup>stays\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("unknown <span>...</span> stays raw", () => {
+    const doc = "a<span>b</span>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("attributed <sup id=\"x\"> stays raw (bare-only v1)", () => {
+    const doc = 'a<sup id="x">b</sup>\n\nother';
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("renders sup inside a heading (separate HTMLTag pass)", () => {
+    const doc = "## title<sup>1</sup>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(13);
+    expect(sup!.to).toBe(14);
+    view.destroy();
+  });
+
+  it("renders sup inside emphasis (separate HTMLTag pass)", () => {
+    const doc = "*a<sup>1</sup>*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(7);
+    expect(sup!.to).toBe(8);
+    view.destroy();
+  });
+
+  it("adds span lines to cursorSensitiveLines even when caret is inside", () => {
+    const doc = "plain\nHello<sup>world</sup>\nmore";
+    const view = makeView(doc, 0); // caret on "plain"
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(2)).toBe(true);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    view.destroy();
+  });
+
+  it("no tags in doc: no html sup/sub decos (smoke)", () => {
+    const doc = "plain text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup" || d.class === "cm-preview-sub")).toBe(false);
+    view.destroy();
+  });
+
+  it("does not decorate HTMLTag inside table cells (block-replaced by table widget)", () => {
+    const doc = "| a<br>b |\n| --- |\n| 1 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { decorations } = buildDecorations(view);
+    const iter = decorations.iter();
+    let htmlBreakWidget = false;
+    while (iter.value) {
+      if (iter.value.spec.widget) htmlBreakWidget = true;
+      iter.next();
+    }
+    expect(htmlBreakWidget).toBe(false);
+    // Table lines must not be polluted by html-tag cursor sensitivity.
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    expect(cursorSensitiveLines.has(2)).toBe(false);
+    view.destroy();
+  });
+});
+
 describe("buildDecorations — blockquotes", () => {
   it("applies line class and hides quote mark on regular blockquote", () => {
     const doc = "> Quoted text\n\nother";

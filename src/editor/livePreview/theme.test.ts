@@ -122,6 +122,40 @@ describe("strikethrough theme spec", () => {
   });
 });
 
+describe("inline HTML sup/sub/mark theme spec", () => {
+  it("livePreviewThemeSpec contains .cm-preview-sup key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-sup"]).toBeDefined();
+  });
+
+  it(".cm-preview-sup is superscript with smaller font (matches .cm-footnote-ref metrics)", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-sup"] as Record<string, string>;
+    expect(rule.verticalAlign).toBe("super");
+    expect(rule.fontSize).toBe("0.75em");
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it("livePreviewThemeSpec contains .cm-preview-sub key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-sub"]).toBeDefined();
+  });
+
+  it(".cm-preview-sub is subscript with smaller font", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-sub"] as Record<string, string>;
+    expect(rule.verticalAlign).toBe("sub");
+    expect(rule.fontSize).toBe("0.75em");
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it("livePreviewThemeSpec contains .cm-preview-mark key", () => {
+    expect(livePreviewThemeSpec[".cm-preview-mark"]).toBeDefined();
+  });
+
+  it(".cm-preview-mark has a translucent accent background and no margin", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-mark"] as Record<string, string>;
+    expect(rule.backgroundColor).toContain("color-mix");
+    expect(rule).not.toHaveProperty("margin");
+  });
+});
+
 describe("escaped dollar theme spec", () => {
   it("livePreviewThemeSpec contains .cm-preview-escaped-dollar key", () => {
     expect(livePreviewThemeSpec[".cm-preview-escaped-dollar"]).toBeDefined();

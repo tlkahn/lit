@@ -13,6 +13,7 @@ import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
 import { getRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
+import { pairHtmlInlineTags, type HtmlTagSpan } from "./htmlInline";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -34,6 +35,14 @@ const cursorSensitiveNodeNames = new Set([
   "InlineComment", "BlockComment", "HorizontalRule", "DisplayMath",
   "Strikethrough", "FootnoteRef", "FootnoteDef",
 ]);
+
+// Tag name -> live-preview class. Keep in sync with the allowlist in
+// htmlInline.ts and the theme rules in theme.ts. "mark" is intentionally not
+// mapped until its decorations cycle lands (pairer already recognizes it).
+const htmlInlineClassMap: Record<string, string> = {
+  sup: "cm-preview-sup",
+  sub: "cm-preview-sub",
+};
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
   perfMark("buildDecorations:start");
@@ -157,6 +166,29 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
     });
   }
 
+  // Inline-HTML allowlist pass. HTMLTag is a leaf, but headings / emphasis /
+  // strikethrough return false from the main iterate, so a dedicated collect
+  // pass is required (see plan root cause). Skip tags inside tables: the
+  // whole Table is block-replaced by EditableTableWidget, and per-cell tags
+  // would only pollute cursorSensitiveLines (same precedent as Escape).
+  const htmlTags: HtmlTagSpan[] = [];
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(state).iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (node.name !== "HTMLTag") return;
+        if (hasAncestor(node.node, "Table")) return;
+        htmlTags.push({
+          from: node.from,
+          to: node.to,
+          raw: state.doc.sliceString(node.from, node.to),
+        });
+      },
+    });
+  }
+  addHtmlInlineDecos(state, htmlTags, decos, cursorSensitiveLines);
+
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
 
   const filtered = filterContainedDecorations(decos);
@@ -176,6 +208,34 @@ function hasAncestor(
     cur = cur.parent as { name: string; parent: unknown } | null;
   }
   return false;
+}
+
+function addHtmlInlineDecos(
+  state: EditorState,
+  tags: HtmlTagSpan[],
+  decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
+) {
+  const pairs = pairHtmlInlineTags(tags);
+  for (const pair of pairs) {
+    if (pair.type === "void") continue; // <br> widget lands in its own cycle
+    const cls = htmlInlineClassMap[pair.name];
+    if (!cls) continue;
+
+    const from = pair.open.from;
+    const to = pair.close.to;
+    const startLine = state.doc.lineAt(from).number;
+    const endLine = state.doc.lineAt(to).number;
+    for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+
+    if (isCursorInRange(state, from, to)) continue;
+
+    decos.push({ from: pair.open.from, to: pair.open.to, deco: Decoration.replace({}) });
+    decos.push({ from: pair.close.from, to: pair.close.to, deco: Decoration.replace({}) });
+    if (pair.contentFrom < pair.contentTo) {
+      decos.push({ from: pair.contentFrom, to: pair.contentTo, deco: Decoration.mark({ class: cls }) });
+    }
+  }
 }
 
 function processInlineChildren(

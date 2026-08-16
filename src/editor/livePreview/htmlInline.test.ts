@@ -67,13 +67,13 @@ function span(raw: string): HtmlTagSpan {
   return { from: 0, to: raw.length, raw };
 }
 
-function tags(...raws: string[]): HtmlTagSpan[] {
+function tags<T extends string[]>(...raws: T): { [K in keyof T]: HtmlTagSpan } {
   let pos = 0;
   return raws.map((raw) => {
     const s = { from: pos, to: pos + raw.length, raw };
     pos += raw.length;
     return s;
-  });
+  }) as { [K in keyof T]: HtmlTagSpan };
 }
 
 describe("pairHtmlInlineTags", () => {
