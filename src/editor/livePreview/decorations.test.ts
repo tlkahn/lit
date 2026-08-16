@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { buildDecorations, buildBlockReplacements, filterContainedDecorations } from "./decorations";
+import { buildDecorations, buildBlockReplacements, filterContainedDecorations, collectHtmlInlineTags } from "./decorations";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
@@ -2222,6 +2222,46 @@ describe("buildDecorations — inline HTML sup/sub", () => {
     expect(cursorSensitiveLines.has(1)).toBe(false);
     expect(cursorSensitiveLines.has(2)).toBe(false);
     view.destroy();
+  });
+});
+
+describe("collectHtmlInlineTags", () => {
+  function makeState(doc: string): EditorState {
+    return EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] })],
+    });
+  }
+
+  it("returns both tags for a multi-line same-paragraph pair", () => {
+    const state = makeState("a<sup>b\nc</sup>d");
+    const tags = collectHtmlInlineTags(state);
+    expect(tags).toHaveLength(2);
+    expect(tags[0]!.raw).toBe("<sup>");
+    expect(tags[0]!.from).toBe(1);
+    expect(tags[1]!.raw).toBe("</sup>");
+    expect(tags[1]!.from).toBe(9);
+    expect(tags[0]!.parentFrom).toBe(tags[1]!.parentFrom);
+    expect(tags[0]!.parentFrom).toBeGreaterThanOrEqual(0);
+  });
+
+  it("skips HTMLTag inside Table", () => {
+    const state = makeState("| a<br>b |\n| --- |\n| 1 |\n\nother");
+    const tags = collectHtmlInlineTags(state);
+    expect(tags).toHaveLength(0);
+  });
+
+  it("is not limited to a half-document slice", () => {
+    // Tags near the start and near the end must both be collected in one
+    // call: pins the full-document walk (a viewport-clipped collect would
+    // drop one end of a multi-line pair at the edge).
+    const state = makeState("a<sup>b</sup>\n\n\n\n\n\n\n\n\n\nz<sub>w</sub>end");
+    const tags = collectHtmlInlineTags(state);
+    expect(tags).toHaveLength(4);
+    expect(tags.some((t) => t.raw === "<sup>")).toBe(true);
+    expect(tags.some((t) => t.raw === "</sup>")).toBe(true);
+    expect(tags.some((t) => t.raw === "<sub>")).toBe(true);
+    expect(tags.some((t) => t.raw === "</sub>")).toBe(true);
   });
 });
 

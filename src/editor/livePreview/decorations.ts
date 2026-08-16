@@ -168,28 +168,12 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
 
   // Inline-HTML allowlist pass. HTMLTag is a leaf, but headings / emphasis /
   // strikethrough return false from the main iterate, so a dedicated collect
-  // pass is required (see plan root cause). Skip tags inside tables: the
-  // whole Table is block-replaced by EditableTableWidget, and per-cell tags
-  // would only pollute cursorSensitiveLines (same precedent as Escape).
-  const htmlTags: HtmlTagSpan[] = [];
-  for (const { from, to } of view.visibleRanges) {
-    syntaxTree(state).iterate({
-      from,
-      to,
-      enter: (node) => {
-        if (node.name !== "HTMLTag") return;
-        if (hasAncestor(node.node, "Table")) return;
-        const parent = node.node.parent;
-        htmlTags.push({
-          from: node.from,
-          to: node.to,
-          raw: state.doc.sliceString(node.from, node.to),
-          parentFrom: parent ? parent.from : -1,
-        });
-      },
-    });
-  }
-  addHtmlInlineDecos(state, htmlTags, decos, cursorSensitiveLines);
+  // pass is required (see plan root cause). Full-document collect: tags are
+  // sparse leaves with no wrapper node, so a viewport-clipped collect drops
+  // one end of a multi-line pair and fail-closes into half-raw source at the
+  // edge. Emphasis does not have this problem because the parent node still
+  // enters when it overlaps the viewport.
+  addHtmlInlineDecos(state, collectHtmlInlineTags(state), decos, cursorSensitiveLines);
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
 
@@ -198,6 +182,30 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   const result = RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
   perfMeasure("buildDecorations", "buildDecorations:start");
   return { decorations: result, cursorSensitiveLines };
+}
+
+/**
+ * Collect allowlisted HTMLTag spans over the whole document. Skip tags inside
+ * tables: the whole Table is block-replaced by EditableTableWidget, and
+ * per-cell tags would only pollute cursorSensitiveLines (same precedent as
+ * Escape).
+ */
+export function collectHtmlInlineTags(state: EditorState): HtmlTagSpan[] {
+  const tags: HtmlTagSpan[] = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "HTMLTag") return;
+      if (hasAncestor(node.node, "Table")) return;
+      const parent = node.node.parent;
+      tags.push({
+        from: node.from,
+        to: node.to,
+        raw: state.doc.sliceString(node.from, node.to),
+        parentFrom: parent ? parent.from : -1,
+      });
+    },
+  });
+  return tags;
 }
 
 function hasAncestor(
