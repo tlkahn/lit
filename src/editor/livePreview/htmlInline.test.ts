@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { parseHtmlInlineTag, pairHtmlInlineTags, type HtmlTagSpan } from "./htmlInline";
+import {
+  parseHtmlInlineTag,
+  pairHtmlInlineTags,
+  HTML_INLINE_ALLOWLIST,
+  HTML_INLINE_PAIR_CLASS,
+  type HtmlTagSpan,
+} from "./htmlInline";
 
 describe("parseHtmlInlineTag", () => {
   it("parses bare <sup> as open sup", () => {
@@ -254,5 +260,18 @@ describe("pairHtmlInlineTags", () => {
     expect(t[1]!.from).toBe(5);
     expect(t[2]!.from).toBe(6);
     expect(span("<sup>")).toEqual({ from: 0, to: 5, raw: "<sup>", parentFrom: 0 });
+  });
+});
+
+describe("HTML_INLINE_ALLOWLIST / HTML_INLINE_PAIR_CLASS sync", () => {
+  it("every allowlisted pair tag has a class map entry and br does not", () => {
+    for (const name of HTML_INLINE_ALLOWLIST) {
+      const cls = (HTML_INLINE_PAIR_CLASS as Record<string, string | undefined>)[name];
+      if (name === "br") {
+        expect(cls).toBeUndefined();
+      } else {
+        expect(cls).toMatch(/^cm-preview-/);
+      }
+    }
   });
 });

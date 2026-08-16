@@ -2213,7 +2213,7 @@ describe("buildDecorations — inline HTML sup/sub", () => {
     const iter = decorations.iter();
     let htmlBreakWidget = false;
     while (iter.value) {
-      if (iter.value.spec.widget) htmlBreakWidget = true;
+      if (iter.value.spec.widget instanceof HtmlBreakWidget) htmlBreakWidget = true;
       iter.next();
     }
     expect(htmlBreakWidget).toBe(false);

@@ -9,7 +9,18 @@
 
 export type HtmlInlineName = "sup" | "sub" | "mark" | "br";
 
-const PAIR_TAG_NAMES = ["sup", "sub", "mark"] as const;
+/**
+ * Live-preview decoration class per allowlisted pair tag. Single source of
+ * truth for the deco layer (decorations.ts imports this); theme.ts still
+ * hardcodes the selectors and stays pinned by theme tests.
+ */
+export const HTML_INLINE_PAIR_CLASS: Record<Exclude<HtmlInlineName, "br">, string> = {
+  sup: "cm-preview-sup",
+  sub: "cm-preview-sub",
+  mark: "cm-preview-mark",
+};
+
+const PAIR_TAG_NAMES = Object.keys(HTML_INLINE_PAIR_CLASS) as (keyof typeof HTML_INLINE_PAIR_CLASS)[];
 
 /** Tag names the live preview may render as real typography. */
 export const HTML_INLINE_ALLOWLIST: readonly HtmlInlineName[] = [...PAIR_TAG_NAMES, "br"];

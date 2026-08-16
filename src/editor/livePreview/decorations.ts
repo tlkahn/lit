@@ -13,7 +13,7 @@ import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
 import { getRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
-import { pairHtmlInlineTags, type HtmlTagSpan } from "./htmlInline";
+import { pairHtmlInlineTags, HTML_INLINE_PAIR_CLASS, type HtmlTagSpan } from "./htmlInline";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -36,14 +36,9 @@ const cursorSensitiveNodeNames = new Set([
   "Strikethrough", "FootnoteRef", "FootnoteDef",
 ]);
 
-// Tag name -> live-preview class. Keep in sync with the allowlist in
-// htmlInline.ts and the theme rules in theme.ts.
-const htmlInlineClassMap: Record<string, string> = {
-  sup: "cm-preview-sup",
-  sub: "cm-preview-sub",
-  mark: "cm-preview-mark",
-};
-
+// Tag name -> live-preview class, single-sourced from htmlInline.ts
+// (HTML_INLINE_PAIR_CLASS). Theme rules in theme.ts still hardcode the
+// selectors and are pinned by theme tests.
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
   perfMark("buildDecorations:start");
   const { state } = view;
@@ -251,7 +246,7 @@ function addHtmlInlineDecos(
       decos.push({ from: tag.from, to: tag.to, deco: Decoration.replace({ widget: new HtmlBreakWidget() }) });
       continue;
     }
-    const cls = htmlInlineClassMap[pair.name];
+    const cls = HTML_INLINE_PAIR_CLASS[pair.name];
     if (!cls) continue;
 
     const from = pair.open.from;
