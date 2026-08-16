@@ -53,7 +53,9 @@ export const scopeHighlightField = StateField.define<DecorationSet>({
           if (r.from < r.to) ranges.push(r);
         }
         if (ranges.length === 0) return Decoration.none;
-        return Decoration.set(ranges.map((r) => highlightMark.range(r.from, r.to)));
+        // `sort = true`: the public multi-range `Decoration.set` throws on
+        // unsorted input; clip callers can produce out-of-order segments.
+        return Decoration.set(ranges.map((r) => highlightMark.range(r.from, r.to)), true);
       }
     }
     if (tr.docChanged) return Decoration.none;

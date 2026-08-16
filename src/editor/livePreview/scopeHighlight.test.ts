@@ -49,6 +49,22 @@ describe("scopeHighlightField", () => {
     expect(ranges).toEqual([{ from: 0, to: 5 }, { from: 12, to: 15 }]);
   });
 
+  it("setScopeHighlight.of with unsorted ranges does not throw and keeps both marks", () => {
+    const state = EditorState.create({
+      doc: "hello world foo bar",
+      extensions: [scopeHighlightField],
+    });
+    const tr = state.update({
+      effects: setScopeHighlight.of([{ from: 10, to: 12 }, { from: 1, to: 3 }]),
+    });
+    const decos = tr.state.field(scopeHighlightField);
+    const ranges: Array<{ from: number; to: number }> = [];
+    decos.between(0, state.doc.length, (from, to) => {
+      ranges.push({ from, to });
+    });
+    expect(ranges).toEqual([{ from: 1, to: 3 }, { from: 10, to: 12 }]);
+  });
+
   it("setScopeHighlight.of([]) clears to Decoration.none", () => {
     const state = EditorState.create({
       doc: "hello world",

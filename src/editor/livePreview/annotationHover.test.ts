@@ -441,9 +441,12 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
-  // --- Cycle 8: stacked block hover with real fixture shapes (#1028) ---
+  // --- Cycle 8: stacked block fixture shapes through the paint path (#1028) ---
+  // These FE tests mock IPC: they pin the paint/clip wiring given resolve
+  // returns prose ranges. Real core execution for fixtures A/B lives in the
+  // src-tauri command smokes (cmd_resolve_stacked_*).
 
-  it("Fixture A: hover 1st stacked block highlights prose anuttara", async () => {
+  it("Fixture A: hover 1st stacked block paints prose anuttara", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
     const anns = spans.map((s, i) =>
@@ -465,7 +468,7 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
-  it("Fixture A: hover 2nd stacked block (same anchor) highlights the same prose word", async () => {
+  it("Fixture A: hover 2nd stacked block (same anchor) paints the same prose word", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
     const anns = spans.map((s, i) =>
@@ -479,7 +482,7 @@ describe("annotationHover", () => {
     );
     const view = makeHoverView(FIXTURE_A_STACKED_SAME_ANCHOR, anns);
     const proseStart = FIXTURE_A_STACKED_SAME_ANCHOR.indexOf("anuttara");
-    // What core v0.1.1 resolves for ann[1]'s anchor: the prose occurrence.
+    // Given resolve returns the prose range for ann[1]'s anchor.
     mockResolve.mockResolvedValue({ start: proseStart, end: proseStart + 8 });
 
     await handleAnnotationHover(view, anns[1]!);
@@ -502,7 +505,7 @@ describe("annotationHover", () => {
     view.destroy();
   });
 
-  it("Fixture A: cold-hovering the 2nd block works the same as after the 1st", async () => {
+  it("Fixture A: hovering the 1st then the 2nd stacked block repaints prose", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
     const anns = spans.map((s, i) =>
@@ -518,14 +521,59 @@ describe("annotationHover", () => {
     const proseStart = FIXTURE_A_STACKED_SAME_ANCHOR.indexOf("anuttara");
     mockResolve.mockResolvedValue({ start: proseStart, end: proseStart + 8 });
 
-    // No prior hover in this view - the 2nd block is the first thing hovered.
-    await handleAnnotationHover(view, anns[1]!);
-
+    // Warm path: hover the 1st block, then the 2nd block in the same view.
+    await handleAnnotationHover(view, anns[0]!);
     expect(fieldRanges(view)).toEqual([{ from: proseStart, to: proseStart + 8 }]);
+
+    await handleAnnotationHover(view, anns[1]!);
+    expect(fieldRanges(view)).toEqual([{ from: proseStart, to: proseStart + 8 }]);
+    // Both hovers resolved via IPC; the last call used the 2nd block's start.
+    expect(mockResolve).toHaveBeenCalledTimes(2);
+    expect(mockResolve).toHaveBeenLastCalledWith(
+      FIXTURE_A_STACKED_SAME_ANCHOR,
+      anns[1]!.char_start,
+      { kind: "anchor", value: "anuttara" },
+      "en",
+    );
     view.destroy();
   });
 
-  it("Fixture B: hover 2nd adjacent default-scope block highlights the prose sentence", async () => {
+  it("loose word range (pre-C3 core shape) clips to visible prose gaps only", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
+    const anns = spans.map((s, i) =>
+      makeAnnotation({
+        form: "block",
+        char_start: s.from,
+        char_end: s.to,
+        annotation_type: i === 0 ? "note" : "crossref",
+        scope: { kind: "words", value: 1 },
+      }),
+    );
+    const view = makeHoverView(FIXTURE_A_STACKED_SAME_ANCHOR, anns);
+    const wordStart = FIXTURE_A_STACKED_SAME_ANCHOR.indexOf("system.");
+    // Pre-C3 loose core range: from the rightmost prose word through the
+    // prior block source up to the hovered annotation. The FE clip must keep
+    // only the visible gaps (prose before block 1, blank line between the
+    // blocks) and never paint a block span.
+    mockResolve.mockResolvedValue({ start: wordStart, end: anns[1]!.char_start });
+
+    await handleAnnotationHover(view, anns[1]!);
+
+    const expected = [
+      { from: wordStart, to: spans[0]!.from },
+      { from: spans[0]!.to, to: spans[1]!.from },
+    ].filter((r) => r.from < r.to);
+    expect(fieldRanges(view)).toEqual(expected);
+    for (const r of fieldRanges(view)) {
+      for (const s of spans) {
+        expect(r.from >= s.to || r.to <= s.from).toBe(true);
+      }
+    }
+    view.destroy();
+  });
+
+  it("Fixture B: hover 2nd adjacent default-scope block paints the prose sentence", async () => {
     usePreferencesStore.setState({ annotationDefaultLang: "en" });
     const spans = blockSpans(FIXTURE_B_ADJACENT_DEFAULT_SENTENCE);
     const anns = spans.map((s) =>
@@ -538,7 +586,7 @@ describe("annotationHover", () => {
     );
     const view = makeHoverView(FIXTURE_B_ADJACENT_DEFAULT_SENTENCE, anns);
     const sentenceEnd = "Only one prose sentence.".length;
-    // What core v0.1.1 resolves for ann[1] Sentence(1).
+    // Given resolve returns the prose sentence for ann[1] Sentence(1).
     mockResolve.mockResolvedValue({ start: 0, end: sentenceEnd });
 
     await handleAnnotationHover(view, anns[1]!);
