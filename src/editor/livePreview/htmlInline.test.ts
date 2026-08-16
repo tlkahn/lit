@@ -64,13 +64,27 @@ describe("parseHtmlInlineTag", () => {
 });
 
 function span(raw: string): HtmlTagSpan {
-  return { from: 0, to: raw.length, raw };
+  return { from: 0, to: raw.length, raw, parentFrom: 0 };
 }
 
 function tags<T extends string[]>(...raws: T): { [K in keyof T]: HtmlTagSpan } {
   let pos = 0;
   return raws.map((raw) => {
-    const s = { from: pos, to: pos + raw.length, raw };
+    const s = { from: pos, to: pos + raw.length, raw, parentFrom: 0 };
+    pos += raw.length;
+    return s;
+  }) as { [K in keyof T]: HtmlTagSpan };
+}
+
+// Same as tags() but each span carries an explicit parentFrom (document
+// position of the direct syntax parent node). Used to pin the same-parent
+// fail-closed pairing rule.
+function tagsWithParent<T extends { raw: string; parentFrom: number }[]>(
+  ...items: T
+): { [K in keyof T]: HtmlTagSpan } {
+  let pos = 0;
+  return items.map(({ raw, parentFrom }) => {
+    const s = { from: pos, to: pos + raw.length, raw, parentFrom };
     pos += raw.length;
     return s;
   }) as { [K in keyof T]: HtmlTagSpan };
@@ -193,11 +207,52 @@ describe("pairHtmlInlineTags", () => {
     expect(pairs[0]).toMatchObject({ type: "pair", name: "sup", open: o, close: c });
   });
 
+  it("pairs across different parentFrom values are dropped", () => {
+    const [open, close] = tagsWithParent(
+      { raw: "<sup>", parentFrom: 0 },
+      { raw: "</sup>", parentFrom: 10 },
+    );
+    expect(pairHtmlInlineTags([open, close])).toEqual([]);
+  });
+
+  it("missing parentFrom (-1) never pairs", () => {
+    const [open, close] = tagsWithParent(
+      { raw: "<sup>", parentFrom: -1 },
+      { raw: "</sup>", parentFrom: -1 },
+    );
+    expect(pairHtmlInlineTags([open, close])).toEqual([]);
+  });
+
+  it("nested open under a different parent than its close fails closed", () => {
+    const [s1, s2, c2, c1] = tagsWithParent(
+      { raw: "<sup>", parentFrom: 0 },
+      { raw: "<sub>", parentFrom: 0 },
+      { raw: "</sub>", parentFrom: 10 },
+      { raw: "</sup>", parentFrom: 0 },
+    );
+    // The parent-mismatched </sub> is ignored without popping, so the outer
+    // </sup> cannot reach the still-stacked <sub> -> fail closed entirely.
+    expect(pairHtmlInlineTags([s1, s2, c2, c1])).toEqual([]);
+  });
+
+  it("parent-mismatched close fails closed without popping unrelated opens", () => {
+    // <sup> (parent 0), then a parent-mismatched </sup> (parent 10) that is
+    // ignored, then a same-parent </sup> (parent 0) still closes the open.
+    const [o, orphan, c] = tagsWithParent(
+      { raw: "<sup>", parentFrom: 0 },
+      { raw: "</sup>", parentFrom: 10 },
+      { raw: "</sup>", parentFrom: 0 },
+    );
+    const pairs = pairHtmlInlineTags([o!, orphan!, c!]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]).toMatchObject({ type: "pair", name: "sup", open: o, close: c });
+  });
+
   it("helper: span()/tags() positions are document-ordered", () => {
     const t = tags("<sup>", "x", "</sup>");
     expect(t[0]!.from).toBe(0);
     expect(t[1]!.from).toBe(5);
     expect(t[2]!.from).toBe(6);
-    expect(span("<sup>")).toEqual({ from: 0, to: 5, raw: "<sup>" });
+    expect(span("<sup>")).toEqual({ from: 0, to: 5, raw: "<sup>", parentFrom: 0 });
   });
 });

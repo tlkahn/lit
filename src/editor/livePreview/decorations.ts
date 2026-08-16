@@ -179,10 +179,12 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
       enter: (node) => {
         if (node.name !== "HTMLTag") return;
         if (hasAncestor(node.node, "Table")) return;
+        const parent = node.node.parent;
         htmlTags.push({
           from: node.from,
           to: node.to,
           raw: state.doc.sliceString(node.from, node.to),
+          parentFrom: parent ? parent.from : -1,
         });
       },
     });

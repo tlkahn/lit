@@ -2089,6 +2089,62 @@ describe("buildDecorations — inline HTML sup/sub", () => {
     view.destroy();
   });
 
+  it("cross-paragraph <sup> does not decorate", () => {
+    const doc = "a<sup>b\n\nc</sup>d\n\nOTHER";
+    const view = makeView(doc, doc.length - 1); // caret on OTHER
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 10 && d.to === 16)).toBe(false);
+    view.destroy();
+  });
+
+  it("cross-heading <sup> does not decorate", () => {
+    const doc = "a<sup>b\n# H\nc</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 19)).toBe(false);
+    view.destroy();
+  });
+
+  it("cross-list-item <sup> does not decorate", () => {
+    const doc = "- x<sup>a\n- y</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 8)).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 19)).toBe(false);
+    view.destroy();
+  });
+
+  it("same-paragraph soft-break <sup> still decorates", () => {
+    const doc = "a<sup>b\nc</sup>d\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 9 && d.to === 15)).toBe(true);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(6);
+    expect(sup!.to).toBe(9);
+    view.destroy();
+  });
+
+  it("blockquote-continued paragraph <sup> still decorates", () => {
+    const doc = "> a<sup>b\n> c</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 8)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 19)).toBe(true);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(8);
+    expect(sup!.to).toBe(13);
+    view.destroy();
+  });
+
   it("does not decorate HTMLTag inside table cells (block-replaced by table widget)", () => {
     const doc = "| a<br>b |\n| --- |\n| 1 |\n\nother";
     const view = makeView(doc, doc.length - 1);

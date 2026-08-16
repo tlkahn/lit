@@ -38,7 +38,13 @@ export function parseHtmlInlineTag(raw: string): ParsedHtmlInlineTag {
   return { kind: "other" };
 }
 
-export type HtmlTagSpan = { from: number; to: number; raw: string };
+export type HtmlTagSpan = {
+  from: number;
+  to: number;
+  raw: string;
+  /** Document position of the direct syntax parent node (e.g. the Paragraph), or -1 if absent. */
+  parentFrom: number;
+};
 
 export type HtmlInlinePair =
   | {
@@ -76,7 +82,14 @@ export function pairHtmlInlineTags(tags: HtmlTagSpan[]): HtmlInlinePair[] {
       continue;
     }
     const top = stack[stack.length - 1];
-    if (top && top.name === p.name) {
+    // Same direct syntax parent => no cross-block pairs. A close in block B
+    // must not close an open from block A (fail closed).
+    if (
+      top &&
+      top.name === p.name &&
+      top.tag.parentFrom === tag.parentFrom &&
+      top.tag.parentFrom >= 0
+    ) {
       stack.pop();
       pairs.push({
         type: "pair",
@@ -87,7 +100,7 @@ export function pairHtmlInlineTags(tags: HtmlTagSpan[]): HtmlInlinePair[] {
         contentTo: tag.from,
       });
     }
-    // mismatched / orphan close: ignored, stack untouched
+    // parent-mismatched / mismatched / orphan close: ignored, stack untouched
   }
 
   return pairs;
