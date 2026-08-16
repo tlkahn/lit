@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { buildDecorations, buildBlockReplacements, filterContainedDecorations } from "./decorations";
+import { buildDecorations, buildBlockReplacements, filterContainedDecorations, collectHtmlInlineTags } from "./decorations";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
@@ -11,7 +11,7 @@ import { Footnote } from "../markdown/footnote";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
-import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget } from "./widgets";
+import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget, HtmlBreakWidget } from "./widgets";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
 
 vi.mock("katex", () => ({
@@ -52,7 +52,7 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   widgetVariant?: "short" | "full";
-  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref" | "footnote-def-body";
+  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref" | "footnote-def-body" | "html-break";
   footnoteDisplayLabel?: string; // raw source label for ref sup and def mark
   footnoteBodyText?: string;
   url?: string;
@@ -86,6 +86,7 @@ function collectDecos(view: EditorView): DecoInfo[] {
         info.widgetKind = "footnote-def-body";
         info.footnoteBodyText = spec.widget.bodyText;
       }
+      if (spec.widget instanceof HtmlBreakWidget) info.widgetKind = "html-break";
     }
     if (spec.class) info.class = spec.class;
     if (spec.attributes?.["data-url"]) info.url = spec.attributes["data-url"];
@@ -1870,6 +1871,397 @@ describe("buildDecorations — strikethrough", () => {
     const { cursorSensitiveLines } = buildDecorations(view);
     expect(cursorSensitiveLines.has(2)).toBe(true);
     view.destroy();
+  });
+});
+
+describe("buildDecorations — inline HTML sup/sub", () => {
+  it("hides <sup>/</sup> and marks content when cursor elsewhere", () => {
+    const doc = "Hello<sup>world</sup>\n\nother";
+    const view = makeView(doc, doc.length - 1); // caret on "other"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 5 && d.to === 10)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 15 && d.to === 21)).toBe(true);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(10);
+    expect(sup!.to).toBe(15);
+    view.destroy();
+  });
+
+  it("hides <sub>/</sub> and marks content when cursor elsewhere", () => {
+    const doc = "a<sub>i</sub>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 7 && d.to === 13)).toBe(true);
+    const sub = decos.find((d) => d.class === "cm-preview-sub");
+    expect(sub).toBeDefined();
+    expect(sub!.from).toBe(6);
+    expect(sub!.to).toBe(7);
+    view.destroy();
+  });
+
+  it("reveals raw tags + source when caret is inside the span", () => {
+    const doc = "Hello<sup>world</sup>\n\nother";
+    const view = makeView(doc, 12); // caret inside "world"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace" && d.from >= 5 && d.to <= 21)).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("reveals raw tags when caret sits on the open tag itself", () => {
+    const doc = "Hello<sup>world</sup>\n\nother";
+    const view = makeView(doc, 5); // caret on "<" of <sup>
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    view.destroy();
+  });
+
+  it("keeps a sibling span decorated when caret is inside another", () => {
+    const doc = "Hello<sup>world</sup> and <sup>there</sup>\n\nother";
+    const view = makeView(doc, 7); // caret inside first span's content
+    const decos = collectDecos(view);
+    const sups = decos.filter((d) => d.class === "cm-preview-sup");
+    expect(sups).toHaveLength(1);
+    expect(sups[0]!.from).toBe(31);
+    expect(sups[0]!.to).toBe(36);
+    view.destroy();
+  });
+
+  it("sup over a link keeps both the sup mark and the link decorations", () => {
+    const doc = "See<sup>[1](#chap01.html_b_1)</sup>\n\nx";
+    const view = makeView(doc, doc.length - 1); // caret on x
+    const decos = collectDecos(view);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(8);
+    expect(sup!.to).toBe(29);
+    const link = decos.find((d) => d.class === "cm-preview-link");
+    expect(link).toBeDefined();
+    expect(link!.url).toBe("#chap01.html_b_1");
+    expect(decos.some((d) => d.type === "replace" && d.from === 8 && d.to === 9)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 10 && d.to === 29)).toBe(true);
+    view.destroy();
+  });
+
+  it("sup over bold keeps both the sup mark and the bold mark", () => {
+    const doc = "a<sup>**b**</sup>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(6);
+    expect(sup!.to).toBe(11);
+    expect(decos.find((d) => d.class === "cm-preview-bold")).toBeDefined();
+    view.destroy();
+  });
+
+  it("unclosed <sup> stays raw (no hide, no mark)", () => {
+    const doc = "Unclosed<sup>stays\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("unknown <span>...</span> stays raw", () => {
+    const doc = "a<span>b</span>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("attributed <sup id=\"x\"> stays raw (bare-only v1)", () => {
+    const doc = 'a<sup id="x">b</sup>\n\nother';
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("renders sup inside a heading (separate HTMLTag pass)", () => {
+    const doc = "## title<sup>1</sup>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-h2")).toBeDefined();
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(13);
+    expect(sup!.to).toBe(14);
+    view.destroy();
+  });
+
+  it("renders sup inside emphasis (separate HTMLTag pass)", () => {
+    const doc = "*a<sup>1</sup>*\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.find((d) => d.class === "cm-preview-italic")).toBeDefined();
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(7);
+    expect(sup!.to).toBe(8);
+    view.destroy();
+  });
+
+  it("adds span lines to cursorSensitiveLines even when caret is inside", () => {
+    const doc = "plain\nHello<sup>world</sup>\nmore";
+    const view = makeView(doc, 0); // caret on "plain"
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(2)).toBe(true);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    view.destroy();
+  });
+
+  it("hides <mark>/</mark> and marks content when cursor elsewhere", () => {
+    const doc = "hi <mark>there</mark>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 9)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 14 && d.to === 21)).toBe(true);
+    const mark = decos.find((d) => d.class === "cm-preview-mark");
+    expect(mark).toBeDefined();
+    expect(mark!.from).toBe(9);
+    expect(mark!.to).toBe(14);
+    view.destroy();
+  });
+
+  it("reveals raw <mark> tags when caret is inside the span", () => {
+    const doc = "hi <mark>there</mark>\n\nother";
+    const view = makeView(doc, 11); // caret inside "there"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-mark")).toBe(false);
+    view.destroy();
+  });
+
+  it("no tags in doc: no html sup/sub decos (smoke)", () => {
+    const doc = "plain text\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup" || d.class === "cm-preview-sub")).toBe(false);
+    view.destroy();
+  });
+
+  it("hides <br>/<br/> with a break widget when cursor elsewhere", () => {
+    const doc = "a<br>b\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const br = decos.find((d) => d.widgetKind === "html-break");
+    expect(br).toBeDefined();
+    expect(br!.from).toBe(1);
+    expect(br!.to).toBe(5);
+    view.destroy();
+  });
+
+  it("hides <br/> self-closing form", () => {
+    const doc = "a<br/>b\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const br = decos.find((d) => d.widgetKind === "html-break");
+    expect(br).toBeDefined();
+    expect(br!.from).toBe(1);
+    expect(br!.to).toBe(6);
+    view.destroy();
+  });
+
+  it("reveals raw <br> when caret is on the tag", () => {
+    const doc = "a<br>b\n\nother";
+    const view = makeView(doc, 2); // caret inside "<br>"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "html-break")).toBe(false);
+    view.destroy();
+  });
+
+  it("renders multiple brs and keeps the line cursor-sensitive", () => {
+    const doc = "a<br>b and c<br/>d";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const brs = decos.filter((d) => d.widgetKind === "html-break");
+    expect(brs).toHaveLength(2);
+    expect(brs[0]!.from).toBe(1);
+    expect(brs[1]!.from).toBe(12);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(true);
+    view.destroy();
+  });
+
+  it("cross-paragraph <sup> does not decorate", () => {
+    const doc = "a<sup>b\n\nc</sup>d\n\nOTHER";
+    const view = makeView(doc, doc.length - 1); // caret on OTHER
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 10 && d.to === 16)).toBe(false);
+    view.destroy();
+  });
+
+  it("cross-heading <sup> does not decorate", () => {
+    const doc = "a<sup>b\n# H\nc</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 19)).toBe(false);
+    view.destroy();
+  });
+
+  it("cross-list-item <sup> does not decorate", () => {
+    const doc = "- x<sup>a\n- y</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 8)).toBe(false);
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 19)).toBe(false);
+    view.destroy();
+  });
+
+  it("same-paragraph soft-break <sup> still decorates", () => {
+    const doc = "a<sup>b\nc</sup>d\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 1 && d.to === 6)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 9 && d.to === 15)).toBe(true);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(6);
+    expect(sup!.to).toBe(9);
+    view.destroy();
+  });
+
+  it("blockquote-continued paragraph <sup> still decorates", () => {
+    const doc = "> a<sup>b\n> c</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 8)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 13 && d.to === 19)).toBe(true);
+    const sup = decos.find((d) => d.class === "cm-preview-sup");
+    expect(sup).toBeDefined();
+    expect(sup!.from).toBe(8);
+    expect(sup!.to).toBe(13);
+    view.destroy();
+  });
+
+  it("nested sub stays raw when caret is in outer sup content only", () => {
+    const doc = "<sup>a<sub>x</sub>b</sup>\n\nOTHER";
+    const view = makeView(doc, 5); // caret on "a" (outer content, outside inner sub)
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-preview-sub")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("nested sub and outer both raw when caret is on inner content", () => {
+    const doc = "<sup>a<sub>x</sub>b</sup>\n\nOTHER";
+    const view = makeView(doc, 11); // caret on "x" (inner sub content)
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-preview-sub")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("nested sub and outer both decorate when caret is away", () => {
+    const doc = "<sup>a<sub>x</sub>b</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1); // caret on OTHER
+    const decos = collectDecos(view);
+    const sups = decos.filter((d) => d.class === "cm-preview-sup");
+    expect(sups).toHaveLength(1);
+    expect(sups[0]!.from).toBe(5);
+    expect(sups[0]!.to).toBe(19);
+    const subs = decos.filter((d) => d.class === "cm-preview-sub");
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.from).toBe(11);
+    expect(subs[0]!.to).toBe(12);
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 5)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 19 && d.to === 25)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 6 && d.to === 11)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 12 && d.to === 18)).toBe(true);
+    view.destroy();
+  });
+
+  it("br inside a caret-revealed sup stays raw", () => {
+    const doc = "<sup>a<br>b</sup>\n\nOTHER";
+    const view = makeView(doc, 5); // caret on "a" inside sup
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "html-break")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("br inside sup still widgets when caret is away", () => {
+    const doc = "<sup>a<br>b</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const br = decos.find((d) => d.widgetKind === "html-break");
+    expect(br).toBeDefined();
+    expect(br!.from).toBe(6);
+    expect(br!.to).toBe(10);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(true);
+    view.destroy();
+  });
+
+  it("does not decorate HTMLTag inside table cells (block-replaced by table widget)", () => {
+    const doc = "| a<br>b |\n| --- |\n| 1 |\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const { decorations } = buildDecorations(view);
+    const iter = decorations.iter();
+    let htmlBreakWidget = false;
+    while (iter.value) {
+      if (iter.value.spec.widget instanceof HtmlBreakWidget) htmlBreakWidget = true;
+      iter.next();
+    }
+    expect(htmlBreakWidget).toBe(false);
+    // Table lines must not be polluted by html-tag cursor sensitivity.
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(false);
+    expect(cursorSensitiveLines.has(2)).toBe(false);
+    view.destroy();
+  });
+});
+
+describe("collectHtmlInlineTags", () => {
+  function makeState(doc: string): EditorState {
+    return EditorState.create({
+      doc,
+      extensions: [markdown({ extensions: [GFM, WikiLink, MathExt, CommentExt, Footnote] })],
+    });
+  }
+
+  it("returns both tags for a multi-line same-paragraph pair", () => {
+    const state = makeState("a<sup>b\nc</sup>d");
+    const tags = collectHtmlInlineTags(state);
+    expect(tags).toHaveLength(2);
+    expect(tags[0]!.raw).toBe("<sup>");
+    expect(tags[0]!.from).toBe(1);
+    expect(tags[1]!.raw).toBe("</sup>");
+    expect(tags[1]!.from).toBe(9);
+    expect(tags[0]!.parentFrom).toBe(tags[1]!.parentFrom);
+    expect(tags[0]!.parentFrom).toBeGreaterThanOrEqual(0);
+  });
+
+  it("skips HTMLTag inside Table", () => {
+    const state = makeState("| a<br>b |\n| --- |\n| 1 |\n\nother");
+    const tags = collectHtmlInlineTags(state);
+    expect(tags).toHaveLength(0);
+  });
+
+  it("is not limited to a half-document slice", () => {
+    // Tags near the start and near the end must both be collected in one
+    // call: pins the full-document walk (a viewport-clipped collect would
+    // drop one end of a multi-line pair at the edge).
+    const state = makeState("a<sup>b</sup>\n\n\n\n\n\n\n\n\n\nz<sub>w</sub>end");
+    const tags = collectHtmlInlineTags(state);
+    expect(tags).toHaveLength(4);
+    expect(tags.some((t) => t.raw === "<sup>")).toBe(true);
+    expect(tags.some((t) => t.raw === "</sup>")).toBe(true);
+    expect(tags.some((t) => t.raw === "<sub>")).toBe(true);
+    expect(tags.some((t) => t.raw === "</sub>")).toBe(true);
   });
 });
 

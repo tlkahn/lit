@@ -366,6 +366,30 @@ export class EscapedDollarWidget extends WidgetType {
   }
 }
 
+/**
+ * Stand-in for the allowlisted void `<br>` / `<br/>` tag in live preview.
+ * A real <br> element forces a soft line break inside the line's inline
+ * content. estimatedHeight -1: let CM6 measure after sync (a fixed line
+ * height would drift if the editor font size changes). No margin anywhere.
+ */
+export class HtmlBreakWidget extends WidgetType {
+  toDOM(): HTMLElement {
+    return document.createElement("br");
+  }
+
+  eq(other: HtmlBreakWidget): boolean {
+    return other instanceof HtmlBreakWidget;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+
+  get estimatedHeight(): number {
+    return -1;
+  }
+}
+
 export class DisplayMathWidget extends WidgetType {
   constructor(readonly latex: string) {
     super();

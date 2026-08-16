@@ -12,6 +12,7 @@ import {
   HorizontalRuleWidget,
   PageBreakWidget,
   EscapedDollarWidget,
+  HtmlBreakWidget,
   clearFailedImageCache,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
@@ -74,6 +75,30 @@ describe("EscapedDollarWidget", () => {
   it("estimatedHeight is -1 (inherits line height)", () => {
     const widget = new EscapedDollarWidget();
     expect(widget.estimatedHeight).toBe(-1);
+  });
+});
+
+describe("HtmlBreakWidget", () => {
+  it("toDOM returns a BR element", () => {
+    const widget = new HtmlBreakWidget();
+    const el = widget.toDOM();
+    expect(el.tagName).toBe("BR");
+  });
+
+  it("eq returns true for another HtmlBreakWidget", () => {
+    const a = new HtmlBreakWidget();
+    const b = new HtmlBreakWidget();
+    expect(a.eq(b)).toBe(true);
+  });
+
+  it("estimatedHeight is -1 (lets CM6 measure after sync)", () => {
+    const widget = new HtmlBreakWidget();
+    expect(widget.estimatedHeight).toBe(-1);
+  });
+
+  it("ignoreEvent returns false", () => {
+    const widget = new HtmlBreakWidget();
+    expect(widget.ignoreEvent()).toBe(false);
   });
 });
 

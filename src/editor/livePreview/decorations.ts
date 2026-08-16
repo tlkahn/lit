@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget, HtmlBreakWidget } from "./widgets";
 import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
@@ -13,6 +13,7 @@ import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
 import { perfMark, perfMeasure } from "./perf";
 import { getRefDefLabels, addPlainBracketDecos } from "./plainBrackets";
+import { pairHtmlInlineTags, HTML_INLINE_PAIR_CLASS, type HtmlTagSpan } from "./htmlInline";
 
 const headingClass: Record<string, string> = {
   ATXHeading1: "cm-preview-h1",
@@ -35,6 +36,9 @@ const cursorSensitiveNodeNames = new Set([
   "Strikethrough", "FootnoteRef", "FootnoteDef",
 ]);
 
+// Tag name -> live-preview class, single-sourced from htmlInline.ts
+// (HTML_INLINE_PAIR_CLASS). Theme rules in theme.ts still hardcode the
+// selectors and are pinned by theme tests.
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
   perfMark("buildDecorations:start");
   const { state } = view;
@@ -157,6 +161,15 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
     });
   }
 
+  // Inline-HTML allowlist pass. HTMLTag is a leaf, but headings / emphasis /
+  // strikethrough return false from the main iterate, so a dedicated collect
+  // pass is required (see plan root cause). Full-document collect: tags are
+  // sparse leaves with no wrapper node, so a viewport-clipped collect drops
+  // one end of a multi-line pair and fail-closes into half-raw source at the
+  // edge. Emphasis does not have this problem because the parent node still
+  // enters when it overlaps the viewport.
+  addHtmlInlineDecos(state, collectHtmlInlineTags(state), decos, cursorSensitiveLines);
+
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
 
   const filtered = filterContainedDecorations(decos);
@@ -164,6 +177,30 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
   const result = RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
   perfMeasure("buildDecorations", "buildDecorations:start");
   return { decorations: result, cursorSensitiveLines };
+}
+
+/**
+ * Collect allowlisted HTMLTag spans over the whole document. Skip tags inside
+ * tables: the whole Table is block-replaced by EditableTableWidget, and
+ * per-cell tags would only pollute cursorSensitiveLines (same precedent as
+ * Escape).
+ */
+export function collectHtmlInlineTags(state: EditorState): HtmlTagSpan[] {
+  const tags: HtmlTagSpan[] = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== "HTMLTag") return;
+      if (hasAncestor(node.node, "Table")) return;
+      const parent = node.node.parent;
+      tags.push({
+        from: node.from,
+        to: node.to,
+        raw: state.doc.sliceString(node.from, node.to),
+        parentFrom: parent ? parent.from : -1,
+      });
+    },
+  });
+  return tags;
 }
 
 function hasAncestor(
@@ -176,6 +213,56 @@ function hasAncestor(
     cur = cur.parent as { name: string; parent: unknown } | null;
   }
   return false;
+}
+
+function addHtmlInlineDecos(
+  state: EditorState,
+  tags: HtmlTagSpan[],
+  decos: { from: number; to: number; deco: Decoration }[],
+  cursorSensitiveLines: Set<number>,
+) {
+  const pairs = pairHtmlInlineTags(tags);
+  // Emphasis-like reveal: any pair whose span contains the caret raw-ifies
+  // itself and every nested allowlisted pair / void inside it (a range always
+  // contains itself, so the caret-inside pair is revealed too). Sibling pairs
+  // outside the reveal ranges keep decorating.
+  const revealRanges: { from: number; to: number }[] = [];
+  for (const pair of pairs) {
+    if (pair.type === "pair" && isCursorInRange(state, pair.open.from, pair.close.to)) {
+      revealRanges.push({ from: pair.open.from, to: pair.close.to });
+    }
+  }
+  const inReveal = (from: number, to: number) =>
+    revealRanges.some((r) => r.from <= from && to <= r.to);
+
+  for (const pair of pairs) {
+    if (pair.type === "void") {
+      const tag = pair.tag;
+      const line = state.doc.lineAt(tag.from).number;
+      cursorSensitiveLines.add(line);
+      // A bare <br> with the caret on it still reveals (no pair to contain
+      // it); a <br> inside a revealed pair is suppressed by inReveal.
+      if (inReveal(tag.from, tag.to) || isCursorInRange(state, tag.from, tag.to)) continue;
+      decos.push({ from: tag.from, to: tag.to, deco: Decoration.replace({ widget: new HtmlBreakWidget() }) });
+      continue;
+    }
+    const cls = HTML_INLINE_PAIR_CLASS[pair.name];
+    if (!cls) continue;
+
+    const from = pair.open.from;
+    const to = pair.close.to;
+    const startLine = state.doc.lineAt(from).number;
+    const endLine = state.doc.lineAt(to).number;
+    for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
+
+    if (inReveal(from, to)) continue;
+
+    decos.push({ from: pair.open.from, to: pair.open.to, deco: Decoration.replace({}) });
+    decos.push({ from: pair.close.from, to: pair.close.to, deco: Decoration.replace({}) });
+    if (pair.contentFrom < pair.contentTo) {
+      decos.push({ from: pair.contentFrom, to: pair.contentTo, deco: Decoration.mark({ class: cls }) });
+    }
+  }
 }
 
 function processInlineChildren(

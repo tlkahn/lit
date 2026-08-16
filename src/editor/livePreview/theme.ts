@@ -43,6 +43,22 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     textDecoration: "line-through",
   },
 
+  // Inline HTML allowlist (sup/sub/mark). Metrics mirror .cm-footnote-ref
+  // (fontSize / vertical-align) but with no accent color / pointer / hover:
+  // these are typography, not footnote controls. No margin anywhere (CM6
+  // height map).
+  ".cm-preview-sup": {
+    fontSize: "0.75em",
+    verticalAlign: "super",
+  },
+  ".cm-preview-sub": {
+    fontSize: "0.75em",
+    verticalAlign: "sub",
+  },
+  ".cm-preview-mark": {
+    backgroundColor: "color-mix(in srgb, var(--text-accent) 22%, transparent)",
+  },
+
   // Escaped dollar stand-in (cm-preview-escaped-dollar). Glyph is the
   // differentiator; keep styling neutral. No margin, no fontSize change
   // (avoids caret/layout jump on reveal).
