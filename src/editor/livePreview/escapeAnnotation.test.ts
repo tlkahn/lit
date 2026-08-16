@@ -53,7 +53,7 @@ describe("escapeAnnotationKeymap", () => {
     const doc = "hello <!---n | test---> more text";
     const ann = makeAnnotation({ char_start: 6, char_end: 23 });
     const view = makeView(doc, 10, [ann]);
-    view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
+    view.dispatch({ effects: setScopeHighlight.of([{ from: 0, to: 5 }]) });
 
     const handled = runEsc(view);
     expect(handled).toBe(true);

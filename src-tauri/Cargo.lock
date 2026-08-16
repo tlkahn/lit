@@ -3388,8 +3388,8 @@ dependencies = [
 
 [[package]]
 name = "lit-annotation-core"
-version = "0.1.0"
-source = "git+https://github.com/tlkahn/lit-annotation-core.git?tag=v0.1.0#a2072944877cb5a7c69da21f7e44054b998b86f2"
+version = "0.1.2"
+source = "git+https://github.com/tlkahn/lit-annotation-core.git?tag=v0.1.2#3377251045c785e6f3f8c6052fd5d163a85a200b"
 dependencies = [
  "regex",
  "sentencex",

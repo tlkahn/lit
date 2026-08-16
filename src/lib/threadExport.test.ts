@@ -270,7 +270,7 @@ describe("deleteThread", () => {
       }),
       parent: document.createElement("div"),
     });
-    view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
+    view.dispatch({ effects: setScopeHighlight.of([{ from: 0, to: 5 }]) });
     expect(view.state.field(scopeHighlightField)).not.toBe(Decoration.none);
 
     deleteThread(view, makeThreadAnnotation());
