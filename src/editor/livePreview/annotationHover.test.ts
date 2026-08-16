@@ -6,6 +6,7 @@ import {
   handleAnnotationLeave,
 } from "./annotationHover";
 import { scopeHighlightField, setScopeHighlight } from "./scopeHighlight";
+import { annotationDataField, setAnnotationData } from "./annotationState";
 import { frontmatterFacet } from "./crossref";
 import { Decoration } from "@codemirror/view";
 import type { Annotation } from "../../lib/ipc";
@@ -33,6 +34,36 @@ function makeView(
     ],
   });
   return new EditorView({ state, parent: document.createElement("div") });
+}
+
+function makeHoverView(
+  doc = "hello world",
+  annotations: Annotation[] = [],
+  frontmatter?: Record<string, unknown>,
+): EditorView {
+  const state = EditorState.create({
+    doc,
+    extensions: [
+      scopeHighlightField,
+      annotationDataField,
+      ...(frontmatter ? [frontmatterFacet.of(frontmatter)] : []),
+    ],
+  });
+  const view = new EditorView({ state, parent: document.createElement("div") });
+  if (annotations.length > 0) {
+    view.dispatch({ effects: setAnnotationData.of(annotations) });
+  }
+  return view;
+}
+
+function fieldRanges(view: EditorView): Array<{ from: number; to: number }> {
+  const ranges: Array<{ from: number; to: number }> = [];
+  view.state
+    .field(scopeHighlightField)
+    .between(0, view.state.doc.length, (from, to) => {
+      ranges.push({ from, to });
+    });
+  return ranges;
 }
 
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
@@ -169,6 +200,76 @@ describe("annotationHover", () => {
 
     expect(mockResolve).toHaveBeenCalled();
     expect(mockResolveWithMode).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  // --- Cycle 3: hover clips resolved range against annotation spans (#1028) ---
+
+  it("fully-contained resolved range clips to no highlight", async () => {
+    const view = makeHoverView("some doc text", [
+      makeAnnotation({ char_start: 10, char_end: 40 }),
+    ]);
+    mockResolve.mockResolvedValue({ start: 12, end: 30 });
+
+    await handleAnnotationHover(view, makeAnnotation({ char_start: 10, char_end: 40 }));
+
+    expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
+    view.destroy();
+  });
+
+  it("straddling resolved range clips into visible segments around the span", async () => {
+    // "prefix " (7) + block (30) + " suffix" (7) = 44 chars
+    const doc = "prefix " + "x".repeat(30) + " suffix";
+    const view = makeHoverView(doc, [
+      makeAnnotation({ char_start: 7, char_end: 37 }),
+    ]);
+    mockResolve.mockResolvedValue({ start: 0, end: 44 });
+
+    await handleAnnotationHover(view, makeAnnotation({ char_start: 7, char_end: 37 }));
+
+    expect(fieldRanges(view)).toEqual([
+      { from: 0, to: 7 },
+      { from: 37, to: 44 },
+    ]);
+    view.destroy();
+  });
+
+  it("hover with an annotation field but no spans keeps the single full range", async () => {
+    const view = makeHoverView("hello world", []);
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(fieldRanges(view)).toEqual([{ from: 0, to: 5 }]);
+    view.destroy();
+  });
+
+  it("hover without an annotation field keeps the single full range", async () => {
+    const view = makeView();
+    mockResolve.mockResolvedValue({ start: 0, end: 5 });
+
+    await handleAnnotationHover(view, makeAnnotation());
+
+    expect(fieldRanges(view)).toEqual([{ from: 0, to: 5 }]);
+    view.destroy();
+  });
+
+  it("hovered annotation's own span is subtracted too", async () => {
+    // "prefix " (7) + block1 (30) + " middle " (8) + block2 (20) + " suffix" (7)
+    const doc = "prefix " + "x".repeat(30) + " middle " + "y".repeat(20) + " suffix";
+    const view = makeHoverView(doc, [
+      makeAnnotation({ char_start: 7, char_end: 37 }),
+      makeAnnotation({ char_start: 45, char_end: 65 }),
+    ]);
+    mockResolve.mockResolvedValue({ start: 0, end: 72 });
+
+    await handleAnnotationHover(view, makeAnnotation({ char_start: 7, char_end: 37 }));
+
+    expect(fieldRanges(view)).toEqual([
+      { from: 0, to: 7 },
+      { from: 37, to: 45 },
+      { from: 65, to: 72 },
+    ]);
     view.destroy();
   });
 

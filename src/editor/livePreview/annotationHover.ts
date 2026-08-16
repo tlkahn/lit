@@ -4,7 +4,12 @@ import { resolveAnnotationScope, resolveAnnotationScopeWithMode } from "../../li
 import { usePreferencesStore } from "../../stores/preferences";
 import { effectiveAnnotationLang } from "../../lib/annotationLang";
 import { frontmatterFacet } from "./crossref";
-import { dispatchScopeHighlight, clearScopeHighlight } from "./scopeHighlight";
+import {
+  dispatchScopeHighlightRanges,
+  clearScopeHighlight,
+  clipRangeToVisible,
+} from "./scopeHighlight";
+import { annotationDataField } from "./annotationState";
 
 const generationMap = new WeakMap<EditorView, number>();
 
@@ -64,7 +69,19 @@ export async function handleAnnotationHover(
   if (!range) return;
 
   if (range.start < range.end) {
-    dispatchScopeHighlight(view, range.start, range.end);
+    // Subtract annotation replace spans (char_start..char_end from
+    // annotationDataField) so marks land only on visible prose. A range fully
+    // hidden behind widgets clips to empty: clear explicitly rather than
+    // guessing a fallback prose range (core resolve is the correctness layer).
+    const spans = (view.state.field(annotationDataField, false) ?? [])
+      .filter((a) => a.char_start < a.char_end)
+      .map((a) => ({ from: a.char_start, to: a.char_end }));
+    const segments = clipRangeToVisible(range.start, range.end, spans);
+    if (segments.length === 0) {
+      clearScopeHighlight(view);
+      return;
+    }
+    dispatchScopeHighlightRanges(view, segments);
   }
 }
 
