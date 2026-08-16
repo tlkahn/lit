@@ -66,6 +66,57 @@ function fieldRanges(view: EditorView): Array<{ from: number; to: number }> {
   return ranges;
 }
 
+// --- Issue #1028 fixtures (block annotations; derive offsets, don't hardcode) ---
+
+const FIXTURE_A_STACKED_SAME_ANCHOR = [
+  "The term anuttara is central to the system.",
+  "",
+  "<!---",
+  "n",
+  '^"anuttara"',
+  "---",
+  "Primary sense: unsurpassed.",
+  "--->",
+  "",
+  "<!---",
+  "cf",
+  '^"anuttara"',
+  "---",
+  "See T\u0100 3.68.",
+  "--->",
+].join("\n");
+
+const FIXTURE_B_ADJACENT_DEFAULT_SENTENCE = [
+  "Only one prose sentence.",
+  "",
+  "<!---",
+  "n",
+  "---",
+  "body one",
+  "--->",
+  "",
+  "<!---",
+  "n",
+  "---",
+  "body two",
+  "--->",
+].join("\n");
+
+/** Byte spans of each `<!---...--->` block in the doc (ASCII fixtures). */
+function blockSpans(doc: string): Array<{ from: number; to: number }> {
+  const spans: Array<{ from: number; to: number }> = [];
+  let search = 0;
+  for (;;) {
+    const open = doc.indexOf("<!---", search);
+    if (open < 0) break;
+    const close = doc.indexOf("--->", open + 5);
+    if (close < 0) break;
+    spans.push({ from: open, to: close + 4 });
+    search = close + 4;
+  }
+  return spans;
+}
+
 function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
   return {
     form: "compact",
@@ -387,6 +438,127 @@ describe("annotationHover", () => {
       "fr",
       "bidirectional",
     );
+    view.destroy();
+  });
+
+  // --- Cycle 8: stacked block hover with real fixture shapes (#1028) ---
+
+  it("Fixture A: hover 1st stacked block highlights prose anuttara", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
+    const anns = spans.map((s, i) =>
+      makeAnnotation({
+        form: "block",
+        char_start: s.from,
+        char_end: s.to,
+        annotation_type: i === 0 ? "note" : "crossref",
+        scope: { kind: "anchor", value: "anuttara" },
+      }),
+    );
+    const view = makeHoverView(FIXTURE_A_STACKED_SAME_ANCHOR, anns);
+    const proseStart = FIXTURE_A_STACKED_SAME_ANCHOR.indexOf("anuttara");
+    mockResolve.mockResolvedValue({ start: proseStart, end: proseStart + 8 });
+
+    await handleAnnotationHover(view, anns[0]!);
+
+    expect(fieldRanges(view)).toEqual([{ from: proseStart, to: proseStart + 8 }]);
+    view.destroy();
+  });
+
+  it("Fixture A: hover 2nd stacked block (same anchor) highlights the same prose word", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
+    const anns = spans.map((s, i) =>
+      makeAnnotation({
+        form: "block",
+        char_start: s.from,
+        char_end: s.to,
+        annotation_type: i === 0 ? "note" : "crossref",
+        scope: { kind: "anchor", value: "anuttara" },
+      }),
+    );
+    const view = makeHoverView(FIXTURE_A_STACKED_SAME_ANCHOR, anns);
+    const proseStart = FIXTURE_A_STACKED_SAME_ANCHOR.indexOf("anuttara");
+    // What core v0.1.1 resolves for ann[1]'s anchor: the prose occurrence.
+    mockResolve.mockResolvedValue({ start: proseStart, end: proseStart + 8 });
+
+    await handleAnnotationHover(view, anns[1]!);
+
+    // IPC sees the 2nd block's char_start and anchor scope.
+    expect(mockResolve).toHaveBeenCalledWith(
+      FIXTURE_A_STACKED_SAME_ANCHOR,
+      anns[1]!.char_start,
+      { kind: "anchor", value: "anuttara" },
+      "en",
+    );
+    // Marks land only on prose offsets, never inside annotation spans.
+    const ranges = fieldRanges(view);
+    expect(ranges).toEqual([{ from: proseStart, to: proseStart + 8 }]);
+    for (const r of ranges) {
+      for (const s of spans) {
+        expect(r.from >= s.to || r.to <= s.from).toBe(true);
+      }
+    }
+    view.destroy();
+  });
+
+  it("Fixture A: cold-hovering the 2nd block works the same as after the 1st", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const spans = blockSpans(FIXTURE_A_STACKED_SAME_ANCHOR);
+    const anns = spans.map((s, i) =>
+      makeAnnotation({
+        form: "block",
+        char_start: s.from,
+        char_end: s.to,
+        annotation_type: i === 0 ? "note" : "crossref",
+        scope: { kind: "anchor", value: "anuttara" },
+      }),
+    );
+    const view = makeHoverView(FIXTURE_A_STACKED_SAME_ANCHOR, anns);
+    const proseStart = FIXTURE_A_STACKED_SAME_ANCHOR.indexOf("anuttara");
+    mockResolve.mockResolvedValue({ start: proseStart, end: proseStart + 8 });
+
+    // No prior hover in this view - the 2nd block is the first thing hovered.
+    await handleAnnotationHover(view, anns[1]!);
+
+    expect(fieldRanges(view)).toEqual([{ from: proseStart, to: proseStart + 8 }]);
+    view.destroy();
+  });
+
+  it("Fixture B: hover 2nd adjacent default-scope block highlights the prose sentence", async () => {
+    usePreferencesStore.setState({ annotationDefaultLang: "en" });
+    const spans = blockSpans(FIXTURE_B_ADJACENT_DEFAULT_SENTENCE);
+    const anns = spans.map((s) =>
+      makeAnnotation({
+        form: "block",
+        char_start: s.from,
+        char_end: s.to,
+        scope: { kind: "sentence", value: 1 },
+      }),
+    );
+    const view = makeHoverView(FIXTURE_B_ADJACENT_DEFAULT_SENTENCE, anns);
+    const sentenceEnd = "Only one prose sentence.".length;
+    // What core v0.1.1 resolves for ann[1] Sentence(1).
+    mockResolve.mockResolvedValue({ start: 0, end: sentenceEnd });
+
+    await handleAnnotationHover(view, anns[1]!);
+
+    expect(mockResolve).toHaveBeenCalledWith(
+      FIXTURE_B_ADJACENT_DEFAULT_SENTENCE,
+      anns[1]!.char_start,
+      { kind: "sentence", value: 1 },
+      "en",
+    );
+    const ranges = fieldRanges(view);
+    expect(ranges).toEqual([{ from: 0, to: sentenceEnd }]);
+    expect(FIXTURE_B_ADJACENT_DEFAULT_SENTENCE.slice(0, sentenceEnd)).toBe(
+      "Only one prose sentence.",
+    );
+    for (const r of ranges) {
+      for (const s of spans) {
+        expect(r.from >= s.to || r.to <= s.from).toBe(true);
+      }
+    }
     view.destroy();
   });
 });
