@@ -2,7 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
-import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget } from "./widgets";
+import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget, HtmlBreakWidget } from "./widgets";
 import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
@@ -37,11 +37,11 @@ const cursorSensitiveNodeNames = new Set([
 ]);
 
 // Tag name -> live-preview class. Keep in sync with the allowlist in
-// htmlInline.ts and the theme rules in theme.ts. "mark" is intentionally not
-// mapped until its decorations cycle lands (pairer already recognizes it).
+// htmlInline.ts and the theme rules in theme.ts.
 const htmlInlineClassMap: Record<string, string> = {
   sup: "cm-preview-sup",
   sub: "cm-preview-sub",
+  mark: "cm-preview-mark",
 };
 
 export function buildDecorations(view: EditorView): BuildDecorationsResult {
@@ -218,7 +218,14 @@ function addHtmlInlineDecos(
 ) {
   const pairs = pairHtmlInlineTags(tags);
   for (const pair of pairs) {
-    if (pair.type === "void") continue; // <br> widget lands in its own cycle
+    if (pair.type === "void") {
+      const tag = pair.tag;
+      const line = state.doc.lineAt(tag.from).number;
+      cursorSensitiveLines.add(line);
+      if (isCursorInRange(state, tag.from, tag.to)) continue;
+      decos.push({ from: tag.from, to: tag.to, deco: Decoration.replace({ widget: new HtmlBreakWidget() }) });
+      continue;
+    }
     const cls = htmlInlineClassMap[pair.name];
     if (!cls) continue;
 

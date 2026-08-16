@@ -11,7 +11,7 @@ import { Footnote } from "../markdown/footnote";
 import { calloutFoldField } from "./callout";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { Decoration } from "@codemirror/view";
-import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget } from "./widgets";
+import { ImageWidget, MermaidWidget, HorizontalRuleWidget, DisplayMathWidget, EscapedDollarWidget, HtmlBreakWidget } from "./widgets";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
 
 vi.mock("katex", () => ({
@@ -52,7 +52,7 @@ type DecoInfo = {
   class?: string;
   widget?: boolean;
   widgetVariant?: "short" | "full";
-  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref" | "footnote-def-body";
+  widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref" | "footnote-def-body" | "html-break";
   footnoteDisplayLabel?: string; // raw source label for ref sup and def mark
   footnoteBodyText?: string;
   url?: string;
@@ -86,6 +86,7 @@ function collectDecos(view: EditorView): DecoInfo[] {
         info.widgetKind = "footnote-def-body";
         info.footnoteBodyText = spec.widget.bodyText;
       }
+      if (spec.widget instanceof HtmlBreakWidget) info.widgetKind = "html-break";
     }
     if (spec.class) info.class = spec.class;
     if (spec.attributes?.["data-url"]) info.url = spec.attributes["data-url"];
@@ -2016,11 +2017,75 @@ describe("buildDecorations — inline HTML sup/sub", () => {
     view.destroy();
   });
 
+  it("hides <mark>/</mark> and marks content when cursor elsewhere", () => {
+    const doc = "hi <mark>there</mark>\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.type === "replace" && d.from === 3 && d.to === 9)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 14 && d.to === 21)).toBe(true);
+    const mark = decos.find((d) => d.class === "cm-preview-mark");
+    expect(mark).toBeDefined();
+    expect(mark!.from).toBe(9);
+    expect(mark!.to).toBe(14);
+    view.destroy();
+  });
+
+  it("reveals raw <mark> tags when caret is inside the span", () => {
+    const doc = "hi <mark>there</mark>\n\nother";
+    const view = makeView(doc, 11); // caret inside "there"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-mark")).toBe(false);
+    view.destroy();
+  });
+
   it("no tags in doc: no html sup/sub decos (smoke)", () => {
     const doc = "plain text\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
     expect(decos.some((d) => d.class === "cm-preview-sup" || d.class === "cm-preview-sub")).toBe(false);
+    view.destroy();
+  });
+
+  it("hides <br>/<br/> with a break widget when cursor elsewhere", () => {
+    const doc = "a<br>b\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const br = decos.find((d) => d.widgetKind === "html-break");
+    expect(br).toBeDefined();
+    expect(br!.from).toBe(1);
+    expect(br!.to).toBe(5);
+    view.destroy();
+  });
+
+  it("hides <br/> self-closing form", () => {
+    const doc = "a<br/>b\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const br = decos.find((d) => d.widgetKind === "html-break");
+    expect(br).toBeDefined();
+    expect(br!.from).toBe(1);
+    expect(br!.to).toBe(6);
+    view.destroy();
+  });
+
+  it("reveals raw <br> when caret is on the tag", () => {
+    const doc = "a<br>b\n\nother";
+    const view = makeView(doc, 2); // caret inside "<br>"
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "html-break")).toBe(false);
+    view.destroy();
+  });
+
+  it("renders multiple brs and keeps the line cursor-sensitive", () => {
+    const doc = "a<br>b and c<br/>d";
+    const view = makeView(doc, doc.length);
+    const decos = collectDecos(view);
+    const brs = decos.filter((d) => d.widgetKind === "html-break");
+    expect(brs).toHaveLength(2);
+    expect(brs[0]!.from).toBe(1);
+    expect(brs[1]!.from).toBe(12);
+    const { cursorSensitiveLines } = buildDecorations(view);
+    expect(cursorSensitiveLines.has(1)).toBe(true);
     view.destroy();
   });
 
