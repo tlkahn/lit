@@ -70,9 +70,12 @@ export async function handleAnnotationHover(
 
   if (range.start < range.end) {
     // Subtract annotation replace spans (char_start..char_end from
-    // annotationDataField) so marks land only on visible prose. A range fully
-    // hidden behind widgets clips to empty: clear explicitly rather than
-    // guessing a fallback prose range (core resolve is the correctness layer).
+    // annotationDataField) so marks land only on visible prose. Defense in
+    // depth: CM6 already suppresses marks on replaced text, and core resolve
+    // is the source of truth for prose attachment (#1028); clipping keeps
+    // multi-segment paint explicit and independent of replace-widget details.
+    // A range fully hidden behind widgets clips to empty: clear explicitly
+    // rather than guessing a fallback prose range.
     const spans = (view.state.field(annotationDataField, false) ?? [])
       .filter((a) => a.char_start < a.char_end)
       .map((a) => ({ from: a.char_start, to: a.char_end }));

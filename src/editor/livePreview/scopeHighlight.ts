@@ -9,6 +9,11 @@ export type CharRange = { from: number; to: number };
  * Subtract replaced/annotation spans from `[from, to)`. Returns sorted,
  * non-empty visible segments (gaps between replaced spans). A range fully
  * hidden behind replaced spans yields `[]`.
+ *
+ * Defense in depth, not a correctness layer: core resolve (lit-annotation-core)
+ * is the source of truth for prose attachment (#1028); this only guarantees
+ * marks never paint inside block-widget chrome even if a future caller feeds a
+ * range that straddles replaced spans, and keeps the explicit-empty clear path.
  */
 export function clipRangeToVisible(
   from: number,
