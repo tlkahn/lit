@@ -98,7 +98,7 @@ describe("annotationHover", () => {
 
   it("handleAnnotationLeave clears highlight", () => {
     const view = makeView();
-    view.dispatch({ effects: setScopeHighlight.of({ from: 0, to: 5 }) });
+    view.dispatch({ effects: setScopeHighlight.of([{ from: 0, to: 5 }]) });
     handleAnnotationLeave(view);
     expect(view.state.field(scopeHighlightField)).toBe(Decoration.none);
     view.destroy();

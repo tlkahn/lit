@@ -1,7 +1,7 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView } from "@codemirror/view";
 
-export const setScopeHighlight = StateEffect.define<{ from: number; to: number } | null>();
+export const setScopeHighlight = StateEffect.define<CharRange[] | null>();
 
 export type CharRange = { from: number; to: number };
 
@@ -47,10 +47,13 @@ export const scopeHighlightField = StateField.define<DecorationSet>({
   update(value, tr) {
     for (const e of tr.effects) {
       if (e.is(setScopeHighlight)) {
-        if (e.value === null) return Decoration.none;
-        const { from, to } = e.value;
-        if (from >= to) return Decoration.none;
-        return Decoration.set([highlightMark.range(from, to)]);
+        if (e.value === null || e.value.length === 0) return Decoration.none;
+        const ranges: Array<{ from: number; to: number }> = [];
+        for (const r of e.value) {
+          if (r.from < r.to) ranges.push(r);
+        }
+        if (ranges.length === 0) return Decoration.none;
+        return Decoration.set(ranges.map((r) => highlightMark.range(r.from, r.to)));
       }
     }
     if (tr.docChanged) return Decoration.none;
@@ -61,7 +64,11 @@ export const scopeHighlightField = StateField.define<DecorationSet>({
 
 export function dispatchScopeHighlight(view: EditorView, from: number, to: number) {
   if (from >= to) return;
-  view.dispatch({ effects: setScopeHighlight.of({ from, to }) });
+  dispatchScopeHighlightRanges(view, [{ from, to }]);
+}
+
+export function dispatchScopeHighlightRanges(view: EditorView, ranges: CharRange[]) {
+  view.dispatch({ effects: setScopeHighlight.of(ranges) });
 }
 
 export function clearScopeHighlight(view: EditorView) {
