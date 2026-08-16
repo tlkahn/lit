@@ -219,12 +219,27 @@ function addHtmlInlineDecos(
   cursorSensitiveLines: Set<number>,
 ) {
   const pairs = pairHtmlInlineTags(tags);
+  // Emphasis-like reveal: any pair whose span contains the caret raw-ifies
+  // itself and every nested allowlisted pair / void inside it (a range always
+  // contains itself, so the caret-inside pair is revealed too). Sibling pairs
+  // outside the reveal ranges keep decorating.
+  const revealRanges: { from: number; to: number }[] = [];
+  for (const pair of pairs) {
+    if (pair.type === "pair" && isCursorInRange(state, pair.open.from, pair.close.to)) {
+      revealRanges.push({ from: pair.open.from, to: pair.close.to });
+    }
+  }
+  const inReveal = (from: number, to: number) =>
+    revealRanges.some((r) => r.from <= from && to <= r.to);
+
   for (const pair of pairs) {
     if (pair.type === "void") {
       const tag = pair.tag;
       const line = state.doc.lineAt(tag.from).number;
       cursorSensitiveLines.add(line);
-      if (isCursorInRange(state, tag.from, tag.to)) continue;
+      // A bare <br> with the caret on it still reveals (no pair to contain
+      // it); a <br> inside a revealed pair is suppressed by inReveal.
+      if (inReveal(tag.from, tag.to) || isCursorInRange(state, tag.from, tag.to)) continue;
       decos.push({ from: tag.from, to: tag.to, deco: Decoration.replace({ widget: new HtmlBreakWidget() }) });
       continue;
     }
@@ -237,7 +252,7 @@ function addHtmlInlineDecos(
     const endLine = state.doc.lineAt(to).number;
     for (let l = startLine; l <= endLine; l++) cursorSensitiveLines.add(l);
 
-    if (isCursorInRange(state, from, to)) continue;
+    if (inReveal(from, to)) continue;
 
     decos.push({ from: pair.open.from, to: pair.open.to, deco: Decoration.replace({}) });
     decos.push({ from: pair.close.from, to: pair.close.to, deco: Decoration.replace({}) });

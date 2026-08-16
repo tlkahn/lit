@@ -2145,6 +2145,67 @@ describe("buildDecorations — inline HTML sup/sub", () => {
     view.destroy();
   });
 
+  it("nested sub stays raw when caret is in outer sup content only", () => {
+    const doc = "<sup>a<sub>x</sub>b</sup>\n\nOTHER";
+    const view = makeView(doc, 5); // caret on "a" (outer content, outside inner sub)
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-preview-sub")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("nested sub and outer both raw when caret is on inner content", () => {
+    const doc = "<sup>a<sub>x</sub>b</sup>\n\nOTHER";
+    const view = makeView(doc, 11); // caret on "x" (inner sub content)
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-preview-sub")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("nested sub and outer both decorate when caret is away", () => {
+    const doc = "<sup>a<sub>x</sub>b</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1); // caret on OTHER
+    const decos = collectDecos(view);
+    const sups = decos.filter((d) => d.class === "cm-preview-sup");
+    expect(sups).toHaveLength(1);
+    expect(sups[0]!.from).toBe(5);
+    expect(sups[0]!.to).toBe(19);
+    const subs = decos.filter((d) => d.class === "cm-preview-sub");
+    expect(subs).toHaveLength(1);
+    expect(subs[0]!.from).toBe(11);
+    expect(subs[0]!.to).toBe(12);
+    expect(decos.some((d) => d.type === "replace" && d.from === 0 && d.to === 5)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 19 && d.to === 25)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 6 && d.to === 11)).toBe(true);
+    expect(decos.some((d) => d.type === "replace" && d.from === 12 && d.to === 18)).toBe(true);
+    view.destroy();
+  });
+
+  it("br inside a caret-revealed sup stays raw", () => {
+    const doc = "<sup>a<br>b</sup>\n\nOTHER";
+    const view = makeView(doc, 5); // caret on "a" inside sup
+    const decos = collectDecos(view);
+    expect(decos.some((d) => d.widgetKind === "html-break")).toBe(false);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(false);
+    expect(decos.filter((d) => d.type === "replace")).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("br inside sup still widgets when caret is away", () => {
+    const doc = "<sup>a<br>b</sup>\n\nOTHER";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const br = decos.find((d) => d.widgetKind === "html-break");
+    expect(br).toBeDefined();
+    expect(br!.from).toBe(6);
+    expect(br!.to).toBe(10);
+    expect(decos.some((d) => d.class === "cm-preview-sup")).toBe(true);
+    view.destroy();
+  });
+
   it("does not decorate HTMLTag inside table cells (block-replaced by table widget)", () => {
     const doc = "| a<br>b |\n| --- |\n| 1 |\n\nother";
     const view = makeView(doc, doc.length - 1);
