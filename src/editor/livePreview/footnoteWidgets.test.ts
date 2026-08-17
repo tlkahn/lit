@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { EditorView } from "@codemirror/view";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
+import { isJumpNavigation } from "../jumpHistory";
 import { getKatexSync, loadKatex } from "./katexLoader";
 
 const mockKatex = {
@@ -52,6 +53,7 @@ describe("FootnoteRefWidget", () => {
       expect.objectContaining({
         selection: { anchor: 42 },
         scrollIntoView: true,
+        annotations: isJumpNavigation.of(true),
       }),
     );
   });
@@ -157,7 +159,11 @@ describe("FootnoteDefMarkWidget", () => {
     backref.dispatchEvent(evt);
 
     expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ selection: { anchor: 42 }, scrollIntoView: true }),
+      expect.objectContaining({
+        selection: { anchor: 42 },
+        scrollIntoView: true,
+        annotations: isJumpNavigation.of(true),
+      }),
     );
   });
 
@@ -367,6 +373,7 @@ describe("FootnoteDefBodyWidget", () => {
       expect.objectContaining({
         selection: { anchor: 42 },
         scrollIntoView: true,
+        annotations: isJumpNavigation.of(true),
       }),
     );
     expect(focus).toHaveBeenCalled();
