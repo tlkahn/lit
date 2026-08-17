@@ -120,9 +120,11 @@ export class FootnoteDefMarkWidget extends WidgetType {
   }
 
   // Allow caret placement near the marker via normal clicks; do not swallow
-  // the event the way the ref superscripts do.
-  ignoreEvent(): boolean {
-    return false;
+  // the event the way the ref superscripts do. Only ignore CM events whose
+  // target is the backref control, so clicking ↩ never also places the caret.
+  ignoreEvent(event: Event): boolean {
+    const t = event.target as HTMLElement | null;
+    return !!t?.closest?.(".cm-footnote-backref");
   }
 
   get estimatedHeight(): number {
@@ -177,8 +179,9 @@ export class FootnoteDefBodyWidget extends WidgetType {
     );
   }
 
-  ignoreEvent(): boolean {
-    return false;
+  ignoreEvent(event: Event): boolean {
+    const t = event.target as HTMLElement | null;
+    return !!t?.closest?.(".cm-footnote-backref");
   }
 
   // Padding/heights are in CSS; margin is forbidden (CM6 height map).

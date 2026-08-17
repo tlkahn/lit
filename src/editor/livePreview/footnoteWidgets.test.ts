@@ -120,7 +120,8 @@ describe("FootnoteDefMarkWidget", () => {
 
   it("ignoreEvent returns false (do not swallow caret placement clicks)", () => {
     const widget = new FootnoteDefMarkWidget("1");
-    expect(widget.ignoreEvent()).toBe(false);
+    const el = widget.toDOM(mockView);
+    expect(widget.ignoreEvent({ target: el } as unknown as Event)).toBe(false);
   });
 
   it("has estimatedHeight of 16", () => {
@@ -168,9 +169,19 @@ describe("FootnoteDefMarkWidget", () => {
     expect(a.eq(c)).toBe(false);
   });
 
-  it("ignoreEvent stays false even with a backref", () => {
+  it("ignoreEvent is false for a non-backref event target", () => {
     const widget = new FootnoteDefMarkWidget("1", 42);
-    expect(widget.ignoreEvent()).toBe(false);
+    const host = widget.toDOM(mockView);
+    const evt = { target: host } as unknown as Event;
+    expect(widget.ignoreEvent(evt)).toBe(false);
+  });
+
+  it("ignoreEvent is true when event target is the backref", () => {
+    const widget = new FootnoteDefMarkWidget("1", 42);
+    const el = widget.toDOM(mockView);
+    const backref = el.querySelector(".cm-footnote-backref")!;
+    const evt = { target: backref } as unknown as Event;
+    expect(widget.ignoreEvent(evt)).toBe(true);
   });
 });
 
@@ -274,9 +285,19 @@ describe("FootnoteDefBodyWidget", () => {
     expect(a.eq(c)).toBe(false);
   });
 
-  it("ignoreEvent returns false (clicks place caret into the def)", () => {
-    const widget = new FootnoteDefBodyWidget("text");
-    expect(widget.ignoreEvent()).toBe(false);
+  it("ignoreEvent returns false for a non-backref event target", () => {
+    const widget = new FootnoteDefBodyWidget("text", 42);
+    const el = widget.toDOM(mockView);
+    const evt = { target: el } as unknown as Event;
+    expect(widget.ignoreEvent(evt)).toBe(false);
+  });
+
+  it("ignoreEvent is true when event target is the backref", () => {
+    const widget = new FootnoteDefBodyWidget("text", 42);
+    const el = widget.toDOM(mockView);
+    const backref = el.querySelector(".cm-footnote-backref")!;
+    const evt = { target: backref } as unknown as Event;
+    expect(widget.ignoreEvent(evt)).toBe(true);
   });
 
   it("estimatedHeight is a finite number >= 16 and grows with more lines", () => {
