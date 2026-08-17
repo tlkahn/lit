@@ -149,7 +149,13 @@ export class FootnoteDefBodyWidget extends WidgetType {
   toDOM(view?: EditorView): HTMLElement {
     const div = document.createElement("div");
     div.className = "cm-footnote-def-body";
-    paintFootnoteBody(div, this.bodyText);
+    // Paint into an inner content wrapper so paintFootnoteBody's async KaTeX
+    // repaint (its innerHTML write) cannot wipe sibling chrome (the backref)
+    // appended after the content. The wrapper is a layout host only.
+    const content = document.createElement("div");
+    content.className = "cm-footnote-def-body-content";
+    paintFootnoteBody(content, this.bodyText);
+    div.appendChild(content);
     // Links inside the rendered body must not navigate (Tauri would open a
     // new window / lose caret placement). preventDefault only, never
     // stopPropagation: CM must still map the click to a doc position inside

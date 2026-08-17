@@ -351,6 +351,27 @@ describe("FootnoteDefBodyWidget", () => {
     expect(focus).toHaveBeenCalled();
   });
 
+  it("backref survives loadKatex async upgrade when body has math", async () => {
+    vi.mocked(getKatexSync).mockReturnValueOnce(null);
+
+    const widget = new FootnoteDefBodyWidget("sigma $x$", 42);
+    const el = widget.toDOM(mockView);
+    document.body.appendChild(el); // must be connected for the upgrade
+    const initialBackref = el.querySelector(".cm-footnote-backref");
+    expect(initialBackref).toBeTruthy();
+    expect(initialBackref!.textContent).toBe("↩");
+
+    await vi.waitFor(() => {
+      expect(el.innerHTML).not.toContain("cm-preview-math-placeholder");
+    });
+
+    // The async KaTeX repaint writes innerHTML; the backref must survive it.
+    const backref = el.querySelector(".cm-footnote-backref");
+    expect(backref).toBeTruthy();
+    expect(backref!.textContent).toBe("↩");
+    el.remove();
+  });
+
   it("backref mousedown stopPropagation so body does not treat it as caret placement", () => {
     let parentMousedown = 0;
     const dispatch = vi.fn();
