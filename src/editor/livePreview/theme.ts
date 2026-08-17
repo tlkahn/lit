@@ -495,6 +495,15 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   ".cm-footnote-def-body table": {
     margin: "0",
   },
+  ".cm-footnote-backref": {
+    color: "var(--text-accent)",
+    cursor: "pointer",
+    paddingLeft: "0.35em",
+    // padding only, never margin (CM6 height map)
+  },
+  ".cm-footnote-backref:hover": {
+    textDecoration: "underline",
+  },
   ".cm-footnote-tooltip": {
     backgroundColor: "var(--background-primary, #fff)",
     border: "1px solid var(--background-modifier-border, #e0e0e0)",

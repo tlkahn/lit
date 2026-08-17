@@ -127,6 +127,51 @@ describe("FootnoteDefMarkWidget", () => {
     const widget = new FootnoteDefMarkWidget("1");
     expect(widget.estimatedHeight).toBe(16);
   });
+
+  it("toDOM(view) with a targetRefPos shows label text plus a backref ↩", () => {
+    const el = new FootnoteDefMarkWidget("1", 10).toDOM(mockView);
+    expect(el.textContent).toContain("1.");
+    const backref = el.querySelector(".cm-footnote-backref");
+    expect(backref).toBeTruthy();
+    expect(backref!.textContent).toBe("↩");
+  });
+
+  it("toDOM with targetRefPos null shows label only, no backref", () => {
+    const el = new FootnoteDefMarkWidget("1").toDOM(mockView);
+    expect(el.querySelector(".cm-footnote-backref")).toBeNull();
+    expect(el.textContent).toBe("1.");
+  });
+
+  it("backref on the mark mousedown dispatches selection to target", () => {
+    const dispatch = vi.fn();
+    const focus = vi.fn();
+    const posAtCoords = vi.fn().mockReturnValue(10);
+    const mockState = { doc: { lineAt: () => ({ number: 1, from: 0 }) } };
+    const domAtPos = vi.fn().mockReturnValue({ node: { parentElement: null } });
+    const view = { dispatch, focus, posAtCoords, domAtPos, state: mockState } as unknown as EditorView;
+
+    const el = new FootnoteDefMarkWidget("1", 42).toDOM(view);
+    const backref = el.querySelector(".cm-footnote-backref")!;
+    const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    backref.dispatchEvent(evt);
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ selection: { anchor: 42 }, scrollIntoView: true }),
+    );
+  });
+
+  it("eq includes targetRefPos", () => {
+    const a = new FootnoteDefMarkWidget("1", 42);
+    const b = new FootnoteDefMarkWidget("1", 42);
+    const c = new FootnoteDefMarkWidget("1", 100);
+    expect(a.eq(b)).toBe(true);
+    expect(a.eq(c)).toBe(false);
+  });
+
+  it("ignoreEvent stays false even with a backref", () => {
+    const widget = new FootnoteDefMarkWidget("1", 42);
+    expect(widget.ignoreEvent()).toBe(false);
+  });
 });
 
 describe("FootnoteDefBodyWidget", () => {
@@ -262,5 +307,72 @@ describe("FootnoteDefBodyWidget", () => {
     const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     el.dispatchEvent(evt);
     expect(evt.defaultPrevented).toBe(false);
+  });
+
+  it("toDOM with a targetRefPos contains a .cm-footnote-backref showing the ↩ glyph", () => {
+    const el = new FootnoteDefBodyWidget("body text", 42).toDOM(mockView);
+    const backref = el.querySelector(".cm-footnote-backref");
+    expect(backref).toBeTruthy();
+    expect(backref!.textContent).toBe("↩");
+  });
+
+  it("toDOM with targetRefPos null has no backref", () => {
+    const el = new FootnoteDefBodyWidget("body text").toDOM(mockView);
+    expect(el.querySelector(".cm-footnote-backref")).toBeNull();
+  });
+
+  it("backref is not an a[href] element", () => {
+    const el = new FootnoteDefBodyWidget("body text", 42).toDOM(mockView);
+    const backref = el.querySelector(".cm-footnote-backref");
+    expect(backref!.tagName).not.toBe("A");
+    expect(backref!.getAttribute("href")).toBeNull();
+  });
+
+  it("backref mousedown dispatches selection to targetRefPos with scrollIntoView", () => {
+    const dispatch = vi.fn();
+    const focus = vi.fn();
+    const posAtCoords = vi.fn().mockReturnValue(10);
+    const mockState = { doc: { lineAt: () => ({ number: 1, from: 0 }) } };
+    const domAtPos = vi.fn().mockReturnValue({ node: { parentElement: null } });
+    const view = { dispatch, focus, posAtCoords, domAtPos, state: mockState } as unknown as EditorView;
+
+    const el = new FootnoteDefBodyWidget("body text", 42).toDOM(view);
+    const backref = el.querySelector(".cm-footnote-backref")!;
+    const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    backref.dispatchEvent(evt);
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selection: { anchor: 42 },
+        scrollIntoView: true,
+      }),
+    );
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it("backref mousedown stopPropagation so body does not treat it as caret placement", () => {
+    let parentMousedown = 0;
+    const dispatch = vi.fn();
+    const focus = vi.fn();
+    const posAtCoords = vi.fn().mockReturnValue(10);
+    const mockState = { doc: { lineAt: () => ({ number: 1, from: 0 }) } };
+    const domAtPos = vi.fn().mockReturnValue({ node: { parentElement: null } });
+    const view = { dispatch, focus, posAtCoords, domAtPos, state: mockState } as unknown as EditorView;
+
+    const el = new FootnoteDefBodyWidget("body text", 42).toDOM(view);
+    el.addEventListener("mousedown", () => parentMousedown++);
+    const backref = el.querySelector(".cm-footnote-backref")!;
+    backref.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+
+    expect(parentMousedown).toBe(0);
+  });
+
+  it("eq is false when only targetRefPos differs and true when both match", () => {
+    const a = new FootnoteDefBodyWidget("text", 42);
+    const b = new FootnoteDefBodyWidget("text", 42);
+    const c = new FootnoteDefBodyWidget("text", 100);
+    expect(a.eq(b)).toBe(true);
+    expect(a.eq(c)).toBe(false);
   });
 });

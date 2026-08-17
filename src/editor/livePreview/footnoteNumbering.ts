@@ -6,10 +6,13 @@ import { syntaxTree } from "@codemirror/language";
 // renderMarkdown / markedFootnote may still emit sequential export ids.
 export interface FootnoteMap {
   defPositions: Map<string, { from: number; to: number }>;
+  /** First FootnoteRef `from` per label, in document order. */
+  firstRefPositions: Map<string, number>;
 }
 
 export function buildFootnoteMap(state: EditorState): FootnoteMap {
   const defPositions = new Map<string, { from: number; to: number }>();
+  const firstRefPositions = new Map<string, number>();
 
   syntaxTree(state).iterate({
     enter: (node) => {
@@ -23,8 +26,16 @@ export function buildFootnoteMap(state: EditorState): FootnoteMap {
           }
         }
       }
+      if (node.name === "FootnoteRef") {
+        const marks = node.node.getChildren("FootnoteRefMark");
+        if (marks.length < 2) return;
+        const label = state.doc.sliceString(marks[0]!.to, marks[1]!.from);
+        if (!firstRefPositions.has(label)) {
+          firstRefPositions.set(label, node.from);
+        }
+      }
     },
   });
 
-  return { defPositions };
+  return { defPositions, firstRefPositions };
 }

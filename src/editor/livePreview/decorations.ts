@@ -148,7 +148,7 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
           // Mark-only replace (single-line); the def body stays visible. The
           // whole def stays cursor-sensitive via cursorSensitiveNodeNames, so
           // entering any line reveals the raw marker and drops the line class.
-          addFootnoteDefDecos(state, node.from, node.to, node.node, decos);
+          addFootnoteDefDecos(state, node.from, node.to, node.node, footnoteMap, decos);
           return false; // only FootnoteDefMark child today; nothing else to walk
         }
         if (node.name === "DisplayMath") {
@@ -438,6 +438,7 @@ function addFootnoteDefDecos(
   from: number,
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
+  footnoteMap: FootnoteMap,
   decos: { from: number; to: number; deco: Decoration }[],
 ) {
   // Any line of a multi-line def reveals the raw marker and drops the line
@@ -462,12 +463,23 @@ function addFootnoteDefDecos(
     if (next === " " || next === "\t") replaceTo += 1;
   }
 
+  // Backref ownership: the body widget carries the ↩ when the body is
+  // non-empty; if there is no body widget (empty/whitespace body), the mark
+  // widget carries it so empty defs still round-trip to the ref.
+  const bodyInfo = getFootnoteDefBodyInfo(state, node);
+  const bodyEmpty =
+    !bodyInfo ||
+    bodyInfo.bodyFrom >= bodyInfo.bodyTo ||
+    bodyInfo.bodyText.trim() === "";
+  const firstRef = footnoteMap.firstRefPositions.get(label) ?? null;
+  const markBackrefPos = bodyEmpty ? firstRef : null;
+
   // Marker only - body stays in place, readable.
   decos.push({
     from: mark.from,
     to: replaceTo,
     deco: Decoration.replace({
-      widget: new FootnoteDefMarkWidget(label),
+      widget: new FootnoteDefMarkWidget(label, markBackrefPos),
     }),
   });
 
@@ -880,6 +892,7 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
   perfMark("buildBlockReplacements:start");
   const decos: { from: number; to: number; deco: Decoration }[] = [];
   const cursorSensitiveRanges: Array<{ fromLine: number; toLine: number }> = [];
+  const footnoteMap = buildFootnoteMap(state);
 
   syntaxTree(state).iterate({
     enter: (node) => {
@@ -894,7 +907,7 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
         }
       }
       if (node.name === "FootnoteDef") {
-        addFootnoteDefBodyBlock(state, node.from, node.to, node.node, decos, cursorSensitiveRanges);
+        addFootnoteDefBodyBlock(state, node.from, node.to, node.node, footnoteMap, decos, cursorSensitiveRanges);
       }
       if (node.name === "DisplayMath") {
         const text = state.doc.sliceString(node.from, node.to);
@@ -1014,6 +1027,7 @@ function addFootnoteDefBodyBlock(
   from: number,
   to: number,
   node: ReturnType<typeof syntaxTree>["topNode"],
+  footnoteMap: FootnoteMap,
   decos: { from: number; to: number; deco: Decoration }[],
   cursorSensitiveRanges: Array<{ fromLine: number; toLine: number }>,
 ) {
@@ -1028,13 +1042,25 @@ function addFootnoteDefBodyBlock(
   const info = getFootnoteDefBodyInfo(state, node);
   if (!info || info.bodyFrom >= info.bodyTo || info.bodyText.trim() === "") return;
 
+  // Resolve the source label (same regex as the mark path) solely to look up
+  // the first ref for the backref target. Missing/unparsed mark -> null.
+  let targetRefPos: number | null = null;
+  const mark = node.getChild("FootnoteDefMark");
+  if (mark) {
+    const markText = state.doc.sliceString(mark.from, mark.to);
+    const m = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
+    if (m?.[1]) {
+      targetRefPos = footnoteMap.firstRefPositions.get(m[1]) ?? null;
+    }
+  }
+
   // Body span only: abuts the mark replace ([mark.from, bodyFrom)) so the
   // ViewPlugin mark widget and this body widget never overlap.
   decos.push({
     from: info.bodyFrom,
     to: info.bodyTo,
     deco: Decoration.replace({
-      widget: new FootnoteDefBodyWidget(info.bodyText),
+      widget: new FootnoteDefBodyWidget(info.bodyText, targetRefPos),
     }),
   });
 }
