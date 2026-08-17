@@ -499,6 +499,7 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     color: "var(--text-accent)",
     cursor: "pointer",
     paddingLeft: "0.35em",
+    userSelect: "none",
     // padding only, never margin (CM6 height map)
   },
   ".cm-footnote-backref:hover": {

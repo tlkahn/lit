@@ -278,6 +278,11 @@ describe("footnote definition theme spec", () => {
     expect(rule).not.toHaveProperty("margin");
   });
 
+  it(".cm-footnote-backref disables text selection", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-backref"] as Record<string, string>;
+    expect(rule.userSelect).toBe("none");
+  });
+
   it("has a .cm-footnote-backref:hover rule", () => {
     const rule = livePreviewThemeSpec[".cm-footnote-backref:hover"] as Record<string, string>;
     expect(rule).toBeDefined();
