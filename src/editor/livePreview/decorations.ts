@@ -7,7 +7,7 @@ import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
 import { FootnoteRefWidget, FootnoteDefMarkWidget, FootnoteDefBodyWidget } from "./footnoteWidgets";
 import { getFootnoteDefBodyInfo } from "./footnoteTooltip";
-import { buildFootnoteMap, type FootnoteMap } from "./footnoteNumbering";
+import { buildFootnoteMap, parseFootnoteDefLabel, type FootnoteMap } from "./footnoteNumbering";
 import { imageResolverFacet } from "./imageResolver";
 import { mediaThumbnailsFacet } from "./mediaThumbnails";
 import { parseCalloutType, calloutFoldField } from "./callout";
@@ -450,8 +450,7 @@ function addFootnoteDefDecos(
   if (!mark) return;
 
   const markText = state.doc.sliceString(mark.from, mark.to);
-  const m = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
-  const label = m?.[1];
+  const label = parseFootnoteDefLabel(markText);
   // Unparsed mark text gets no widget (skip rather than inventing a fallback).
   if (!label) return;
 
@@ -1042,15 +1041,14 @@ function addFootnoteDefBodyBlock(
   const info = getFootnoteDefBodyInfo(state, node);
   if (!info || info.bodyFrom >= info.bodyTo || info.bodyText.trim() === "") return;
 
-  // Resolve the source label (same regex as the mark path) solely to look up
+  // Resolve the source label (same helper as the mark path) solely to look up
   // the first ref for the backref target. Missing/unparsed mark -> null.
   let targetRefPos: number | null = null;
   const mark = node.getChild("FootnoteDefMark");
   if (mark) {
-    const markText = state.doc.sliceString(mark.from, mark.to);
-    const m = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
-    if (m?.[1]) {
-      targetRefPos = footnoteMap.firstRefPositions.get(m[1]) ?? null;
+    const label = parseFootnoteDefLabel(state.doc.sliceString(mark.from, mark.to));
+    if (label) {
+      targetRefPos = footnoteMap.firstRefPositions.get(label) ?? null;
     }
   }
 

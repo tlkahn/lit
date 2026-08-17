@@ -10,6 +10,18 @@ export interface FootnoteMap {
   firstRefPositions: Map<string, number>;
 }
 
+const FOOTNOTE_DEF_LABEL_RE = /^\[\^([a-zA-Z0-9_-]+)\]:$/;
+
+/**
+ * Extract the source label from a `[^label]:` definition mark's raw text.
+ * Returns null when the text is not a well-formed def marker (callers skip
+ * unparsed marks rather than inventing a fallback label).
+ */
+export function parseFootnoteDefLabel(markText: string): string | null {
+  const m = FOOTNOTE_DEF_LABEL_RE.exec(markText);
+  return m?.[1] ?? null;
+}
+
 export function buildFootnoteMap(state: EditorState): FootnoteMap {
   const defPositions = new Map<string, { from: number; to: number }>();
   const firstRefPositions = new Map<string, number>();
@@ -19,10 +31,9 @@ export function buildFootnoteMap(state: EditorState): FootnoteMap {
       if (node.name === "FootnoteDef") {
         const mark = node.node.getChild("FootnoteDefMark");
         if (mark) {
-          const markText = state.doc.sliceString(mark.from, mark.to);
-          const match = /^\[\^([a-zA-Z0-9_-]+)\]:$/.exec(markText);
-          if (match) {
-            defPositions.set(match[1]!, { from: node.from, to: node.to });
+          const label = parseFootnoteDefLabel(state.doc.sliceString(mark.from, mark.to));
+          if (label) {
+            defPositions.set(label, { from: node.from, to: node.to });
           }
         }
       }

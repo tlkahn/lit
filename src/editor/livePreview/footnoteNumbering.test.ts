@@ -2,7 +2,23 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { Footnote } from "../markdown/footnote";
-import { buildFootnoteMap } from "./footnoteNumbering";
+import { buildFootnoteMap, parseFootnoteDefLabel } from "./footnoteNumbering";
+
+describe("parseFootnoteDefLabel", () => {
+  it("extracts a named label", () => {
+    expect(parseFootnoteDefLabel("[^note]:")).toBe("note");
+  });
+
+  it("extracts a numeric label", () => {
+    expect(parseFootnoteDefLabel("[^1]:")).toBe("1");
+  });
+
+  it("returns null for malformed / non-def mark text", () => {
+    expect(parseFootnoteDefLabel("[^bad")).toBeNull();
+    expect(parseFootnoteDefLabel("")).toBeNull();
+    expect(parseFootnoteDefLabel("[^x]")).toBeNull();
+  });
+});
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
