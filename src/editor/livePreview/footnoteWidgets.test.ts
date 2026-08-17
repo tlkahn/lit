@@ -94,7 +94,7 @@ describe("FootnoteRefWidget", () => {
 describe("FootnoteDefMarkWidget", () => {
   it("toDOM returns span with class and label + dot", () => {
     const widget = new FootnoteDefMarkWidget("3");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.tagName).toBe("SPAN");
     expect(el.className).toBe("cm-footnote-def-mark");
     expect(el.textContent).toBe("3.");
@@ -102,7 +102,7 @@ describe("FootnoteDefMarkWidget", () => {
 
   it("toDOM shows a named label with dot", () => {
     const widget = new FootnoteDefMarkWidget("note");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.textContent).toBe("note.");
   });
 
@@ -188,14 +188,14 @@ describe("FootnoteDefMarkWidget", () => {
 describe("FootnoteDefBodyWidget", () => {
   it("toDOM returns a div with class cm-footnote-def-body", () => {
     const widget = new FootnoteDefBodyWidget("Definition text");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.tagName).toBe("DIV");
     expect(el.className).toBe("cm-footnote-def-body");
   });
 
   it("toDOM renders bold markdown via renderFootnoteBody", () => {
     const widget = new FootnoteDefBodyWidget("**bold** and *em*");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.innerHTML).toContain("<strong>bold</strong>");
     expect(el.innerHTML).toContain("<em>em</em>");
   });
@@ -203,7 +203,7 @@ describe("FootnoteDefBodyWidget", () => {
   it("toDOM renders inline math (placeholder path when katex not loaded)", () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
     const widget = new FootnoteDefBodyWidget("sigma $x$");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     // katex is not loaded, so renderMathToHtml emits the placeholder span
     // with the latex text visible (element is detached, so no upgrade).
     expect(el.innerHTML).toContain("cm-preview-math-placeholder");
@@ -214,7 +214,7 @@ describe("FootnoteDefBodyWidget", () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
 
     const widget = new FootnoteDefBodyWidget("sigma $x$");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     document.body.appendChild(el); // must be connected for the upgrade
     expect(el.innerHTML).toContain("cm-preview-math-placeholder");
 
@@ -230,7 +230,7 @@ describe("FootnoteDefBodyWidget", () => {
     // immediately, so no async upgrade is needed.
     vi.mocked(loadKatex).mockClear();
     const widget = new FootnoteDefBodyWidget("sigma $x$");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.innerHTML).not.toContain("cm-preview-math-placeholder");
     expect(el.innerHTML).toContain("cm-preview-math-inline");
     expect(loadKatex).not.toHaveBeenCalled();
@@ -239,7 +239,7 @@ describe("FootnoteDefBodyWidget", () => {
   it("toDOM does not throw if loadKatex resolves after the node is detached", async () => {
     vi.mocked(getKatexSync).mockReturnValueOnce(null);
 
-    const el = new FootnoteDefBodyWidget("$x$").toDOM();
+    const el = new FootnoteDefBodyWidget("$x$").toDOM(mockView);
     // Deliberately never attached: the upgrade must bail without throwing.
     await Promise.resolve();
     await Promise.resolve();
@@ -248,20 +248,20 @@ describe("FootnoteDefBodyWidget", () => {
 
   it("toDOM sanitizes script tags out of the body", () => {
     const widget = new FootnoteDefBodyWidget("<script>alert('xss')</script>");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.innerHTML).not.toContain("<script>");
   });
 
   it("toDOM renders block markdown (heading) inside the body", () => {
     const widget = new FootnoteDefBodyWidget("### Setup\ncontent");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.innerHTML).toContain("<h3>");
     expect(el.innerHTML).toContain("Setup");
   });
 
   it("toDOM renders display math inside a multi-line body", () => {
     const widget = new FootnoteDefBodyWidget("Before\n$$\nx^2\n$$\nAfter");
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.innerHTML).toContain("cm-preview-math-display");
   });
 
@@ -269,7 +269,7 @@ describe("FootnoteDefBodyWidget", () => {
     const widget = new FootnoteDefBodyWidget(
       "**bold** and *em* with $\\sigma$\n### Setup\n$$\nE = mc^2\n$$",
     );
-    const el = widget.toDOM();
+    const el = widget.toDOM(mockView);
     expect(el.innerHTML).toContain("<strong>bold</strong>");
     expect(el.innerHTML).toContain("<em>em</em>");
     expect(el.innerHTML).toContain("<h3>");
@@ -315,7 +315,7 @@ describe("FootnoteDefBodyWidget", () => {
   });
 
   it("mousedown on a link inside the body prevents default navigation", () => {
-    const el = new FootnoteDefBodyWidget("[go](https://example.com)").toDOM();
+    const el = new FootnoteDefBodyWidget("[go](https://example.com)").toDOM(mockView);
     const anchor = el.querySelector("a[href]") as HTMLAnchorElement;
     expect(anchor).toBeTruthy();
     const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
@@ -324,7 +324,7 @@ describe("FootnoteDefBodyWidget", () => {
   });
 
   it("mousedown on non-link body text does not preventDefault", () => {
-    const el = new FootnoteDefBodyWidget("plain text").toDOM();
+    const el = new FootnoteDefBodyWidget("plain text").toDOM(mockView);
     const evt = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     el.dispatchEvent(evt);
     expect(evt.defaultPrevented).toBe(false);

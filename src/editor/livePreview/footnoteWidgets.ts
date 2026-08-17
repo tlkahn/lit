@@ -102,11 +102,11 @@ export class FootnoteDefMarkWidget extends WidgetType {
     super();
   }
 
-  toDOM(view?: EditorView): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const span = document.createElement("span");
     span.className = "cm-footnote-def-mark";
     span.textContent = `${this.label}.`;
-    if (this.targetRefPos != null && view) {
+    if (this.targetRefPos != null) {
       span.appendChild(makeFootnoteBackref(view, this.targetRefPos));
     }
     return span;
@@ -148,7 +148,7 @@ export class FootnoteDefBodyWidget extends WidgetType {
     super();
   }
 
-  toDOM(view?: EditorView): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const div = document.createElement("div");
     div.className = "cm-footnote-def-body";
     // Paint into an inner content wrapper so paintFootnoteBody's async KaTeX
@@ -166,7 +166,7 @@ export class FootnoteDefBodyWidget extends WidgetType {
       const t = e.target as HTMLElement | null;
       if (t?.closest?.("a[href]")) e.preventDefault();
     });
-    if (this.targetRefPos != null && view) {
+    if (this.targetRefPos != null) {
       div.appendChild(makeFootnoteBackref(view, this.targetRefPos));
     }
     return div;
