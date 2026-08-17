@@ -265,6 +265,28 @@ describe("footnote definition theme spec", () => {
     expect(rule.margin).toBe("0");
     expect(rule).not.toHaveProperty("marginTop");
   });
+
+  it("livePreviewThemeSpec contains .cm-footnote-backref key", () => {
+    expect(livePreviewThemeSpec[".cm-footnote-backref"]).toBeDefined();
+  });
+
+  it(".cm-footnote-backref uses accent color, pointer cursor, padding only (no margin)", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-backref"] as Record<string, string>;
+    expect(rule.color).toBe("var(--text-accent)");
+    expect(rule.cursor).toBe("pointer");
+    expect(rule.paddingLeft).toBeDefined();
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it(".cm-footnote-backref disables text selection", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-backref"] as Record<string, string>;
+    expect(rule.userSelect).toBe("none");
+  });
+
+  it("has a .cm-footnote-backref:hover rule", () => {
+    const rule = livePreviewThemeSpec[".cm-footnote-backref:hover"] as Record<string, string>;
+    expect(rule).toBeDefined();
+  });
 });
 
 describe("blockquote theme spec", () => {

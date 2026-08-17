@@ -55,6 +55,7 @@ type DecoInfo = {
   widgetKind?: "escaped-dollar" | "footnote-def-mark" | "footnote-ref" | "footnote-def-body" | "html-break";
   footnoteDisplayLabel?: string; // raw source label for ref sup and def mark
   footnoteBodyText?: string;
+  footnoteTargetRefPos?: number | null;
   url?: string;
   style?: string;
 };
@@ -81,10 +82,12 @@ function collectDecos(view: EditorView): DecoInfo[] {
       if (spec.widget instanceof FootnoteDefMarkWidget) {
         info.widgetKind = "footnote-def-mark";
         info.footnoteDisplayLabel = spec.widget.label;
+        info.footnoteTargetRefPos = spec.widget.targetRefPos;
       }
       if (spec.widget instanceof FootnoteDefBodyWidget) {
         info.widgetKind = "footnote-def-body";
         info.footnoteBodyText = spec.widget.bodyText;
+        info.footnoteTargetRefPos = spec.widget.targetRefPos;
       }
       if (spec.widget instanceof HtmlBreakWidget) info.widgetKind = "html-break";
     }
@@ -1309,10 +1312,12 @@ function collectBlockDecos(view: EditorView): DecoInfo[] {
       if (spec.widget instanceof FootnoteDefMarkWidget) {
         info.widgetKind = "footnote-def-mark";
         info.footnoteDisplayLabel = spec.widget.label;
+        info.footnoteTargetRefPos = spec.widget.targetRefPos;
       }
       if (spec.widget instanceof FootnoteDefBodyWidget) {
         info.widgetKind = "footnote-def-body";
         info.footnoteBodyText = spec.widget.bodyText;
+        info.footnoteTargetRefPos = spec.widget.targetRefPos;
       }
     }
     if (spec.class) info.class = spec.class;
@@ -3092,6 +3097,78 @@ describe("buildDecorations — footnote definitions", () => {
     expect(defMark).toBeDefined();
     expect(defMark!.from).toBe(16);
     expect(defMark!.to).toBe(22);
+    view.destroy();
+  });
+
+  it("body widget receives targetRefPos = the matching ref start", () => {
+    const doc = "See [^1].\n\n[^1]: Hello";
+    const view = makeView(doc, 0); // caret on "See"
+    const bodies = collectBlockDecos(view).filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.footnoteTargetRefPos).toBe(doc.indexOf("[^1]"));
+    view.destroy();
+  });
+
+  it("body widget targetRefPos is null when there is no ref", () => {
+    const doc = "Text\n\n[^1]: Orphan def";
+    const view = makeView(doc, 2);
+    const bodies = collectBlockDecos(view).filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.footnoteTargetRefPos).toBeNull();
+    view.destroy();
+  });
+
+  it("body widget targets the FIRST ref when the label repeats", () => {
+    const doc = "See [^x] and again [^x].\n\n[^x]: X def";
+    const view = makeView(doc, 0);
+    const bodies = collectBlockDecos(view).filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.footnoteTargetRefPos).toBe(doc.indexOf("[^x]"));
+    view.destroy();
+  });
+
+  it("multi-line body still gets one body widget with targetRefPos", () => {
+    const doc = "See [^1].\n\n[^1]: First line\n    Continuation";
+    const view = makeView(doc, 0);
+    const bodies = collectBlockDecos(view).filter((d) => d.widgetKind === "footnote-def-body");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.footnoteTargetRefPos).toBe(doc.indexOf("[^1]"));
+    view.destroy();
+  });
+
+  it("non-empty body + ref: mark widget carries no backref (body owns it)", () => {
+    const doc = "See [^1].\n\n[^1]: Hello";
+    const view = makeView(doc, 0);
+    const marks = collectDecos(view).filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.footnoteTargetRefPos).toBeNull();
+    view.destroy();
+  });
+
+  it("empty body with a ref: mark widget gets the backref (target = ref from)", () => {
+    const doc = "See [^1].\n\n[^1]:";
+    const view = makeView(doc, 0);
+    const marks = collectDecos(view).filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.footnoteTargetRefPos).toBe(doc.indexOf("[^1]"));
+    view.destroy();
+  });
+
+  it("whitespace-only body with a ref: mark widget gets the backref", () => {
+    const doc = "See [^1].\n\n[^1]:   ";
+    const view = makeView(doc, 0);
+    const marks = collectDecos(view).filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.footnoteTargetRefPos).toBe(doc.indexOf("[^1]"));
+    view.destroy();
+  });
+
+  it("empty body with no ref: mark widget carries no backref", () => {
+    const doc = "Text\n\n[^1]:";
+    const view = makeView(doc, 0);
+    const marks = collectDecos(view).filter((d) => d.widgetKind === "footnote-def-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.footnoteTargetRefPos).toBeNull();
     view.destroy();
   });
 });

@@ -2,7 +2,23 @@ import { describe, it, expect } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { Footnote } from "../markdown/footnote";
-import { buildFootnoteMap } from "./footnoteNumbering";
+import { buildFootnoteMap, parseFootnoteDefLabel } from "./footnoteNumbering";
+
+describe("parseFootnoteDefLabel", () => {
+  it("extracts a named label", () => {
+    expect(parseFootnoteDefLabel("[^note]:")).toBe("note");
+  });
+
+  it("extracts a numeric label", () => {
+    expect(parseFootnoteDefLabel("[^1]:")).toBe("1");
+  });
+
+  it("returns null for malformed / non-def mark text", () => {
+    expect(parseFootnoteDefLabel("[^bad")).toBeNull();
+    expect(parseFootnoteDefLabel("")).toBeNull();
+    expect(parseFootnoteDefLabel("[^x]")).toBeNull();
+  });
+});
 
 function makeState(doc: string): EditorState {
   return EditorState.create({
@@ -12,13 +28,44 @@ function makeState(doc: string): EditorState {
 }
 
 describe("buildFootnoteMap", () => {
-  it("exposes only defPositions (no ref index, no labelToNumber)", () => {
+  it("exposes defPositions and firstRefPositions (no labelToNumber)", () => {
     const map = buildFootnoteMap(makeState("See [^a].\n\n[^a]: A"));
     expect(map).toEqual({
       defPositions: expect.any(Map),
+      firstRefPositions: expect.any(Map),
     });
     expect(map).not.toHaveProperty("refPositions");
     expect(map).not.toHaveProperty("labelToNumber");
+  });
+
+  it("records the single ref's start offset in firstRefPositions", () => {
+    const map = buildFootnoteMap(makeState("See [^a].\n\n[^a]: A"));
+    expect(map.firstRefPositions.get("a")).toBe(4); // "[" of [^a]
+  });
+
+  it("multiple refs to one label: first occurrence wins (earlier offset)", () => {
+    const doc = "See [^x] and [^x] again.\n\n[^x]: X def";
+    expect(buildFootnoteMap(makeState(doc)).firstRefPositions.get("x")).toBe(doc.indexOf("[^x]"));
+  });
+
+  it("ref without a def is still recorded in firstRefPositions", () => {
+    const map = buildFootnoteMap(makeState("See [^a] here."));
+    expect(map.firstRefPositions.get("a")).toBe(4);
+    expect(map.defPositions.size).toBe(0);
+  });
+
+  it("orphan def (no ref) is absent from firstRefPositions", () => {
+    const state = makeState("[^b]: Only a def");
+    const map = buildFootnoteMap(state);
+    expect(map.defPositions.get("b")).toBeDefined();
+    expect(map.firstRefPositions.has("b")).toBe(false);
+  });
+
+  it("named and numeric labels both resolve in firstRefPositions", () => {
+    const doc = "See [^note] and [^1].\n\n[^note]: N\n[^1]: One";
+    const map = buildFootnoteMap(makeState(doc));
+    expect(map.firstRefPositions.get("note")).toBe(doc.indexOf("[^note]"));
+    expect(map.firstRefPositions.get("1")).toBe(doc.indexOf("[^1]"));
   });
 
   it("records correct defPositions", () => {
