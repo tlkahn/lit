@@ -12,8 +12,8 @@ export const SIDEBAR_WIDTH_PX = DEFAULT_SIDEBAR_WIDTH_PX;
 export function parseStoredSidebarWidth(raw: string | null): number {
   if (raw === null) return DEFAULT_SIDEBAR_WIDTH_PX;
   const parsed = Number(raw);
-  if (isNaN(parsed)) return DEFAULT_SIDEBAR_WIDTH_PX;
-  return Math.max(parsed, MIN_SIDEBAR_WIDTH_PX);
+  if (!Number.isFinite(parsed)) return DEFAULT_SIDEBAR_WIDTH_PX;
+  return Math.max(Math.round(parsed), MIN_SIDEBAR_WIDTH_PX);
 }
 
 function loadSidebarWidth(): number {
@@ -28,7 +28,8 @@ export interface SidebarLayoutState {
 export const useSidebarLayoutStore = create<SidebarLayoutState>((set) => ({
   sidebarWidth: loadSidebarWidth(),
   setSidebarWidth: (w: number) => {
-    const clamped = Math.max(w, MIN_SIDEBAR_WIDTH_PX);
+    if (!Number.isFinite(w)) return;
+    const clamped = Math.max(Math.round(w), MIN_SIDEBAR_WIDTH_PX);
     set({ sidebarWidth: clamped });
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped));
   },

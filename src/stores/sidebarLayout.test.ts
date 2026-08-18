@@ -32,6 +32,25 @@ describe("sidebarLayout store", () => {
     expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(MIN_SIDEBAR_WIDTH_PX);
     expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe(String(MIN_SIDEBAR_WIDTH_PX));
   });
+
+  it("setSidebarWidth(300.4) rounds state and storage to 300", () => {
+    useSidebarLayoutStore.getState().setSidebarWidth(300.4);
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(300);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
+  });
+
+  it("setSidebarWidth(Infinity) leaves state unchanged and does not corrupt storage", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 240 });
+    useSidebarLayoutStore.getState().setSidebarWidth(Infinity);
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(240);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).not.toBe("Infinity");
+  });
+
+  it("setSidebarWidth(NaN) leaves state unchanged", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 240 });
+    useSidebarLayoutStore.getState().setSidebarWidth(NaN);
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(240);
+  });
 });
 
 describe("parseStoredSidebarWidth", () => {
@@ -49,5 +68,21 @@ describe("parseStoredSidebarWidth", () => {
 
   it("returns default for invalid input", () => {
     expect(parseStoredSidebarWidth("abc")).toBe(DEFAULT_SIDEBAR_WIDTH_PX);
+  });
+
+  it("returns default for 'Infinity'", () => {
+    expect(parseStoredSidebarWidth("Infinity")).toBe(DEFAULT_SIDEBAR_WIDTH_PX);
+  });
+
+  it("returns default for '-Infinity'", () => {
+    expect(parseStoredSidebarWidth("-Infinity")).toBe(DEFAULT_SIDEBAR_WIDTH_PX);
+  });
+
+  it("returns default for 'NaN'", () => {
+    expect(parseStoredSidebarWidth("NaN")).toBe(DEFAULT_SIDEBAR_WIDTH_PX);
+  });
+
+  it("rounds fractional values to integer px", () => {
+    expect(parseStoredSidebarWidth("300.6")).toBe(301);
   });
 });
