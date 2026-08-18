@@ -148,6 +148,20 @@ describe("PaneHeader", () => {
     usePaneHistoryStore.setState({ goForward: originalGoForward });
   });
 
+  it("header row and title contain min-w-0/truncate for overflow containment", () => {
+    useWorkspaceStore.setState({ pages: [meta("note.md", "markdown")] });
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "note.md" },
+      focusedPaneId: "p1",
+    });
+    render(
+      <PaneHeader paneId="p1" pagePath="note.md" fileType="markdown" />,
+    );
+    expect(screen.getByTestId("pane-header").className).toContain("min-w-0");
+    expect(screen.getByTestId("pane-header-title").className).toContain("truncate");
+    expect(screen.getByTestId("pane-header-title").className).toContain("min-w-0");
+  });
+
   it("shows markdown title from paneContentRegistry", () => {
     useWorkspaceStore.setState({ pages: [meta("note.md", "markdown")] });
     usePaneStore.setState({

@@ -119,7 +119,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
         ref={emptyContainerRef}
         data-testid={`code-editor-pane-${paneId}`}
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
+        className={`flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -132,11 +132,11 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
     <div
       data-testid={`code-editor-pane-${paneId}`}
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >
-      <div ref={containerRef} className="flex-1 overflow-hidden" />
+      <div ref={containerRef} data-testid="code-editor-host" className="flex-1 min-w-0 overflow-hidden" />
     </div>
   );
 }

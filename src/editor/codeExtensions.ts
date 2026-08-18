@@ -18,7 +18,7 @@ import {
 } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
-import { getThemeExtension, highlightExtension, searchTheme } from "./theme";
+import { getThemeExtension, highlightExtension, searchTheme, codeEditorContentThemeSpec } from "./theme";
 import { pairWrapExtension } from "./pairWrap";
 
 export interface CodeExtensionConfig {
@@ -45,6 +45,10 @@ export function createCodeExtensions(config: CodeExtensionConfig): Extension[] {
     pairWrapExtension(),
     config.languageCompartment.of(config.language ?? []),
     config.themeCompartment.of(getThemeExtension(config.theme)),
+    // Let non-wrapping code lines extend .cm-content past the scroller so long
+    // lines scroll horizontally instead of clipping against the markdown
+    // content maxWidth/overflowX. Merges over the shared theme for code only.
+    EditorView.baseTheme(codeEditorContentThemeSpec),
     highlightExtension,
     lineNumbers(),
     highlightActiveLine(),

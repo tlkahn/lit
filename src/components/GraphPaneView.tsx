@@ -18,7 +18,7 @@ export function GraphPaneView({ paneId, pagePath, onExportNetwork }: { paneId: s
   }, [paneId, setPaneViewMode]);
 
   return (
-    <div data-testid="graph-view-wrapper" className="flex-1 min-h-0">
+    <div data-testid="graph-view-wrapper" className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
         <LazyGraphView
           activePageId={pagePath}

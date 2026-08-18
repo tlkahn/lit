@@ -37,7 +37,7 @@ export function CodeMirrorEditor({ doc, onChange, onSelectionChange, resolveImag
     <div
       ref={containerRef}
       data-testid="editor"
-      className="flex-1 overflow-hidden"
+      className="flex-1 min-w-0 overflow-hidden"
       style={style}
     />
   );

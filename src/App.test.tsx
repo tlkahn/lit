@@ -171,6 +171,22 @@ describe("App", () => {
     expect(screen.getByText("Open Workspace")).toBeInTheDocument();
   });
 
+  it("app main wrapper contains min-w-0 for row min-size containment", () => {
+    useWorkspaceStore.setState({
+      workspacePath: "/test",
+      pages: samplePages,
+      graphReady: true,
+    });
+    render(<App />);
+    const wrapper = screen.getByTestId("app-main-wrapper");
+    expect(wrapper.className).toContain("min-w-0");
+    // regression: must keep the existing flex/min-size classes
+    expect(wrapper.className).toContain("min-h-0");
+    expect(wrapper.className).toContain("flex-1");
+    expect(wrapper.className).toContain("flex");
+    expect(wrapper.className).toContain("flex-col");
+  });
+
   it("shows sidebar and content when workspace is open", async () => {
     useWorkspaceStore.setState({
       workspacePath: "/test",

@@ -593,7 +593,7 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
   return (
     <main
       className={canvasReady
-        ? "relative flex min-h-0 flex-1 flex-col items-center bg-bg-primary-alt focus:outline-none"
+        ? "relative flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-hidden bg-bg-primary-alt focus:outline-none"
         : "flex flex-1 flex-col items-center justify-center gap-2 bg-bg-primary-alt"
       }
       data-testid={canvasReady ? "pdf-viewer" : "pdf-loading"}
@@ -608,7 +608,8 @@ export function PdfViewer({ filePath, paneId, initialPage = 0, onPageChange, onP
       )}
       <div
         ref={scrollContainerRef}
-        className={canvasReady ? `w-full flex-1 overflow-auto px-4 pb-4${panCursor ? ` cursor-${panCursor}` : ""}` : undefined}
+        data-testid="pdf-scroll"
+        className={canvasReady ? `min-w-0 w-full flex-1 overflow-auto px-4 pb-4${panCursor ? ` cursor-${panCursor}` : ""}` : undefined}
         style={canvasReady ? undefined : { display: "none" }}
         onMouseDown={canvasReady ? handleMouseDown : undefined}
         onMouseMove={canvasReady ? handleMouseMove : undefined}

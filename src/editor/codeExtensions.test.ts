@@ -52,6 +52,20 @@ describe("createCodeExtensions", () => {
     expect(unlockedState.facet(EditorView.editable)).toBe(true);
   });
 
+  it("wires the code content override so long lines can exceed the scroller", () => {
+    const c = freshCompartments();
+    const state = EditorState.create({
+      doc: "code",
+      extensions: createCodeExtensions({ theme: "light", ...c }),
+    });
+    const rules = state
+      .facet(EditorView.styleModule)
+      .map((m) => m.getRules())
+      .join("\n");
+    expect(rules).toContain("max-width: none");
+    expect(rules).toContain("overflow-x: visible");
+  });
+
   it("loads a language when one is provided and not when null", () => {
     const c = freshCompartments();
     const withLang = EditorState.create({

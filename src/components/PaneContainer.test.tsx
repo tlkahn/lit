@@ -228,6 +228,24 @@ describe("PaneContainer", () => {
     expect(split.className).toContain("flex-col");
   });
 
+  it("pane-split contains min-w-0 for row min-size containment", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    const { getByTestId } = render(<PaneContainer />);
+    const split = getByTestId("pane-split");
+    expect(split.className).toContain("min-w-0");
+  });
+
   it("children have flex-basis matching sizes", () => {
     const root: PaneNode = {
       type: "split",
@@ -288,6 +306,37 @@ describe("PaneContainer", () => {
     expect(wrapper.className).toContain("flex");
     expect(wrapper.className).toContain("flex-1");
     expect(wrapper.className).toContain("min-h-0");
+  });
+
+  it("multi-pane leaf contains min-w-0 and overflow-hidden", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    render(<PaneContainer />);
+    const leafA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    const leafB = document.querySelector('[data-pane-id="pane-b"]') as HTMLElement;
+    for (const leaf of [leafA, leafB]) {
+      expect(leaf.className).toContain("min-w-0");
+      expect(leaf.className).toContain("overflow-hidden");
+      expect(leaf.className).toContain("flex-1");
+    }
+  });
+
+  it("single-pane leaf wrapper contains min-w-0 and overflow-hidden", () => {
+    const { getByTestId } = render(<PaneContainer />);
+    const wrapper = getByTestId("editor-pane-solo").parentElement as HTMLElement;
+    expect(wrapper.className).toContain("min-w-0");
+    expect(wrapper.className).toContain("overflow-hidden");
+    expect(wrapper.className).toContain("flex-1");
   });
 
   it("passes style prop to the container div", () => {
@@ -399,6 +448,11 @@ describe("PaneContainer", () => {
     const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.className).toContain("grow-0");
     expect(wrapperA.className).toContain("shrink-0");
+    // Regression lock: the split child (parent of [data-pane-id]) must keep its
+    // outer min-w-0 + overflow-hidden clamp so descendants cannot widen the
+    // pane layout past its flex-basis.
+    expect(wrapperA.className).toContain("min-w-0");
+    expect(wrapperA.className).toContain("overflow-hidden");
   });
 
   // Cycle 19 — drag divider updates store in context
@@ -756,6 +810,15 @@ describe("PaneContainer collapsed mode", () => {
     const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
     expect(wrapperA.style.display).toBe("");
     expect(wrapperB.style.display).toBe("");
+  });
+
+  it("collapsed pane-split contains min-w-0", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const split = screen.getByTestId("pane-split");
+    expect(split.className).toContain("min-w-0");
   });
 });
 

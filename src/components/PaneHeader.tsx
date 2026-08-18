@@ -38,7 +38,7 @@ export function PaneHeader({ paneId, pagePath, fileType, onMouseDown }: PaneHead
   return (
     <div
       data-testid="pane-header"
-      className="flex items-center gap-1.5 px-3 py-1.5 text-sm"
+      className="flex min-w-0 items-center gap-1.5 px-3 py-1.5 text-sm"
       onMouseDown={onMouseDown}
     >
       <HistoryNavButtons paneId={paneId} testIdPrefix="pane-history-" />

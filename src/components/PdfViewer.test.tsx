@@ -265,6 +265,25 @@ describe("PdfViewer", () => {
     expect(loading.textContent).toContain("Loading PDF…");
   });
 
+  it("ready-state main contains min-w-0 and overflow-hidden for pane containment", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const viewer = await screen.findByTestId("pdf-viewer");
+    expect(viewer.className).toContain("min-w-0");
+    expect(viewer.className).toContain("overflow-hidden");
+    expect(viewer.className).toContain("flex-1");
+  });
+
+  it("scroll container is the pane-bounded scrollport with min-w-0 w-full overflow-auto", async () => {
+    render(<PdfViewer filePath="/test/doc.pdf" paneId="pane-1" />);
+    const scroll = await screen.findByTestId("pdf-scroll");
+    expect(scroll.className).toContain("min-w-0");
+    expect(scroll.className).toContain("w-full");
+    expect(scroll.className).toContain("overflow-auto");
+    expect(scroll.className).toContain("flex-1");
+    // The scrollport is the visible clip/scroll boundary for wide pages.
+    expect(scroll).toBe(screen.getByTestId("pdf-page-canvas").parentElement!.parentElement);
+  });
+
   it("shows spinner overlay during page navigation", async () => {
     let goToPage: ((i: number) => void) | null = null;
     render(

@@ -51,7 +51,7 @@ export function MindmapPaneView({ paneId, pagePath, onExportNetwork }: { paneId:
   }, [headingTree, paneId]);
 
   return (
-    <div data-testid="mindmap-view" className="flex-1 min-h-0">
+    <div data-testid="mindmap-view" className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <Suspense fallback={<div className="flex items-center justify-center h-full text-text-faint">Loading…</div>}>
         <LazyMindmapView
           key={pagePath}

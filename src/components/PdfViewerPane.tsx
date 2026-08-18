@@ -129,7 +129,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
         ref={emptyContainerRef}
         data-testid="pdf-viewer-pane"
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center ${borderClass}`}
+        className={`flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden ${borderClass}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -150,7 +150,7 @@ function PdfViewerPaneInner({ paneId }: PdfViewerPaneProps) {
       ref={containerRef}
       data-testid="pdf-viewer-pane"
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col ${borderClass}`}
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${borderClass}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >
