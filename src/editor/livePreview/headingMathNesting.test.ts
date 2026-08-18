@@ -109,6 +109,19 @@ describe("emphasis inline math DOM nesting", () => {
     view.dom.remove();
     view.destroy();
   });
+
+  it("nests a sole image widget inside the bold mark DOM", () => {
+    const doc = "**![alt](img.png)**\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-image, .cm-preview-image-thumbnail"),
+    )!;
+    const img = line.querySelector(".cm-preview-image, .cm-preview-image-thumbnail");
+    expect(img).not.toBeNull();
+    expect(img!.closest(".cm-preview-bold")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
 });
 
 describe("strikethrough inline math DOM nesting", () => {
@@ -133,6 +146,32 @@ describe("strikethrough inline math DOM nesting", () => {
     )!;
     const math = line.querySelector(".cm-preview-math-inline")!;
     expect(math.closest(".cm-preview-strikethrough")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests start-aligned inline math inside the strikethrough mark DOM", () => {
+    const doc = "~~$x$ after~~\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-strikethrough"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline");
+    expect(math).not.toBeNull();
+    expect(math!.closest(".cm-preview-strikethrough")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests end-aligned inline math inside the strikethrough mark DOM", () => {
+    const doc = "~~before $x$~~\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-strikethrough"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline");
+    expect(math).not.toBeNull();
+    expect(math!.closest(".cm-preview-strikethrough")).not.toBeNull();
     view.dom.remove();
     view.destroy();
   });
@@ -216,6 +255,22 @@ describe("heading inline math DOM nesting", () => {
     )!;
     const math = line.querySelector(".cm-preview-math-inline")!;
     expect(math.closest(".cm-preview-h2")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests sole bold math inside both bold and heading marks", () => {
+    const doc = "## **$d_1$** rest\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const math = [...view.dom.querySelectorAll(".cm-preview-math-inline")].find(
+      Boolean,
+    )!;
+    expect(math.closest(".cm-preview-bold")).not.toBeNull();
+    expect(math.closest(".cm-preview-h2")).not.toBeNull();
+    // bold mark itself under heading
+    expect(
+      math.closest(".cm-preview-bold")!.closest(".cm-preview-h2"),
+    ).not.toBeNull();
     view.dom.remove();
     view.destroy();
   });

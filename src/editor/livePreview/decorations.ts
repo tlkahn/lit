@@ -26,11 +26,14 @@ const headingClass: Record<string, string> = {
 
 /**
  * Content marks that inline replace widgets must nest into for em / weight /
- * line-through inheritance. Inclusive at both ends: start-aligned and
+ * line-through inheritance: heading, emphasis, strikethrough, link, and
+ * html-inline sup/sub/mark pairs. Inclusive at both ends: start-aligned and
  * end-aligned widgets share one endpoint with the mark after marker hides;
  * default exclusive sides leave them outside the mark DOM (#1043 + the
- * start-aligned / full-span follow-up). Interior widgets nested without flags.
+ * start-aligned / full-span follow-up). Interior widgets nest without flags.
  * `inclusive: true` must stay last so the attrs bag can never clobber it.
+ * Wikilink, inline-code, and comment marks stay exclusive: they host no
+ * nested replace widgets today (math inside [[...]] is a separate feature).
  */
 function previewContentMark(
   cls: string,
