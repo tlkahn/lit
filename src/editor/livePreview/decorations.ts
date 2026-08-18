@@ -24,6 +24,21 @@ const headingClass: Record<string, string> = {
   ATXHeading6: "cm-preview-h6",
 };
 
+/**
+ * Content marks that inline replace widgets must nest into for em / weight /
+ * line-through inheritance. Inclusive at both ends: start-aligned and
+ * end-aligned widgets share one endpoint with the mark after marker hides;
+ * default exclusive sides leave them outside the mark DOM (#1043 + the
+ * start-aligned / full-span follow-up). Interior widgets nested without flags.
+ */
+function previewContentMark(cls: string, attrs?: { attributes?: Record<string, string> }) {
+  return Decoration.mark({
+    class: cls,
+    inclusive: true,
+    ...attrs,
+  });
+}
+
 export interface BuildDecorationsResult {
   decorations: DecorationSet;
   cursorSensitiveLines: Set<number>;
@@ -174,7 +189,12 @@ export function buildDecorations(view: EditorView): BuildDecorationsResult {
 
   const filtered = filterContainedDecorations(decos);
 
-  const result = RangeSet.of(filtered.map((d) => d.deco.range(d.from, d.to)));
+  // Side-aware sort: marks use inclusiveStart (inclusive: true), so ranges
+  // that share `from` must order by startSide, not from/to alone.
+  const result = RangeSet.of(
+    filtered.map((d) => d.deco.range(d.from, d.to)),
+    true,
+  );
   perfMeasure("buildDecorations", "buildDecorations:start");
   return { decorations: result, cursorSensitiveLines };
 }
@@ -325,7 +345,7 @@ function addHeadingDecos(
     ? (headerMark.to < to && state.doc.sliceString(headerMark.to, headerMark.to + 1) === " " ? headerMark.to + 1 : headerMark.to)
     : from;
   if (contentFrom < to) {
-    decos.push({ from: contentFrom, to, deco: Decoration.mark({ class: cls }) });
+    decos.push({ from: contentFrom, to, deco: previewContentMark(cls) });
   }
 
   processInlineChildren(state, node, decos, cursorSensitiveLines, footnoteMap);
@@ -373,7 +393,7 @@ function addEmphasisDecos(
   }
 
   if (contentFrom < contentTo) {
-    decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: cls }) });
+    decos.push({ from: contentFrom, to: contentTo, deco: previewContentMark(cls) });
   }
 
   processInlineChildren(state, node, decos, cursorSensitiveLines, footnoteMap);
@@ -403,7 +423,7 @@ function addStrikethroughDecos(
   }
 
   if (contentFrom < contentTo) {
-    decos.push({ from: contentFrom, to: contentTo, deco: Decoration.mark({ class: "cm-preview-strikethrough" }) });
+    decos.push({ from: contentFrom, to: contentTo, deco: previewContentMark("cm-preview-strikethrough") });
   }
 
   processInlineChildren(state, node, decos, cursorSensitiveLines, footnoteMap);
@@ -948,7 +968,12 @@ export function buildBlockReplacements(state: EditorState): BlockReplacementStat
   });
 
   decos.sort((a, b) => a.from - b.from || a.to - b.to);
-  const result = RangeSet.of(decos.map((d) => d.deco.range(d.from, d.to)));
+  // Side-aware sort for consistency with buildDecorations: any future block
+  // mark that uses inclusiveStart would otherwise throw on RangeSet.of.
+  const result = RangeSet.of(
+    decos.map((d) => d.deco.range(d.from, d.to)),
+    true,
+  );
   perfMeasure("buildBlockReplacements", "buildBlockReplacements:start");
   return { decos: result, cursorSensitiveRanges };
 }
@@ -977,7 +1002,11 @@ export function filterContainedDecorations(
     if (
       w < widgetReplaces.length &&
       widgetReplaces[w]!.from <= d.from &&
-      widgetReplaces[w]!.to >= d.to
+      widgetReplaces[w]!.to >= d.to &&
+      // Strict containment only: a mark whose bounds are exactly equal to a
+      // sole-child widget (e.g. `## $E=mc^2$`, `**$d_1$**`) must survive so
+      // `inclusive` can nest the widget into it for style inheritance.
+      (widgetReplaces[w]!.from < d.from || widgetReplaces[w]!.to > d.to)
     ) {
       continue;
     }
