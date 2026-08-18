@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor, fireEvent } from "@testing-library/react";
+import { render, waitFor, fireEvent, screen } from "@testing-library/react";
 import { usePaneStore } from "../stores/panes";
 import { useCursorInfoStore } from "../stores/cursorInfo";
 import CodeEditorPane from "./CodeEditorPane";
@@ -75,7 +75,7 @@ describe("CodeEditorPane", () => {
     expect(root.className).toContain("min-w-0");
     expect(root.className).toContain("overflow-hidden");
     // Host container (ref={containerRef}) inside the filled root
-    const host = root.querySelector(".flex-1") as HTMLElement;
+    const host = screen.getByTestId("code-editor-host") as HTMLElement;
     expect(host.className).toContain("min-w-0");
     expect(host.className).toContain("overflow-hidden");
   });

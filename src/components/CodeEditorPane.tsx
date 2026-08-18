@@ -136,7 +136,7 @@ function CodeEditorPaneInner({ paneId }: { paneId: string }) {
       onFocus={handleFocus}
       tabIndex={-1}
     >
-      <div ref={containerRef} className="flex-1 min-w-0 overflow-hidden" />
+      <div ref={containerRef} data-testid="code-editor-host" className="flex-1 min-w-0 overflow-hidden" />
     </div>
   );
 }
