@@ -255,9 +255,10 @@ export function Sidebar({
   const shellRef = useRef<HTMLDivElement>(null);
   const asideRef = useRef<HTMLElement>(null);
 
-  // Re-clamp stored width to parent * maxRatio when the sidebar is resized via
-  // window resize (mirror of BottomPanel.clampPanelSize). Never auto-grow; only
-  // shrin when the stored width exceeds the new proportional max.
+  // Re-clamp stored width to parent * maxRatio whenever the sidebar is visible:
+  // on mount / un-collapse (immediate) and on window resize (mirror of
+  // BottomPanel.clampPanelSize). Never auto-grow; only shrink when the stored
+  // width exceeds the new proportional max. While collapsed, do nothing.
   useEffect(() => {
     if (collapsed) return;
     const reClamp = () => {
@@ -271,6 +272,7 @@ export function Sidebar({
         setSidebarWidth(max);
       }
     };
+    reClamp();
     window.addEventListener("resize", reClamp);
     return () => window.removeEventListener("resize", reClamp);
   }, [collapsed, setSidebarWidth]);

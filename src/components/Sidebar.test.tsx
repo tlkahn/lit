@@ -471,6 +471,18 @@ describe("Sidebar window resize re-clamp", () => {
     expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
   });
 
+  it("clamps stored width to half parent when expanding from collapsed", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 400 });
+    const { rerender } = render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 600);
+
+    rerender(<Sidebar collapsed={false} />);
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(300);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
+    expect(screen.getByTestId("sidebar-shell").style.width).toBe("300px");
+  });
+
   it("does not clobber stored width when collapsed", () => {
     useSidebarLayoutStore.setState({ sidebarWidth: 400 });
     render(<Sidebar collapsed />);
