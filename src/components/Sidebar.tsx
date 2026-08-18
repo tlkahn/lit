@@ -581,7 +581,7 @@ export function Sidebar({
         contentRef={asideRef}
         onResizeEnd={setSidebarWidth}
       />
-    <aside ref={asideRef} className="flex h-full shrink-0 flex-col bg-bg-secondary" style={{ width: sidebarWidth }}>
+      <aside ref={asideRef} className="flex h-full shrink-0 flex-col bg-bg-secondary" style={{ width: sidebarWidth }}>
       <div className="flex items-center border-b border-border-subtle">
         <button
           onClick={() => setTab("files")}
@@ -752,7 +752,7 @@ export function Sidebar({
           if (trashConfirm) void runTrash(trashConfirm.paths);
         }}
       />
-    </aside>
+      </aside>
     </div>
   );
 }

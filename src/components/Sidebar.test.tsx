@@ -6,9 +6,8 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useFileTreeSelectionStore } from "../stores/fileTreeSelection";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
-import { useSidebarLayoutStore, DEFAULT_SIDEBAR_WIDTH_PX, SIDEBAR_WIDTH_STORAGE_KEY } from "../stores/sidebarLayout";
+import { useSidebarLayoutStore, DEFAULT_SIDEBAR_WIDTH_PX, SIDEBAR_WIDTH_STORAGE_KEY, MIN_SIDEBAR_WIDTH_PX } from "../stores/sidebarLayout";
 import { usePreferencesStore } from "../stores/preferences";
-import { MIN_SIDEBAR_WIDTH_PX } from "../stores/sidebarLayout";
 import type { BibEntry } from "../lib/ipc";
 
 let invokedCommands: { cmd: string; args: unknown }[] = [];
@@ -452,7 +451,7 @@ describe("Sidebar drag resize", () => {
     expect(document.body.style.userSelect).toBe("");
   });
 
-    it("drag left on right-position handle increases width", () => {
+  it("drag left on right-position handle increases width", () => {
     usePreferencesStore.setState({ sidebarLocation: "right" });
     render(<Sidebar />);
     const shell = screen.getByTestId("sidebar-shell");
