@@ -271,6 +271,32 @@ function mockSidebarParentWidth(shell: HTMLElement, width: number) {
     }) as DOMRect;
 }
 
+describe("Sidebar shell overflow", () => {
+  beforeEach(() => {
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    useSidebarLayoutStore.setState({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH_PX });
+    useWorkspaceStore.setState({ pages: [makePage("Alpha", "Alpha.md")] });
+  });
+
+  it("docked expanded shell clips overflow hidden", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.overflow).toBe("hidden");
+  });
+
+  it("docked collapsed shell clips overflow hidden", () => {
+    render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.overflow).toBe("hidden");
+  });
+
+  it("overlay shell clips overflow hidden", () => {
+    render(<Sidebar overlay />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.overflow).toBe("hidden");
+  });
+});
+
 describe("Sidebar drag resize", () => {
   beforeEach(() => {
     localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);

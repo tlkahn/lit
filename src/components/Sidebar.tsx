@@ -554,11 +554,12 @@ export function Sidebar({
         [position === "right" ? "right" : "left"]: 0,
         height: "100%",
         width: sidebarWidth,
+        overflow: "hidden",
       }
     : {
         width: collapsed ? 0 : sidebarWidth,
         transition: "width 150ms ease-out",
-        overflow: collapsed ? "hidden" : undefined,
+        overflow: "hidden",
         flexShrink: 0,
       };
 
