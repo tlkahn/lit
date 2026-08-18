@@ -12,11 +12,17 @@ import { usePaneStore, type PaneSplit } from "./stores/panes";
 import { usePanePdfLinkStore } from "./stores/panePdfLink";
 import { executeCommand } from "./lib/commandRegistry";
 import { useBottomPanelStore } from "./stores/bottomPanel";
+import { useResponsiveLayoutStore } from "./stores/responsiveLayout";
 import { useStatusMessageStore } from "./stores/statusMessage";
 import { _resetForTesting as resetRegistry } from "./lib/paneContentRegistry";
 import { _resetForTesting as resetEditorViewRef, setCurrentEditorView } from "./lib/editorViewRef";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { SIDEBAR_WIDTH_PX } from "./components/Sidebar";
+import {
+  useSidebarLayoutStore,
+  DEFAULT_SIDEBAR_WIDTH_PX,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+} from "./stores/sidebarLayout";
 import type { AnnotationBuilderEventDetail } from "./lib/annotationDsl";
 import type { Annotation } from "./lib/ipc";
 import type { EditorView } from "@codemirror/view";
@@ -117,6 +123,9 @@ describe("App", () => {
       sidebarLocation: "left",
       loaded: true,
     });
+
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    useSidebarLayoutStore.setState({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH_PX });
 
     useLicenseStore.setState({
       state: "licensed",
@@ -288,6 +297,44 @@ describe("App", () => {
     const aside = document.querySelector("aside")!;
     const wrapper = aside.parentElement!;
     expect(wrapper.style.transition).toBe("width 150ms ease-out");
+  });
+
+  it("sidebar shell follows store width when set via setSidebarWidth", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useSidebarLayoutStore.getState().setSidebarWidth(320);
+
+    render(<App />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.width).toBe("320px");
+  });
+
+  it("sidebar shell collapses to 0px while store keeps width when hidden", () => {
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useSidebarLayoutStore.getState().setSidebarWidth(320);
+    usePreferencesStore.setState({ sidebarVisible: false });
+
+    render(<App />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.width).toBe("0px");
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(320);
+    expect(shell.style.overflow).toBe("hidden");
+    expect(shell.style.transition).toBe("width 150ms ease-out");
+  });
+
+  it("overlay path uses store width, not 0", () => {
+    const origWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true, writable: true });
+    useWorkspaceStore.setState({ workspacePath: "/test", pages: [], graphReady: true });
+    useSidebarLayoutStore.getState().setSidebarWidth(320);
+    useResponsiveLayoutStore.setState({ windowWidth: 800, sidebarAutoCollapsed: true });
+    usePreferencesStore.setState({ sidebarVisible: true });
+
+    render(<App />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.width).toBe("320px");
+    expect(shell.style.position).toBe("absolute");
+
+    Object.defineProperty(window, "innerWidth", { value: origWidth, configurable: true, writable: true });
   });
 
   it("quick switcher not visible by default", () => {

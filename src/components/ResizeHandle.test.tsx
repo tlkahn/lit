@@ -28,6 +28,7 @@ function renderHandle(props: Partial<React.ComponentProps<typeof ResizeHandle>> 
           direction={props.direction ?? "bottom"}
           currentSize={props.currentSize ?? 200}
           enabled={props.enabled ?? true}
+          minSize={props.minSize}
           panelRef={panelRef}
           contentRef={contentRef}
           onResizeEnd={props.onResizeEnd ?? onResizeEnd}
@@ -173,6 +174,32 @@ describe("ResizeHandle", () => {
         fireEvent.mouseMove(document, { clientX: 420 });
       });
       expect(panelRef.current!.style.width).toBe("420px");
+    });
+
+    it("minSize prop overrides default min for left direction", () => {
+      const { panelRef } = renderHandle({ direction: "left", currentSize: 320, minSize: 180 });
+      mockParentBoundingRect(panelRef.current!, 600, 1000);
+
+      const handle = screen.getByTestId("resize-handle");
+      act(() => {
+        fireEvent.mouseDown(handle, { clientX: 320 });
+        fireEvent.mouseMove(document, { clientX: 100 });
+      });
+      // 320 - 220 = 100, clamped to minSize 180
+      expect(panelRef.current!.style.width).toBe("180px");
+    });
+
+    it("default min (MIN_PANEL_WIDTH) still applies when minSize omitted", () => {
+      const { panelRef } = renderHandle({ direction: "left", currentSize: 320 });
+      mockParentBoundingRect(panelRef.current!, 600, 1000);
+
+      const handle = screen.getByTestId("resize-handle");
+      act(() => {
+        fireEvent.mouseDown(handle, { clientX: 320 });
+        fireEvent.mouseMove(document, { clientX: 100 });
+      });
+      // 320 - 220 = 100, clamped to MIN_PANEL_WIDTH (200)
+      expect(panelRef.current!.style.width).toBe(`${MIN_PANEL_WIDTH}px`);
     });
   });
 

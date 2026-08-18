@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from "react";
-import { Sidebar, SIDEBAR_WIDTH_PX } from "./components/Sidebar";
+import { Sidebar } from "./components/Sidebar";
 import { ContentArea } from "./components/ContentArea";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ContentErrorFallback } from "./components/ContentErrorFallback";
@@ -623,27 +623,11 @@ function App() {
               onClick={() => usePreferencesStore.setState({ sidebarVisible: false })}
             />
           )}
-          <div
-            style={{
-              ...(showSidebarOverlay
-                ? {
-                    position: "absolute" as const,
-                    zIndex: 46,
-                    top: 0,
-                    [position === "right" ? "right" : "left"]: 0,
-                    height: "100%",
-                    width: `${SIDEBAR_WIDTH_PX}px`,
-                  }
-                : {
-                    width: effectiveSidebarVisible ? `${SIDEBAR_WIDTH_PX}px` : "0px",
-                    transition: "width 150ms ease-out",
-                    overflow: "hidden",
-                    flexShrink: 0,
-                  }),
-            }}
-          >
-            <Sidebar onExportNetwork={exportFlow.requestExport} />
-          </div>
+          <Sidebar
+            collapsed={!effectiveSidebarVisible && !showSidebarOverlay}
+            overlay={showSidebarOverlay}
+            onExportNetwork={exportFlow.requestExport}
+          />
           <div
             data-testid="app-main-wrapper"
             className="flex min-h-0 min-w-0 flex-1 flex-col"
