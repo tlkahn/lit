@@ -28,6 +28,9 @@ import { visiblePagePaths, nextFocusKey } from "../lib/fileTreeTrash";
 import { Outline } from "./Outline";
 import { ReferenceLibrary } from "./ReferenceLibrary";
 import { SearchPanel } from "./SearchPanel";
+import { useSidebarLayoutStore, MIN_SIDEBAR_WIDTH_PX, SIDEBAR_MAX_WIDTH_RATIO } from "../stores/sidebarLayout";
+import { useSidebarPosition } from "../hooks/useSidebarPosition";
+import { ResizeHandle } from "./ResizeHandle";
 import { useSearchPanelStore } from "../stores/searchPanel";
 import { SortDropdown } from "./SortDropdown";
 import { TrashPagesDialog } from "./TrashPagesDialog";
@@ -180,9 +183,17 @@ const PageItem = memo(function PageItem({
   );
 });
 
-export const SIDEBAR_WIDTH_PX = 240;
+export { SIDEBAR_WIDTH_PX, DEFAULT_SIDEBAR_WIDTH_PX } from "../stores/sidebarLayout";
 
-export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) => void } = {}) {
+export function Sidebar({
+  onExportNetwork,
+  collapsed = false,
+  overlay = false,
+}: {
+  onExportNetwork?: (path: string) => void;
+  collapsed?: boolean;
+  overlay?: boolean;
+} = {}) {
   const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const pages = useWorkspaceStore((s) => s.pages);
   const currentPagePath = useWorkspaceStore((s) => s.currentPagePath);
@@ -238,6 +249,33 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
   const deferredSearch = useDeferredValue(search);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [trashConfirm, setTrashConfirm] = useState<{ paths: string[]; labels: string[] } | null>(null);
+  const sidebarWidth = useSidebarLayoutStore((s) => s.sidebarWidth);
+  const setSidebarWidth = useSidebarLayoutStore((s) => s.setSidebarWidth);
+  const { position } = useSidebarPosition();
+  const shellRef = useRef<HTMLDivElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
+
+  // Re-clamp stored width to parent * maxRatio whenever the sidebar is visible:
+  // on mount / un-collapse (immediate) and on window resize (mirror of
+  // BottomPanel.clampPanelSize). Never auto-grow; only shrink when the stored
+  // width exceeds the new proportional max. While collapsed, do nothing.
+  useEffect(() => {
+    if (collapsed) return;
+    const reClamp = () => {
+      const shell = shellRef.current;
+      const parent = shell?.parentElement;
+      if (!shell || !parent) return;
+      const parentW = parent.getBoundingClientRect().width;
+      if (parentW <= 0) return;
+      const max = parentW * SIDEBAR_MAX_WIDTH_RATIO;
+      if (useSidebarLayoutStore.getState().sidebarWidth > max) {
+        setSidebarWidth(max);
+      }
+    };
+    reClamp();
+    window.addEventListener("resize", reClamp);
+    return () => window.removeEventListener("resize", reClamp);
+  }, [collapsed, setSidebarWidth]);
 
   const filtered = useMemo(
     () => deferredSearch ? localeFilter(pages, deferredSearch, (p) => p.title) : pages,
@@ -510,8 +548,40 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
     onRevealLibrary: dispatchRevealLibrary,
   });
 
+  const shellStyle: React.CSSProperties = overlay
+    ? {
+        position: "absolute",
+        zIndex: 46,
+        top: 0,
+        [position === "right" ? "right" : "left"]: 0,
+        height: "100%",
+        width: sidebarWidth,
+        overflow: "hidden",
+      }
+    : {
+        width: collapsed ? 0 : sidebarWidth,
+        transition: "width 150ms ease-out",
+        overflow: "hidden",
+        flexShrink: 0,
+      };
+
   return (
-    <aside className="flex h-full shrink-0 flex-col bg-bg-secondary" style={{ width: SIDEBAR_WIDTH_PX }}>
+    <div
+      ref={shellRef}
+      data-testid="sidebar-shell"
+      className="relative h-full"
+      style={shellStyle}
+    >
+      <ResizeHandle
+        direction={position === "right" ? "right" : "left"}
+        currentSize={sidebarWidth}
+        enabled={!collapsed}
+        minSize={MIN_SIDEBAR_WIDTH_PX}
+        panelRef={shellRef}
+        contentRef={asideRef}
+        onResizeEnd={setSidebarWidth}
+      />
+      <aside ref={asideRef} className="flex h-full shrink-0 flex-col bg-bg-secondary" style={{ width: sidebarWidth }}>
       <div className="flex items-center border-b border-border-subtle">
         <button
           onClick={() => setTab("files")}
@@ -682,6 +752,7 @@ export function Sidebar({ onExportNetwork }: { onExportNetwork?: (path: string) 
           if (trashConfirm) void runTrash(trashConfirm.paths);
         }}
       />
-    </aside>
+      </aside>
+    </div>
   );
 }

@@ -50,14 +50,16 @@ interface ResizeHandleProps {
   direction: Direction;
   currentSize: number;
   enabled: boolean;
-  panelRef: RefObject<HTMLDivElement | null>;
-  contentRef: RefObject<HTMLDivElement | null>;
+  minSize?: number;
+  panelRef: RefObject<HTMLElement | null>;
+  contentRef: RefObject<HTMLElement | null>;
   onResizeEnd: (size: number) => void;
 }
 
-export function ResizeHandle({ direction, currentSize, enabled, panelRef, contentRef, onResizeEnd }: ResizeHandleProps) {
+export function ResizeHandle({ direction, currentSize, enabled, minSize, panelRef, contentRef, onResizeEnd }: ResizeHandleProps) {
   const cleanupRef = useRef<(() => void) | null>(null);
   const config = getResizeConfig(direction);
+  const effectiveMinSize = minSize ?? config.minSize;
 
   useEffect(() => {
     return () => { cleanupRef.current?.(); };
@@ -80,7 +82,7 @@ export function ResizeHandle({ direction, currentSize, enabled, panelRef, conten
       const maxSize = parentDim * config.maxRatio;
       const currentPos = config.axis === "x" ? ev.clientX : ev.clientY;
       const delta = config.deltaSign * (currentPos - startPos);
-      const newSize = Math.min(Math.max(startSize + delta, config.minSize), maxSize);
+      const newSize = Math.min(Math.max(startSize + delta, effectiveMinSize), maxSize);
       lastSize = newSize;
       if (panelRef.current) panelRef.current.style[config.dimension] = newSize + "px";
       if (contentRef.current) contentRef.current.style[config.dimension] = newSize + "px";

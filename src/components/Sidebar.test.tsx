@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, act, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { mockInvoke, mockListen, emitMockEvent, resetListenMock } from "../test/tauri-mock";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useStatusMessageStore } from "../stores/statusMessage";
 import { useFileTreeSelectionStore } from "../stores/fileTreeSelection";
 import { Sidebar, SIDEBAR_WIDTH_PX } from "./Sidebar";
+import { useSidebarLayoutStore, DEFAULT_SIDEBAR_WIDTH_PX, SIDEBAR_WIDTH_STORAGE_KEY, MIN_SIDEBAR_WIDTH_PX } from "../stores/sidebarLayout";
+import { usePreferencesStore } from "../stores/preferences";
 import type { BibEntry } from "../lib/ipc";
 
 let invokedCommands: { cmd: string; args: unknown }[] = [];
@@ -216,15 +218,308 @@ describe("Sidebar PDF icon", () => {
   });
 });
 
-describe("Sidebar width constant", () => {
-  it("aside element has width set to SIDEBAR_WIDTH_PX", () => {
+describe("Sidebar width", () => {
+  beforeEach(() => {
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    useSidebarLayoutStore.setState({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH_PX });
     useWorkspaceStore.setState({
       pages: [makePage("Alpha", "Alpha.md")],
     });
+  });
+
+  it("aside element has width set to SIDEBAR_WIDTH_PX", () => {
     render(<Sidebar />);
 
     const aside = document.querySelector("aside")!;
     expect(aside.style.width).toBe(`${SIDEBAR_WIDTH_PX}px`);
+  });
+
+  it("renders a sidebar-shell with width from the store", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell).toBeInTheDocument();
+    expect(shell.style.width).toBe(`${DEFAULT_SIDEBAR_WIDTH_PX}px`);
+  });
+
+  it("aside width style equals store sidebarWidth", () => {
+    render(<Sidebar />);
+    const aside = document.querySelector("aside")!;
+    expect(aside.style.width).toBe("240px");
+  });
+
+  it("shell and aside follow store width after setSidebarWidth", () => {
+    const { rerender } = render(<Sidebar />);
+    act(() => {
+      useSidebarLayoutStore.getState().setSidebarWidth(300);
+    });
+    rerender(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    const aside = document.querySelector("aside")!;
+    expect(shell.style.width).toBe("300px");
+    expect(aside.style.width).toBe("300px");
+  });
+});
+
+function mockSidebarParentWidth(shell: HTMLElement, width: number) {
+  const parent = shell.parentElement!;
+  parent.getBoundingClientRect = () =>
+    ({
+      x: 0, y: 0, width, height: 600,
+      top: 0, right: width, bottom: 600, left: 0,
+      toJSON: () => ({}),
+    }) as DOMRect;
+}
+
+describe("Sidebar shell overflow", () => {
+  beforeEach(() => {
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    useSidebarLayoutStore.setState({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH_PX });
+    useWorkspaceStore.setState({ pages: [makePage("Alpha", "Alpha.md")] });
+  });
+
+  it("docked expanded shell clips overflow hidden", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.overflow).toBe("hidden");
+  });
+
+  it("docked collapsed shell clips overflow hidden", () => {
+    render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.overflow).toBe("hidden");
+  });
+
+  it("overlay shell clips overflow hidden", () => {
+    render(<Sidebar overlay />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(shell.style.overflow).toBe("hidden");
+  });
+});
+
+describe("Sidebar drag resize", () => {
+  beforeEach(() => {
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    useSidebarLayoutStore.setState({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH_PX });
+    usePreferencesStore.setState({ sidebarLocation: "left" });
+    useWorkspaceStore.setState({ pages: [makePage("Alpha", "Alpha.md")] });
+  });
+
+  it("mounts a resize-handle inside the shell", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    expect(within(shell).getByTestId("resize-handle")).toBeInTheDocument();
+  });
+
+  it("left-position handle sits on the right edge with ew-resize cursor and 4px width", () => {
+    usePreferencesStore.setState({ sidebarLocation: "left" });
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    const handle = within(shell).getByTestId("resize-handle");
+    expect(handle.style.cursor).toBe("ew-resize");
+    expect(handle.style.right).toBe("0px");
+    expect(handle.style.width).toBe("4px");
+  });
+
+  it("right-position handle sits on the left edge with ew-resize cursor", () => {
+    usePreferencesStore.setState({ sidebarLocation: "right" });
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    const handle = within(shell).getByTestId("resize-handle");
+    expect(handle.style.cursor).toBe("ew-resize");
+    expect(handle.style.left).toBe("0px");
+  });
+
+  it("drag right on left handle increases shell and aside width", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const aside = document.querySelector("aside")!;
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 300 });
+    });
+    expect(shell.style.width).toBe("300px");
+    expect(aside.style.width).toBe("300px");
+  });
+
+  it("multiple mousemove events update width continuously", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 260 });
+      fireEvent.mouseMove(document, { clientX: 280 });
+      fireEvent.mouseMove(document, { clientX: 300 });
+    });
+    expect(shell.style.width).toBe("300px");
+  });
+
+  it("drag inward past min clamps to MIN_SIDEBAR_WIDTH_PX", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 100 });
+    });
+    expect(shell.style.width).toBe(`${MIN_SIDEBAR_WIDTH_PX}px`);
+  });
+
+  it("drag outward past 50% parent clamps to half parent width", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 1000 });
+    });
+    expect(shell.style.width).toBe("400px");
+  });
+
+  it("mouseup persists final width to store and localStorage", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 300 });
+      fireEvent.mouseUp(document);
+    });
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(300);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
+  });
+
+  it("collapsed sidebar ignores drag (store unchanged)", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 240 });
+    render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 300 });
+      fireEvent.mouseUp(document);
+    });
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(240);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).not.toBe("300");
+  });
+
+  it("disables transition during drag and restores after mouseup", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 300 });
+    });
+    expect(shell.style.transition).toBe("none");
+
+    act(() => {
+      fireEvent.mouseUp(document);
+    });
+    expect(shell.style.transition).toBe("width 150ms ease-out");
+  });
+
+  it("sets body user-select none during drag and clears after", () => {
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+    });
+    expect(document.body.style.userSelect).toBe("none");
+
+    act(() => {
+      fireEvent.mouseUp(document);
+    });
+    expect(document.body.style.userSelect).toBe("");
+  });
+
+  it("drag left on right-position handle increases width", () => {
+    usePreferencesStore.setState({ sidebarLocation: "right" });
+    render(<Sidebar />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 500 });
+      fireEvent.mouseMove(document, { clientX: 400 });
+    });
+    expect(shell.style.width).toBe("340px");
+  });
+});
+
+describe("Sidebar window resize re-clamp", () => {
+  beforeEach(() => {
+    localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    useSidebarLayoutStore.setState({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH_PX });
+    useWorkspaceStore.setState({ pages: [makePage("Alpha", "Alpha.md")] });
+  });
+
+  it("re-clamps visible sidebar width to half parent width on window resize", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 400 });
+    render(<Sidebar collapsed={false} />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 600);
+
+    act(() => {
+      fireEvent(window, new Event("resize"));
+    });
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(300);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
+  });
+
+  it("clamps stored width to half parent when expanding from collapsed", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 400 });
+    const { rerender } = render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 600);
+
+    rerender(<Sidebar collapsed={false} />);
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(300);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
+    expect(screen.getByTestId("sidebar-shell").style.width).toBe("300px");
+  });
+
+  it("does not clobber stored width when collapsed", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 400 });
+    render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 600);
+
+    act(() => {
+      fireEvent(window, new Event("resize"));
+    });
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(400);
+  });
+
+  it("re-clamps when sidebar is overlaying", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 400 });
+    render(<Sidebar overlay />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 600);
+
+    act(() => {
+      fireEvent(window, new Event("resize"));
+    });
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(300);
   });
 });
 
