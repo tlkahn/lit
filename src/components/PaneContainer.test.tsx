@@ -228,6 +228,24 @@ describe("PaneContainer", () => {
     expect(split.className).toContain("flex-col");
   });
 
+  it("pane-split contains min-w-0 for row min-size containment", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    const { getByTestId } = render(<PaneContainer />);
+    const split = getByTestId("pane-split");
+    expect(split.className).toContain("min-w-0");
+  });
+
   it("children have flex-basis matching sizes", () => {
     const root: PaneNode = {
       type: "split",
@@ -792,6 +810,15 @@ describe("PaneContainer collapsed mode", () => {
     const wrapperB = screen.getByTestId("editor-pane-pane-b").parentElement!;
     expect(wrapperA.style.display).toBe("");
     expect(wrapperB.style.display).toBe("");
+  });
+
+  it("collapsed pane-split contains min-w-0", () => {
+    useResponsiveLayoutStore.setState({ panesCollapsed: true });
+    usePaneStore.setState({ root: splitRoot, focusedPaneId: "pane-a" });
+    render(<PaneContainer />);
+
+    const split = screen.getByTestId("pane-split");
+    expect(split.className).toContain("min-w-0");
   });
 });
 

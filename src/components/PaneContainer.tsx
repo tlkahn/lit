@@ -150,7 +150,7 @@ function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
     const activeIdx = focusedIdx >= 0 ? focusedIdx : 0;
 
     return (
-      <div data-testid="pane-split" className="flex flex-col min-h-0 flex-1">
+      <div data-testid="pane-split" className="flex flex-col min-h-0 min-w-0 flex-1">
         {node.children.map((child, i) => (
           <div
             key={child.id}
@@ -202,7 +202,7 @@ function PaneNodeRenderer({ node, path }: { node: PaneNode; path: number[] }) {
   return (
     <div
       data-testid="pane-split"
-      className={`flex ${directionClass} min-h-0 flex-1`}
+      className={`flex ${directionClass} min-h-0 min-w-0 flex-1`}
     >
       {items}
     </div>
