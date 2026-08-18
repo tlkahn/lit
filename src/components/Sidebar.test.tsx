@@ -401,6 +401,22 @@ describe("Sidebar drag resize", () => {
     expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
   });
 
+  it("collapsed sidebar ignores drag (store unchanged)", () => {
+    useSidebarLayoutStore.setState({ sidebarWidth: 240 });
+    render(<Sidebar collapsed />);
+    const shell = screen.getByTestId("sidebar-shell");
+    mockSidebarParentWidth(shell, 800);
+    const handle = within(shell).getByTestId("resize-handle");
+
+    act(() => {
+      fireEvent.mouseDown(handle, { clientX: 240 });
+      fireEvent.mouseMove(document, { clientX: 300 });
+      fireEvent.mouseUp(document);
+    });
+    expect(useSidebarLayoutStore.getState().sidebarWidth).toBe(240);
+    expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).not.toBe("300");
+  });
+
   it("disables transition during drag and restores after mouseup", () => {
     render(<Sidebar />);
     const shell = screen.getByTestId("sidebar-shell");

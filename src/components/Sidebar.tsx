@@ -575,7 +575,7 @@ export function Sidebar({
       <ResizeHandle
         direction={position === "right" ? "right" : "left"}
         currentSize={sidebarWidth}
-        enabled
+        enabled={!collapsed}
         minSize={MIN_SIDEBAR_WIDTH_PX}
         panelRef={shellRef}
         contentRef={asideRef}
