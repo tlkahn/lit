@@ -70,6 +70,9 @@ const samplePage = {
 };
 
 beforeEach(() => {
+  // Capture before fake timers replace it, so a test that leaked an rAF spy
+  // (e.g. it failed midway) cannot corrupt the faked rAF for later tests.
+  const realRaf = window.requestAnimationFrame;
   vi.useFakeTimers({ shouldAdvanceTime: true });
   capturedProps = {};
   usePaneStore.setState({
@@ -101,6 +104,7 @@ beforeEach(() => {
   });
 
   return () => {
+    window.requestAnimationFrame = realRaf;
     vi.useRealTimers();
     cleanup();
   };
@@ -1309,13 +1313,19 @@ describe("EditorPane", () => {
   });
 
   describe("guarded global listeners", () => {
-    it("scroll-to-line scrolls the focused pane", async () => {
+    it("scroll-to-line with cursor defers view.focus via requestAnimationFrame", async () => {
       usePaneStore.setState({
         root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
         focusedPaneId: "pane-1",
       });
       const view = fakeViewWithDoc("line one\nline two\nline three");
       vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      const rafCbs: FrameRequestCallback[] = [];
+      const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
 
       render(<EditorPane paneId="pane-1" />);
       await waitFor(() => {
@@ -1326,11 +1336,22 @@ describe("EditorPane", () => {
         new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
       );
 
+      // Sync: scroll + selection applied immediately
       expect(view.dispatch).toHaveBeenCalledTimes(1);
       const tx = (view.dispatch as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       const expectedPos = Text.of("line one\nline two\nline three".split("\n")).line(2).from;
       expect(tx.selection.head).toBe(expectedPos);
-      expect(view.focus).toHaveBeenCalled();
+      expect(tx.effects).toBeDefined(); // scrollIntoView effect present
+
+      // Focus must NOT run synchronously (modal may still be mounted)
+      expect(view.focus).not.toHaveBeenCalled();
+      expect(rafCbs.length).toBeGreaterThanOrEqual(1);
+
+      // Flush deferred focus
+      rafCbs.forEach((cb) => cb(0));
+      expect(view.focus).toHaveBeenCalledTimes(1);
+
+      rafSpy.mockRestore();
     });
 
     it("scroll-to-line ignores unfocused pane", async () => {
@@ -1351,6 +1372,107 @@ describe("EditorPane", () => {
       );
 
       expect(view.dispatch).not.toHaveBeenCalled();
+    });
+
+    it("scroll-to-line deferred focus skips if pane is no longer focused", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      const rafCbs: FrameRequestCallback[] = [];
+      const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      // Focus moved away before rAF
+      usePaneStore.setState({ focusedPaneId: "other" });
+      rafCbs.forEach((cb) => cb(0));
+
+      expect(view.focus).not.toHaveBeenCalled();
+      // Selection/scroll already applied sync - that is OK / existing behavior
+      expect(view.dispatch).toHaveBeenCalledTimes(1);
+
+      rafSpy.mockRestore();
+    });
+
+    it("scroll-to-line deferred focus skips if pane left editor mode", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "editor" },
+        focusedPaneId: "pane-1",
+      });
+      const view = fakeViewWithDoc("line one\nline two");
+      vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
+
+      const rafCbs: FrameRequestCallback[] = [];
+      const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md", viewMode: "mindmap" },
+        focusedPaneId: "pane-1",
+      });
+      rafCbs.forEach((cb) => cb(0));
+
+      expect(view.focus).not.toHaveBeenCalled();
+
+      rafSpy.mockRestore();
+    });
+
+    it("scroll-to-line deferred focus uses the current pane view", async () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+        focusedPaneId: "pane-1",
+      });
+      const viewA = fakeViewWithDoc("line one\nline two");
+      const viewB = fakeViewWithDoc("line one\nline two");
+      const getSpy = vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(viewA);
+
+      const rafCbs: FrameRequestCallback[] = [];
+      const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
+
+      render(<EditorPane paneId="pane-1" />);
+      await waitFor(() => {
+        expect(capturedProps.onViewChange).toBeDefined();
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("lit:scroll-to-line", { detail: { line: 1, cursor: true } }),
+      );
+
+      getSpy.mockReturnValue(viewB);
+      rafCbs.forEach((cb) => cb(0));
+
+      expect(viewA.focus).not.toHaveBeenCalled();
+      expect(viewB.focus).toHaveBeenCalledTimes(1);
+
+      rafSpy.mockRestore();
     });
 
     it("scroll-to-line without cursor flag does not set selection", async () => {
@@ -1516,6 +1638,12 @@ describe("EditorPane", () => {
       const view = fakeViewWithDoc("line one\nline two\nline three");
       vi.spyOn(editorViewRef, "getPaneView").mockReturnValue(view);
 
+      const rafCbs: FrameRequestCallback[] = [];
+      const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        rafCbs.push(cb);
+        return rafCbs.length;
+      });
+
       render(<EditorPane paneId="pane-1" />);
       await waitFor(() => {
         expect(capturedProps.onViewChange).toBeDefined();
@@ -1526,7 +1654,12 @@ describe("EditorPane", () => {
       );
 
       expect(view.dispatch).toHaveBeenCalledTimes(1);
-      expect(view.focus).toHaveBeenCalled();
+      expect(view.focus).not.toHaveBeenCalled(); // deferred, not sync
+
+      rafCbs.forEach((cb) => cb(0));
+      expect(view.focus).toHaveBeenCalledTimes(1);
+
+      rafSpy.mockRestore();
     });
 
     it("cleans up listeners on unmount", async () => {
