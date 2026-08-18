@@ -30,12 +30,16 @@ const headingClass: Record<string, string> = {
  * end-aligned widgets share one endpoint with the mark after marker hides;
  * default exclusive sides leave them outside the mark DOM (#1043 + the
  * start-aligned / full-span follow-up). Interior widgets nested without flags.
+ * `inclusive: true` must stay last so the attrs bag can never clobber it.
  */
-function previewContentMark(cls: string, attrs?: { attributes?: Record<string, string> }) {
+function previewContentMark(
+  cls: string,
+  attributes?: Record<string, string>,
+) {
   return Decoration.mark({
     class: cls,
+    ...(attributes ? { attributes } : {}),
     inclusive: true,
-    ...attrs,
   });
 }
 
@@ -673,7 +677,7 @@ function addLinkDecos(
   decos.push({
     from: openBracket.to,
     to: closeBracket.from,
-    deco: Decoration.mark({ class: "cm-preview-link", attributes: { "data-url": url } }),
+    deco: previewContentMark("cm-preview-link", { "data-url": url }),
   });
 }
 

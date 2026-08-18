@@ -246,3 +246,17 @@ describe("heading inline math DOM nesting", () => {
     view.destroy();
   });
 });
+
+describe("link inline math DOM nesting", () => {
+  it("nests a sole inline math that spans the whole link label", () => {
+    const doc = "[$d_1$](http://example.com)\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-math-inline"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline")!;
+    expect(math.closest(".cm-preview-link")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+});
