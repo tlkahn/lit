@@ -266,6 +266,24 @@ describe("buildDecorations — inline elements inside headings", () => {
     view.destroy();
   });
 
+  it("html-inline sup content mark sets inclusive so widgets nest", () => {
+    const doc = "<sup>$x$</sup>\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-sup") {
+        expect(spec.inclusive === true).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
   it("renders image inside heading as widget", () => {
     const doc = "## ![alt](img.png)\n\nother";
     const view = makeView(doc, doc.length - 1);

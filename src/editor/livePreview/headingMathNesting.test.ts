@@ -299,4 +299,54 @@ describe("html-inline math DOM nesting", () => {
     view.dom.remove();
     view.destroy();
   });
+
+  it("nests start-aligned inline math inside the sup mark DOM", () => {
+    const doc = "<sup>$x$ after</sup>\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-sup"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline");
+    expect(math).not.toBeNull();
+    expect(math!.closest(".cm-preview-sup")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests a sole inline math that spans the whole sub content", () => {
+    const doc = "<sub>$x$</sub>\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-math-inline"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline")!;
+    expect(math.closest(".cm-preview-sub")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests end-aligned inline math inside the sub mark DOM", () => {
+    const doc = "<sub>before $x$</sub>\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-sub"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline");
+    expect(math).not.toBeNull();
+    expect(math!.closest(".cm-preview-sub")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests a sole inline math that spans the whole mark content", () => {
+    const doc = "<mark>$x$</mark>\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-math-inline"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline")!;
+    expect(math.closest(".cm-preview-mark")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
 });
