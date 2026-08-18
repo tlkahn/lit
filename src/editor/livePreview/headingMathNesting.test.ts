@@ -259,4 +259,30 @@ describe("link inline math DOM nesting", () => {
     view.dom.remove();
     view.destroy();
   });
+
+  it("nests start-aligned inline math inside the link mark DOM", () => {
+    const doc = "[$d_1$ and more](http://example.com)\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-link"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline");
+    expect(math).not.toBeNull();
+    expect(math!.closest(".cm-preview-link")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+
+  it("nests end-aligned inline math inside the link mark DOM", () => {
+    const doc = "[text $d_1$](http://example.com)\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-link"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline");
+    expect(math).not.toBeNull();
+    expect(math!.closest(".cm-preview-link")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
 });

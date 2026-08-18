@@ -245,6 +245,27 @@ describe("buildDecorations — inline elements inside headings", () => {
     view.destroy();
   });
 
+  it("link content mark sets inclusive so start-/end-aligned widgets nest", () => {
+    const doc = "[$d_1$](http://example.com)\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-link") {
+        expect(spec.inclusive === true).toBe(true);
+        expect(
+          (spec.attributes as Record<string, string> | undefined)?.["data-url"],
+        ).toBe("http://example.com");
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
   it("renders image inside heading as widget", () => {
     const doc = "## ![alt](img.png)\n\nother";
     const view = makeView(doc, doc.length - 1);
