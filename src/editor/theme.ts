@@ -3,6 +3,7 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter, tagHighlighter, tags } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
+
 /**
  * Shared base-theme spec for markdown and code editors.
  *
@@ -10,8 +11,15 @@ import type { Extension } from "@codemirror/state";
  * width contract that makes CM wrap to the pane width: the editor root is
  * `width: 100%` with `minWidth: 0`, so descendants (`.cm-scroller` /
  * `.cm-content`) measure against the pane box rather than an inflated content
- * width that an outer `overflow-hidden` would otherwise clip. `.cm-content`
- * stays within that width via `maxWidth: 100%` / `overflowX: clip`.
+ * width that an outer `overflow-hidden` would otherwise clip.
+ *
+ * The root width contract (`&` = `width: 100%` / `minWidth: 0`) is shared by
+ * markdown and code editors. The `.cm-content` max-width / clip rules below
+ * are **markdown-oriented**: prose stays within the scroller (`maxWidth:
+ * "100%"` + `overflowX: "clip"`, plus line wrapping). Code editors override
+ * these content rules with `codeEditorContentThemeSpec` so long non-wrapping
+ * lines can extend `.cm-content` past the scroller and `.cm-scroller` becomes
+ * the horizontal scrollport.
  */
 export const editorBaseThemeSpec: { [selector: string]: { [prop: string]: string | number } } = {
   "&": { height: "100%", width: "100%", minWidth: 0, containerType: "inline-size" },
@@ -28,6 +36,20 @@ export const editorBaseThemeSpec: { [selector: string]: { [prop: string]: string
   ".cm-gutters": {
     backgroundColor: "transparent",
     border: "none",
+  },
+};
+
+/**
+ * Code-editor-only override of the shared `.cm-content` rules. Code does not
+ * soft-wrap, so long lines must be allowed to grow `.cm-content` past the
+ * scroller width (`maxWidth: "none"`) and the scroller (`.cm-scroller`) owns
+ * horizontal scrolling. Applied inside `createCodeExtensions` via
+ * `EditorView.baseTheme` so it merges over the shared markdown-oriented clip.
+ */
+export const codeEditorContentThemeSpec: { [selector: string]: { [prop: string]: string | number } } = {
+  ".cm-content": {
+    maxWidth: "none",
+    overflowX: "visible",
   },
 };
 

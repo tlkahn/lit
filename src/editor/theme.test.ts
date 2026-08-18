@@ -7,6 +7,7 @@ import {
   getThemeExtension,
   searchTheme,
   editorBaseThemeSpec,
+  codeEditorContentThemeSpec,
 } from "./theme";
 
 describe("theme", () => {
@@ -24,6 +25,13 @@ describe("theme", () => {
     expect(content!.minWidth).toBe(0);
     expect(content!.maxWidth).toBe("100%");
     expect(content!.overflowX).toBe("clip");
+  });
+
+  it("codeEditorContentThemeSpec lets content exceed the scroller width", () => {
+    const content = codeEditorContentThemeSpec[".cm-content"];
+    expect(content).toBeDefined();
+    expect(content!.maxWidth).toBe("none");
+    expect(content!.overflowX).toBe("visible");
   });
 
   it("editorTheme is a valid Extension", () => {
