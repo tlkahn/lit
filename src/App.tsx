@@ -644,7 +644,10 @@ function App() {
           >
             <Sidebar onExportNetwork={exportFlow.requestExport} />
           </div>
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div
+            data-testid="app-main-wrapper"
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
+          >
             <ErrorBoundary fallback={ContentErrorFallback} resetKey={currentPagePath}>
               <ContentArea onExportNetwork={exportFlow.requestExport} renderBottomPanel={bottomPanelMode !== "side"} />
             </ErrorBoundary>
