@@ -3,8 +3,18 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter, tagHighlighter, tags } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
-const shared = EditorView.baseTheme({
-  "&": { height: "100%", containerType: "inline-size" },
+/**
+ * Shared base-theme spec for markdown and code editors.
+ *
+ * The spec is exported (mirroring `livePreviewThemeSpec`) so tests can lock the
+ * width contract that makes CM wrap to the pane width: the editor root is
+ * `width: 100%` with `minWidth: 0`, so descendants (`.cm-scroller` /
+ * `.cm-content`) measure against the pane box rather than an inflated content
+ * width that an outer `overflow-hidden` would otherwise clip. `.cm-content`
+ * stays within that width via `maxWidth: 100%` / `overflowX: clip`.
+ */
+export const editorBaseThemeSpec: { [selector: string]: { [prop: string]: string | number } } = {
+  "&": { height: "100%", width: "100%", minWidth: 0, containerType: "inline-size" },
   ".cm-scroller": { overflow: "auto", overscrollBehavior: "contain", scrollbarGutter: "stable" },
   ".cm-content": {
     minWidth: 0,
@@ -19,7 +29,9 @@ const shared = EditorView.baseTheme({
     backgroundColor: "transparent",
     border: "none",
   },
-});
+};
+
+const shared = EditorView.baseTheme(editorBaseThemeSpec);
 
 export const editorTheme: Extension = [
   shared,

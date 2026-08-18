@@ -56,6 +56,30 @@ describe("CodeEditorPane", () => {
     expect(getByTestId(`code-editor-pane-${paneId}`)).toBeInTheDocument();
   });
 
+  it("empty root contains min-w-0 and overflow-hidden", () => {
+    const paneId = seedLeaf(null);
+    render(<CodeEditorPane paneId={paneId} />);
+    const root = document.querySelector(
+      `[data-testid="code-editor-pane-${paneId}"]`,
+    ) as HTMLElement;
+    expect(root.className).toContain("min-w-0");
+    expect(root.className).toContain("overflow-hidden");
+  });
+
+  it("filled root and CM host contain min-w-0 and overflow-hidden", () => {
+    const paneId = seedLeaf("refs.bib");
+    render(<CodeEditorPane paneId={paneId} />);
+    const root = document.querySelector(
+      `[data-testid="code-editor-pane-${paneId}"]`,
+    ) as HTMLElement;
+    expect(root.className).toContain("min-w-0");
+    expect(root.className).toContain("overflow-hidden");
+    // Host container (ref={containerRef}) inside the filled root
+    const host = root.querySelector(".flex-1") as HTMLElement;
+    expect(host.className).toContain("min-w-0");
+    expect(host.className).toContain("overflow-hidden");
+  });
+
   it("calls useCodeFileContent with (paneId, pagePath) and loadLanguage with the basename", async () => {
     const paneId = seedLeaf("a/b/refs.bib");
     render(<CodeEditorPane paneId={paneId} />);

@@ -28,6 +28,13 @@ describe("CodeMirrorEditor", () => {
     expect(container.className).toContain("flex-1");
   });
 
+  it("container has min-w-0 and overflow-hidden for pane-sized wrapping", () => {
+    render(<CodeMirrorEditor doc="" />);
+    const container = screen.getByTestId("editor");
+    expect(container.className).toContain("min-w-0");
+    expect(container.className).toContain("overflow-hidden");
+  });
+
   it("viewRef is populated with EditorView", () => {
     let capturedRef: React.RefObject<EditorView | null> = { current: null };
     function Wrapper() {

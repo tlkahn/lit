@@ -290,6 +290,37 @@ describe("PaneContainer", () => {
     expect(wrapper.className).toContain("min-h-0");
   });
 
+  it("multi-pane leaf contains min-w-0 and overflow-hidden", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "pane-a", pagePath: null },
+        { type: "leaf", id: "pane-b", pagePath: null },
+      ],
+      sizes: [50, 50],
+    };
+    usePaneStore.setState({ root, focusedPaneId: "pane-a" });
+
+    render(<PaneContainer />);
+    const leafA = document.querySelector('[data-pane-id="pane-a"]') as HTMLElement;
+    const leafB = document.querySelector('[data-pane-id="pane-b"]') as HTMLElement;
+    for (const leaf of [leafA, leafB]) {
+      expect(leaf.className).toContain("min-w-0");
+      expect(leaf.className).toContain("overflow-hidden");
+      expect(leaf.className).toContain("flex-1");
+    }
+  });
+
+  it("single-pane leaf wrapper contains min-w-0 and overflow-hidden", () => {
+    const { getByTestId } = render(<PaneContainer />);
+    const wrapper = getByTestId("editor-pane-solo").parentElement as HTMLElement;
+    expect(wrapper.className).toContain("min-w-0");
+    expect(wrapper.className).toContain("overflow-hidden");
+    expect(wrapper.className).toContain("flex-1");
+  });
+
   it("passes style prop to the container div", () => {
     const { container } = render(
       <PaneContainer style={{ display: "none" }} />,
@@ -399,6 +430,11 @@ describe("PaneContainer", () => {
     const wrapperA = getByTestId("editor-pane-pane-a").closest("[data-pane-id]")!.parentElement!;
     expect(wrapperA.className).toContain("grow-0");
     expect(wrapperA.className).toContain("shrink-0");
+    // Regression lock: the split child (parent of [data-pane-id]) must keep its
+    // outer min-w-0 + overflow-hidden clamp so descendants cannot widen the
+    // pane layout past its flex-basis.
+    expect(wrapperA.className).toContain("min-w-0");
+    expect(wrapperA.className).toContain("overflow-hidden");
   });
 
   // Cycle 19 — drag divider updates store in context

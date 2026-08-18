@@ -361,7 +361,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         ref={emptyContainerRef}
         data-testid="editor-pane"
         data-pane-id={paneId}
-        className={`flex min-h-0 flex-1 items-center justify-center ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
+        className={`flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
         onFocus={handleFocus}
         tabIndex={-1}
       >
@@ -374,7 +374,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     <div
       data-testid="editor-pane"
       data-pane-id={paneId}
-      className={`flex min-h-0 flex-1 flex-col ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${singlePaneFocusBorderClass(isMultiPane, isFocused)}`}
       onFocus={handleFocus}
       tabIndex={-1}
     >

@@ -90,7 +90,7 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
     const isEditor = viewMode === "editor";
     content = (
       <>
-        <div className={isEditor ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+        <div className={isEditor ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "hidden"}>
           <EditorPane paneId={paneId} />
         </div>
         {viewMode === "mindmap" && <MindmapPaneView paneId={paneId} pagePath={pagePath} onExportNetwork={onExportNetwork} />}
@@ -114,7 +114,7 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
 
   if (!isMultiPane) {
     return (
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {content}
         {loadingOverlay}
       </div>
@@ -126,7 +126,7 @@ function PaneLeafRenderer({ paneId }: { paneId: string }) {
       onMouseDownCapture={handleFocus}
       data-pane-id={paneId}
       tabIndex={-1}
-      className={`relative flex min-h-0 flex-1 flex-col ${borderClass}`}
+      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${borderClass}`}
     >
       <PaneHeader paneId={paneId} pagePath={pagePath} fileType={fileType} onMouseDown={handleHeaderMouseDown} />
       {content}

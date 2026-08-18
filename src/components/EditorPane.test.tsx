@@ -127,6 +127,27 @@ describe("EditorPane", () => {
     expect(screen.queryByTestId("mock-editor")).toBeNull();
   });
 
+  it("empty root contains min-w-0 and overflow-hidden", () => {
+    render(<EditorPane paneId="pane-1" />);
+    const root = screen.getByTestId("editor-pane");
+    expect(root.className).toContain("min-w-0");
+    expect(root.className).toContain("overflow-hidden");
+  });
+
+  it("filled root contains min-w-0 and overflow-hidden", async () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },
+      focusedPaneId: "pane-1",
+    });
+    render(<EditorPane paneId="pane-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-editor")).toBeInTheDocument();
+    });
+    const root = screen.getByTestId("editor-pane");
+    expect(root.className).toContain("min-w-0");
+    expect(root.className).toContain("overflow-hidden");
+  });
+
   it("passes loaded body to CodeMirrorEditor", async () => {
     usePaneStore.setState({
       root: { type: "leaf", id: "pane-1", pagePath: "hello.md" },

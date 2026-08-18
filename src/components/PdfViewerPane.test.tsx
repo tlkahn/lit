@@ -113,6 +113,22 @@ describe("PdfViewerPane", () => {
     expect(queryByTestId(/^pdf-viewer-\/ws/)).toBeNull();
   });
 
+  it("empty root contains min-w-0 and overflow-hidden", () => {
+    const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+    expect(getByTestId("pdf-viewer-pane").className).toContain("min-w-0");
+    expect(getByTestId("pdf-viewer-pane").className).toContain("overflow-hidden");
+  });
+
+  it("filled root contains min-w-0 and overflow-hidden", () => {
+    usePaneStore.setState({
+      root: { type: "leaf", id: "p1", pagePath: "doc.pdf" },
+      focusedPaneId: "p1",
+    });
+    const { getByTestId } = render(<PdfViewerPane paneId="p1" />);
+    expect(getByTestId("pdf-viewer-pane").className).toContain("min-w-0");
+    expect(getByTestId("pdf-viewer-pane").className).toContain("overflow-hidden");
+  });
+
   it("applies focus border when focused", () => {
     usePaneStore.setState({
       root: { type: "leaf", id: "p1", pagePath: "doc.pdf" },
