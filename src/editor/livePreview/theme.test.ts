@@ -35,6 +35,18 @@ describe("heading theme spec", () => {
   });
 });
 
+describe("math text-indent locks (#1046)", () => {
+  it("resets text-indent on inline math so list hanging indent cannot clip KaTeX (#1046)", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-math-inline"] as Record<string, string>;
+    expect(rule.textIndent).toBe("0");
+  });
+
+  it("resets text-indent on display math (#1046 sibling shield)", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-math-display"] as Record<string, string>;
+    expect(rule.textIndent).toBe("0");
+  });
+});
+
 describe("crossref CSS variables in variables.css", () => {
   const css = readFileSync(
     resolve(__dirname, "../../themes/variables.css"),
