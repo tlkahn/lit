@@ -211,6 +211,18 @@ function escapeCell(value: string): string {
   return value.replace(/\|/g, "\\|").trim();
 }
 
+/**
+ * What a raw cell string becomes after serializeTable -> parseTable.
+ * Used to detect real divergence (undo/redo/external edit) vs typing-path
+ * serializer normalization (escape/trim) that should not count as a change.
+ */
+export function cellRoundTrip(value: string): string {
+  // Single source of truth: run the value through the same escape + parse
+  // path a one-cell table would take. Avoids duplicating trim/escape rules.
+  const cells = parseCells(`| ${escapeCell(value)} |`);
+  return cells[0] ?? "";
+}
+
 function alignmentToDelimiter(a: Alignment): string {
   if (a === "left") return ":---";
   if (a === "right") return "---:";

@@ -1,7 +1,7 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
 import { undo, redo } from "@codemirror/commands";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
-import { applyQuotePrefixes, parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
+import { applyQuotePrefixes, cellRoundTrip, parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
@@ -520,6 +520,126 @@ export function setCaretOffset(cell: Node, offset: number): void {
   sel.addRange(range);
 }
 
+interface TableCommitCtx {
+  parsed: ParsedTable;
+  from: number;
+  rawLength: number;
+  prefixes: string[];
+}
+
+interface TableResume {
+  row: string;
+  col: string;
+  offset: number;
+}
+
+/** Mutable per-container commit context; cell listeners read at call time. */
+const tableCtx = new WeakMap<HTMLElement, TableCommitCtx>();
+
+/** Last-wins pending focus resume after a shape-changing rebuild. */
+const pendingResume = new WeakMap<HTMLElement, TableResume>();
+
+function bindTableCtx(
+  container: HTMLElement,
+  parsed: ParsedTable,
+  from: number,
+  rawLength: number,
+  prefixes: string[],
+): TableCommitCtx {
+  const next: TableCommitCtx = { parsed, from, rawLength, prefixes };
+  const existing = tableCtx.get(container);
+  if (existing) {
+    Object.assign(existing, next);
+    return existing;
+  }
+  tableCtx.set(container, next);
+  return next;
+}
+
+function cellValueAt(parsed: ParsedTable, row: number, col: number): string {
+  if (row === 0) return parsed.headers[col] ?? "";
+  return parsed.rows[row - 1]?.[col] ?? "";
+}
+
+/** Shape = header count + body row count + per-row column count. */
+function domShapeMatches(dom: HTMLElement, parsed: ParsedTable): boolean {
+  const headers = dom.querySelectorAll("thead th");
+  if (headers.length !== parsed.headers.length) return false;
+  if (headers.length !== parsed.alignments.length) return false;
+  const bodyRows = dom.querySelectorAll("tbody tr");
+  if (bodyRows.length !== parsed.rows.length) return false;
+  for (let r = 0; r < parsed.rows.length; r++) {
+    const cells = bodyRows[r]!.querySelectorAll("td");
+    if (cells.length !== parsed.rows[r]!.length) return false;
+  }
+  // Require addressable cells so in-place updates can key by data-row/col.
+  const addressed = dom.querySelectorAll("[data-row][data-col]");
+  const expected = parsed.headers.length + parsed.rows.reduce((n, row) => n + row.length, 0);
+  return addressed.length === expected;
+}
+
+function updateCellsInPlace(dom: HTMLElement, parsed: ParsedTable): void {
+  const cells = dom.querySelectorAll<HTMLElement>("[data-row][data-col]");
+  for (const cell of cells) {
+    const row = Number(cell.dataset.row);
+    const col = Number(cell.dataset.col);
+    if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+    const v = cellValueAt(parsed, row, col);
+    const alignment = parsed.alignments[col];
+    const isEditingFlag = cell.dataset.editing === "1";
+    const isFocused = cell.ownerDocument.activeElement === cell;
+
+    if (isEditingFlag && isFocused) {
+      // Actively editing: keep node identity; only rewrite on real divergence.
+      cell.dataset.raw = v;
+      if (cellRoundTrip(cell.textContent ?? "") !== v) {
+        const offset = getCaretOffset(cell);
+        cell.textContent = v;
+        setCaretOffset(cell, offset);
+      }
+      applyAlignment(cell, alignment);
+      continue;
+    }
+
+    if (isEditingFlag && !isFocused) {
+      // Stale editing flag: fall through to display rendering.
+      delete cell.dataset.editing;
+    }
+
+    if (cell.dataset.raw !== v) {
+      cell.dataset.raw = v;
+      cell.innerHTML = renderInlineMarkdown(v);
+    }
+    applyAlignment(cell, alignment);
+  }
+}
+
+function restoreTableFocus(container: HTMLElement): void {
+  const pending = pendingResume.get(container);
+  if (!pending) return;
+  pendingResume.delete(container);
+  if (!container.isConnected) return;
+  const doc = container.ownerDocument;
+  const ae = doc.activeElement;
+  // Don't steal focus if something outside the container took it.
+  if (ae && ae !== doc.body && !container.contains(ae)) return;
+  const cell = container.querySelector(
+    `[data-row="${pending.row}"][data-col="${pending.col}"]`,
+  ) as HTMLElement | null;
+  if (!cell) return;
+  cell.dataset.editing = "1";
+  cell.textContent = cell.dataset.raw ?? "";
+  cell.focus({ preventScroll: true });
+  setCaretOffset(cell, pending.offset);
+}
+
+function queueTableFocusRestore(container: HTMLElement, resume: TableResume): void {
+  // Last-wins: later rebuilds overwrite the pending slot; each queues a microtask,
+  // but only the final pending value is applied (earlier tasks no-op after delete).
+  pendingResume.set(container, resume);
+  queueMicrotask(() => restoreTableFocus(container));
+}
+
 export class EditableTableWidget extends WidgetType {
   constructor(
     readonly tableText: string,
@@ -558,6 +678,7 @@ export class EditableTableWidget extends WidgetType {
 
     const parsed = parseTable(this.tableText);
     if (!parsed) return container;
+    bindTableCtx(container, parsed, this.from, this.rawLength, this.prefixes);
     this.buildTable(container, view, parsed);
     return container;
   }
@@ -566,32 +687,46 @@ export class EditableTableWidget extends WidgetType {
     const parsed = parseTable(this.tableText);
     if (!parsed) return false;
 
+    // Always refresh commit context first so in-place cell listeners see new coords.
+    bindTableCtx(dom, parsed, this.from, this.rawLength, this.prefixes);
+
+    if (domShapeMatches(dom, parsed)) {
+      updateCellsInPlace(dom, parsed);
+      return true;
+    }
+
+    return this.rebuildTable(dom, view, parsed);
+  }
+
+  /** Full rebuild path for shape changes. Never focuses synchronously. */
+  private rebuildTable(dom: HTMLElement, view: EditorView, parsed: ParsedTable): boolean {
     const active = dom.querySelector(
       "[data-editing='1']",
     ) as HTMLElement | null;
+    const focusedEditing =
+      active && active.ownerDocument.activeElement === active ? active : null;
     const resume =
-      active && active.dataset.row != null && active.dataset.col != null
+      focusedEditing &&
+      focusedEditing.dataset.row != null &&
+      focusedEditing.dataset.col != null
         ? {
-            row: active.dataset.row,
-            col: active.dataset.col,
-            offset: getCaretOffset(active),
+            row: focusedEditing.dataset.row,
+            col: focusedEditing.dataset.col,
+            offset: getCaretOffset(focusedEditing),
           }
         : null;
 
-    dom.innerHTML = "";
-    this.buildTable(dom, view, parsed);
+    dom.dataset.rebuilding = "1";
+    try {
+      dom.innerHTML = "";
+      this.buildTable(dom, view, parsed);
+    } finally {
+      delete dom.dataset.rebuilding;
+    }
 
     if (resume) {
-      const cell = dom.querySelector(
-        `[data-row="${resume.row}"][data-col="${resume.col}"]`,
-      ) as HTMLElement | null;
-      if (cell) {
-        // Re-enter raw edit mode without select-all; restore caret.
-        cell.dataset.editing = "1";
-        cell.textContent = cell.dataset.raw ?? "";
-        cell.focus();
-        setCaretOffset(cell, resume.offset);
-      }
+      // Defer past CM's synchronous build+sync+updateSelection so focus sticks.
+      queueTableFocusRestore(dom, resume);
     }
     return true;
   }
@@ -601,19 +736,21 @@ export class EditableTableWidget extends WidgetType {
     table.className = "cm-preview-table";
 
     const commitCell = (row: number, col: number, nextValue: string, userEvent = "input") => {
+      const ctx = tableCtx.get(container);
+      if (!ctx) return;
       const updated: ParsedTable = {
-        headers: [...parsed.headers],
-        alignments: [...parsed.alignments],
-        rows: parsed.rows.map((r) => [...r]),
+        headers: [...ctx.parsed.headers],
+        alignments: [...ctx.parsed.alignments],
+        rows: ctx.parsed.rows.map((r) => [...r]),
       };
       if (row === 0) {
         updated.headers[col] = nextValue;
       } else {
         updated.rows[row - 1]![col] = nextValue;
       }
-      const newMarkdown = applyQuotePrefixes(serializeTable(updated), this.prefixes);
+      const newMarkdown = applyQuotePrefixes(serializeTable(updated), ctx.prefixes);
       view.dispatch({
-        changes: { from: this.from, to: this.from + this.rawLength, insert: newMarkdown },
+        changes: { from: ctx.from, to: ctx.from + ctx.rawLength, insert: newMarkdown },
         userEvent,
       });
     };
@@ -750,11 +887,30 @@ function createEditableCell(
   });
 
   cell.addEventListener("blur", () => {
+    // Skip commit + display re-render while the container is mid-rebuild
+    // (WKWebView can fire blur when cells are detached).
+    const container = cell.closest(".cm-preview-table-container") as HTMLElement | null;
+    if (container?.dataset.rebuilding === "1") return;
+
     delete cell.dataset.editing;
     const next = cell.textContent ?? "";
     commitIfChanged(next, "input");
     cell.innerHTML = renderInlineMarkdown(cell.dataset.raw ?? "");
   });
+
+  const hardenFocusAfterHistory = () => {
+    // Belt-and-braces: if focus silently fell to <body>, put it back.
+    queueMicrotask(() => {
+      const doc = cell.ownerDocument;
+      if (
+        doc.activeElement === doc.body &&
+        cell.isConnected &&
+        cell.dataset.editing === "1"
+      ) {
+        cell.focus({ preventScroll: true });
+      }
+    });
+  };
 
   cell.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -766,10 +922,12 @@ function createEditableCell(
       e.preventDefault();
       e.stopPropagation();
       undo(view);
+      hardenFocusAfterHistory();
     } else if (isModRedo(e)) {
       e.preventDefault();
       e.stopPropagation();
       redo(view);
+      hardenFocusAfterHistory();
     }
   });
 
@@ -954,5 +1112,7 @@ export class PageBreakWidget extends WidgetType {
 function applyAlignment(el: HTMLElement, alignment: Alignment | undefined) {
   if (alignment && alignment !== "default") {
     el.style.textAlign = alignment;
+  } else {
+    el.style.textAlign = "";
   }
 }
