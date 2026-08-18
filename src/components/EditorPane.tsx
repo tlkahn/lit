@@ -83,6 +83,17 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
     [paneId],
   );
 
+  // Focus the editor of a pane only if it is still the focused, editor-mode
+  // pane with a live view. Re-validating at call time (not at schedule time)
+  // keeps deferred focus from stealing focus after the user has navigated away
+  // or switched the pane out of editor mode.
+  const focusPaneEditor = (id: string) => {
+    if (usePaneStore.getState().focusedPaneId !== id) return;
+    const leaf = findLeaf(usePaneStore.getState().root, id);
+    if (!leaf || (leaf.viewMode && leaf.viewMode !== "editor")) return;
+    getPaneView(id)?.focus();
+  };
+
   const handleSelectionChange = useCallback((line: number, col: number) => {
     useCursorInfoStore.getState().setCursorInfo(line, col);
 
@@ -147,7 +158,12 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
         ...(detail.cursor ? { selection: EditorSelection.cursor(pos) } : {}),
       });
       if (detail.flash) dispatchFlashHighlight(view, lineObj.from, lineObj.to);
-      if (detail.cursor) view.focus();
+      if (detail.cursor) {
+        // Defer focus past modal unmount + modal-lock unlock, which reset
+        // document.activeElement (see #348 / #1040). Re-resolve the view inside
+        // the rAF so we never focus a stale instance.
+        requestAnimationFrame(() => focusPaneEditor(paneId));
+      }
     };
     window.addEventListener("lit:scroll-to-line", handler);
     return () => window.removeEventListener("lit:scroll-to-line", handler);
@@ -155,10 +171,7 @@ function EditorPaneInner({ paneId }: EditorPaneProps) {
 
   useEffect(() => {
     const handler = () => {
-      if (usePaneStore.getState().focusedPaneId !== paneId) return;
-      const leaf = findLeaf(usePaneStore.getState().root, paneId);
-      if (!leaf || (leaf.viewMode && leaf.viewMode !== "editor")) return;
-      getPaneView(paneId)?.focus();
+      focusPaneEditor(paneId);
     };
     window.addEventListener("lit:request-editor-focus", handler);
     return () => window.removeEventListener("lit:request-editor-focus", handler);
