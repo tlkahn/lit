@@ -89,7 +89,14 @@ export const blockReplacementField = StateField.define<BlockReplacementState>({
     }
   },
   update(value, tr) {
-    if (tr.docChanged || tr.effects.length) {
+    // Rebuild only when the doc changes, a callout toggles, or a facet that
+    // feeds block widgets (mermaid thumbnails) changes. Rebuilding on every
+    // unrelated effect (crossref/bib/annotation/scroll) reparented table DOM
+    // on each keystroke and caused focus-loss + beachball (#1039).
+    const calloutToggled = tr.effects.some((e) => e.is(toggleCalloutEffect));
+    const thumbsChanged =
+      tr.startState.facet(mediaThumbnailsFacet) !== tr.state.facet(mediaThumbnailsFacet);
+    if (tr.docChanged || calloutToggled || thumbsChanged) {
       try {
         return buildBlockReplacements(tr.state);
       } catch (e) {

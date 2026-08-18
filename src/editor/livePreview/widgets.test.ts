@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { history, undo } from "@codemirror/commands";
 import { widgetSync } from "./widgetSyncAnnotation";
 import {
   ImageWidget,
@@ -14,6 +15,10 @@ import {
   EscapedDollarWidget,
   HtmlBreakWidget,
   clearFailedImageCache,
+  isModUndo,
+  isModRedo,
+  getCaretOffset,
+  setCaretOffset,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
 import { stripQuotePrefixes } from "./table";
@@ -760,6 +765,55 @@ describe("DisplayMathWidget", () => {
   });
 });
 
+describe("C8: undo/redo key chord helpers", () => {
+  const ke = (init: {
+    key?: string;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+    altKey?: boolean;
+  }) => ({
+    key: init.key ?? "z",
+    metaKey: init.metaKey ?? false,
+    ctrlKey: init.ctrlKey ?? false,
+    shiftKey: init.shiftKey ?? false,
+    altKey: init.altKey ?? false,
+  });
+
+  it("Mod-z is undo (not redo)", () => {
+    expect(isModUndo(ke({ key: "z", metaKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "z", metaKey: true }))).toBe(false);
+    expect(isModUndo(ke({ key: "z", ctrlKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "z", ctrlKey: true }))).toBe(false);
+  });
+
+  it("Mod-Shift-z is redo (not undo)", () => {
+    expect(isModUndo(ke({ key: "z", metaKey: true, shiftKey: true }))).toBe(false);
+    expect(isModRedo(ke({ key: "z", metaKey: true, shiftKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "z", ctrlKey: true, shiftKey: true }))).toBe(true);
+  });
+
+  it("Mod-y is redo (not undo)", () => {
+    expect(isModUndo(ke({ key: "y", metaKey: true }))).toBe(false);
+    expect(isModRedo(ke({ key: "y", metaKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "y", ctrlKey: true }))).toBe(true);
+  });
+
+  it("plain z is neither", () => {
+    expect(isModUndo(ke({ key: "z" }))).toBe(false);
+    expect(isModRedo(ke({ key: "z" }))).toBe(false);
+  });
+
+  it("Alt-Mod-z is neither", () => {
+    expect(isModUndo(ke({ key: "z", metaKey: true, altKey: true }))).toBe(false);
+    expect(isModRedo(ke({ key: "z", metaKey: true, altKey: true }))).toBe(false);
+  });
+
+  it("Mod-Shift-y is neither (only Mod-z variants shift)", () => {
+    expect(isModRedo(ke({ key: "y", metaKey: true, shiftKey: true }))).toBe(false);
+  });
+});
+
 describe("EditableTableWidget", () => {
   const basicTable = "| a | b |\n| --- | --- |\n| 1 | 2 |";
 
@@ -776,6 +830,684 @@ describe("EditableTableWidget", () => {
     const state = EditorState.create({ doc: doc ?? basicTable });
     return new EditorView({ state, parent: document.createElement("div") });
   }
+
+  function makeHistoryTableView(doc?: string): EditorView {
+    const state = EditorState.create({
+      doc: doc ?? basicTable,
+      extensions: [history()],
+    });
+    return new EditorView({ state, parent: document.createElement("div") });
+  }
+
+  // C1: a blur-commit must be a history-eligible CM transaction, so undo after
+  // blur restores the prior table text.
+  it("C1: blur-commit is undoable via CM history", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new FocusEvent("blur"));
+    expect(view.state.doc.toString()).toContain("changed");
+    // re-focus editor chrome so the CM keymap context applies (not strictly
+    // required for the command itself, but matches the real flow)
+    undo(view);
+    expect(view.state.doc.toString()).toBe(basicTable);
+    el.remove();
+    view.destroy();
+  });
+
+  // C2: typing in a focused cell live-commits to the CM doc (no blur needed).
+  it("C2: input event live-commits cell text to the doc", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    // doc must be updated WITHOUT blur
+    expect(view.state.doc.toString()).toContain("changed");
+    el.remove();
+    view.destroy();
+  });
+
+  // C6: IME composition input must not commit mid-compose; compositionend commits.
+  it("C6: input during composition is ignored, compositionend commits", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "あ";
+    const composing = new InputEvent("input", { bubbles: true, inputType: "insertCompositionText" });
+    Object.defineProperty(composing, "isComposing", { value: true });
+    td.dispatchEvent(composing);
+    expect(view.state.doc.toString()).not.toContain("あ");
+    td.dispatchEvent(new CompositionEvent("compositionend"));
+    expect(view.state.doc.toString()).toContain("あ");
+    el.remove();
+    view.destroy();
+  });
+
+  // C3: Mod-z while focused in a cell reverses the live-commit via CM history.
+  it("C3: Mod-z in a focused cell undoes the live-commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(view.state.doc.toString()).toContain("changed");
+
+    const undoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(undoEvent);
+    expect(undoEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toBe(basicTable);
+    el.remove();
+    view.destroy();
+  });
+
+  it("C3b: multi-keystroke typing coalesces into a single undo step", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "ab";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const oneStepDoc = view.state.doc.toString();
+    expect(oneStepDoc).toContain("ab");
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
+    td.dispatchEvent(undoEvent);
+    // a single undo reverts the whole coalesced edit group back to the original
+    expect(view.state.doc.toString()).toBe(basicTable);
+    el.remove();
+    view.destroy();
+  });
+
+  // C4: Mod-Shift-z / Mod-y while focused in a cell reapplies the undone commit.
+  it("C4: Mod-Shift-z in a focused cell redoes the undone commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
+    td.dispatchEvent(undoEvent);
+    expect(view.state.doc.toString()).toBe(basicTable);
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(redoEvent);
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toContain("changed");
+    el.remove();
+    view.destroy();
+  });
+
+  it("C4: Mod-y in a focused cell redoes the undone commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
+    td.dispatchEvent(undoEvent);
+    expect(view.state.doc.toString()).toBe(basicTable);
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      key: "y",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(redoEvent);
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toContain("changed");
+    el.remove();
+    view.destroy();
+  });
+
+  // #1039 C2: same-shape updateDOM must keep the editing cell node identity
+  // (no destroy/recreate) and must not call focus() - typing path stays put.
+  it("1039-C2: in-place update preserves editing-cell identity without focus()", () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    // Real focus() so activeElement === cell (FocusEvent alone does not in jsdom).
+    td.focus();
+    td.textContent = "abcdef";
+    setCaretOffset(td, 3);
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const newDoc = view.state.doc.toString();
+    expect(newDoc).toContain("abcdef");
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    const w2 = makeWidget(newDoc, 0, newDoc.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    const after = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    expect(after).toBe(td); // same node reference
+    expect(after.dataset.editing).toBe("1");
+    expect(after.textContent).toBe("abcdef");
+    expect(document.activeElement).toBe(td);
+    expect(getCaretOffset(td)).toBe(3);
+    expect(focusSpy).not.toHaveBeenCalled();
+    focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C2b: trailing-space typing must not count as divergence (serializer trims).
+  it("1039-C2b: trailing-space typing does not rewrite editing cell", () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "ab ";
+    setCaretOffset(td, 3);
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const newDoc = view.state.doc.toString();
+
+    const w2 = makeWidget(newDoc, 0, newDoc.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td);
+    // textContent left alone (still has trailing space the user typed)
+    expect(td.textContent).toBe("ab ");
+    expect(document.activeElement).toBe(td);
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C3: same-shape update refreshes non-editing display cells + alignments.
+  it("1039-C3: in-place update refreshes display cells and alignments", () => {
+    const view = makeTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td00 = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    const td01 = dom.querySelector('td[data-row="1"][data-col="1"]') as HTMLElement;
+    const th0 = dom.querySelector('th[data-row="0"][data-col="0"]') as HTMLElement;
+    const originalInner = td01.innerHTML;
+
+    // Change body col0 value and center-align col0; leave col1 alone.
+    const next = "| a | b |\n| :---: | --- |\n| **x** | 2 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+
+    // Node identity preserved for all cells (same shape).
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td00);
+    expect(dom.querySelector('td[data-row="1"][data-col="1"]')).toBe(td01);
+    expect(dom.querySelector('th[data-row="0"][data-col="0"]')).toBe(th0);
+
+    expect(td00.dataset.raw).toBe("**x**");
+    expect(td00.innerHTML).toContain("<strong>");
+    expect(td00.style.textAlign).toBe("center");
+    // Unchanged cell keeps prior raw + was not needlessly rewritten.
+    expect(td01.dataset.raw).toBe("2");
+    expect(td01.innerHTML).toBe(originalInner);
+
+    // Alignment removal resets to default.
+    const next2 = "| a | b |\n| --- | --- |\n| **x** | 2 |";
+    const w3 = makeWidget(next2, 0, next2.length);
+    expect(w3.updateDOM(dom, view)).toBe(true);
+    expect(td00.style.textAlign).toBe("");
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C4: in-place divergence (undo) restores value + clamps caret; no focus().
+  it("1039-C4: in-place divergence restores value and clamps caret without focus()", () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "abcdef";
+    setCaretOffset(td, 6);
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(view.state.doc.toString()).toContain("abcdef");
+
+    // Simulate undo's rebuild: widget for the reverted doc text.
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    const w2 = makeWidget(basicTable, 0, basicTable.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td);
+    expect(td.textContent).toBe("1");
+    expect(td.dataset.raw).toBe("1");
+    expect(td.dataset.editing).toBe("1");
+    expect(document.activeElement).toBe(td);
+    // focus() left caret at end of original "1" (caretBefore of the edit)
+    expect(getCaretOffset(td)).toBe(1);
+    expect(focusSpy).not.toHaveBeenCalled();
+    focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C4b: undo of a trailing delete restores caret AFTER the restored char.
+  it("1039-C4b: undo of trailing delete restores caret after restored char", () => {
+    const view = makeHistoryTableView();
+    const start = "| h |\n| --- |\n| 0.20 |";
+    const w1 = makeWidget(start, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    // beforeinput captures caret at end (4) before the delete mutates the DOM.
+    setCaretOffset(td, 4);
+    td.dispatchEvent(
+      new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "deleteContentBackward",
+      }),
+    );
+    td.textContent = "0.2";
+    setCaretOffset(td, 3);
+    td.dispatchEvent(
+      new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }),
+    );
+    expect(view.state.doc.toString()).toContain("0.2");
+    expect(view.state.doc.toString()).not.toContain("0.20");
+
+    // Undo -> value 0.20, caret should be 4 (pre-delete), not 3.
+    const w2 = makeWidget(start, 0, start.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    expect(td.textContent).toBe("0.20");
+    expect(getCaretOffset(td)).toBe(4);
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C5: commit context rebinding - in-place update must refresh from/rawLength
+  // so subsequent commits target the new range (no stale closure).
+  it("1039-C5: commit context rebinds from/rawLength after in-place updateDOM", () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0, basicTable.length);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+
+    // Simulate the doc growing above the table: widget moves to from=10.
+    const shifted = basicTable;
+    const w2 = makeWidget(shifted, 10, shifted.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td);
+
+    // Swallow the dispatch - view doc is still length 33, so a real from=10 write would throw.
+    const dispatchSpy = vi.spyOn(view, "dispatch").mockImplementation(() => undefined as never);
+    td.textContent = "zz";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(dispatchSpy).toHaveBeenCalled();
+    const call = dispatchSpy.mock.calls[0]![0] as {
+      changes: { from: number; to: number; insert: string };
+    };
+    expect(call.changes.from).toBe(10);
+    expect(call.changes.to).toBe(10 + shifted.length);
+    dispatchSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C6b: same-shape updateDOM also defers focus restore (CM reparents on length change).
+  it("1039-C6b: in-place updateDOM queues deferred focus restore when editing", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "hello";
+    setCaretOffset(td, 3);
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    // Same shape, different text - inplace path.
+    const next = "| a | b |\n| --- | --- |\n| hello | 2 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    // No synchronous focus during updateDOM.
+    expect(focusSpy).not.toHaveBeenCalled();
+
+    // Simulate CM reparent drop: blur to body before microtask.
+    Object.defineProperty(document, "activeElement", {
+      configurable: true,
+      get: () => document.body,
+    });
+    await Promise.resolve();
+    delete (document as { activeElement?: Element }).activeElement;
+
+    expect(focusSpy).toHaveBeenCalled();
+    const usedPreventScroll = focusSpy.mock.calls.some(
+      (c) => c[0] && typeof c[0] === "object" && (c[0] as FocusOptions).preventScroll === true,
+    );
+    expect(usedPreventScroll).toBe(true);
+    focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C6: shape-change fallback rebuild defers focus restore to a microtask.
+  it("1039-C6: fallback rebuild defers focus restore (no sync focus)", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "hello";
+    setCaretOffset(td, 3);
+    // Mark editing; do not live-commit - we only care about resume capture.
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    // Extra row -> shape change -> fallback rebuild.
+    const next = "| a | b |\n| --- | --- |\n| hello | 2 |\n| 3 | 4 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+
+    // Immediately after updateDOM: no synchronous focus() from the restore path.
+    expect(focusSpy).not.toHaveBeenCalled();
+
+    await Promise.resolve(); // flush deferred restore microtask
+
+    const resumed = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    expect(resumed).not.toBeNull();
+    expect(resumed).not.toBe(td); // rebuilt node
+    expect(resumed.dataset.editing).toBe("1");
+    expect(document.activeElement).toBe(resumed);
+    expect(getCaretOffset(resumed)).toBe(3);
+    expect(focusSpy).toHaveBeenCalled();
+    const usedPreventScroll = focusSpy.mock.calls.some(
+      (c) => c[0] && typeof c[0] === "object" && (c[0] as FocusOptions).preventScroll === true,
+    );
+    expect(usedPreventScroll).toBe(true);
+    focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C7a: disconnected container -> deferred restore is a no-op.
+  it("1039-C7a: deferred restore skips disconnected container", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+
+    const next = "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    dom.remove(); // disconnect before microtask
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    await Promise.resolve();
+    expect(focusSpy).not.toHaveBeenCalled();
+    focusSpy.mockRestore();
+    view.destroy();
+  });
+
+  // #1039 C7b: external focus before microtask -> no focus stealing.
+  it("1039-C7b: deferred restore does not steal focus from outside element", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+
+    const outsider = document.createElement("button");
+    document.body.appendChild(outsider);
+
+    const next = "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    outsider.focus();
+    expect(document.activeElement).toBe(outsider);
+
+    await Promise.resolve();
+    expect(document.activeElement).toBe(outsider); // not stolen
+    outsider.remove();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C7c: two rebuilds before flush -> last-wins single restore.
+  it("1039-C7c: deferred restore last-wins across stacked rebuilds", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "first";
+    setCaretOffset(td, 2);
+
+    const next1 = "| a | b |\n| --- | --- |\n| first | 2 |\n| 3 | 4 |";
+    const w2 = makeWidget(next1, 0, next1.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+
+    // Second rebuild before microtask; focus a different logical cell after first rebuild.
+    const mid = dom.querySelector('td[data-row="1"][data-col="1"]') as HTMLElement;
+    mid.focus();
+    mid.textContent = "sec";
+    setCaretOffset(mid, 1);
+
+    const next2 = "| a | b |\n| --- | --- |\n| first | sec |\n| 3 | 4 |\n| 5 | 6 |";
+    const w3 = makeWidget(next2, 0, next2.length);
+    expect(w3.updateDOM(dom, view)).toBe(true);
+
+    await Promise.resolve();
+
+    const resumed = document.activeElement as HTMLElement;
+    expect(resumed?.getAttribute("data-row")).toBe("1");
+    expect(resumed?.getAttribute("data-col")).toBe("1");
+    expect(resumed.dataset.editing).toBe("1");
+    expect(getCaretOffset(resumed)).toBe(1);
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C8: blur while rebuilding must not commit or re-render display HTML.
+  it("1039-C8: blur during rebuild is a no-op", () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    // Live-commit so dataset.raw matches; then mutate text without committing so a
+    // naive blur would want to commit.
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    td.textContent = "changed!";
+
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    dom.dataset.rebuilding = "1";
+    td.dispatchEvent(new FocusEvent("blur"));
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    // Guard path must not clear editing flag or re-render display HTML.
+    expect(td.dataset.editing).toBe("1");
+    expect(td.textContent).toBe("changed!");
+    expect(td.innerHTML).not.toContain("<"); // still raw text, not markdown HTML
+    delete dom.dataset.rebuilding;
+    dispatchSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C9: stale data-editing (flag set but cell not focused) is cleaned up.
+  it("1039-C9: stale data-editing cleared and display HTML rendered", () => {
+    const view = makeTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    // Stale flag without focus.
+    td.dataset.editing = "1";
+    td.textContent = "1";
+    expect(document.activeElement).not.toBe(td);
+
+    const next = "| a | b |\n| --- | --- |\n| **z** | 2 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    expect(td.dataset.editing).toBeUndefined();
+    expect(td.dataset.raw).toBe("**z**");
+    expect(td.innerHTML).toContain("<strong>");
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C10: end-to-end in-cell undo/redo keeps focus + caret via in-place path.
+  it("1039-C10: in-cell undo/redo retains focus and caret", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "ab";
+    setCaretOffset(td, 2);
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    td.textContent = "abcd";
+    setCaretOffset(td, 4);
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const editedDoc = view.state.doc.toString();
+    expect(editedDoc).toContain("abcd");
+
+    // Drive updateDOM as CM would after the live-commit (identity path).
+    const wEdited = makeWidget(editedDoc, 0, editedDoc.length);
+    wEdited.updateDOM(dom, view);
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td);
+    expect(document.activeElement).toBe(td);
+
+    const undoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(undoEvent);
+    expect(undoEvent.defaultPrevented).toBe(true);
+    // history coalesces typing; one undo reverts to original
+    expect(view.state.doc.toString()).toBe(basicTable);
+
+    const wUndo = makeWidget(basicTable, 0, basicTable.length);
+    expect(wUndo.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td);
+    expect(td.textContent).toBe("1");
+    expect(document.activeElement).toBe(td);
+    expect(getCaretOffset(td)).toBe(1);
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(redoEvent);
+    expect(view.state.doc.toString()).toContain("abcd");
+    const redone = view.state.doc.toString();
+    const wRedo = makeWidget(redone, 0, redone.length);
+    expect(wRedo.updateDOM(dom, view)).toBe(true);
+    expect(dom.querySelector('td[data-row="1"][data-col="0"]')).toBe(td);
+    expect(td.textContent).toBe("abcd");
+    expect(document.activeElement).toBe(td);
+    dom.remove();
+    view.destroy();
+  });
+
+  it("1039-C10b: keydown hardening refocuses editing cell if focus fell to body", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "zz";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    const undoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    // Patch activeElement during the microtask window so the hardening path fires.
+    let pretendBody = false;
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, "activeElement");
+    Object.defineProperty(document, "activeElement", {
+      configurable: true,
+      get() {
+        if (pretendBody) return document.body;
+        return desc?.get?.call(this) ?? null;
+      },
+    });
+    pretendBody = true;
+    td.dataset.editing = "1";
+    td.dispatchEvent(undoEvent);
+    focusSpy.mockClear();
+    await Promise.resolve();
+    expect(focusSpy).toHaveBeenCalled();
+    const usedPreventScroll = focusSpy.mock.calls.some(
+      (c) => c[0] && typeof c[0] === "object" && (c[0] as FocusOptions).preventScroll === true,
+    );
+    expect(usedPreventScroll).toBe(true);
+    pretendBody = false;
+    delete (document as { activeElement?: Element }).activeElement;
+    focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // C7: blur after a live-commit (already synced) must not dispatch again.
+  it("C7: blur after live-commit does not double-commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    dispatchSpy.mockClear();
+    td.dispatchEvent(new FocusEvent("blur"));
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    el.remove();
+    view.destroy();
+  });
 
   it("toDOM returns a container div with correct class", () => {
     const view = makeTableView();
@@ -1021,6 +1753,28 @@ describe("EditableTableWidget", () => {
       expect(lines[1]!.startsWith("> ")).toBe(true);
       expect(lines[2]!.startsWith("> ")).toBe(true);
       expect(call.changes.insert).toContain("changed");
+      view.destroy();
+    });
+
+    it("C9: input-commit re-applies quote prefixes and is undoable", () => {
+      const { text, prefixes } = stripQuotePrefixes(quotedRaw);
+      const view = makeHistoryTableView(quotedRaw);
+      const widget = makeWidget(text, 0, quotedRaw.length, prefixes);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+      const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+      td.dispatchEvent(new FocusEvent("focus"));
+      td.textContent = "changed";
+      td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      const inserted = view.state.doc.toString();
+      expect(inserted).toContain("changed");
+      const lines = inserted.split("\n");
+      expect(lines[1]!.startsWith("> ")).toBe(true);
+      expect(lines[2]!.startsWith("> ")).toBe(true);
+      // undo restores the original quoted table intact
+      undo(view);
+      expect(view.state.doc.toString()).toBe(quotedRaw);
+      el.remove();
       view.destroy();
     });
   });

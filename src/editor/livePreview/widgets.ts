@@ -1,6 +1,7 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
+import { undo, redo } from "@codemirror/commands";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
-import { applyQuotePrefixes, parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
+import { applyQuotePrefixes, cellRoundTrip, parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
 import { showMediaLightbox } from "./lightbox";
 import { navigateToPageFacet } from "./navigateToPageFacet";
@@ -464,6 +465,248 @@ export class DisplayMathWidget extends WidgetType {
   }
 }
 
+export type ModKeyEvent = Pick<
+  KeyboardEvent,
+  "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+>;
+
+function isMod(e: ModKeyEvent): boolean {
+  return e.metaKey || e.ctrlKey;
+}
+
+/** Match historyKeymap's Undo: (meta|ctrl)+z without shift or alt. */
+export function isModUndo(e: ModKeyEvent): boolean {
+  return isMod(e) && e.key.toLowerCase() === "z" && !e.shiftKey && !e.altKey;
+}
+
+/** Match historyKeymap's Redo: (meta|ctrl)+y w/o shift, or (meta|ctrl)+shift+z. */
+export function isModRedo(e: ModKeyEvent): boolean {
+  if (isMod(e) && e.key.toLowerCase() === "y" && !e.shiftKey) return true;
+  return (
+    isMod(e) && e.key.toLowerCase() === "z" && e.shiftKey && !e.altKey
+  );
+}
+
+function firstTextNode(cell: Node): Text | null {
+  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+  return walker.nextNode() as Text | null;
+}
+
+/**
+ * Caret offset into the single text node of an editing cell. Falls back to
+ * end-of-text when there is no selection or the caret sits outside the cell.
+ */
+export function getCaretOffset(cell: Node): number {
+  const sel = window.getSelection();
+  const len = (cell.textContent ?? "").length;
+  const text = firstTextNode(cell);
+  if (!sel || sel.rangeCount === 0 || !text) return len;
+  const range = sel.getRangeAt(0);
+  if (range.startContainer === text) return range.startOffset;
+  if (range.startContainer === cell) return range.startOffset <= 0 ? 0 : len;
+  return len;
+}
+
+/** Place the caret at a clamped offset into the editing cell's text node. */
+export function setCaretOffset(cell: Node, offset: number): void {
+  const sel = window.getSelection();
+  const text = firstTextNode(cell);
+  if (!sel || !text) return;
+  const range = document.createRange();
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  range.setStart(text, clamped);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+interface TableCommitCtx {
+  parsed: ParsedTable;
+  from: number;
+  rawLength: number;
+  prefixes: string[];
+}
+
+interface TableResume {
+  row: string;
+  col: string;
+  offset: number;
+}
+
+/** Mutable per-container commit context; cell listeners read at call time. */
+const tableCtx = new WeakMap<HTMLElement, TableCommitCtx>();
+
+/** Last-wins pending focus resume after updateDOM / history (CM may reparent). */
+const pendingResume = new WeakMap<HTMLElement, TableResume>();
+
+/** Cells currently receiving a silent focus restore (skip select-all focus handler). */
+const silentFocusCells = new WeakSet<HTMLElement>();
+
+/** Last live-edit caret anchors so undo/redo can restore the pre/post caret. */
+interface CellEditCaret {
+  prevRaw: string;
+  nextRaw: string;
+  caretBefore: number;
+  caretAfter: number;
+}
+const cellEditCarets = new WeakMap<HTMLElement, CellEditCaret>();
+
+
+function bindTableCtx(
+  container: HTMLElement,
+  parsed: ParsedTable,
+  from: number,
+  rawLength: number,
+  prefixes: string[],
+): TableCommitCtx {
+  const next: TableCommitCtx = { parsed, from, rawLength, prefixes };
+  const existing = tableCtx.get(container);
+  if (existing) {
+    Object.assign(existing, next);
+    return existing;
+  }
+  tableCtx.set(container, next);
+  return next;
+}
+
+function cellValueAt(parsed: ParsedTable, row: number, col: number): string {
+  if (row === 0) return parsed.headers[col] ?? "";
+  return parsed.rows[row - 1]?.[col] ?? "";
+}
+
+/** Shape = header count + body row count + per-row column count. */
+function domShapeMatches(dom: HTMLElement, parsed: ParsedTable): boolean {
+  const headers = dom.querySelectorAll("thead th");
+  if (headers.length !== parsed.headers.length) return false;
+  if (headers.length !== parsed.alignments.length) return false;
+  const bodyRows = dom.querySelectorAll("tbody tr");
+  if (bodyRows.length !== parsed.rows.length) return false;
+  for (let r = 0; r < parsed.rows.length; r++) {
+    const cells = bodyRows[r]!.querySelectorAll("td");
+    if (cells.length !== parsed.rows[r]!.length) return false;
+  }
+  // Require addressable cells so in-place updates can key by data-row/col.
+  const addressed = dom.querySelectorAll("[data-row][data-col]");
+  const expected = parsed.headers.length + parsed.rows.reduce((n, row) => n + row.length, 0);
+  return addressed.length === expected;
+}
+
+function updateCellsInPlace(dom: HTMLElement, parsed: ParsedTable): void {
+  const cells = dom.querySelectorAll<HTMLElement>("[data-row][data-col]");
+  for (const cell of cells) {
+    const row = Number(cell.dataset.row);
+    const col = Number(cell.dataset.col);
+    if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+    const v = cellValueAt(parsed, row, col);
+    const alignment = parsed.alignments[col];
+    const isEditingFlag = cell.dataset.editing === "1";
+    const isFocused = cell.ownerDocument.activeElement === cell;
+
+    if (isEditingFlag && isFocused) {
+      // Actively editing: keep node identity; only rewrite on real divergence.
+      cell.dataset.raw = v;
+      const before = cell.textContent ?? "";
+      if (cellRoundTrip(before) !== v) {
+        const offset = resolveDivergedCaret(cell, before, v);
+        cell.textContent = v;
+        setCaretOffset(cell, offset);
+      }
+      applyAlignment(cell, alignment);
+      continue;
+    }
+
+    if (isEditingFlag && !isFocused) {
+      // Stale editing flag: fall through to display rendering.
+      delete cell.dataset.editing;
+    }
+
+    if (cell.dataset.raw !== v) {
+      cell.dataset.raw = v;
+      cell.innerHTML = renderInlineMarkdown(v);
+    }
+    applyAlignment(cell, alignment);
+  }
+}
+
+/**
+ * Pick the caret for an external cell-value rewrite (undo/redo/other).
+ * Uses the last live-edit anchors when the rewrite matches that edit's
+ * prev/next values; otherwise keeps end-of-text if the caret was at end,
+ * else clamps the current offset.
+ */
+function resolveDivergedCaret(cell: HTMLElement, before: string, next: string): number {
+  const edit = cellEditCarets.get(cell);
+  if (edit) {
+    // Undo of the last live-edit: restore caret as it was before that edit.
+    if (next === edit.prevRaw && before === edit.nextRaw) return edit.caretBefore;
+    // Redo of the last live-edit: restore caret as it was after that edit.
+    if (next === edit.nextRaw && before === edit.prevRaw) return edit.caretAfter;
+    // Coalesced undo landing on the original pre-edit value.
+    if (next === edit.prevRaw) return edit.caretBefore;
+    if (next === edit.nextRaw) return edit.caretAfter;
+  }
+  const cur = getCaretOffset(cell);
+  // Caret was at end of the short text -> stay at end after growth (undo delete).
+  if (cur >= before.length) return next.length;
+  return Math.max(0, Math.min(cur, next.length));
+}
+
+function captureEditingResume(dom: HTMLElement): TableResume | null {
+  const active = dom.querySelector<HTMLElement>("[data-editing='1']");
+  if (!active || active.ownerDocument.activeElement !== active) return null;
+  if (active.dataset.row == null || active.dataset.col == null) return null;
+  return {
+    row: active.dataset.row,
+    col: active.dataset.col,
+    offset: getCaretOffset(active),
+  };
+}
+
+function restoreTableFocus(container: HTMLElement): void {
+  const pending = pendingResume.get(container);
+  if (!pending) return;
+  pendingResume.delete(container);
+  if (!container.isConnected) return;
+
+  const doc = container.ownerDocument;
+  const ae = doc.activeElement;
+  const cell = container.querySelector(
+    `[data-row="${pending.row}"][data-col="${pending.col}"]`,
+  ) as HTMLElement | null;
+
+  // Already focused on the right cell - just clamp caret if needed.
+  if (cell && ae === cell) {
+    setCaretOffset(cell, pending.offset);
+    return;
+  }
+
+  // Don't steal focus if something outside the container took it. CM reparent
+  // drops focus to body; .cm-content is also a steal we reverse while editing.
+  const aeIsEditorChrome =
+    !ae ||
+    ae === doc.body ||
+    (ae instanceof HTMLElement &&
+      (ae.classList.contains("cm-content") || ae.classList.contains("cm-editor")));
+  if (ae && !aeIsEditorChrome && !container.contains(ae)) return;
+  if (!cell) return;
+
+  // Silent focus: skip the normal focus handler's select-all / collapse-to-end.
+  silentFocusCells.add(cell);
+  cell.dataset.editing = "1";
+  const raw = cell.dataset.raw ?? "";
+  if (cell.textContent !== raw) cell.textContent = raw;
+  cell.focus({ preventScroll: true });
+  setCaretOffset(cell, pending.offset);
+  queueMicrotask(() => silentFocusCells.delete(cell));
+}
+
+function queueTableFocusRestore(container: HTMLElement, resume: TableResume): void {
+  // Last-wins: later rebuilds overwrite the pending slot; each queues a microtask,
+  // but only the final pending value is applied (earlier tasks no-op after delete).
+  pendingResume.set(container, resume);
+  queueMicrotask(() => restoreTableFocus(container));
+}
+
 export class EditableTableWidget extends WidgetType {
   constructor(
     readonly tableText: string,
@@ -502,6 +745,7 @@ export class EditableTableWidget extends WidgetType {
 
     const parsed = parseTable(this.tableText);
     if (!parsed) return container;
+    bindTableCtx(container, parsed, this.from, this.rawLength, this.prefixes);
     this.buildTable(container, view, parsed);
     return container;
   }
@@ -509,8 +753,63 @@ export class EditableTableWidget extends WidgetType {
   updateDOM(dom: HTMLElement, view: EditorView): boolean {
     const parsed = parseTable(this.tableText);
     if (!parsed) return false;
-    dom.innerHTML = "";
-    this.buildTable(dom, view, parsed);
+
+    // Always refresh commit context first so in-place cell listeners see new coords.
+    bindTableCtx(dom, parsed, this.from, this.rawLength, this.prefixes);
+
+    // Capture before any DOM work: CM tile.sync may reparent the container and
+    // drop focus to <body> even when cell identity is preserved (length change).
+    const resumeAtEntry = captureEditingResume(dom);
+
+    if (domShapeMatches(dom, parsed)) {
+      updateCellsInPlace(dom, parsed);
+      if (resumeAtEntry) {
+        // Prefer post-update caret (divergence path may have clamped it).
+        const cell = dom.querySelector<HTMLElement>(
+          `[data-row="${resumeAtEntry.row}"][data-col="${resumeAtEntry.col}"]`,
+        );
+        const offset =
+          cell && document.activeElement === cell
+            ? getCaretOffset(cell)
+            : resumeAtEntry.offset;
+        queueTableFocusRestore(dom, { ...resumeAtEntry, offset });
+      }
+      return true;
+    }
+
+    return this.rebuildTable(dom, view, parsed);
+  }
+
+  /** Full rebuild path for shape changes. Never focuses synchronously. */
+  private rebuildTable(dom: HTMLElement, view: EditorView, parsed: ParsedTable): boolean {
+    const active = dom.querySelector(
+      "[data-editing='1']",
+    ) as HTMLElement | null;
+    const focusedEditing =
+      active && active.ownerDocument.activeElement === active ? active : null;
+    const resume =
+      focusedEditing &&
+      focusedEditing.dataset.row != null &&
+      focusedEditing.dataset.col != null
+        ? {
+            row: focusedEditing.dataset.row,
+            col: focusedEditing.dataset.col,
+            offset: getCaretOffset(focusedEditing),
+          }
+        : null;
+
+    dom.dataset.rebuilding = "1";
+    try {
+      dom.innerHTML = "";
+      this.buildTable(dom, view, parsed);
+    } finally {
+      delete dom.dataset.rebuilding;
+    }
+
+    if (resume) {
+      // Defer past CM's synchronous build+sync+updateSelection so focus sticks.
+      queueTableFocusRestore(dom, resume);
+    }
     return true;
   }
 
@@ -518,27 +817,44 @@ export class EditableTableWidget extends WidgetType {
     const table = document.createElement("table");
     table.className = "cm-preview-table";
 
-    const commitCell = (row: number, col: number, nextValue: string) => {
+    const commitCell = (row: number, col: number, nextValue: string, userEvent = "input") => {
+      const ctx = tableCtx.get(container);
+      if (!ctx) return;
       const updated: ParsedTable = {
-        headers: [...parsed.headers],
-        alignments: [...parsed.alignments],
-        rows: parsed.rows.map((r) => [...r]),
+        headers: [...ctx.parsed.headers],
+        alignments: [...ctx.parsed.alignments],
+        rows: ctx.parsed.rows.map((r) => [...r]),
       };
       if (row === 0) {
         updated.headers[col] = nextValue;
       } else {
         updated.rows[row - 1]![col] = nextValue;
       }
-      const newMarkdown = applyQuotePrefixes(serializeTable(updated), this.prefixes);
+      const newMarkdown = applyQuotePrefixes(serializeTable(updated), ctx.prefixes);
       view.dispatch({
-        changes: { from: this.from, to: this.from + this.rawLength, insert: newMarkdown },
+        changes: { from: ctx.from, to: ctx.from + ctx.rawLength, insert: newMarkdown },
+        userEvent,
       });
     };
+
+    const makeCell = (
+      tag: "th" | "td",
+      value: string,
+      i: number,
+      row: number,
+    ) =>
+      createEditableCell(
+        tag,
+        value,
+        parsed.alignments[i],
+        (next, userEvent) => commitCell(row, i, next, userEvent),
+        view,
+      );
 
     const thead = document.createElement("thead");
     const headerRow = document.createElement("tr");
     parsed.headers.forEach((header, i) => {
-      const th = createEditableCell("th", header, parsed.alignments[i], (next) => commitCell(0, i, next));
+      const th = makeCell("th", header, i, 0);
       th.dataset.row = "0";
       th.dataset.col = String(i);
       headerRow.appendChild(th);
@@ -552,7 +868,7 @@ export class EditableTableWidget extends WidgetType {
         const rowIndex = ri + 1;
         const tr = document.createElement("tr");
         row.forEach((cell, i) => {
-          const td = createEditableCell("td", cell, parsed.alignments[i], (next) => commitCell(rowIndex, i, next));
+          const td = makeCell("td", cell, i, rowIndex);
           td.dataset.row = String(rowIndex);
           td.dataset.col = String(i);
           tr.appendChild(td);
@@ -579,17 +895,27 @@ export class EditableTableWidget extends WidgetType {
     return true;
   }
 
+
   get estimatedHeight(): number {
     const rowCount = this.tableText.split("\n").length - 1;
     return Math.max(60, rowCount * 33 + 40);
   }
 }
 
+function userEventFromInput(e: InputEvent): string {
+  const inputType = e.inputType ?? "";
+  if (inputType.startsWith("delete")) {
+    return inputType.includes("Backward") ? "delete.backward" : "delete.forward";
+  }
+  return "input.type";
+}
+
 function createEditableCell(
   tag: "th" | "td",
   value: string,
   alignment: Alignment | undefined,
-  onCommit: (next: string) => void,
+  onCommit: (next: string, userEvent: string) => void,
+  view: EditorView,
 ): HTMLTableCellElement {
   const cell = document.createElement(tag);
   cell.innerHTML = renderInlineMarkdown(value);
@@ -599,13 +925,35 @@ function createEditableCell(
   applyAlignment(cell, alignment);
 
   let selectAllOnFocus = false;
+  /** Caret offset captured in beforeinput, before the DOM mutates. */
+  let caretBeforeInput = 0;
+
+  const commitIfChanged = (next: string, userEvent: string): boolean => {
+    const raw = cell.dataset.raw ?? "";
+    if (next === raw) return false;
+    cellEditCarets.set(cell, {
+      prevRaw: raw,
+      nextRaw: next,
+      caretBefore: caretBeforeInput,
+      caretAfter: getCaretOffset(cell),
+    });
+    cell.dataset.raw = next;
+    onCommit(next, userEvent);
+    return true;
+  };
 
   cell.addEventListener("mousedown", () => {
     selectAllOnFocus = cell.childElementCount > 0;
   });
 
   cell.addEventListener("focus", () => {
+    // Silent restore path: keep text + caret; caller already set them.
+    if (silentFocusCells.has(cell)) {
+      cell.dataset.editing = "1";
+      return;
+    }
     const raw = cell.dataset.raw ?? "";
+    cell.dataset.editing = "1";
     cell.textContent = raw;
     const sel = window.getSelection();
     if (sel && cell.firstChild) {
@@ -620,28 +968,86 @@ function createEditableCell(
       sel.removeAllRanges();
       sel.addRange(range);
     }
+    caretBeforeInput = getCaretOffset(cell);
+  });
+
+  cell.addEventListener("beforeinput", (e) => {
+    const ev = e as InputEvent;
+    if (ev.isComposing) return;
+    // DOM still has the pre-edit value/caret here - anchor for undo restore.
+    caretBeforeInput = getCaretOffset(cell);
+  });
+
+  cell.addEventListener("input", (e) => {
+    const ev = e as InputEvent;
+    if (ev.isComposing) return;
+    const prevRaw = cell.dataset.raw ?? "";
+    const nextRaw = cell.textContent ?? "";
+    cellEditCarets.set(cell, {
+      prevRaw,
+      nextRaw,
+      caretBefore: caretBeforeInput,
+      caretAfter: getCaretOffset(cell),
+    });
+    cell.dataset.raw = nextRaw;
+    onCommit(nextRaw, userEventFromInput(ev));
+  });
+
+  cell.addEventListener("compositionend", () => {
+    const next = cell.textContent ?? "";
+    commitIfChanged(next, "input.type");
   });
 
   cell.addEventListener("blur", () => {
+    // Skip commit + display re-render while the container is mid-rebuild
+    // (WKWebView can fire blur when cells are detached).
+    const container = cell.closest(".cm-preview-table-container") as HTMLElement | null;
+    if (container?.dataset.rebuilding === "1") return;
+
+    delete cell.dataset.editing;
     const next = cell.textContent ?? "";
-    const raw = cell.dataset.raw ?? "";
-    if (next !== raw) {
-      cell.dataset.raw = next;
-      onCommit(next);
-    }
+    commitIfChanged(next, "input");
     cell.innerHTML = renderInlineMarkdown(cell.dataset.raw ?? "");
   });
+
+  const hardenFocusAfterHistory = (preOffset: number) => {
+    // updateDOM already queues a restore with the clamped caret when the doc
+    // changed. Only fill in if nothing is pending (e.g. undo was a no-op).
+    const container = cell.closest(".cm-preview-table-container") as HTMLElement | null;
+    if (
+      container &&
+      !pendingResume.has(container) &&
+      cell.dataset.row != null &&
+      cell.dataset.col != null &&
+      cell.dataset.editing === "1"
+    ) {
+      const len = (cell.textContent ?? "").length;
+      queueTableFocusRestore(container, {
+        row: cell.dataset.row,
+        col: cell.dataset.col,
+        offset: Math.max(0, Math.min(preOffset, len)),
+      });
+    }
+  };
 
   cell.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       const next = cell.textContent ?? "";
-      const raw = cell.dataset.raw ?? "";
-      if (next !== raw) {
-        cell.dataset.raw = next;
-        onCommit(next);
-      }
+      commitIfChanged(next, "input");
       cell.blur();
+    } else if (isModUndo(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const preOffset = getCaretOffset(cell);
+      undo(view);
+      hardenFocusAfterHistory(preOffset);
+    } else if (isModRedo(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const preOffset = getCaretOffset(cell);
+      redo(view);
+      hardenFocusAfterHistory(preOffset);
     }
   });
 
@@ -826,5 +1232,7 @@ export class PageBreakWidget extends WidgetType {
 function applyAlignment(el: HTMLElement, alignment: Alignment | undefined) {
   if (alignment && alignment !== "default") {
     el.style.textAlign = alignment;
+  } else {
+    el.style.textAlign = "";
   }
 }

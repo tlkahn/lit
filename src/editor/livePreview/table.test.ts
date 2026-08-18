@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition, serializeTable, stripQuotePrefixes, applyQuotePrefixes } from "./table";
+import { parseTableAlignment, parseTable, renderInlineMarkdown, getCellPosition, serializeTable, stripQuotePrefixes, applyQuotePrefixes, cellRoundTrip } from "./table";
 import { getKatexSync } from "./katexLoader";
 
 const mockKatex = {
@@ -460,5 +460,44 @@ describe("getCellPosition", () => {
 
   it("handles from offset with body cell", () => {
     expect(getCellPosition("| a |\n| --- |\n| x |", 50, 1, 0)).toBe(66);
+  });
+});
+
+describe("cellRoundTrip", () => {
+  it("returns plain values unchanged", () => {
+    expect(cellRoundTrip("a")).toBe("a");
+    expect(cellRoundTrip("")).toBe("");
+    expect(cellRoundTrip("**bold**")).toBe("**bold**");
+  });
+
+  it("trims trailing/leading whitespace (escapeCell trim quirk)", () => {
+    expect(cellRoundTrip("a ")).toBe("a");
+    expect(cellRoundTrip(" a")).toBe("a");
+    expect(cellRoundTrip("  a  ")).toBe("a");
+  });
+
+  it("agrees with parseTable(serializeTable(...)) for single cells", () => {
+    for (const v of ["a", "a ", "", "**bold**", "x*y", "hello world"]) {
+      const serialized = serializeTable({
+        headers: [v],
+        alignments: ["default"],
+        rows: [],
+      });
+      const parsed = parseTable(serialized);
+      expect(cellRoundTrip(v)).toBe(parsed!.headers[0]);
+    }
+  });
+
+  it("agrees with parseTable(serializeTable(...)) for composite tables", () => {
+    const data = {
+      headers: ["a ", "b"],
+      alignments: ["default" as const, "left" as const],
+      rows: [["x", "y "]],
+    };
+    const parsed = parseTable(serializeTable(data))!;
+    expect(cellRoundTrip(data.headers[0]!)).toBe(parsed.headers[0]);
+    expect(cellRoundTrip(data.headers[1]!)).toBe(parsed.headers[1]);
+    expect(cellRoundTrip(data.rows[0]![0]!)).toBe(parsed.rows[0]![0]);
+    expect(cellRoundTrip(data.rows[0]![1]!)).toBe(parsed.rows[0]![1]);
   });
 });
