@@ -542,6 +542,15 @@ const pendingResume = new WeakMap<HTMLElement, TableResume>();
 /** Cells currently receiving a silent focus restore (skip select-all focus handler). */
 const silentFocusCells = new WeakSet<HTMLElement>();
 
+/** Last live-edit caret anchors so undo/redo can restore the pre/post caret. */
+interface CellEditCaret {
+  prevRaw: string;
+  nextRaw: string;
+  caretBefore: number;
+  caretAfter: number;
+}
+const cellEditCarets = new WeakMap<HTMLElement, CellEditCaret>();
+
 
 function bindTableCtx(
   container: HTMLElement,
@@ -596,8 +605,9 @@ function updateCellsInPlace(dom: HTMLElement, parsed: ParsedTable): void {
     if (isEditingFlag && isFocused) {
       // Actively editing: keep node identity; only rewrite on real divergence.
       cell.dataset.raw = v;
-      if (cellRoundTrip(cell.textContent ?? "") !== v) {
-        const offset = getCaretOffset(cell);
+      const before = cell.textContent ?? "";
+      if (cellRoundTrip(before) !== v) {
+        const offset = resolveDivergedCaret(cell, before, v);
         cell.textContent = v;
         setCaretOffset(cell, offset);
       }
@@ -616,6 +626,29 @@ function updateCellsInPlace(dom: HTMLElement, parsed: ParsedTable): void {
     }
     applyAlignment(cell, alignment);
   }
+}
+
+/**
+ * Pick the caret for an external cell-value rewrite (undo/redo/other).
+ * Uses the last live-edit anchors when the rewrite matches that edit's
+ * prev/next values; otherwise keeps end-of-text if the caret was at end,
+ * else clamps the current offset.
+ */
+function resolveDivergedCaret(cell: HTMLElement, before: string, next: string): number {
+  const edit = cellEditCarets.get(cell);
+  if (edit) {
+    // Undo of the last live-edit: restore caret as it was before that edit.
+    if (next === edit.prevRaw && before === edit.nextRaw) return edit.caretBefore;
+    // Redo of the last live-edit: restore caret as it was after that edit.
+    if (next === edit.nextRaw && before === edit.prevRaw) return edit.caretAfter;
+    // Coalesced undo landing on the original pre-edit value.
+    if (next === edit.prevRaw) return edit.caretBefore;
+    if (next === edit.nextRaw) return edit.caretAfter;
+  }
+  const cur = getCaretOffset(cell);
+  // Caret was at end of the short text -> stay at end after growth (undo delete).
+  if (cur >= before.length) return next.length;
+  return Math.max(0, Math.min(cur, next.length));
 }
 
 function captureEditingResume(dom: HTMLElement): TableResume | null {
@@ -892,10 +925,18 @@ function createEditableCell(
   applyAlignment(cell, alignment);
 
   let selectAllOnFocus = false;
+  /** Caret offset captured in beforeinput, before the DOM mutates. */
+  let caretBeforeInput = 0;
 
   const commitIfChanged = (next: string, userEvent: string): boolean => {
     const raw = cell.dataset.raw ?? "";
     if (next === raw) return false;
+    cellEditCarets.set(cell, {
+      prevRaw: raw,
+      nextRaw: next,
+      caretBefore: caretBeforeInput,
+      caretAfter: getCaretOffset(cell),
+    });
     cell.dataset.raw = next;
     onCommit(next, userEvent);
     return true;
@@ -927,13 +968,29 @@ function createEditableCell(
       sel.removeAllRanges();
       sel.addRange(range);
     }
+    caretBeforeInput = getCaretOffset(cell);
+  });
+
+  cell.addEventListener("beforeinput", (e) => {
+    const ev = e as InputEvent;
+    if (ev.isComposing) return;
+    // DOM still has the pre-edit value/caret here - anchor for undo restore.
+    caretBeforeInput = getCaretOffset(cell);
   });
 
   cell.addEventListener("input", (e) => {
     const ev = e as InputEvent;
     if (ev.isComposing) return;
-    cell.dataset.raw = cell.textContent ?? "";
-    onCommit(cell.dataset.raw, userEventFromInput(ev));
+    const prevRaw = cell.dataset.raw ?? "";
+    const nextRaw = cell.textContent ?? "";
+    cellEditCarets.set(cell, {
+      prevRaw,
+      nextRaw,
+      caretBefore: caretBeforeInput,
+      caretAfter: getCaretOffset(cell),
+    });
+    cell.dataset.raw = nextRaw;
+    onCommit(nextRaw, userEventFromInput(ev));
   });
 
   cell.addEventListener("compositionend", () => {

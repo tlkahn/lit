@@ -1105,9 +1105,45 @@ describe("EditableTableWidget", () => {
     expect(td.dataset.raw).toBe("1");
     expect(td.dataset.editing).toBe("1");
     expect(document.activeElement).toBe(td);
-    expect(getCaretOffset(td)).toBe(1); // clamped from 6 -> len("1")
+    // focus() left caret at end of original "1" (caretBefore of the edit)
+    expect(getCaretOffset(td)).toBe(1);
     expect(focusSpy).not.toHaveBeenCalled();
     focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
+  // #1039 C4b: undo of a trailing delete restores caret AFTER the restored char.
+  it("1039-C4b: undo of trailing delete restores caret after restored char", () => {
+    const view = makeHistoryTableView();
+    const start = "| h |\n| --- |\n| 0.20 |";
+    const w1 = makeWidget(start, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    // beforeinput captures caret at end (4) before the delete mutates the DOM.
+    setCaretOffset(td, 4);
+    td.dispatchEvent(
+      new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        inputType: "deleteContentBackward",
+      }),
+    );
+    td.textContent = "0.2";
+    setCaretOffset(td, 3);
+    td.dispatchEvent(
+      new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }),
+    );
+    expect(view.state.doc.toString()).toContain("0.2");
+    expect(view.state.doc.toString()).not.toContain("0.20");
+
+    // Undo -> value 0.20, caret should be 4 (pre-delete), not 3.
+    const w2 = makeWidget(start, 0, start.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    expect(td.textContent).toBe("0.20");
+    expect(getCaretOffset(td)).toBe(4);
     dom.remove();
     view.destroy();
   });
