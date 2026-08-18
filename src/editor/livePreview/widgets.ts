@@ -536,8 +536,12 @@ interface TableResume {
 /** Mutable per-container commit context; cell listeners read at call time. */
 const tableCtx = new WeakMap<HTMLElement, TableCommitCtx>();
 
-/** Last-wins pending focus resume after a shape-changing rebuild. */
+/** Last-wins pending focus resume after updateDOM / history (CM may reparent). */
 const pendingResume = new WeakMap<HTMLElement, TableResume>();
+
+/** Cells currently receiving a silent focus restore (skip select-all focus handler). */
+const silentFocusCells = new WeakSet<HTMLElement>();
+
 
 function bindTableCtx(
   container: HTMLElement,
@@ -614,23 +618,53 @@ function updateCellsInPlace(dom: HTMLElement, parsed: ParsedTable): void {
   }
 }
 
+function captureEditingResume(dom: HTMLElement): TableResume | null {
+  const active = dom.querySelector<HTMLElement>("[data-editing='1']");
+  if (!active || active.ownerDocument.activeElement !== active) return null;
+  if (active.dataset.row == null || active.dataset.col == null) return null;
+  return {
+    row: active.dataset.row,
+    col: active.dataset.col,
+    offset: getCaretOffset(active),
+  };
+}
+
 function restoreTableFocus(container: HTMLElement): void {
   const pending = pendingResume.get(container);
   if (!pending) return;
   pendingResume.delete(container);
   if (!container.isConnected) return;
+
   const doc = container.ownerDocument;
   const ae = doc.activeElement;
-  // Don't steal focus if something outside the container took it.
-  if (ae && ae !== doc.body && !container.contains(ae)) return;
   const cell = container.querySelector(
     `[data-row="${pending.row}"][data-col="${pending.col}"]`,
   ) as HTMLElement | null;
+
+  // Already focused on the right cell - just clamp caret if needed.
+  if (cell && ae === cell) {
+    setCaretOffset(cell, pending.offset);
+    return;
+  }
+
+  // Don't steal focus if something outside the container took it. CM reparent
+  // drops focus to body; .cm-content is also a steal we reverse while editing.
+  const aeIsEditorChrome =
+    !ae ||
+    ae === doc.body ||
+    (ae instanceof HTMLElement &&
+      (ae.classList.contains("cm-content") || ae.classList.contains("cm-editor")));
+  if (ae && !aeIsEditorChrome && !container.contains(ae)) return;
   if (!cell) return;
+
+  // Silent focus: skip the normal focus handler's select-all / collapse-to-end.
+  silentFocusCells.add(cell);
   cell.dataset.editing = "1";
-  cell.textContent = cell.dataset.raw ?? "";
+  const raw = cell.dataset.raw ?? "";
+  if (cell.textContent !== raw) cell.textContent = raw;
   cell.focus({ preventScroll: true });
   setCaretOffset(cell, pending.offset);
+  queueMicrotask(() => silentFocusCells.delete(cell));
 }
 
 function queueTableFocusRestore(container: HTMLElement, resume: TableResume): void {
@@ -690,8 +724,23 @@ export class EditableTableWidget extends WidgetType {
     // Always refresh commit context first so in-place cell listeners see new coords.
     bindTableCtx(dom, parsed, this.from, this.rawLength, this.prefixes);
 
+    // Capture before any DOM work: CM tile.sync may reparent the container and
+    // drop focus to <body> even when cell identity is preserved (length change).
+    const resumeAtEntry = captureEditingResume(dom);
+
     if (domShapeMatches(dom, parsed)) {
       updateCellsInPlace(dom, parsed);
+      if (resumeAtEntry) {
+        // Prefer post-update caret (divergence path may have clamped it).
+        const cell = dom.querySelector<HTMLElement>(
+          `[data-row="${resumeAtEntry.row}"][data-col="${resumeAtEntry.col}"]`,
+        );
+        const offset =
+          cell && document.activeElement === cell
+            ? getCaretOffset(cell)
+            : resumeAtEntry.offset;
+        queueTableFocusRestore(dom, { ...resumeAtEntry, offset });
+      }
       return true;
     }
 
@@ -813,6 +862,7 @@ export class EditableTableWidget extends WidgetType {
     return true;
   }
 
+
   get estimatedHeight(): number {
     const rowCount = this.tableText.split("\n").length - 1;
     return Math.max(60, rowCount * 33 + 40);
@@ -856,6 +906,11 @@ function createEditableCell(
   });
 
   cell.addEventListener("focus", () => {
+    // Silent restore path: keep text + caret; caller already set them.
+    if (silentFocusCells.has(cell)) {
+      cell.dataset.editing = "1";
+      return;
+    }
     const raw = cell.dataset.raw ?? "";
     cell.dataset.editing = "1";
     cell.textContent = raw;
@@ -898,18 +953,24 @@ function createEditableCell(
     cell.innerHTML = renderInlineMarkdown(cell.dataset.raw ?? "");
   });
 
-  const hardenFocusAfterHistory = () => {
-    // Belt-and-braces: if focus silently fell to <body>, put it back.
-    queueMicrotask(() => {
-      const doc = cell.ownerDocument;
-      if (
-        doc.activeElement === doc.body &&
-        cell.isConnected &&
-        cell.dataset.editing === "1"
-      ) {
-        cell.focus({ preventScroll: true });
-      }
-    });
+  const hardenFocusAfterHistory = (preOffset: number) => {
+    // updateDOM already queues a restore with the clamped caret when the doc
+    // changed. Only fill in if nothing is pending (e.g. undo was a no-op).
+    const container = cell.closest(".cm-preview-table-container") as HTMLElement | null;
+    if (
+      container &&
+      !pendingResume.has(container) &&
+      cell.dataset.row != null &&
+      cell.dataset.col != null &&
+      cell.dataset.editing === "1"
+    ) {
+      const len = (cell.textContent ?? "").length;
+      queueTableFocusRestore(container, {
+        row: cell.dataset.row,
+        col: cell.dataset.col,
+        offset: Math.max(0, Math.min(preOffset, len)),
+      });
+    }
   };
 
   cell.addEventListener("keydown", (e) => {
@@ -921,13 +982,15 @@ function createEditableCell(
     } else if (isModUndo(e)) {
       e.preventDefault();
       e.stopPropagation();
+      const preOffset = getCaretOffset(cell);
       undo(view);
-      hardenFocusAfterHistory();
+      hardenFocusAfterHistory(preOffset);
     } else if (isModRedo(e)) {
       e.preventDefault();
       e.stopPropagation();
+      const preOffset = getCaretOffset(cell);
       redo(view);
-      hardenFocusAfterHistory();
+      hardenFocusAfterHistory(preOffset);
     }
   });
 

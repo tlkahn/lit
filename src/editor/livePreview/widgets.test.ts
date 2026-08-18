@@ -1143,6 +1143,43 @@ describe("EditableTableWidget", () => {
     view.destroy();
   });
 
+  // #1039 C6b: same-shape updateDOM also defers focus restore (CM reparents on length change).
+  it("1039-C6b: in-place updateDOM queues deferred focus restore when editing", async () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.focus();
+    td.textContent = "hello";
+    setCaretOffset(td, 3);
+
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    // Same shape, different text - inplace path.
+    const next = "| a | b |\n| --- | --- |\n| hello | 2 |";
+    const w2 = makeWidget(next, 0, next.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    // No synchronous focus during updateDOM.
+    expect(focusSpy).not.toHaveBeenCalled();
+
+    // Simulate CM reparent drop: blur to body before microtask.
+    Object.defineProperty(document, "activeElement", {
+      configurable: true,
+      get: () => document.body,
+    });
+    await Promise.resolve();
+    delete (document as { activeElement?: Element }).activeElement;
+
+    expect(focusSpy).toHaveBeenCalled();
+    const usedPreventScroll = focusSpy.mock.calls.some(
+      (c) => c[0] && typeof c[0] === "object" && (c[0] as FocusOptions).preventScroll === true,
+    );
+    expect(usedPreventScroll).toBe(true);
+    focusSpy.mockRestore();
+    dom.remove();
+    view.destroy();
+  });
+
   // #1039 C6: shape-change fallback rebuild defers focus restore to a microtask.
   it("1039-C6: fallback rebuild defers focus restore (no sync focus)", async () => {
     const view = makeHistoryTableView();

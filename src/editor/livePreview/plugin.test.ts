@@ -162,13 +162,27 @@ describe("blockReplacementField — skip logic", () => {
     view.destroy();
   });
 
-  it("always rebuilds on effects", () => {
+  it("skips rebuild on unrelated effects (avoids table reparent storm)", () => {
     const doc = "line one\nline two";
     const view = makeView(doc, 0);
     const before = getBlockState(view);
 
     const dummyEffect = StateEffect.define<null>();
     view.dispatch({ effects: [dummyEffect.of(null)] });
+    const after = getBlockState(view);
+
+    // Unrelated effects must not rebuild block replacements - each rebuild
+    // reparents table widgets and drops contenteditable focus (#1039).
+    expect(after).toBe(before);
+    view.destroy();
+  });
+
+  it("rebuilds block replacements on toggleCalloutEffect", () => {
+    const doc = "> [!note]\n> body\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const before = getBlockState(view);
+
+    view.dispatch({ effects: [toggleCalloutEffect.of({ pos: 0 })] });
     const after = getBlockState(view);
 
     expect(after).not.toBe(before);
