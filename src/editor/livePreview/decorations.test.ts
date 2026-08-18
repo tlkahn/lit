@@ -210,6 +210,116 @@ describe("buildDecorations — inline elements inside headings", () => {
     view.destroy();
   });
 
+  it("heading content mark sets inclusive so start-/end-aligned widgets nest", () => {
+    const view = makeView("## Title $x$\n\nbody", 15); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-h2") {
+        expect(spec.inclusive === true).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("bold content mark sets inclusive so start-/end-aligned widgets nest", () => {
+    const doc = "**$d_1$ is standardized**\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-bold") {
+        expect(spec.inclusive === true).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("link content mark sets inclusive so start-/end-aligned widgets nest", () => {
+    const doc = "[$d_1$](http://example.com)\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-link") {
+        expect(spec.inclusive === true).toBe(true);
+        expect(
+          (spec.attributes as Record<string, string> | undefined)?.["data-url"],
+        ).toBe("http://example.com");
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("html-inline sup content mark sets inclusive so widgets nest", () => {
+    const doc = "<sup>$x$</sup>\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-sup") {
+        expect(spec.inclusive === true).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("italic content mark sets inclusive so start-/end-aligned widgets nest", () => {
+    const doc = "*$x$ after*\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-italic") {
+        expect(spec.inclusive === true).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
+  it("strikethrough content mark sets inclusive so start-/end-aligned widgets nest", () => {
+    const doc = "~~$x$ after~~\n\nbody";
+    const view = makeView(doc, doc.length - 1); // cursor on body
+    const { decorations } = buildDecorations(view);
+    let found = false;
+    const iter = decorations.iter();
+    while (iter.value) {
+      const spec = iter.value.spec as Record<string, unknown>;
+      if (spec.class === "cm-preview-strikethrough") {
+        expect(spec.inclusive === true).toBe(true);
+        found = true;
+      }
+      iter.next();
+    }
+    expect(found).toBe(true);
+    view.destroy();
+  });
+
   it("renders image inside heading as widget", () => {
     const doc = "## ![alt](img.png)\n\nother";
     const view = makeView(doc, doc.length - 1);
@@ -2490,12 +2600,14 @@ describe("filterContainedDecorations", () => {
     expect(result).toHaveLength(2);
   });
 
-  it("removes non-widget span with exact same bounds as widget", () => {
+  it("keeps non-widget span with exact same bounds as widget", () => {
+    // A mark that spans exactly the widget range is the wrapper for a sole
+    // child (`## $E=mc^2$`, `**$d_1$**`): keep it so `inclusive` nests the
+    // widget inside for style inheritance.
     const decos = [markDeco(0, 10), widgetDeco(0, 10)];
     decos.sort((a, b) => a.from - b.from || a.to - b.to);
     const result = filterContainedDecorations(decos);
-    expect(result).toHaveLength(1);
-    expect(result[0]!.deco.spec.widget).toBeTruthy();
+    expect(result).toHaveLength(2);
   });
 
   it("keeps point deco inside widget range", () => {
@@ -2541,7 +2653,8 @@ describe("filterContainedDecorations", () => {
   });
 
   it("handles **$E=mc^2$** pattern correctly", () => {
-    // bold mark [2,10] should be removed (inside widget [2,10])
+    // bold mark [2,10] equals the widget range: kept as wrapper for the sole
+    // child, so the math inherits bold weight
     // ** hides [0,2] and [10,12] should be kept (outside widget)
     // widget [2,10] should be kept
     const decos = [
@@ -2552,9 +2665,12 @@ describe("filterContainedDecorations", () => {
     ];
     decos.sort((a, b) => a.from - b.from || a.to - b.to);
     const result = filterContainedDecorations(decos);
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(4);
     expect(result.some((d) => d.from === 0 && d.to === 2)).toBe(true);
     expect(result.some((d) => d.deco.spec.widget && d.from === 2 && d.to === 10)).toBe(true);
+    expect(
+      result.some((d) => d.from === 2 && d.to === 10 && d.deco.spec.class === "test-mark"),
+    ).toBe(true);
     expect(result.some((d) => d.from === 10 && d.to === 12)).toBe(true);
   });
 
@@ -2579,14 +2695,16 @@ describe("filterContainedDecorations", () => {
     }
   });
 
-  it("integration: **![alt](img.png)** filters bold mark but keeps marker hides and widget", () => {
+  it("integration: **![alt](img.png)** keeps bold mark wrapping the image widget", () => {
     const doc = "**![alt](img.png)**\n\nother";
     const view = makeView(doc, doc.length - 1);
     const decos = collectDecos(view);
     const imgWidget = decos.find((d) => d.widget && d.from === 2 && d.to === 17);
     expect(imgWidget).toBeDefined();
     const boldMark = decos.find((d) => d.class === "cm-preview-bold");
-    expect(boldMark).toBeUndefined();
+    expect(boldMark).toBeDefined();
+    expect(boldMark!.from).toBe(2);
+    expect(boldMark!.to).toBe(17);
     const starHide1 = decos.find((d) => d.type === "replace" && !d.widget && d.from === 0 && d.to === 2);
     expect(starHide1).toBeDefined();
     const starHide2 = decos.find((d) => d.type === "replace" && !d.widget && d.from === 17 && d.to === 19);

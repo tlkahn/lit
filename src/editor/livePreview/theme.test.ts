@@ -12,6 +12,29 @@ describe("livePreviewBaseTheme", () => {
   });
 });
 
+describe("heading theme spec", () => {
+  it(".cm-preview-h1..h4 keep heading font sizes from #897", () => {
+    expect((livePreviewThemeSpec[".cm-preview-h1"] as Record<string, string>).fontSize).toBe("1.5em");
+    expect((livePreviewThemeSpec[".cm-preview-h2"] as Record<string, string>).fontSize).toBe("1.3em");
+    expect((livePreviewThemeSpec[".cm-preview-h3"] as Record<string, string>).fontSize).toBe("1.15em");
+    expect((livePreviewThemeSpec[".cm-preview-h4"] as Record<string, string>).fontSize).toBe("1.05em");
+  });
+
+  it("neutralizes nested tok-heading em inside preview heading marks", () => {
+    expect((livePreviewThemeSpec[".cm-preview-h1 .tok-heading1"] as Record<string, string>).fontSize).toBe("1em");
+    expect((livePreviewThemeSpec[".cm-preview-h2 .tok-heading2"] as Record<string, string>).fontSize).toBe("1em");
+    expect((livePreviewThemeSpec[".cm-preview-h3 .tok-heading3"] as Record<string, string>).fontSize).toBe("1em");
+    expect((livePreviewThemeSpec[".cm-preview-h4 .tok-heading4"] as Record<string, string>).fontSize).toBe("1em");
+  });
+
+  it("forces katex to 1em so it inherits surrounding preview scale", () => {
+    const rule = livePreviewThemeSpec[
+      ".cm-preview-math-inline .katex, .cm-preview-math-display .katex"
+    ] as Record<string, string>;
+    expect(rule.fontSize).toBe("1em");
+  });
+});
+
 describe("crossref CSS variables in variables.css", () => {
   const css = readFileSync(
     resolve(__dirname, "../../themes/variables.css"),
