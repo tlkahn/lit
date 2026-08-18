@@ -227,6 +227,12 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
   },
 
   // Math
+  // #1046: .cm-list-item { text-indent: -Npx } (hanging indent) inherits into
+  // the inline-block widget box. text-indent applies to the widget's own first
+  // line of content (the KaTeX DOM), shifting it left inside the box, and
+  // overflow:hidden then clips the base glyphs (bare subscripts / specks).
+  // Reset so widget content starts at x=0 inside the box; the list's hanging
+  // indent still positions the widget itself via paddingLeft on the line.
   ".cm-preview-math-inline": {
     padding: "0 2px",
     display: "inline-block",
@@ -234,12 +240,16 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     overflow: "hidden",
     whiteSpace: "nowrap",
     verticalAlign: "bottom",
+    textIndent: "0",
   },
   ".cm-preview-math-display": {
     textAlign: "center",
     padding: "4px 0",
     contain: "inline-size",
     overflowX: "auto",
+    // #1046 sibling shield: same inherited hanging-indent trap if display
+    // math ever sits under .cm-list-item (grammar currently forbids it).
+    textIndent: "0",
   },
   ".cm-preview-math-display .katex-display": {
     margin: "0.2em 0",
