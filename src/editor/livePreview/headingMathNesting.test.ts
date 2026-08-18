@@ -286,3 +286,17 @@ describe("link inline math DOM nesting", () => {
     view.destroy();
   });
 });
+
+describe("html-inline math DOM nesting", () => {
+  it("nests a sole inline math that spans the whole sup content", () => {
+    const doc = "<sup>$x$</sup>\n\nbody";
+    const view = makeView(doc, doc.length - 1);
+    const line = [...view.dom.querySelectorAll(".cm-line")].find((l) =>
+      l.querySelector(".cm-preview-math-inline"),
+    )!;
+    const math = line.querySelector(".cm-preview-math-inline")!;
+    expect(math.closest(".cm-preview-sup")).not.toBeNull();
+    view.dom.remove();
+    view.destroy();
+  });
+});

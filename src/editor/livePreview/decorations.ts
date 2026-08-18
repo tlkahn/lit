@@ -284,7 +284,7 @@ function addHtmlInlineDecos(
     decos.push({ from: pair.open.from, to: pair.open.to, deco: Decoration.replace({}) });
     decos.push({ from: pair.close.from, to: pair.close.to, deco: Decoration.replace({}) });
     if (pair.contentFrom < pair.contentTo) {
-      decos.push({ from: pair.contentFrom, to: pair.contentTo, deco: Decoration.mark({ class: cls }) });
+      decos.push({ from: pair.contentFrom, to: pair.contentTo, deco: previewContentMark(cls) });
     }
   }
 }
