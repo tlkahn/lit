@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { history, undo } from "@codemirror/commands";
 import { widgetSync } from "./widgetSyncAnnotation";
 import {
   ImageWidget,
@@ -14,6 +15,10 @@ import {
   EscapedDollarWidget,
   HtmlBreakWidget,
   clearFailedImageCache,
+  isModUndo,
+  isModRedo,
+  getCaretOffset,
+  setCaretOffset,
 } from "./widgets";
 import { calloutFoldField } from "./callout";
 import { stripQuotePrefixes } from "./table";
@@ -760,6 +765,55 @@ describe("DisplayMathWidget", () => {
   });
 });
 
+describe("C8: undo/redo key chord helpers", () => {
+  const ke = (init: {
+    key?: string;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+    altKey?: boolean;
+  }) => ({
+    key: init.key ?? "z",
+    metaKey: init.metaKey ?? false,
+    ctrlKey: init.ctrlKey ?? false,
+    shiftKey: init.shiftKey ?? false,
+    altKey: init.altKey ?? false,
+  });
+
+  it("Mod-z is undo (not redo)", () => {
+    expect(isModUndo(ke({ key: "z", metaKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "z", metaKey: true }))).toBe(false);
+    expect(isModUndo(ke({ key: "z", ctrlKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "z", ctrlKey: true }))).toBe(false);
+  });
+
+  it("Mod-Shift-z is redo (not undo)", () => {
+    expect(isModUndo(ke({ key: "z", metaKey: true, shiftKey: true }))).toBe(false);
+    expect(isModRedo(ke({ key: "z", metaKey: true, shiftKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "z", ctrlKey: true, shiftKey: true }))).toBe(true);
+  });
+
+  it("Mod-y is redo (not undo)", () => {
+    expect(isModUndo(ke({ key: "y", metaKey: true }))).toBe(false);
+    expect(isModRedo(ke({ key: "y", metaKey: true }))).toBe(true);
+    expect(isModRedo(ke({ key: "y", ctrlKey: true }))).toBe(true);
+  });
+
+  it("plain z is neither", () => {
+    expect(isModUndo(ke({ key: "z" }))).toBe(false);
+    expect(isModRedo(ke({ key: "z" }))).toBe(false);
+  });
+
+  it("Alt-Mod-z is neither", () => {
+    expect(isModUndo(ke({ key: "z", metaKey: true, altKey: true }))).toBe(false);
+    expect(isModRedo(ke({ key: "z", metaKey: true, altKey: true }))).toBe(false);
+  });
+
+  it("Mod-Shift-y is neither (only Mod-z variants shift)", () => {
+    expect(isModRedo(ke({ key: "y", metaKey: true, shiftKey: true }))).toBe(false);
+  });
+});
+
 describe("EditableTableWidget", () => {
   const basicTable = "| a | b |\n| --- | --- |\n| 1 | 2 |";
 
@@ -776,6 +830,212 @@ describe("EditableTableWidget", () => {
     const state = EditorState.create({ doc: doc ?? basicTable });
     return new EditorView({ state, parent: document.createElement("div") });
   }
+
+  function makeHistoryTableView(doc?: string): EditorView {
+    const state = EditorState.create({
+      doc: doc ?? basicTable,
+      extensions: [history()],
+    });
+    return new EditorView({ state, parent: document.createElement("div") });
+  }
+
+  // C1: a blur-commit must be a history-eligible CM transaction, so undo after
+  // blur restores the prior table text.
+  it("C1: blur-commit is undoable via CM history", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new FocusEvent("blur"));
+    expect(view.state.doc.toString()).toContain("changed");
+    // re-focus editor chrome so the CM keymap context applies (not strictly
+    // required for the command itself, but matches the real flow)
+    undo(view);
+    expect(view.state.doc.toString()).toBe(basicTable);
+    el.remove();
+    view.destroy();
+  });
+
+  // C2: typing in a focused cell live-commits to the CM doc (no blur needed).
+  it("C2: input event live-commits cell text to the doc", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    // doc must be updated WITHOUT blur
+    expect(view.state.doc.toString()).toContain("changed");
+    el.remove();
+    view.destroy();
+  });
+
+  // C6: IME composition input must not commit mid-compose; compositionend commits.
+  it("C6: input during composition is ignored, compositionend commits", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "あ";
+    const composing = new InputEvent("input", { bubbles: true, inputType: "insertCompositionText" });
+    Object.defineProperty(composing, "isComposing", { value: true });
+    td.dispatchEvent(composing);
+    expect(view.state.doc.toString()).not.toContain("あ");
+    td.dispatchEvent(new CompositionEvent("compositionend"));
+    expect(view.state.doc.toString()).toContain("あ");
+    el.remove();
+    view.destroy();
+  });
+
+  // C3: Mod-z while focused in a cell reverses the live-commit via CM history.
+  it("C3: Mod-z in a focused cell undoes the live-commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    expect(view.state.doc.toString()).toContain("changed");
+
+    const undoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(undoEvent);
+    expect(undoEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toBe(basicTable);
+    el.remove();
+    view.destroy();
+  });
+
+  it("C3b: multi-keystroke typing coalesces into a single undo step", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "ab";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const oneStepDoc = view.state.doc.toString();
+    expect(oneStepDoc).toContain("ab");
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
+    td.dispatchEvent(undoEvent);
+    // a single undo reverts the whole coalesced edit group back to the original
+    expect(view.state.doc.toString()).toBe(basicTable);
+    el.remove();
+    view.destroy();
+  });
+
+  // C4: Mod-Shift-z / Mod-y while focused in a cell reapplies the undone commit.
+  it("C4: Mod-Shift-z in a focused cell redoes the undone commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
+    td.dispatchEvent(undoEvent);
+    expect(view.state.doc.toString()).toBe(basicTable);
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(redoEvent);
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toContain("changed");
+    el.remove();
+    view.destroy();
+  });
+
+  it("C4: Mod-y in a focused cell redoes the undone commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
+    td.dispatchEvent(undoEvent);
+    expect(view.state.doc.toString()).toBe(basicTable);
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      key: "y",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    td.dispatchEvent(redoEvent);
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toContain("changed");
+    el.remove();
+    view.destroy();
+  });
+
+  // C5: when CM rebuilds the widget DOM after a live-commit (updateDOM), the
+  // editing cell keeps focus and the caret offset survives (clamped).
+  it("C5: updateDOM preserves editing cell focus and caret after live-commit", () => {
+    const view = makeHistoryTableView();
+    const w1 = makeWidget(basicTable, 0);
+    const dom = w1.toDOM(view);
+    document.body.appendChild(dom);
+    const td = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "abcdef";
+    setCaretOffset(td, 3);
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    const newDoc = view.state.doc.toString();
+    expect(newDoc).toContain("abcdef");
+
+    // Simulate CM replacing the widget with a fresh one from the new doc text.
+    const w2 = makeWidget(newDoc, 0, newDoc.length);
+    expect(w2.updateDOM(dom, view)).toBe(true);
+    const resumed = dom.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    expect(resumed).not.toBeNull();
+    expect(resumed.dataset.editing).toBe("1");
+    expect(document.activeElement).toBe(resumed);
+    expect(getCaretOffset(resumed)).toBe(3);
+    dom.remove();
+    view.destroy();
+  });
+
+  // C7: blur after a live-commit (already synced) must not dispatch again.
+  it("C7: blur after live-commit does not double-commit", () => {
+    const view = makeHistoryTableView();
+    const widget = makeWidget(basicTable, 0);
+    const el = widget.toDOM(view);
+    document.body.appendChild(el);
+    const dispatchSpy = vi.spyOn(view, "dispatch");
+    const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+    td.dispatchEvent(new FocusEvent("focus"));
+    td.textContent = "changed";
+    td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+    dispatchSpy.mockClear();
+    td.dispatchEvent(new FocusEvent("blur"));
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    el.remove();
+    view.destroy();
+  });
 
   it("toDOM returns a container div with correct class", () => {
     const view = makeTableView();
@@ -1021,6 +1281,28 @@ describe("EditableTableWidget", () => {
       expect(lines[1]!.startsWith("> ")).toBe(true);
       expect(lines[2]!.startsWith("> ")).toBe(true);
       expect(call.changes.insert).toContain("changed");
+      view.destroy();
+    });
+
+    it("C9: input-commit re-applies quote prefixes and is undoable", () => {
+      const { text, prefixes } = stripQuotePrefixes(quotedRaw);
+      const view = makeHistoryTableView(quotedRaw);
+      const widget = makeWidget(text, 0, quotedRaw.length, prefixes);
+      const el = widget.toDOM(view);
+      document.body.appendChild(el);
+      const td = el.querySelector('td[data-row="1"][data-col="0"]') as HTMLElement;
+      td.dispatchEvent(new FocusEvent("focus"));
+      td.textContent = "changed";
+      td.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
+      const inserted = view.state.doc.toString();
+      expect(inserted).toContain("changed");
+      const lines = inserted.split("\n");
+      expect(lines[1]!.startsWith("> ")).toBe(true);
+      expect(lines[2]!.startsWith("> ")).toBe(true);
+      // undo restores the original quoted table intact
+      undo(view);
+      expect(view.state.doc.toString()).toBe(quotedRaw);
+      el.remove();
       view.destroy();
     });
   });

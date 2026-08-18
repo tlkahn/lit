@@ -1,4 +1,5 @@
 import { type EditorView, WidgetType } from "@codemirror/view";
+import { undo, redo } from "@codemirror/commands";
 import { getCalloutIcon, toggleCalloutEffect } from "./callout";
 import { applyQuotePrefixes, parseTable, renderInlineMarkdown, serializeTable, type Alignment, type ParsedTable } from "./table";
 import { renderMermaid, getMermaidCached } from "./mermaid";
@@ -464,6 +465,61 @@ export class DisplayMathWidget extends WidgetType {
   }
 }
 
+export type ModKeyEvent = Pick<
+  KeyboardEvent,
+  "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+>;
+
+function isMod(e: ModKeyEvent): boolean {
+  return e.metaKey || e.ctrlKey;
+}
+
+/** Match historyKeymap's Undo: (meta|ctrl)+z without shift or alt. */
+export function isModUndo(e: ModKeyEvent): boolean {
+  return isMod(e) && e.key.toLowerCase() === "z" && !e.shiftKey && !e.altKey;
+}
+
+/** Match historyKeymap's Redo: (meta|ctrl)+y w/o shift, or (meta|ctrl)+shift+z. */
+export function isModRedo(e: ModKeyEvent): boolean {
+  if (isMod(e) && e.key.toLowerCase() === "y" && !e.shiftKey) return true;
+  return (
+    isMod(e) && e.key.toLowerCase() === "z" && e.shiftKey && !e.altKey
+  );
+}
+
+function firstTextNode(cell: Node): Text | null {
+  const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+  return walker.nextNode() as Text | null;
+}
+
+/**
+ * Caret offset into the single text node of an editing cell. Falls back to
+ * end-of-text when there is no selection or the caret sits outside the cell.
+ */
+export function getCaretOffset(cell: Node): number {
+  const sel = window.getSelection();
+  const len = (cell.textContent ?? "").length;
+  const text = firstTextNode(cell);
+  if (!sel || sel.rangeCount === 0 || !text) return len;
+  const range = sel.getRangeAt(0);
+  if (range.startContainer === text) return range.startOffset;
+  if (range.startContainer === cell) return range.startOffset <= 0 ? 0 : len;
+  return len;
+}
+
+/** Place the caret at a clamped offset into the editing cell's text node. */
+export function setCaretOffset(cell: Node, offset: number): void {
+  const sel = window.getSelection();
+  const text = firstTextNode(cell);
+  if (!sel || !text) return;
+  const range = document.createRange();
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  range.setStart(text, clamped);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 export class EditableTableWidget extends WidgetType {
   constructor(
     readonly tableText: string,
@@ -509,8 +565,34 @@ export class EditableTableWidget extends WidgetType {
   updateDOM(dom: HTMLElement, view: EditorView): boolean {
     const parsed = parseTable(this.tableText);
     if (!parsed) return false;
+
+    const active = dom.querySelector(
+      "[data-editing='1']",
+    ) as HTMLElement | null;
+    const resume =
+      active && active.dataset.row != null && active.dataset.col != null
+        ? {
+            row: active.dataset.row,
+            col: active.dataset.col,
+            offset: getCaretOffset(active),
+          }
+        : null;
+
     dom.innerHTML = "";
     this.buildTable(dom, view, parsed);
+
+    if (resume) {
+      const cell = dom.querySelector(
+        `[data-row="${resume.row}"][data-col="${resume.col}"]`,
+      ) as HTMLElement | null;
+      if (cell) {
+        // Re-enter raw edit mode without select-all; restore caret.
+        cell.dataset.editing = "1";
+        cell.textContent = cell.dataset.raw ?? "";
+        cell.focus();
+        setCaretOffset(cell, resume.offset);
+      }
+    }
     return true;
   }
 
@@ -518,7 +600,7 @@ export class EditableTableWidget extends WidgetType {
     const table = document.createElement("table");
     table.className = "cm-preview-table";
 
-    const commitCell = (row: number, col: number, nextValue: string) => {
+    const commitCell = (row: number, col: number, nextValue: string, userEvent = "input") => {
       const updated: ParsedTable = {
         headers: [...parsed.headers],
         alignments: [...parsed.alignments],
@@ -532,13 +614,28 @@ export class EditableTableWidget extends WidgetType {
       const newMarkdown = applyQuotePrefixes(serializeTable(updated), this.prefixes);
       view.dispatch({
         changes: { from: this.from, to: this.from + this.rawLength, insert: newMarkdown },
+        userEvent,
       });
     };
+
+    const makeCell = (
+      tag: "th" | "td",
+      value: string,
+      i: number,
+      row: number,
+    ) =>
+      createEditableCell(
+        tag,
+        value,
+        parsed.alignments[i],
+        (next, userEvent) => commitCell(row, i, next, userEvent),
+        view,
+      );
 
     const thead = document.createElement("thead");
     const headerRow = document.createElement("tr");
     parsed.headers.forEach((header, i) => {
-      const th = createEditableCell("th", header, parsed.alignments[i], (next) => commitCell(0, i, next));
+      const th = makeCell("th", header, i, 0);
       th.dataset.row = "0";
       th.dataset.col = String(i);
       headerRow.appendChild(th);
@@ -552,7 +649,7 @@ export class EditableTableWidget extends WidgetType {
         const rowIndex = ri + 1;
         const tr = document.createElement("tr");
         row.forEach((cell, i) => {
-          const td = createEditableCell("td", cell, parsed.alignments[i], (next) => commitCell(rowIndex, i, next));
+          const td = makeCell("td", cell, i, rowIndex);
           td.dataset.row = String(rowIndex);
           td.dataset.col = String(i);
           tr.appendChild(td);
@@ -585,11 +682,20 @@ export class EditableTableWidget extends WidgetType {
   }
 }
 
+function userEventFromInput(e: InputEvent): string {
+  const inputType = e.inputType ?? "";
+  if (inputType.startsWith("delete")) {
+    return inputType.includes("Backward") ? "delete.backward" : "delete.forward";
+  }
+  return "input.type";
+}
+
 function createEditableCell(
   tag: "th" | "td",
   value: string,
   alignment: Alignment | undefined,
-  onCommit: (next: string) => void,
+  onCommit: (next: string, userEvent: string) => void,
+  view: EditorView,
 ): HTMLTableCellElement {
   const cell = document.createElement(tag);
   cell.innerHTML = renderInlineMarkdown(value);
@@ -600,12 +706,21 @@ function createEditableCell(
 
   let selectAllOnFocus = false;
 
+  const commitIfChanged = (next: string, userEvent: string): boolean => {
+    const raw = cell.dataset.raw ?? "";
+    if (next === raw) return false;
+    cell.dataset.raw = next;
+    onCommit(next, userEvent);
+    return true;
+  };
+
   cell.addEventListener("mousedown", () => {
     selectAllOnFocus = cell.childElementCount > 0;
   });
 
   cell.addEventListener("focus", () => {
     const raw = cell.dataset.raw ?? "";
+    cell.dataset.editing = "1";
     cell.textContent = raw;
     const sel = window.getSelection();
     if (sel && cell.firstChild) {
@@ -622,13 +737,22 @@ function createEditableCell(
     }
   });
 
-  cell.addEventListener("blur", () => {
+  cell.addEventListener("input", (e) => {
+    const ev = e as InputEvent;
+    if (ev.isComposing) return;
+    cell.dataset.raw = cell.textContent ?? "";
+    onCommit(cell.dataset.raw, userEventFromInput(ev));
+  });
+
+  cell.addEventListener("compositionend", () => {
     const next = cell.textContent ?? "";
-    const raw = cell.dataset.raw ?? "";
-    if (next !== raw) {
-      cell.dataset.raw = next;
-      onCommit(next);
-    }
+    commitIfChanged(next, "input.type");
+  });
+
+  cell.addEventListener("blur", () => {
+    delete cell.dataset.editing;
+    const next = cell.textContent ?? "";
+    commitIfChanged(next, "input");
     cell.innerHTML = renderInlineMarkdown(cell.dataset.raw ?? "");
   });
 
@@ -636,12 +760,16 @@ function createEditableCell(
     if (e.key === "Enter") {
       e.preventDefault();
       const next = cell.textContent ?? "";
-      const raw = cell.dataset.raw ?? "";
-      if (next !== raw) {
-        cell.dataset.raw = next;
-        onCommit(next);
-      }
+      commitIfChanged(next, "input");
       cell.blur();
+    } else if (isModUndo(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      undo(view);
+    } else if (isModRedo(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      redo(view);
     }
   });
 
