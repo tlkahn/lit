@@ -4,6 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { buildDecorations, buildBlockReplacements, filterContainedDecorations, collectHtmlInlineTags } from "./decorations";
+import * as listIndent from "./listIndent";
 import { WikiLink } from "../markdown/wikilink";
 import { Math as MathExt } from "../markdown/math";
 import { Comment as CommentExt } from "../markdown/comment";
@@ -2756,6 +2757,18 @@ describe("buildDecorations — list items", () => {
     view.destroy();
   });
 
+  it("first line and hard continuation share identical --li-indent (#1050)", () => {
+    const doc = "1. Item\n   continuation\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const decos = collectDecos(view);
+    const firstLine = decos.find((d) => d.class === "cm-list-item");
+    const contLine = decos.find((d) => d.class === "cm-list-item-continuation");
+    expect(firstLine).toBeDefined();
+    expect(contLine).toBeDefined();
+    expect(firstLine!.style).toBe(contLine!.style);
+    view.destroy();
+  });
+
   it("blockquote list item indent matches standalone list item", () => {
     // Standalone: "- Item\n\nother" — marker is "- " → 2 prefix chars
     const standaloneDoc = "- Item\n\nother";
@@ -2780,12 +2793,13 @@ describe("buildDecorations — list items", () => {
     bqView.destroy();
   });
 
-  it("computes indent from defaultCharacterWidth", () => {
+  it("falls back to defaultCharacterWidth when text measure is unavailable (#1050)", () => {
     const doc = "- Item\n\nother";
     const view = makeView(doc, doc.length - 1);
 
-    // In jsdom, coordsAtPos already returns null, so no mocking needed.
-    // "- " is 2 chars (markerEnd + 1 - listMark.from = 1 + 1 - 0 = 2)
+    // jsdom: canvas getContext returns null, so measureEditorTextWidth
+    // returns null and listPrefixIndentPx falls back to charWidth. "- " is 2
+    // chars (markerEnd + 1 - listMark.from = 1 + 1 - 0 = 2).
     const expectedIndent = Math.round(2 * view.defaultCharacterWidth);
     const decos = collectDecos(view);
     const li = decos.find((d) => d.class === "cm-list-item");
@@ -2793,6 +2807,61 @@ describe("buildDecorations — list items", () => {
     expect(li!.style).toBe(`--li-indent: ${expectedIndent}px`);
 
     view.destroy();
+  });
+
+  it("uses measured prefix width for --li-indent when measure returns px (#1050)", () => {
+    const spy = vi
+      .spyOn(listIndent, "measureEditorTextWidth")
+      .mockReturnValue(23);
+    try {
+      const doc = "2. body\n\nother";
+      const view = makeView(doc, doc.length - 1);
+      const decos = collectDecos(view);
+      const li = decos.find((d) => d.class === "cm-list-item");
+      expect(li).toBeDefined();
+      expect(li!.style).toBe("--li-indent: 23px");
+      // prefix passed to measure should be the marker + following space
+      expect(spy).toHaveBeenCalledWith(view, "2. ");
+      view.destroy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("measures ordered multi-digit prefix \"10. \" (#1050)", () => {
+    const spy = vi
+      .spyOn(listIndent, "measureEditorTextWidth")
+      .mockReturnValue(44);
+    try {
+      const doc = "10. body\n\nother";
+      const view = makeView(doc, doc.length - 1);
+      const decos = collectDecos(view);
+      const li = decos.find((d) => d.class === "cm-list-item");
+      expect(li).toBeDefined();
+      expect(li!.style).toBe("--li-indent: 44px");
+      expect(spy).toHaveBeenCalledWith(view, "10. ");
+      view.destroy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("measures task prefix \"- [ ] \" (#1050)", () => {
+    const spy = vi
+      .spyOn(listIndent, "measureEditorTextWidth")
+      .mockReturnValue(33);
+    try {
+      const doc = "- [ ] task\n\nother";
+      const view = makeView(doc, doc.length - 1);
+      const decos = collectDecos(view);
+      const li = decos.find((d) => d.class === "cm-list-item");
+      expect(li).toBeDefined();
+      expect(li!.style).toBe("--li-indent: 33px");
+      expect(spy).toHaveBeenCalledWith(view, "- [ ] ");
+      view.destroy();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("does not call coordsAtPos during buildDecorations (would crash CM6 update cycle)", () => {
