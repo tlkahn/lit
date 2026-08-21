@@ -162,6 +162,33 @@ export function showCardFlipped(flipped: boolean, canFlip: boolean): boolean {
 const STRIP_BTN_CLASS =
   "nerd-font p-1.5 text-sm text-text-muted hover:text-text-normal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-interactive-accent";
 
+/**
+ * Chrome classes for the #1052 strip actions wrapper (NOT the pin).
+ * The actions are hidden until the user engages the card: hover, keyboard
+ * focus inside the card (group-focus-within), or an explicit engaged state
+ * (expanded / selected). Hiding is done with opacity + pointer-events only so
+ * the reserved strip width never collapses (no layout reflow on reveal).
+ * Idle-hide is scoped to fine hover pointers via the arbitrary media variant,
+ * so coarse / no-hover environments always keep the actions visible.
+ */
+export function stripActionsChromeClass(engaged: boolean): string {
+  if (engaged) {
+    return [
+      "flex flex-col items-center transition-opacity duration-150 ease-out",
+      "opacity-100 pointer-events-auto",
+    ].join(" ");
+  }
+  return [
+    "flex flex-col items-center transition-opacity duration-150 ease-out",
+    "[@media(hover:hover)_and_(pointer:fine)]:opacity-0",
+    "[@media(hover:hover)_and_(pointer:fine)]:pointer-events-none",
+    "[@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100",
+    "[@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto",
+    "[@media(hover:hover)_and_(pointer:fine)]:group-focus-within:opacity-100",
+    "[@media(hover:hover)_and_(pointer:fine)]:group-focus-within:pointer-events-auto",
+  ].join(" ");
+}
+
 /** Keep Enter/Space from bubbling to grid keyboard handlers. */
 function stopStripKeyDown(e: React.KeyboardEvent) {
   if (e.key === "Enter" || e.key === " ") e.stopPropagation();
@@ -485,7 +512,7 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
   return (
     <div
       ref={cardRef}
-      className={`relative flex rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
+      className={`group relative flex rounded-lg border bg-bg-primary p-4 transition-all duration-200 ease-out hover:bg-bg-hover focus-visible:ring-2 focus-visible:ring-interactive-accent focus-visible:outline-none ${isPinned ? "border-interactive-accent" : "border-border"}${isSelected ? " ring-2 ring-interactive-accent ring-offset-1 ring-offset-bg-primary" : ""}${justPinned ? " cardbox-pin-pulse" : ""}`}
       onKeyDown={handleKeyDown}
       tabIndex={0}
       data-testid="cardbox-card"
@@ -517,34 +544,41 @@ export const CardboxCard = memo(function CardboxCard({ annotation, expanded, isP
             aria-label="Pinned"
           >{'\u{F0403}'}</span>
         )}
-        {stripActions.map((action, i) => (
-          <Fragment key={action.testId}>
-            {action.separatorBefore && (
-              <div
-                aria-hidden="true"
-                data-testid="card-strip-separator"
-                className="my-0.5 h-px w-4 bg-border"
-              />
-            )}
-            <StripButton
-              testId={action.testId}
-              label={action.label}
-              title={action.title}
-              glyph={action.glyph}
-              onClick={action.onClick}
-              pressed={action.pressed}
-              expanded={action.expanded}
-              className={action.className}
-              tabIndex={i === stripClampedIdx ? 0 : -1}
-              onFocus={() => setStripActiveIdx(i)}
-              buttonRef={(el) => {
-                stripBtnRefs.current[i] = el;
-              }}
-            >
-              {action.children}
-            </StripButton>
-          </Fragment>
-        ))}
+        {/* Action chrome is opacity/pointer-events gated (#1052); the pin above
+            stays a direct child outside this wrapper so it is never hidden. */}
+        <div
+          data-testid="card-action-strip-actions"
+          className={stripActionsChromeClass(expanded || !!isSelected)}
+        >
+          {stripActions.map((action, i) => (
+            <Fragment key={action.testId}>
+              {action.separatorBefore && (
+                <div
+                  aria-hidden="true"
+                  data-testid="card-strip-separator"
+                  className="my-0.5 h-px w-4 bg-border"
+                />
+              )}
+              <StripButton
+                testId={action.testId}
+                label={action.label}
+                title={action.title}
+                glyph={action.glyph}
+                onClick={action.onClick}
+                pressed={action.pressed}
+                expanded={action.expanded}
+                className={action.className}
+                tabIndex={i === stripClampedIdx ? 0 : -1}
+                onFocus={() => setStripActiveIdx(i)}
+                buttonRef={(el) => {
+                  stripBtnRefs.current[i] = el;
+                }}
+              >
+                {action.children}
+              </StripButton>
+            </Fragment>
+          ))}
+        </div>
       </div>
       <div className="cardbox-card-stage min-w-0 flex-1" ref={stageRef} data-testid="card-flip-stage">
         {!showFlipped ? (

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { CardboxCard, showCardFlipped } from "./CardboxCard";
+import { CardboxCard, showCardFlipped, stripActionsChromeClass } from "./CardboxCard";
 import type { CardboxAnnotation } from "../lib/ipc";
 
 interface FlipDeferred {
@@ -71,7 +71,7 @@ describe("CardboxCard", () => {
     expect(screen.getByTestId("card-body")).toBeInTheDocument();
     const front = screen.getByTestId("card-face-front");
     expect(front.querySelector('[data-testid="card-source"]')).toBeNull();
-    // Navigate lives in the always-visible action strip (#981).
+    // Navigate lives in the action strip (#981); chrome visibility #1052.
     expect(screen.getByTestId("card-navigate")).toBeVisible();
   });
 
@@ -2462,8 +2462,10 @@ describe("CardboxCard", () => {
           onNavigate={() => {}}
         />,
       );
-      const strip = screen.getByTestId("card-action-strip");
-      const children = Array.from(strip.children);
+      // Actions live inside card-action-strip-actions (#1052); the separator
+      // and both buttons share that parent, so order is asserted on its children.
+      const actions = screen.getByTestId("card-action-strip-actions");
+      const children = Array.from(actions.children);
       const expandIdx = children.findIndex(
         (el) => (el as HTMLElement).dataset.testid === "card-expand-toggle",
       );
@@ -2544,6 +2546,158 @@ describe("CardboxCard", () => {
       expect(screen.getByTestId("card-navigate")).toBeVisible();
       expect(screen.getByTestId("card-show-connections")).toBeVisible();
       expect(screen.getByTestId("card-note-add")).toBeVisible();
+    });
+  });
+
+  // Visibility contract for #1052 is class-token based: jsdom does not apply
+  // Tailwind, so toBeVisible() cannot prove opacity. We assert class tokens on
+  // card-action-strip-actions and the stripActionsChromeClass helper instead.
+  describe("hover chrome (#1052)", () => {
+    it("wraps strip action controls in card-action-strip-actions inside the toolbar", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+          onShowConnections={() => {}}
+          onSetNote={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      const actions = screen.getByTestId("card-action-strip-actions");
+      expect(strip.contains(actions)).toBe(true);
+      // Buttons live inside the actions wrapper, not loose on the toolbar.
+      expect(actions.querySelector('[data-testid="card-navigate"]')).not.toBeNull();
+      expect(actions.querySelector('[data-testid="card-expand-toggle"]')).not.toBeNull();
+      expect(actions.querySelector('[data-testid="card-flip"]')).not.toBeNull();
+      // Card root is the hover group that drives the reveal.
+      expect(
+        screen.getByTestId("cardbox-card").className.split(/\s+/),
+      ).toContain("group");
+    });
+
+    it("keeps pin-icon outside card-action-strip-actions so pin is not opacity-gated", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          isPinned
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const actions = screen.getByTestId("card-action-strip-actions");
+      const pin = screen.getByTestId("pin-icon");
+      expect(actions.contains(pin)).toBe(false);
+      expect(screen.getByTestId("card-action-strip").contains(pin)).toBe(true);
+    });
+
+    it("hides strip actions by default when collapsed and unselected", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const actions = screen.getByTestId("card-action-strip-actions");
+      expect(actions.className).toBe(stripActionsChromeClass(false));
+      const idle = stripActionsChromeClass(false);
+      expect(idle).toMatch(/opacity-0/);
+      expect(idle).toMatch(/pointer-events-none/);
+    });
+
+    it("declares group-hover and group-focus-within reveal on strip actions", () => {
+      const cls = stripActionsChromeClass(false);
+      expect(cls).toMatch(/group-hover:opacity-100/);
+      expect(cls).toMatch(/group-focus-within:opacity-100/);
+      expect(cls).toMatch(/group-hover:pointer-events-auto/);
+      expect(cls).toMatch(/group-focus-within:pointer-events-auto/);
+
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-action-strip-actions").className).toBe(
+        stripActionsChromeClass(false),
+      );
+    });
+
+    it("scopes idle hide to fine hover pointers so touch keeps actions reachable", () => {
+      const idle = stripActionsChromeClass(false);
+      expect(idle).toMatch(/\(hover:hover\)/);
+      expect(idle).toMatch(/pointer:fine/);
+      // Engaged path is not pointer-gated: coarse pointers and hover-none
+      // environments always see actions via the expanded/selected override.
+      expect(stripActionsChromeClass(true)).toMatch(/opacity-100/);
+      expect(stripActionsChromeClass(true)).toMatch(/pointer-events-auto/);
+    });
+
+    it("keeps strip actions painted when the card is expanded", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={true}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-action-strip-actions").className).toBe(
+        stripActionsChromeClass(true),
+      );
+      const cls = screen.getByTestId("card-action-strip-actions").className;
+      expect(cls.split(/\s+/)).toEqual(
+        expect.arrayContaining(["opacity-100", "pointer-events-auto"]),
+      );
+      expect(cls.includes("opacity-0")).toBe(false);
+    });
+
+    it("keeps strip actions painted when the card is selected", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          isSelected
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("card-action-strip-actions").className).toBe(
+        stripActionsChromeClass(true),
+      );
+      const cls = screen.getByTestId("card-action-strip-actions").className;
+      expect(cls.split(/\s+/)).toEqual(
+        expect.arrayContaining(["opacity-100", "pointer-events-auto"]),
+      );
+      expect(cls.includes("opacity-0")).toBe(false);
+    });
+
+    it("keeps the action strip in flex flow (space reserved; no absolute chrome)", () => {
+      render(
+        <CardboxCard
+          annotation={baseAnnotation}
+          expanded={false}
+          onToggleExpand={() => {}}
+          onNavigate={() => {}}
+        />,
+      );
+      const strip = screen.getByTestId("card-action-strip");
+      expect(strip.className).toMatch(/order-last/);
+      expect(strip.className).toMatch(/shrink-0/);
+      expect(strip.className).toMatch(/flex-col/);
+      expect(strip.className).not.toMatch(/absolute/);
+      // The actions wrapper itself is opacity-gated, never display:hidden or
+      // an absolutely positioned overlay, so reveal cannot reflow the body.
+      const actions = screen.getByTestId("card-action-strip-actions");
+      expect(actions.className).toMatch(/flex-col/);
+      expect(actions.className).not.toMatch(/hidden/);
+      expect(actions.className).not.toMatch(/absolute/);
     });
   });
 
