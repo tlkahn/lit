@@ -269,9 +269,9 @@ export const usePaneStore = create<PaneStore>((set, get) => ({
     if (linkStore.links.has(paneId)) {
       linkStore.unlinkPane(paneId);
     }
-    const newLeaf: PaneLeaf = leaf.viewMode
-      ? { type: "leaf", id: paneId, pagePath, viewMode: leaf.viewMode }
-      : { type: "leaf", id: paneId, pagePath };
+    // #1054: any real page shift lands in editor. Non-editor modes are
+    // page-contextual tools; open/shift should show the file.
+    const newLeaf: PaneLeaf = { type: "leaf", id: paneId, pagePath };
     const newRoot = replaceLeaf(root, paneId, newLeaf);
     set({ root: newRoot });
   },
