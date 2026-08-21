@@ -2,6 +2,7 @@ import { type EditorState, RangeSet } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isCursorOnLine, isCursorInRange } from "./proximity";
+import * as listIndent from "./listIndent";
 import { ImageWidget, CalloutHeaderWidget, InlineMathWidget, DisplayMathWidget, EditableTableWidget, MermaidWidget, HorizontalRuleWidget, PageBreakWidget, EscapedDollarWidget, HtmlBreakWidget } from "./widgets";
 import { parseTable, stripQuotePrefixes } from "./table";
 import { PAGE_MARKER_REGEX_SOURCE } from "../../lib/pageMarkers";
@@ -574,8 +575,11 @@ function addListItemDecos(
   const task = node.getChild("Task");
   const taskMarker = task?.getChild("TaskMarker");
   const markerEnd = taskMarker?.to ?? listMark.to;
-  const prefixChars = markerEnd + 1 - listMark.from;
-  const indent = Math.round(prefixChars * view.defaultCharacterWidth);
+  const bodyStart = Math.min(markerEnd + 1, state.doc.lineAt(from).to);
+  const prefix = state.doc.sliceString(listMark.from, bodyStart);
+  const indent = listIndent.listPrefixIndentPx(prefix, view.defaultCharacterWidth, (t) =>
+    listIndent.measureEditorTextWidth(view, t),
+  );
 
   const firstLineNum = line.number;
   const lastLineNum = state.doc.lineAt(node.to).number;
