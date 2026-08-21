@@ -1042,18 +1042,88 @@ describe("Section B: Store", () => {
     });
   });
 
-  describe("setPanePage preserves viewMode", () => {
-    beforeEach(() => {
+  describe("setPanePage viewMode on navigation (#1054)", () => {
+    it.each(["cardbox", "graph", "mindmap"] as const)(
+      "clears %s viewMode on different-page navigation (#1054)",
+      (mode) => {
+        usePaneStore.setState({
+          root: { type: "leaf", id: "test-root", pagePath: "a.md", viewMode: mode },
+          focusedPaneId: "test-root",
+        });
+        usePaneStore.getState().setPanePage("test-root", "b.md");
+        const leaf = findLeaf(usePaneStore.getState().root, "test-root");
+        expect(leaf!.pagePath).toBe("b.md");
+        expect(leaf!.viewMode).toBeUndefined();
+      },
+    );
+
+    it("same-page setPanePage is a no-op and keeps viewMode (#1054)", () => {
       usePaneStore.setState({
-        root: { type: "leaf", id: "test-root", pagePath: "note.md", viewMode: "mindmap" },
+        root: { type: "leaf", id: "test-root", pagePath: "note.md", viewMode: "cardbox" },
         focusedPaneId: "test-root",
       });
+      const before = usePaneStore.getState().root;
+      usePaneStore.getState().setPanePage("test-root", "note.md");
+      expect(usePaneStore.getState().root).toBe(before);
+      expect(findLeaf(usePaneStore.getState().root, "test-root")!.viewMode).toBe("cardbox");
     });
 
-    it("setPanePage keeps viewMode on navigation", () => {
-      usePaneStore.getState().setPanePage("test-root", "other.md");
+    it("navigating from editor leaves viewMode omitted (#1054)", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "a.md" },
+        focusedPaneId: "test-root",
+      });
+      usePaneStore.getState().setPanePage("test-root", "b.md");
       const leaf = findLeaf(usePaneStore.getState().root, "test-root");
-      expect(leaf!.viewMode).toBe("mindmap");
+      expect(leaf!.pagePath).toBe("b.md");
+      expect(leaf!.viewMode).toBeUndefined();
+      expect("viewMode" in leaf!).toBe(false);
+    });
+
+    it("only the navigated pane loses viewMode; siblings keep theirs (#1054)", () => {
+      const root: PaneSplit = {
+        type: "split",
+        id: "s1",
+        direction: "horizontal",
+        children: [
+          { type: "leaf", id: "left", pagePath: "a.md", viewMode: "cardbox" },
+          { type: "leaf", id: "right", pagePath: "c.md", viewMode: "mindmap" },
+        ],
+        sizes: [50, 50],
+      };
+      usePaneStore.setState({ root, focusedPaneId: "left" });
+
+      usePaneStore.getState().setPanePage("left", "b.md");
+
+      const left = findLeaf(usePaneStore.getState().root, "left")!;
+      const right = findLeaf(usePaneStore.getState().root, "right")!;
+      expect(left.pagePath).toBe("b.md");
+      expect(left.viewMode).toBeUndefined();
+      expect(right.pagePath).toBe("c.md");
+      expect(right.viewMode).toBe("mindmap");
+    });
+
+    it("setPanePage(null) clears pagePath and viewMode (#1054)", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "a.md", viewMode: "graph" },
+        focusedPaneId: "test-root",
+      });
+      usePaneStore.getState().setPanePage("test-root", null);
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root")!;
+      expect(leaf.pagePath).toBeNull();
+      expect(leaf.viewMode).toBeUndefined();
+    });
+
+    it("setPaneViewMode still sets non-editor mode after a navigated reset (#1054)", () => {
+      usePaneStore.setState({
+        root: { type: "leaf", id: "test-root", pagePath: "a.md", viewMode: "cardbox" },
+        focusedPaneId: "test-root",
+      });
+      usePaneStore.getState().setPanePage("test-root", "b.md");
+      usePaneStore.getState().setPaneViewMode("test-root", "cardbox");
+      const leaf = findLeaf(usePaneStore.getState().root, "test-root")!;
+      expect(leaf.pagePath).toBe("b.md");
+      expect(leaf.viewMode).toBe("cardbox");
     });
   });
 
