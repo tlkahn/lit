@@ -74,3 +74,72 @@ export function measureEditorTextWidth(
   const width = entry.ctx.measureText(text).width;
   return Number.isFinite(width) && width > 0 ? width : null;
 }
+
+/**
+ * CommonMark default tab stop for list column math (#1057).
+ *
+ * CommonMark resolves tabs to tab stops of 4 columns for list indentation, so
+ * column math for list continuation hides must use 4 regardless of the CM
+ * editor's configured tab size.
+ */
+export const LIST_TAB_SIZE = 4;
+
+/**
+ * Column offset from the start of `text` to `charOffset`, expanding tabs to
+ * `tabSize` columns (CommonMark). Non-tab chars advance one column.
+ *
+ * `charOffset` is clamped to `[0, text.length]`. #1057 - column math for list
+ * continuation hides is tab-aware.
+ */
+export function columnAt(
+  text: string,
+  charOffset: number,
+  tabSize: number = LIST_TAB_SIZE,
+): number {
+  const clamped = Math.max(0, Math.min(charOffset, text.length));
+  let col = 0;
+  for (let i = 0; i < clamped; i++) {
+    col = text[i] === "\t" ? (Math.floor(col / tabSize) + 1) * tabSize : col + 1;
+  }
+  return col;
+}
+
+/**
+ * Blockquote marker prefix on a list continuation line, aligned with
+ * `addBlockquoteDecos`' `/^(\s*>)\s?/`. `>` is not treated as content end.
+ */
+const BLOCKQUOTE_MARKER_RE = /^(\s*>)\s?/;
+
+/**
+ * On a list continuation line, return the exclusive char offset into `lineText`
+ * at which structural indent ends (the range `[0, end)` within the line text is
+ * hidden via `Decorations.replace`).
+ *
+ * - Skips a leading blockquote marker (same shape `addBlockquoteDecos` hides)
+ *   without treating `>` as content end.
+ * - Then consumes spaces/tabs while the running column is < `contentColumn`.
+ * - Stops at first non-whitespace content, or when column reaches
+ *   `contentColumn`.
+ * - Returns 0 when there is nothing to hide (no blockquote prefix and no
+ *   leading spaces/tabs consumed). A blockquote-prefixed line with no extra
+ *   spaces returns the prefix length so callers can compute the non-overlapping
+ *   hide range. #1057
+ */
+export function listContinuationIndentEnd(
+  lineText: string,
+  contentColumn: number,
+  tabSize: number = LIST_TAB_SIZE,
+): number {
+  const bq = lineText.match(BLOCKQUOTE_MARKER_RE);
+  const startChar = bq ? bq[0].length : 0;
+  let col = columnAt(lineText, startChar, tabSize);
+  let i = startChar;
+  while (i < lineText.length) {
+    const ch = lineText[i];
+    if (ch !== " " && ch !== "\t") break;
+    if (col >= contentColumn) break;
+    col = ch === "\t" ? (Math.floor(col / tabSize) + 1) * tabSize : col + 1;
+    i++;
+  }
+  return i === 0 ? 0 : i;
+}

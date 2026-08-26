@@ -2905,6 +2905,134 @@ describe("buildDecorations — list items", () => {
     expect(li).toBeDefined();
     view.destroy();
   });
+
+  it("hides structural indent on loose ordered hanging paragraph (#1057)", () => {
+    const doc = "36. Place foo.\n\n    The bar\n\nother";
+    const view = makeView(doc, doc.length - 1); // caret on "other"
+    const decos = collectDecos(view);
+
+    // Line 3: "    The bar" starts after "36. Place foo.\n\n"
+    const line3 = view.state.doc.line(3);
+    expect(line3.text).toBe("    The bar");
+
+    const hide = decos.find(
+      (d) => d.type === "replace" && !d.widget && d.from === line3.from && d.to === line3.from + 4,
+    );
+    expect(hide).toBeDefined();
+
+    const cont = decos.find(
+      (d) => d.class === "cm-list-item-continuation" && d.from === line3.from,
+    );
+    expect(cont).toBeDefined();
+    expect(cont!.style).toContain("--li-indent");
+
+    view.destroy();
+  });
+
+  it("hides structural indent on ordered hard-wrap continuation (#1057)", () => {
+    const doc = "1. Item\n   continuation\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const line2 = view.state.doc.line(2);
+    expect(line2.text).toBe("   continuation");
+    const hide = collectDecos(view).find(
+      (d) => d.type === "replace" && !d.widget && d.from === line2.from && d.to === line2.from + 3,
+    );
+    expect(hide).toBeDefined();
+    view.destroy();
+  });
+
+  it("hides structural indent on bullet hard-wrap continuation (#1057)", () => {
+    const doc = "- Item\n  continuation\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const line2 = view.state.doc.line(2);
+    expect(line2.text).toBe("  continuation");
+    const hide = collectDecos(view).find(
+      (d) => d.type === "replace" && !d.widget && d.from === line2.from && d.to === line2.from + 2,
+    );
+    expect(hide).toBeDefined();
+    view.destroy();
+  });
+
+  it("does not emit indent-hide on blank continuation line (#1057)", () => {
+    const doc = "1. A\n\n   B\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const blank = view.state.doc.line(2);
+    expect(blank.text).toBe("");
+    const bad = collectDecos(view).filter(
+      (d) => d.type === "replace" && !d.widget && d.from === blank.from && d.to > blank.from,
+    );
+    expect(bad).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("does not hide chars on the first line of a list item (#1057)", () => {
+    const doc = "1. Item\n   cont\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const line1 = view.state.doc.line(1);
+    const hidePrefix = collectDecos(view).find(
+      (d) => d.type === "replace" && !d.widget && d.from === line1.from && d.to <= line1.from + 3,
+    );
+    expect(hidePrefix).toBeUndefined();
+    view.destroy();
+  });
+
+  it("outer list item does not decorate nested child marker line (#1057)", () => {
+    const doc = "1. outer\n   - nested\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const line2 = view.state.doc.line(2);
+    expect(line2.text).toBe("   - nested");
+
+    const decos = collectDecos(view);
+    const contOnL2 = decos.find(
+      (d) => d.class === "cm-list-item-continuation" && d.from === line2.from,
+    );
+    expect(contOnL2).toBeUndefined();
+
+    const childLi = decos.find((d) => d.class === "cm-list-item" && d.from === line2.from);
+    expect(childLi).toBeDefined();
+
+    view.destroy();
+  });
+
+  it("nested child hides its own hard-wrap structural indent (#1057)", () => {
+    const doc = "1. outer\n   - nested\n     nest cont\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const line3 = view.state.doc.line(3);
+    const nestAt = line3.from + line3.text.indexOf("nest");
+    const hide = collectDecos(view).find(
+      (d) => d.type === "replace" && !d.widget && d.from === line3.from && d.to === nestAt,
+    );
+    expect(hide).toBeDefined();
+    view.destroy();
+  });
+
+  it("hides remaining structural spaces on blockquote list continuation (#1057)", () => {
+    const doc = "> 1. bq item\n>    cont\n\nother";
+    const view = makeView(doc, doc.length - 1); // caret off bq
+    const line2 = view.state.doc.line(2);
+    expect(line2.text).toBe(">    cont");
+    const cAt = line2.from + line2.text.indexOf("cont");
+    const decos = collectDecos(view);
+    for (let pos = line2.from; pos < cAt; pos++) {
+      const covered = decos.some(
+        (d) => d.type === "replace" && !d.widget && d.from <= pos && pos < d.to,
+      );
+      expect(covered).toBe(true);
+    }
+    view.destroy();
+  });
+
+  it("hides structural indent on task list hard-wrap continuation (#1057)", () => {
+    const doc = "- [ ] task\n      more\n\nother";
+    const view = makeView(doc, doc.length - 1);
+    const line2 = view.state.doc.line(2);
+    expect(line2.text).toBe("      more");
+    const hide = collectDecos(view).find(
+      (d) => d.type === "replace" && !d.widget && d.from === line2.from && d.to === line2.from + 6,
+    );
+    expect(hide).toBeDefined();
+    view.destroy();
+  });
 });
 
 describe("buildDecorations — footnote references", () => {

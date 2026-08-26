@@ -581,11 +581,26 @@ function addListItemDecos(
     listIndent.measureEditorTextWidth(view, t),
   );
 
+  // CommonMark column of the item body start (after the marker), measured from
+  // the physical first line start. Used to know how many structural leading
+  // columns to hide on continuation lines (#1057).
+  const contentColumn = listIndent.columnAt(
+    state.doc.lineAt(from).text,
+    bodyStart - state.doc.lineAt(from).from,
+  );
+
   const firstLineNum = line.number;
   const lastLineNum = state.doc.lineAt(node.to).number;
 
   for (let lineNum = firstLineNum; lineNum <= lastLineNum; lineNum++) {
     const l = state.doc.line(lineNum);
+
+    // A strict descendant ListItem owns this line; let it run its own
+    // decorations rather than double-marking or hiding its structural indent.
+    if (lineNum !== firstLineNum && lineIntersectsDescendantListItem(l.from, l.to, node)) {
+      continue;
+    }
+
     const cls = lineNum === firstLineNum ? "cm-list-item" : "cm-list-item-continuation";
     decos.push({
       from: l.from,
@@ -595,7 +610,61 @@ function addListItemDecos(
         attributes: { style: `--li-indent: ${indent}px` },
       }),
     });
+
+    if (lineNum === firstLineNum) continue;
+    if (l.length === 0) continue; // blank line inside loose item
+
+    // Hide structural markdown lead spaces/tabs up to the content column so
+    // continuation text aligns to the item body start (parity with
+    // <li><p>…</p><p>…</p></li>). Don't hide past contentColumn (preserves
+    // indented code / nested prose extra pad).
+    const end = listIndent.listContinuationIndentEnd(l.text, contentColumn);
+    if (end > 0) {
+      // Non-overlapping with blockquote quote-mark hide: start just past the
+      // bq prefix so we never re-hide the ">"-prefix range.
+      const bq = l.text.match(/^(\s*>)\s?/);
+      const bqLen = bq ? bq[0].length : 0;
+      const fromChar = bqLen;
+      if (end > fromChar) {
+        decos.push({
+          from: l.from + fromChar,
+          to: l.from + end,
+          deco: Decoration.replace({}),
+        });
+      }
+    }
   }
+}
+
+/**
+ * True if a strict descendant `ListItem` of `listItemNode` intersects the line
+ * range `[lineFrom, lineTo)`. Used so the outer list item skips lines owned by
+ * a nested list's own `ListItem` (which runs its own decorations) instead of
+ * double-marking / double-hiding them (#1057).
+ */
+function lineIntersectsDescendantListItem(
+  lineFrom: number,
+  lineTo: number,
+  listItemNode: ReturnType<typeof syntaxTree>["topNode"],
+): boolean {
+  let hit = false;
+  const visit = (n: ReturnType<typeof syntaxTree>["topNode"]): boolean => {
+    if (
+      n.name === "ListItem" &&
+      !(n.from === listItemNode.from && n.to === listItemNode.to) &&
+      n.from < lineTo &&
+      n.to > lineFrom
+    ) {
+      hit = true;
+      return true;
+    }
+    for (let c = n.firstChild; c && !hit; c = c.nextSibling) {
+      if (visit(c)) return true;
+    }
+    return hit;
+  };
+  visit(listItemNode);
+  return hit;
 }
 
 function addImageDecos(
