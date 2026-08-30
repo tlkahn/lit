@@ -27,17 +27,34 @@ export const livePreviewThemeSpec: Record<string, Record<string, string | Record
     padding: "2px 4px",
     borderRadius: "3px",
   },
+  // #1059: line-level sizing. Font size lives here (not on .cm-preview-code-inline)
+  // so empty code lines and hidden fence strips keep the same scaled height as
+  // filled code lines; the inner .tok-monospace span is neutralized below to
+  // avoid double scaling.
   ".cm-preview-code-block": {
     backgroundColor: "var(--code-background-translucent, var(--code-background))",
     fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
+    fontSize: "calc(var(--font-monospace-size-ratio, 0.875) * 1em)",
   },
+  // #1059: revealed fence text (\`\`\`js) currently renders in the body font;
+  // give fence strips the mono family and the same scaled size as code lines.
   ".cm-code-fence-top": {
     backgroundColor: "var(--code-background-translucent, var(--code-background))",
     borderRadius: "4px 4px 0 0",
+    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
+    fontSize: "calc(var(--font-monospace-size-ratio, 0.875) * 1em)",
   },
   ".cm-code-fence-bottom": {
     backgroundColor: "var(--code-background-translucent, var(--code-background))",
     borderRadius: "0 0 4px 4px",
+    fontFamily: "var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, \"Noto Sans Mono\", monospace)",
+    fontSize: "calc(var(--font-monospace-size-ratio, 0.875) * 1em)",
+  },
+  // #1059 double-scale guard: CodeText spans inside fenced blocks also carry
+  // .tok-monospace (which sets its own ratio size in index.css). Two classes
+  // beat one regardless of load order, so the span inherits the line scale.
+  ".cm-preview-code-block .tok-monospace": {
+    fontSize: "1em",
   },
   ".cm-preview-strikethrough": {
     textDecoration: "line-through",
