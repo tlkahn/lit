@@ -139,10 +139,46 @@ describe("page break theme spec", () => {
 });
 
 describe("inline code theme spec", () => {
+  // #238 + #1059: size must stay on .tok-monospace (wraps the whole InlineCode
+  // node in both revealed-raw and previewed states). A fontSize here would
+  // change metrics when backticks reveal on cursor entry.
   it(".cm-preview-code-inline has no fontSize to avoid size changes on toggle", () => {
     const rule = livePreviewThemeSpec[".cm-preview-code-inline"] as Record<string, string>;
     expect(rule).toBeDefined();
     expect(rule).not.toHaveProperty("fontSize");
+  });
+});
+
+describe("monospace size scaling (#1059)", () => {
+  const ratioFontSize = "calc(var(--font-monospace-size-ratio, 0.875) * 1em)";
+
+  it(".cm-preview-code-block scales via the ratio with no margin", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-code-block"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.fontSize).toBe(ratioFontSize);
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it(".cm-code-fence-top scales via the ratio and uses the mono family", () => {
+    const rule = livePreviewThemeSpec[".cm-code-fence-top"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.fontSize).toBe(ratioFontSize);
+    expect(rule.fontFamily).toContain("--font-monospace-theme");
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it(".cm-code-fence-bottom scales via the ratio and uses the mono family", () => {
+    const rule = livePreviewThemeSpec[".cm-code-fence-bottom"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.fontSize).toBe(ratioFontSize);
+    expect(rule.fontFamily).toContain("--font-monospace-theme");
+    expect(rule).not.toHaveProperty("margin");
+  });
+
+  it(".cm-preview-code-block .tok-monospace neutralizes double scaling", () => {
+    const rule = livePreviewThemeSpec[".cm-preview-code-block .tok-monospace"] as Record<string, string>;
+    expect(rule).toBeDefined();
+    expect(rule.fontSize).toBe("1em");
   });
 });
 
