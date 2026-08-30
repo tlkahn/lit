@@ -139,6 +139,9 @@ describe("page break theme spec", () => {
 });
 
 describe("inline code theme spec", () => {
+  // #238 + #1059: size must stay on .tok-monospace (wraps the whole InlineCode
+  // node in both revealed-raw and previewed states). A fontSize here would
+  // change metrics when backticks reveal on cursor entry.
   it(".cm-preview-code-inline has no fontSize to avoid size changes on toggle", () => {
     const rule = livePreviewThemeSpec[".cm-preview-code-inline"] as Record<string, string>;
     expect(rule).toBeDefined();

@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { EditorState } from "@codemirror/state";
 import {
   editorTheme,
@@ -55,5 +57,21 @@ describe("theme", () => {
 
   it("searchTheme is a valid Extension", () => {
     expect(() => EditorState.create({ extensions: [searchTheme] })).not.toThrow();
+  });
+});
+
+describe("monospace size scaling (#1059)", () => {
+  const indexCss = readFileSync(resolve(__dirname, "../index.css"), "utf-8");
+
+  it(".tok-monospace scales via the ratio", () => {
+    const rule = indexCss.match(/\.tok-monospace\s*\{[^}]*\}/);
+    expect(rule).not.toBeNull();
+    expect(rule![0]).toContain("font-size: calc(var(--font-monospace-size-ratio, 0.875) * 1em)");
+  });
+
+  it(".tok-monospace keeps the mono family so revealed backticks match previewed content (#238 parity)", () => {
+    const rule = indexCss.match(/\.tok-monospace\s*\{[^}]*\}/);
+    expect(rule).not.toBeNull();
+    expect(rule![0]).toContain("font-family: var(--font-monospace-theme");
   });
 });
