@@ -1699,6 +1699,22 @@ describe("CardboxCard", () => {
       expect(chipRule![0]).toContain("var(--font-monospace-theme");
     });
 
+    it("index.css scales inline code chips via the monospace size ratio (#1059)", () => {
+      const css = indexCss();
+      const chipRule = css.match(
+        /\.prose code:not\(pre code\),\s*\[data-testid="card-original"\] code\s*\{[^}]*\}/,
+      );
+      expect(chipRule).not.toBeNull();
+      expect(chipRule![0]).toContain("font-size: calc(var(--font-monospace-size-ratio, 0.875) * 1em)");
+    });
+
+    it("index.css scales .prose pre blocks via the monospace size ratio (#1059)", () => {
+      const css = indexCss();
+      const preRule = css.match(/\.prose pre\s*\{[^}]*\}/);
+      expect(preRule).not.toBeNull();
+      expect(preRule![0]).toContain("font-size: calc(var(--font-monospace-size-ratio, 0.875) * 1em)");
+    });
+
     it("index.css clamps pre blocks to one line in collapsed cards", () => {
       const css = indexCss();
       const clampRule = css.match(

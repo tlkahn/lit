@@ -273,6 +273,7 @@ select:disabled {
   border-radius: 3px;
   padding: 0.1em 0.3em;
   font-family: var(--font-monospace-theme, ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono", monospace);
+  font-size: calc(var(--font-monospace-size-ratio, 0.875) * 1em);
 }
 
 [data-testid="cardbox-card"] .line-clamp-3 pre {
@@ -285,6 +286,7 @@ select:disabled {
 .prose pre {
   overflow-x: auto;
   max-width: 100%;
+  font-size: calc(var(--font-monospace-size-ratio, 0.875) * 1em);
 }
 
 .prose img {
